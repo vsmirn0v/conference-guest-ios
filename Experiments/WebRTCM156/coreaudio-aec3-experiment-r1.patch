@@ -1,0 +1,1515 @@
+--- a/api/audio/audio_device.h
++++ b/api/audio/audio_device.h
+@@ -38,6 +38,34 @@
+ 
+ class AudioDeviceModule : public RefCountInterface {
+  public:
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  struct ExperimentalCoreAudioMeter {
++    uint64_t samples = 0, callbacks = 0, non_silent_callbacks = 0;
++    double energy = 0, recent_rms = 0;
++    bool energy_known = false;
++    double first_callback_uptime = 0, last_callback_uptime = 0;
++    double first_non_silent_uptime = 0, last_non_silent_uptime = 0;
++  };
++  struct ExperimentalCoreAudioState {
++    bool supported = false, enabled = false;
++    bool input_available = false, output_available = false;
++    bool recording_requested = false, playout_requested = false;
++    bool recording_initialized = false, playout_initialized = false;
++    bool recording = false, playing = false, capture_muted = true;
++    bool cleanup_unconfirmed = false;
++    uint64_t capture_generation = 0;
++    int32_t last_result = -1;
++    double control_snapshot_uptime = 0;
++    uint32_t recording_sample_rate = 0, playout_sample_rate = 0;
++    size_t recording_channels = 0, playout_channels = 0;
++    ExperimentalCoreAudioMeter input_meter, output_meter, physical_output_meter;
++  };
++  // Opt-in, per-owner Mac diagnostic control. Never aliases hardware mixer mute.
++  virtual int32_t EnableExperimentalCoreAudioControl() { return -1; }
++  virtual int32_t SetExperimentalCoreAudioAvailability(bool, bool) { return -1; }
++  virtual int32_t SetExperimentalCoreAudioCaptureMuted(bool) { return -1; }
++  virtual ExperimentalCoreAudioState GetExperimentalCoreAudioState() const { return {}; }
++#endif
+   enum AudioLayer {
+     kPlatformDefaultAudio = 0,
+     kWindowsCoreAudio,
+--- a/modules/audio_device/audio_device_impl.h
++++ b/modules/audio_device/audio_device_impl.h
+@@ -71,6 +71,12 @@
+   int32_t Init() override;
+   int32_t Terminate() override;
+   bool Initialized() const override;
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  int32_t EnableExperimentalCoreAudioControl() override;
++  int32_t SetExperimentalCoreAudioAvailability(bool input, bool output) override;
++  int32_t SetExperimentalCoreAudioCaptureMuted(bool muted) override;
++  ExperimentalCoreAudioState GetExperimentalCoreAudioState() const override;
++#endif
+ 
+   // Device enumeration
+   int16_t PlayoutDevices() override;
+@@ -170,6 +176,19 @@
+  private:
+   PlatformType Platform() const;
+   AudioLayer PlatformAudioLayer() const;
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  int32_t ApplyCoreAudioDirection(bool input, bool run);
++  int32_t InitCoreAudioDirection(bool input);
++  int32_t CacheCoreAudioState(int32_t result);
++  std::atomic<bool> core_audio_enabled_{false};
++  std::atomic<bool> core_audio_input_available_{false}, core_audio_output_available_{false};
++  std::atomic<bool> core_audio_record_requested_{false}, core_audio_play_requested_{false};
++  std::atomic<bool> core_audio_record_initialized_{false}, core_audio_play_initialized_{false};
++  std::atomic<bool> core_audio_recording_{false}, core_audio_playing_{false};
++  std::atomic<bool> core_audio_cleanup_unconfirmed_{false};
++  std::atomic<int32_t> core_audio_last_result_{-1};
++  std::atomic<uint64_t> core_audio_snapshot_nanos_{0};
++#endif
+ 
+   AudioLayer audio_layer_;
+   PlatformType platform_type_ = kPlatformNotSupported;
+--- a/modules/audio_device/audio_device_impl.cc
++++ b/modules/audio_device/audio_device_impl.cc
+@@ -300,6 +300,13 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::Terminate() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) {
++    SetExperimentalCoreAudioCaptureMuted(true);
++    const int32_t recording = StopRecording(), playout = StopPlayout();
++    if (recording || playout || core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire)) return -3;
++  }
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   if (!initialized_)
+     return 0;
+@@ -314,6 +321,132 @@
+   RTC_LOG(LS_INFO) << __FUNCTION__ << ": " << initialized_;
+   return initialized_;
+ }
++
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++int32_t AudioDeviceModuleImpl::CacheCoreAudioState(int32_t result) {
++  core_audio_record_initialized_.store(audio_device_->RecordingIsInitialized(), std::memory_order_relaxed);
++  core_audio_play_initialized_.store(audio_device_->PlayoutIsInitialized(), std::memory_order_relaxed);
++  core_audio_recording_.store(audio_device_->Recording(), std::memory_order_relaxed);
++  core_audio_playing_.store(audio_device_->Playing(), std::memory_order_relaxed);
++  if (audio_device_->ExperimentalCoreAudioError() != 0) {
++    core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++    audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
++    if (result == 0) result = -3;
++  }
++  if (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) && result == 0) result = -3;
++  core_audio_last_result_.store(result, std::memory_order_relaxed);
++  core_audio_snapshot_nanos_.store(uint64_t(AudioDeviceBuffer::ExperimentalCoreAudioUptime() * 1e9), std::memory_order_release);
++  return result;
++}
++int32_t AudioDeviceModuleImpl::EnableExperimentalCoreAudioControl() {
++  if (core_audio_enabled_.load(std::memory_order_acquire)) return 0;
++  if (platform_type_ != kPlatformMac || audio_layer_ != kPlatformDefaultAudio ||
++      audio_device_->Playing() || audio_device_->Recording() ||
++      audio_device_buffer_.IsPlaying() || audio_device_buffer_.IsRecording()) return -1;
++  int32_t result = audio_device_->EnableExperimentalCoreAudioControl();
++  if (result != 0) return result;
++  audio_device_buffer_.EnableExperimentalCoreAudioControl();
++  core_audio_enabled_.store(true, std::memory_order_release);
++  result = Init();  // HAL/device metadata only; no availability probes or IO start.
++  if (result != 0) core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++  return CacheCoreAudioState(result);
++}
++int32_t AudioDeviceModuleImpl::ApplyCoreAudioDirection(bool input, bool run) {
++  if (run) {
++    if (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire)) return -3;
++    bool initialized = input ? audio_device_->RecordingIsInitialized() : audio_device_->PlayoutIsInitialized();
++    int32_t result = initialized ? 0 : (input ? audio_device_->InitRecording() : audio_device_->InitPlayout());
++    if (result != 0) {
++      // Initialization may have registered only part of a native resource set.
++      core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++      audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
++      return CacheCoreAudioState(result);
++    }
++    if (input ? audio_device_->Recording() : audio_device_->Playing()) return CacheCoreAudioState(0);
++    if (input) audio_device_buffer_.StartRecording(); else audio_device_buffer_.StartPlayout();
++    result = input ? audio_device_->StartRecording() : audio_device_->StartPlayout();
++    if (result != 0) {
++      // No implicit retry. Retire resources before reporting a failed activation.
++      const int32_t stopped = ApplyCoreAudioDirection(input, false);
++      if (stopped != 0) core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++    }
++    return CacheCoreAudioState(result);
++  }
++  int32_t result = 0;
++  const bool initialized = input ? audio_device_->RecordingIsInitialized() : audio_device_->PlayoutIsInitialized();
++  const bool running = input ? audio_device_->Recording() : audio_device_->Playing();
++  if (initialized || running) result = input ? audio_device_->StopRecording() : audio_device_->StopPlayout();
++  if (input) {
++    if (audio_device_buffer_.IsRecording()) audio_device_buffer_.StopRecording();
++  } else if (audio_device_buffer_.IsPlaying()) audio_device_buffer_.StopPlayout();
++  if (result != 0 || (input ? audio_device_->Recording() || audio_device_->RecordingIsInitialized()
++                           : audio_device_->Playing() || audio_device_->PlayoutIsInitialized())) {
++    core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++    if (result == 0) result = -3;
++  }
++  return CacheCoreAudioState(result);
++}
++int32_t AudioDeviceModuleImpl::InitCoreAudioDirection(bool input) {
++  if (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire)) return -3;
++  const bool available = input ? core_audio_input_available_.load(std::memory_order_acquire)
++                               : core_audio_output_available_.load(std::memory_order_acquire);
++  const bool initialized = input ? audio_device_->RecordingIsInitialized() : audio_device_->PlayoutIsInitialized();
++  if (!available || initialized) return CacheCoreAudioState(0);
++  const int32_t result = input ? audio_device_->InitRecording() : audio_device_->InitPlayout();
++  if (result != 0) {
++    core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++    audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
++  }
++  return CacheCoreAudioState(result);
++}
++int32_t AudioDeviceModuleImpl::SetExperimentalCoreAudioAvailability(bool input, bool output) {
++  if (!core_audio_enabled_.load(std::memory_order_acquire)) return -1;
++  if (!input) audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
++  core_audio_input_available_.store(input, std::memory_order_release);
++  core_audio_output_available_.store(output, std::memory_order_release);
++  // Availability stops preserve WebRTC demand; explicit StopRecording/Playout clear it.
++  int32_t result = 0;
++  if (!input) result = ApplyCoreAudioDirection(true, false);
++  if (!output) { const int32_t next = ApplyCoreAudioDirection(false, false); if (!result) result = next; }
++  if (!result && output && core_audio_play_requested_.load(std::memory_order_acquire)) result = ApplyCoreAudioDirection(false, true);
++  if (!result && input && core_audio_record_requested_.load(std::memory_order_acquire)) result = ApplyCoreAudioDirection(true, true);
++  return CacheCoreAudioState(result);
++}
++int32_t AudioDeviceModuleImpl::SetExperimentalCoreAudioCaptureMuted(bool muted) {
++  if (!core_audio_enabled_.load(std::memory_order_acquire)) return -1;
++  if (!muted && (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || audio_device_->ExperimentalCoreAudioError())) return -3;
++  audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(muted);
++  return 0;
++}
++AudioDeviceModule::ExperimentalCoreAudioState AudioDeviceModuleImpl::GetExperimentalCoreAudioState() const {
++  ExperimentalCoreAudioState result;
++  result.enabled = core_audio_enabled_.load(std::memory_order_acquire);
++  result.supported = result.enabled;
++  if (!result.enabled) return result;
++  result.input_available = core_audio_input_available_.load(std::memory_order_acquire);
++  result.output_available = core_audio_output_available_.load(std::memory_order_acquire);
++  result.recording_requested = core_audio_record_requested_.load(std::memory_order_acquire);
++  result.playout_requested = core_audio_play_requested_.load(std::memory_order_acquire);
++  result.recording_initialized = core_audio_record_initialized_.load(std::memory_order_acquire);
++  result.playout_initialized = core_audio_play_initialized_.load(std::memory_order_acquire);
++  result.recording = core_audio_recording_.load(std::memory_order_acquire);
++  result.playing = core_audio_playing_.load(std::memory_order_acquire);
++  result.capture_generation = audio_device_buffer_.ExperimentalCoreAudioCaptureState();
++  result.capture_muted = (result.capture_generation & 1) != 0;
++  result.cleanup_unconfirmed = core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || audio_device_->ExperimentalCoreAudioError() != 0;
++  result.last_result = core_audio_last_result_.load(std::memory_order_relaxed);
++  if (audio_device_->ExperimentalCoreAudioError() && result.last_result == 0) result.last_result = -3;
++  result.control_snapshot_uptime = core_audio_snapshot_nanos_.load(std::memory_order_acquire) * 1e-9;
++  result.input_meter = audio_device_buffer_.ExperimentalCoreAudioInputMeter();
++  result.output_meter = audio_device_buffer_.ExperimentalCoreAudioOutputMeter();
++  result.physical_output_meter = audio_device_buffer_.ExperimentalCoreAudioPhysicalOutputMeter();
++  result.recording_sample_rate = audio_device_buffer_.RecordingSampleRate();
++  result.playout_sample_rate = audio_device_buffer_.PlayoutSampleRate();
++  result.recording_channels = audio_device_buffer_.RecordingChannels();
++  result.playout_channels = audio_device_buffer_.PlayoutChannels();
++  return result;
++}
++#endif
+ 
+ int32_t AudioDeviceModuleImpl::InitSpeaker() {
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+@@ -701,6 +834,9 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::InitPlayout() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) return InitCoreAudioDirection(false);
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (PlayoutIsInitialized()) {
+@@ -714,6 +850,9 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::InitRecording() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) return InitCoreAudioDirection(true);
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (RecordingIsInitialized()) {
+@@ -739,6 +878,9 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::StartPlayout() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) { core_audio_play_requested_.store(true, std::memory_order_release); return core_audio_output_available_.load(std::memory_order_acquire) ? ApplyCoreAudioDirection(false, true) : CacheCoreAudioState(0); }
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (Playing()) {
+@@ -753,6 +895,9 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::StopPlayout() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) { core_audio_play_requested_.store(false, std::memory_order_release); return ApplyCoreAudioDirection(false, false); }
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   int32_t result = audio_device_->StopPlayout();
+@@ -764,12 +909,18 @@
+ }
+ 
+ bool AudioDeviceModuleImpl::Playing() const {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) return core_audio_play_requested_.load(std::memory_order_acquire);
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized__BOOL();
+   return audio_device_->Playing();
+ }
+ 
+ int32_t AudioDeviceModuleImpl::StartRecording() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) { core_audio_record_requested_.store(true, std::memory_order_release); return core_audio_input_available_.load(std::memory_order_acquire) ? ApplyCoreAudioDirection(true, true) : CacheCoreAudioState(0); }
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (Recording()) {
+@@ -784,6 +935,9 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::StopRecording() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) { core_audio_record_requested_.store(false, std::memory_order_release); audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true); return ApplyCoreAudioDirection(true, false); }
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   int32_t result = audio_device_->StopRecording();
+@@ -795,6 +949,9 @@
+ }
+ 
+ bool AudioDeviceModuleImpl::Recording() const {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_enabled_.load(std::memory_order_acquire)) return core_audio_record_requested_.load(std::memory_order_acquire);
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized__BOOL();
+   return audio_device_->Recording();
+--- a/modules/audio_device/audio_device_buffer.h
++++ b/modules/audio_device/audio_device_buffer.h
+@@ -18,6 +18,7 @@
+ #include <optional>
+ 
+ #include "api/audio/audio_device_defines.h"
++#include "api/audio/audio_device.h"
+ #include "api/environment/environment.h"
+ #include "api/sequence_checker.h"
+ #include "api/task_queue/task_queue_base.h"
+@@ -104,6 +105,18 @@
+   // Queried on the same control sequence as Start/Stop.
+   bool IsPlaying();
+   bool IsRecording();
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  void EnableExperimentalCoreAudioControl();
++  void SetExperimentalCoreAudioCaptureMuted(bool muted);
++  uint64_t ExperimentalCoreAudioCaptureState() const;
++  AudioDeviceModule::ExperimentalCoreAudioMeter ExperimentalCoreAudioInputMeter() const;
++  AudioDeviceModule::ExperimentalCoreAudioMeter ExperimentalCoreAudioOutputMeter() const;
++  AudioDeviceModule::ExperimentalCoreAudioMeter ExperimentalCoreAudioPhysicalOutputMeter() const;
++  void RecordExperimentalCoreAudioInput(uint64_t energy_q30, size_t samples, bool energy_known);
++  void SetExperimentalCoreAudioRecordedCaptureState(uint64_t local, uint64_t process);
++  void RecordExperimentalCoreAudioPhysicalOutput(uint64_t energy_q30, size_t samples, bool energy_known);
++  static double ExperimentalCoreAudioUptime();
++#endif
+ 
+   int32_t SetRecordingSampleRate(uint32_t fsHz);
+   int32_t SetPlayoutSampleRate(uint32_t fsHz);
+@@ -260,6 +273,22 @@
+   TimestampAligner timestamp_aligner_;
+   // Confined to the existing recording sequence, tagged before the PCM copy.
+   uint64_t application_capture_state_ = 0;
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  struct ExperimentalMeter {
++    std::atomic<uint64_t> samples{0}, energy{0}, callbacks{0}, non_silent{0};
++    std::atomic<uint64_t> first{0}, last{0}, first_non_silent{0}, last_non_silent{0};
++    std::atomic<uint64_t> recent_energy{0}, recent_samples{0};
++    std::atomic<bool> energy_known{true};
++    void Add(const int16_t* data, size_t count);
++    void AddEnergy(uint64_t sum, size_t count, bool known);
++    AudioDeviceModule::ExperimentalCoreAudioMeter Read() const;
++  };
++  std::atomic<bool> experimental_core_audio_enabled_{false};
++  std::atomic<uint64_t> experimental_capture_state_{1};
++  uint64_t recorded_experimental_capture_state_ = 1;
++  ExperimentalMeter experimental_input_meter_, experimental_output_meter_;
++  ExperimentalMeter experimental_physical_output_meter_;
++#endif
+ 
+ // Should *never* be defined in production builds. Only used for testing.
+ // When defined, the output signal will be replaced by a sinus tone at 440Hz.
+--- a/modules/audio_device/audio_device_buffer.cc
++++ b/modules/audio_device/audio_device_buffer.cc
+@@ -16,6 +16,7 @@
+ #include <cstdint>
+ #include <cstring>
+ #include <optional>
++#include <span>
+ 
+ #include "api/audio/audio_device_defines.h"
+ #include "api/environment/environment.h"
+@@ -31,7 +32,104 @@
+ #include "rtc_base/trace_event.h"
+ #include "system_wrappers/include/metrics.h"
+ 
++#include <time.h>
++
+ namespace webrtc {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++namespace {
++uint64_t CoreAudioUptimeNanos() {
++  timespec now;
++  clock_gettime(CLOCK_UPTIME_RAW, &now);
++  return uint64_t(now.tv_sec) * 1000000000ULL + uint64_t(now.tv_nsec);
++}
++}  // namespace
++
++double AudioDeviceBuffer::ExperimentalCoreAudioUptime() {
++  return CoreAudioUptimeNanos() * 1e-9;
++}
++void AudioDeviceBuffer::ExperimentalMeter::Add(const int16_t* data, size_t count) {
++  if (!data || count == 0 || count > 65536) return;
++  static_assert(std::atomic<uint64_t>::is_always_lock_free);
++  uint64_t sum = 0;
++  for (int16_t sample : std::span<const int16_t>(data, count)) {
++    const int64_t value = sample;
++    sum += uint64_t(value * value);
++  }
++  AddEnergy(sum, count, true);
++}
++void AudioDeviceBuffer::ExperimentalMeter::AddEnergy(uint64_t sum, size_t count, bool known) {
++  const uint64_t now = CoreAudioUptimeNanos();
++  if (!known) energy_known.store(false, std::memory_order_relaxed);
++  samples.fetch_add(count, std::memory_order_relaxed);
++  energy.fetch_add(sum, std::memory_order_relaxed);
++  recent_energy.store(sum, std::memory_order_relaxed);
++  recent_samples.store(count, std::memory_order_relaxed);
++  uint64_t zero = 0;
++  first.compare_exchange_strong(zero, now, std::memory_order_relaxed);
++  last.store(now, std::memory_order_relaxed);
++  if (sum != 0) {
++    zero = 0;
++    first_non_silent.compare_exchange_strong(zero, now, std::memory_order_relaxed);
++    last_non_silent.store(now, std::memory_order_relaxed);
++    non_silent.fetch_add(1, std::memory_order_relaxed);
++  }
++  callbacks.fetch_add(1, std::memory_order_release);
++}
++AudioDeviceModule::ExperimentalCoreAudioMeter AudioDeviceBuffer::ExperimentalMeter::Read() const {
++  AudioDeviceModule::ExperimentalCoreAudioMeter result;
++  result.callbacks = callbacks.load(std::memory_order_acquire);
++  result.energy_known = energy_known.load(std::memory_order_relaxed) && result.callbacks != 0;
++  result.samples = samples.load(std::memory_order_relaxed);
++  result.energy = double(energy.load(std::memory_order_relaxed)) / 1073741824.0;
++  const uint64_t count = recent_samples.load(std::memory_order_relaxed);
++  result.recent_rms = count ? std::sqrt(double(recent_energy.load(std::memory_order_relaxed)) / 1073741824.0 / count) : 0;
++  result.non_silent_callbacks = non_silent.load(std::memory_order_relaxed);
++  result.first_callback_uptime = first.load(std::memory_order_relaxed) * 1e-9;
++  result.last_callback_uptime = last.load(std::memory_order_relaxed) * 1e-9;
++  result.first_non_silent_uptime = first_non_silent.load(std::memory_order_relaxed) * 1e-9;
++  result.last_non_silent_uptime = last_non_silent.load(std::memory_order_relaxed) * 1e-9;
++  return result;
++}
++void AudioDeviceBuffer::EnableExperimentalCoreAudioControl() {
++  experimental_capture_state_.store(1, std::memory_order_release);
++  experimental_core_audio_enabled_.store(true, std::memory_order_release);
++}
++void AudioDeviceBuffer::SetExperimentalCoreAudioCaptureMuted(bool muted) {
++  uint64_t previous = experimental_capture_state_.load(std::memory_order_acquire);
++  // Every close invalidates buffered samples, even when already closed.
++  while (muted || (previous & 1) != uint64_t(muted)) {
++    const uint64_t next = ((previous & ~uint64_t{1}) + 2) | uint64_t(muted);
++    if (experimental_capture_state_.compare_exchange_weak(previous, next,
++          std::memory_order_acq_rel, std::memory_order_acquire)) return;
++  }
++}
++uint64_t AudioDeviceBuffer::ExperimentalCoreAudioCaptureState() const {
++  return experimental_capture_state_.load(std::memory_order_acquire);
++}
++AudioDeviceModule::ExperimentalCoreAudioMeter AudioDeviceBuffer::ExperimentalCoreAudioInputMeter() const {
++  return experimental_input_meter_.Read();
++}
++AudioDeviceModule::ExperimentalCoreAudioMeter AudioDeviceBuffer::ExperimentalCoreAudioOutputMeter() const {
++  return experimental_output_meter_.Read();
++}
++AudioDeviceModule::ExperimentalCoreAudioMeter AudioDeviceBuffer::ExperimentalCoreAudioPhysicalOutputMeter() const {
++  return experimental_physical_output_meter_.Read();
++}
++void AudioDeviceBuffer::RecordExperimentalCoreAudioInput(uint64_t energy_q30, size_t samples, bool known) {
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    experimental_input_meter_.AddEnergy(energy_q30, samples, known);
++  }
++}
++void AudioDeviceBuffer::SetExperimentalCoreAudioRecordedCaptureState(uint64_t local, uint64_t process) {
++  recorded_experimental_capture_state_ = local;
++  application_capture_state_ = process;
++}
++void AudioDeviceBuffer::RecordExperimentalCoreAudioPhysicalOutput(uint64_t energy_q30, size_t samples, bool known) {
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    experimental_physical_output_meter_.AddEnergy(energy_q30, samples, known);
++  }
++}
++#endif
+ 
+ namespace {
+ std::atomic<uint64_t> application_capture_state{0};
+@@ -303,6 +401,11 @@
+     size_t samples_per_channel,
+     std::optional<int64_t> capture_timestamp_ns) {
+   application_capture_state_ = ApplicationCaptureState();
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    recorded_experimental_capture_state_ = ExperimentalCoreAudioCaptureState();
++  }
++#endif
+   // Copy the complete input buffer to the local buffer.
+   const size_t old_size = rec_buffer_.size();
+   if (application_capture_state_ & 1) {
+@@ -369,6 +472,14 @@
+ 
+ int32_t AudioDeviceBuffer::DeliverRecordedData() {
+   const uint64_t capture_state = ApplicationCaptureState();
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    const uint64_t local_state = ExperimentalCoreAudioCaptureState();
++    if ((local_state & 1) || local_state != recorded_experimental_capture_state_) {
++      SilenceRecordedBuffer();
++    }
++  }
++#endif
+   if ((capture_state & 1) || capture_state != application_capture_state_) {
+     // Keep the recording clock alive, without exposing microphone samples.
+     // An SFU may need silent RTP before it advertises the new audio track and
+@@ -443,6 +554,11 @@
+ 
+ int32_t AudioDeviceBuffer::GetPlayoutData(void* audio_buffer) {
+   RTC_DCHECK_GT(play_buffer_.size(), 0);
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    experimental_output_meter_.Add(play_buffer_.data(), play_buffer_.size());
++  }
++#endif
+ #ifdef AUDIO_DEVICE_PLAYS_SINUS_TONE
+   const double phase_increment =
+       k2Pi * 440.0 / static_cast<double>(play_sample_rate_);
+--- a/modules/audio_device/mac/audio_device_mac.h
++++ b/modules/audio_device/mac/audio_device_mac.h
+@@ -23,6 +23,7 @@
+ #include "modules/audio_device/audio_device_generic.h"
+ #include "modules/audio_device/mac/audio_mixer_manager_mac.h"
+ #include "modules/audio_device/mac/audio_ring_buffer_mac.h"
++#include "modules/audio_device/mac/experimental_core_audio_capture.h"
+ #include "rtc_base/event.h"
+ #include "rtc_base/logging.h"
+ #include "rtc_base/platform_thread.h"
+@@ -62,6 +63,8 @@
+  public:
+   AudioDeviceMac();
+   ~AudioDeviceMac();
++  virtual int32_t EnableExperimentalCoreAudioControl();
++  virtual int32_t ExperimentalCoreAudioError() const;
+ 
+   // Retrieve the currently utilized audio layer
+   virtual int32_t ActiveAudioLayer(
+@@ -280,6 +283,9 @@
+   uint16_t _outputDeviceIndex;
+   AudioDeviceID _inputDeviceID;
+   AudioDeviceID _outputDeviceID;
++  std::atomic<bool> experimental_core_audio_enabled_{false};
++  std::atomic<int32_t> experimental_core_audio_error_{0};
++  void RecordExperimentalCoreAudioError(int32_t error);
+   AudioDeviceIOProcID _inDeviceIOProcID;
+   AudioDeviceIOProcID _deviceIOProcID;
+   bool _inputDeviceIsSpecified;
+@@ -293,8 +299,8 @@
+ 
+   bool _initialized;
+   bool _isShutDown;
+-  bool _recording;
+-  bool _playing;
++  std::atomic<bool> _recording;
++  std::atomic<bool> _playing;
+   bool _recIsInitialized;
+   bool _playIsInitialized;
+ 
+@@ -302,9 +308,9 @@
+   std::atomic<int32_t> _renderDeviceIsAlive;
+   std::atomic<int32_t> _captureDeviceIsAlive;
+ 
+-  bool _twoDevices;
+-  bool _doStop;  // For play if not shared device or play+rec if shared device
+-  bool _doStopRec;  // For rec if not shared device
++  std::atomic<bool> _twoDevices;
++  std::atomic<bool> _doStop;  // For play if not shared device or play+rec if shared device
++  std::atomic<bool> _doStopRec;  // For rec if not shared device
+   bool _macBookPro;
+   bool _macBookProPanRight;
+ 
+@@ -326,6 +332,9 @@
+   int32_t _renderDelayOffsetSamples;
+ 
+   AudioRingBufferMac<Float32> _captureBuffer;
++  std::unique_ptr<ExperimentalCoreAudioCapture> experimental_capture_buffer_;
++  // Exclusively owned by the capture worker, including converter callbacks.
++  ExperimentalCoreAudioCaptureEpoch experimental_converter_epoch_;
+   AudioRingBufferMac<SInt16> _renderBuffer;
+ 
+   semaphore_t _renderSemaphore;
+--- a/modules/audio_device/mac/audio_device_mac.cc
++++ b/modules/audio_device/mac/audio_device_mac.cc
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include "modules/audio_device/mac/audio_device_mac.h"
++#include <cmath>
+ 
+ #include <ApplicationServices/ApplicationServices.h>
+ #include <mach/mach.h>   // mach_task_self()
+@@ -29,6 +30,7 @@
+   do {                                                                    \
+     err = expr;                                                           \
+     if (err != noErr) {                                                   \
++      RecordExperimentalCoreAudioError(err); \
+       logCAMsg(::webrtc::LS_ERROR, "Error in " #expr, (const char*)&err); \
+       return -1;                                                          \
+     }                                                                     \
+@@ -38,6 +40,7 @@
+   do {                                                                    \
+     err = expr;                                                           \
+     if (err != noErr) {                                                   \
++      RecordExperimentalCoreAudioError(err); \
+       logCAMsg(::webrtc::LS_ERROR, "Error in " #expr, (const char*)&err); \
+     }                                                                     \
+   } while (0)
+@@ -46,6 +49,7 @@
+   do {                                                                      \
+     err = expr;                                                             \
+     if (err != noErr) {                                                     \
++      RecordExperimentalCoreAudioError(err); \
+       logCAMsg(::webrtc::LS_WARNING, "Error in " #expr, (const char*)&err); \
+     }                                                                       \
+   } while (0)
+@@ -175,6 +179,36 @@
+   _ptrAudioBuffer->SetPlayoutChannels(N_PLAY_CHANNELS);
+ }
+ 
++int32_t AudioDeviceMac::EnableExperimentalCoreAudioControl() {
++  MutexLock lock(&mutex_);
++  if (_playing || _recording || _playIsInitialized || _recIsInitialized) return -1;
++  AudioDeviceID input = 0, output = 0;
++  UInt32 size = sizeof(AudioDeviceID);
++  AudioObjectPropertyAddress address = {kAudioHardwarePropertyDefaultInputDevice,
++      kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
++  OSStatus result = AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, &input);
++  if (result != noErr) return -1;
++  address.mSelector = kAudioHardwarePropertyDefaultOutputDevice;
++  size = sizeof(AudioDeviceID);
++  result = AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, &output);
++  if (result != noErr) return -1;
++  // Narrow experiment: a shared duplex IOProc cannot promise physical input-off.
++  if (!input || !output || input == output) return -2;
++  experimental_capture_buffer_ =
++      std::make_unique<ExperimentalCoreAudioCapture>(REC_BUF_SIZE_IN_SAMPLES);
++  experimental_core_audio_enabled_.store(true, std::memory_order_release);
++  return 0;
++}
++int32_t AudioDeviceMac::ExperimentalCoreAudioError() const {
++  return experimental_core_audio_error_.load(std::memory_order_acquire);
++}
++void AudioDeviceMac::RecordExperimentalCoreAudioError(int32_t error) {
++  if (error && experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    int32_t expected = 0;
++    experimental_core_audio_error_.compare_exchange_strong(expected, error, std::memory_order_acq_rel);
++  }
++}
++
+ int32_t AudioDeviceMac::ActiveAudioLayer(
+     AudioDeviceModule::AudioLayer& audioLayer) const {
+   audioLayer = AudioDeviceModule::kPlatformDefaultAudio;
+@@ -348,6 +382,9 @@
+     _twoDevices = true;
+   }
+ 
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) && !_twoDevices) {
++    RecordExperimentalCoreAudioError(-2); return -1;
++  }
+   if (_mixerManager.OpenSpeaker(_outputDeviceID) == -1) {
+     return -1;
+   }
+@@ -404,6 +441,9 @@
+     _twoDevices = true;
+   }
+ 
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) && !_twoDevices) {
++    RecordExperimentalCoreAudioError(-2); return -1;
++  }
+   if (_mixerManager.OpenMicrophone(_inputDeviceID) == -1) {
+     return -1;
+   }
+@@ -895,6 +935,7 @@
+   // Initialize the speaker (devices might have been added or removed)
+   if (InitSpeakerLocked() == -1) {
+     RTC_LOG(LS_WARNING) << "InitSpeaker() failed";
++    if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) return -1;
+   }
+ 
+   if (!MicrophoneIsInitialized()) {
+@@ -903,6 +944,7 @@
+     bool available = false;
+     if (MicrophoneIsAvailableLocked(available) == -1) {
+       RTC_LOG(LS_WARNING) << "MicrophoneIsAvailable() failed";
++      if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) return -1;
+     }
+   }
+ 
+@@ -1032,6 +1074,7 @@
+   // Initialize the microphone (devices might have been added or removed)
+   if (InitMicrophoneLocked() == -1) {
+     RTC_LOG(LS_WARNING) << "InitMicrophone() failed";
++    if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) return -1;
+   }
+ 
+   if (!SpeakerIsInitialized()) {
+@@ -1040,6 +1083,7 @@
+     bool available = false;
+     if (SpeakerIsAvailableLocked(available) == -1) {
+       RTC_LOG(LS_WARNING) << "SpeakerIsAvailable() failed";
++      if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) return -1;
+     }
+   }
+ 
+@@ -1047,6 +1091,10 @@
+   UInt32 size = 0;
+ 
+   _captureBuffer.Clear();
++  if (experimental_capture_buffer_) {
++    experimental_capture_buffer_->ClearWhenIdle();
++    experimental_converter_epoch_ = ExperimentalCoreAudioCaptureEpoch();
++  }
+ 
+   _captureDelayUs = 0;
+   _captureLatencyUs = 0;
+@@ -1214,6 +1262,26 @@
+ int32_t AudioDeviceMac::StartRecording() {
+   RTC_LOG(LS_INFO) << "StartRecording";
+   MutexLock lock(&mutex_);
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    AudioDeviceID input = 0, output = 0;
++    UInt32 bytes = sizeof(AudioDeviceID);
++    AudioObjectPropertyAddress address = {kAudioHardwarePropertyDefaultInputDevice,
++        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
++    OSStatus topology = AudioObjectGetPropertyData(kAudioObjectSystemObject, &address,
++        0, nullptr, &bytes, &input);
++    address.mSelector = kAudioHardwarePropertyDefaultOutputDevice;
++    bytes = sizeof(AudioDeviceID);
++    if (topology == noErr) topology = AudioObjectGetPropertyData(kAudioObjectSystemObject,
++        &address, 0, nullptr, &bytes, &output);
++    if (topology != noErr || !input || !output || input == output ||
++        (_inputDeviceID && input != _inputDeviceID) ||
++        (_outputDeviceID && output != _outputDeviceID)) {
++      RecordExperimentalCoreAudioError(topology != noErr ? topology : -2);
++      return -1;
++    }
++  }
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) &&
++      ExperimentalCoreAudioError() != 0) return -1;
+ 
+   if (!_recIsInitialized) {
+     return -1;
+@@ -1267,6 +1335,7 @@
+       _doStopRec = true;  // Signal to io proc to stop audio device
+       mutex_.Unlock();    // Cannot be under lock, risk of deadlock
+       if (!_stopEventRec.Wait(TimeDelta::Seconds(2))) {
++        RecordExperimentalCoreAudioError(-7);
+         MutexLock lockScoped(&mutex_);
+         RTC_LOG(LS_WARNING) << "Timed out stopping the capture IOProc."
+                                "We may have failed to detect a device removal.";
+@@ -1295,6 +1364,7 @@
+       _doStop = true;   // Signal to io proc to stop audio device
+       mutex_.Unlock();  // Cannot be under lock, risk of deadlock
+       if (!_stopEvent.Wait(TimeDelta::Seconds(2))) {
++        RecordExperimentalCoreAudioError(-7);
+         MutexLock lockScoped(&mutex_);
+         RTC_LOG(LS_WARNING) << "Timed out stopping the shared IOProc."
+                                "We may have failed to detect a device removal.";
+@@ -1323,6 +1393,11 @@
+     mutex_.Lock();
+   }
+ 
++  // HAL errors can mean an IOProc still owns callback-visible resources.
++  // Retain them under quarantine; neither retry nor destruct this ADM in-app.
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) &&
++      ExperimentalCoreAudioError() != 0) return -1;
++
+   WEBRTC_CA_LOG_WARN(AudioConverterDispose(_captureConverter));
+ 
+   // Remove listeners.
+@@ -1356,6 +1431,26 @@
+ int32_t AudioDeviceMac::StartPlayout() {
+   RTC_LOG(LS_INFO) << "StartPlayout";
+   MutexLock lock(&mutex_);
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    AudioDeviceID input = 0, output = 0;
++    UInt32 bytes = sizeof(AudioDeviceID);
++    AudioObjectPropertyAddress address = {kAudioHardwarePropertyDefaultInputDevice,
++        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
++    OSStatus topology = AudioObjectGetPropertyData(kAudioObjectSystemObject, &address,
++        0, nullptr, &bytes, &input);
++    address.mSelector = kAudioHardwarePropertyDefaultOutputDevice;
++    bytes = sizeof(AudioDeviceID);
++    if (topology == noErr) topology = AudioObjectGetPropertyData(kAudioObjectSystemObject,
++        &address, 0, nullptr, &bytes, &output);
++    if (topology != noErr || !input || !output || input == output ||
++        (_inputDeviceID && input != _inputDeviceID) ||
++        (_outputDeviceID && output != _outputDeviceID)) {
++      RecordExperimentalCoreAudioError(topology != noErr ? topology : -2);
++      return -1;
++    }
++  }
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) &&
++      ExperimentalCoreAudioError() != 0) return -1;
+ 
+   if (!_playIsInitialized) {
+     return -1;
+@@ -1405,6 +1500,7 @@
+     _doStop = true;   // Signal to io proc to stop audio device
+     mutex_.Unlock();  // Cannot be under lock, risk of deadlock
+     if (!_stopEvent.Wait(TimeDelta::Seconds(2))) {
++        RecordExperimentalCoreAudioError(-7);
+       MutexLock lockScoped(&mutex_);
+       RTC_LOG(LS_WARNING) << "Timed out stopping the render IOProc."
+                              "We may have failed to detect a device removal.";
+@@ -1435,6 +1531,11 @@
+     render_worker_thread_.Finalize();
+     mutex_.Lock();
+   }
++
++  // HAL errors can mean an IOProc still owns callback-visible resources.
++  // Retain them under quarantine; neither retry nor destruct this ADM in-app.
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) &&
++      ExperimentalCoreAudioError() != 0) return -1;
+ 
+   WEBRTC_CA_LOG_WARN(AudioConverterDispose(_renderConverter));
+ 
+@@ -1866,6 +1967,12 @@
+ }
+ 
+ int32_t AudioDeviceMac::HandleDeviceChange() {
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    RecordExperimentalCoreAudioError(-6);
++    if (_ptrAudioBuffer) _ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++    return -1;  // Owner must retire this ADM; never mutate an active converter.
++  }
++
+   OSStatus err = noErr;
+ 
+   RTC_LOG(LS_VERBOSE) << "kAudioHardwarePropertyDevices";
+@@ -1916,6 +2023,12 @@
+ int32_t AudioDeviceMac::HandleStreamFormatChange(
+     const AudioObjectID objectId,
+     const AudioObjectPropertyAddress propertyAddress) {
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    RecordExperimentalCoreAudioError(-6);
++    if (_ptrAudioBuffer) _ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++    return -1;  // Owner must retire this ADM; never mutate an active converter.
++  }
++
+   OSStatus err = noErr;
+ 
+   RTC_LOG(LS_VERBOSE) << "Stream format changed";
+@@ -2006,6 +2119,12 @@
+ int32_t AudioDeviceMac::HandleDataSourceChange(
+     const AudioObjectID objectId,
+     const AudioObjectPropertyAddress propertyAddress) {
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++    RecordExperimentalCoreAudioError(-6);
++    if (_ptrAudioBuffer) _ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++    return -1;  // Route/data-source recovery requires a fresh owner/ADM.
++  }
++
+   OSStatus err = noErr;
+ 
+   if (_macBookPro &&
+@@ -2157,6 +2276,7 @@
+   err = AudioConverterFillComplexBuffer(_renderConverter, outConverterProc,
+                                         this, &size, outputData, NULL);
+   if (err != noErr) {
++    RecordExperimentalCoreAudioError(err);
+     if (err == 1) {
+       // This is our own error.
+       RTC_LOG(LS_ERROR) << "Error in AudioConverterFillComplexBuffer()";
+@@ -2179,6 +2299,33 @@
+ 
+   _renderDelayUs = renderDelayUs;
+ 
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) && _ptrAudioBuffer) {
++    // Bounded scalar inspection only: no allocation, logs, locks or app callback.
++    bool known = _outStreamFormat.mFormatID == kAudioFormatLinearPCM &&
++        (_outStreamFormat.mFormatFlags & kAudioFormatFlagIsFloat) &&
++        !(_outStreamFormat.mFormatFlags & kAudioFormatFlagIsBigEndian) &&
++        _outStreamFormat.mBitsPerChannel == 32 && outputData->mNumberBuffers <= 64;
++    uint64_t samples = 0;
++    double energy = 0;
++    if (known) {
++      for (const auto& buffer : std::span<const AudioBuffer>(
++               outputData->mBuffers, outputData->mNumberBuffers)) {
++        const size_t count = buffer.mDataByteSize / sizeof(float);
++        if (!buffer.mData || samples + count > 65536 || buffer.mDataByteSize % sizeof(float)) { known = false; break; }
++        const float* data = static_cast<const float*>(buffer.mData);
++        for (float sample : std::span<const float>(data, count)) {
++          const double value = sample;
++          if (!std::isfinite(value) || value < -8 || value > 8) { known = false; break; }
++          energy += value * value;
++        }
++        if (!known) break;
++        samples += count;
++      }
++    }
++    _ptrAudioBuffer->RecordExperimentalCoreAudioPhysicalOutput(
++        known ? uint64_t(energy * 1073741824.0) : 0, known ? samples : 0, known);
++  }
++
+   return 0;
+ }
+ 
+@@ -2207,6 +2354,10 @@
+ 
+ OSStatus AudioDeviceMac::implInDeviceIOProc(const AudioBufferList* inputData,
+                                             const AudioTimeStamp* inputTime) {
++  const bool experimental = experimental_core_audio_enabled_.load(std::memory_order_acquire);
++  const uint64_t local_epoch = experimental && _ptrAudioBuffer
++      ? _ptrAudioBuffer->ExperimentalCoreAudioCaptureState() : 1;
++  const uint64_t process_epoch = experimental ? ApplicationCaptureState() : 1;
+   OSStatus err = noErr;
+   UInt64 inputTimeNs = AudioConvertHostTimeToNanos(inputTime->mHostTime);
+   UInt64 nowNs = AudioConvertHostTimeToNanos(AudioGetCurrentHostTime());
+@@ -2235,7 +2386,8 @@
+     return 0;
+   }
+ 
+-  size_t bufSizeSamples = _captureBuffer.AvailableToRead();
++  size_t bufSizeSamples = experimental ? experimental_capture_buffer_->AvailableToRead()
++                                       : _captureBuffer.AvailableToRead();
+ 
+   int32_t captureDelayUs =
+       static_cast<int32_t>(1e-3 * (nowNs - inputTimeNs) + 0.5);
+@@ -2250,8 +2402,35 @@
+   size_t numSamples = inputData->mBuffers->mDataByteSize *
+                       _inStreamFormat.mChannelsPerFrame /
+                       _inStreamFormat.mBytesPerPacket;
+-  _captureBuffer.Write(std::span<const Float32>(
+-      static_cast<const Float32*>(inputData->mBuffers->mData), numSamples));
++  if (experimental && (!inputData->mBuffers->mData || numSamples > 65536 ||
++      numSamples > experimental_capture_buffer_->capacity())) {
++    if (_ptrAudioBuffer) _ptrAudioBuffer->RecordExperimentalCoreAudioInput(0, 0, false);
++    RecordExperimentalCoreAudioError(-5);
++    return 0;
++  }
++  const auto input = std::span<const Float32>(
++      static_cast<const Float32*>(inputData->mBuffers->mData), numSamples);
++  if (experimental) {
++    // Driver already requires interleaved float32. Reject any unexpected layout.
++    bool known = inputData->mNumberBuffers == 1 && input.data() &&
++        numSamples <= 65536 && _inStreamFormat.mBitsPerChannel == 32 &&
++        (_inStreamFormat.mFormatFlags & kAudioFormatFlagIsFloat) &&
++        !(_inStreamFormat.mFormatFlags & kAudioFormatFlagIsBigEndian) &&
++        inputData->mBuffers->mDataByteSize == numSamples * sizeof(float);
++    double energy = 0;
++    if (known) {
++      for (float sample : input) {
++        if (!std::isfinite(sample) || sample < -8 || sample > 8) { known = false; break; }
++        energy += double(sample) * sample;
++      }
++    }
++    if (_ptrAudioBuffer) _ptrAudioBuffer->RecordExperimentalCoreAudioInput(
++        known ? uint64_t(energy * 1073741824.0) : 0, known ? numSamples : 0, known);
++    if (!known) { RecordExperimentalCoreAudioError(-5); return 0; }
++    experimental_capture_buffer_->Write(input, local_epoch, process_epoch);
++  } else {
++    _captureBuffer.Write(input);
++  }
+ 
+   kern_return_t kernErr = semaphore_signal_all(_captureSemaphore);
+   if (kernErr != KERN_SUCCESS) {
+@@ -2266,7 +2445,14 @@
+   RTC_DCHECK(data->mNumberBuffers == 1);
+   size_t numSamples = *numberDataPackets * _inStreamFormat.mChannelsPerFrame;
+ 
+-  while (_captureBuffer.AvailableToRead() < numSamples) {
++  const bool experimental = experimental_core_audio_enabled_.load(std::memory_order_acquire);
++  if (numSamples > REC_BUF_SIZE_IN_SAMPLES) {
++    if (experimental) RecordExperimentalCoreAudioError(-5);
++    *numberDataPackets = 0;
++    return 1;
++  }
++  while ((experimental ? experimental_capture_buffer_->AvailableToRead()
++                       : _captureBuffer.AvailableToRead()) < numSamples) {
+     mach_timespec_t timeout;
+     timeout.tv_sec = 0;
+     timeout.tv_nsec = TIMER_PERIOD_MS;
+@@ -2285,7 +2471,12 @@
+   }
+ 
+   data->mBuffers->mData = _captureConvertData;
+-  _captureBuffer.Read(std::span<Float32>(_captureConvertData, numSamples));
++  if (experimental) {
++    experimental_capture_buffer_->Read(std::span<Float32>(_captureConvertData, numSamples),
++        experimental_converter_epoch_.local(), experimental_converter_epoch_.process());
++  } else {
++    _captureBuffer.Read(std::span<Float32>(_captureConvertData, numSamples));
++  }
+ 
+   data->mBuffers->mNumberChannels = _inStreamFormat.mChannelsPerFrame;
+   *numberDataPackets = numSamples / _inStreamFormat.mChannelsPerFrame;
+@@ -2374,6 +2565,16 @@
+       _inDesiredFormat.mBytesPerPacket * noRecSamples;
+   engineBuffer.mBuffers->mData = recordBuffer.data();
+ 
++  const bool experimental = experimental_core_audio_enabled_.load(std::memory_order_acquire);
++  if (experimental && _ptrAudioBuffer) {
++    const uint64_t local = _ptrAudioBuffer->ExperimentalCoreAudioCaptureState();
++    const uint64_t process = ApplicationCaptureState();
++    // Only the capture worker owns the converter. Resetting here discards
++    // resampler history and any converter-held input from a previous epoch.
++    const int32_t reset = experimental_converter_epoch_.Begin(local, process,
++        [this] { return AudioConverterReset(_captureConverter); });
++    if (reset != noErr) { RecordExperimentalCoreAudioError(reset); return false; }
++  }
+   err = AudioConverterFillComplexBuffer(_captureConverter, inConverterProc,
+                                         this, &size, &engineBuffer, NULL);
+   if (err != noErr) {
+@@ -2381,6 +2582,7 @@
+       // This is our own error.
+       return false;
+     } else {
++      RecordExperimentalCoreAudioError(err);
+       logCAMsg(LS_ERROR, "Error in AudioConverterFillComplexBuffer()",
+                (const char*)&err);
+       return false;
+@@ -2409,6 +2611,12 @@
+     // #recorded samples is not a full buffer)
+     _ptrAudioBuffer->SetRecordedBuffer((int8_t*)recordBuffer.data(),
+                                        (uint32_t)size);
++    if (experimental) {
++      // Never resample privacy epochs after conversion; DeliverRecordedData
++      // rejects the entire block if either gate changed while Fill was running.
++      _ptrAudioBuffer->SetExperimentalCoreAudioRecordedCaptureState(
++          experimental_converter_epoch_.local(), experimental_converter_epoch_.process());
++    }
+     _ptrAudioBuffer->SetVQEData(msecOnPlaySide, msecOnRecordSide);
+     _ptrAudioBuffer->SetTypingStatus(KeyPressed());
+ 
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
+@@ -22,6 +22,7 @@
+ #import "RTCMacros.h"
+ 
+ NS_ASSUME_NONNULL_BEGIN
++
+ 
+ typedef NS_ENUM(NSInteger, RTC_OBJC_TYPE(RTCAudioDeviceModuleType)) {
+   RTC_OBJC_TYPE(RTCAudioDeviceModuleTypePlatformDefault),
+@@ -212,6 +213,17 @@
+ RTC_OBJC_EXPORT
+ @interface RTC_OBJC_TYPE(RTCAudioDeviceModule) : NSObject
+ 
++#if TARGET_OS_OSX
++// Opt-in per-ADM CoreAudio experiment. State is passive atomics, never hardware probes.
++- (NSInteger)enableExperimentalCoreAudioControl NS_SWIFT_NAME(enableExperimentalCoreAudioControl());
++- (NSInteger)setExperimentalCoreAudioInputAvailable:(BOOL)inputAvailable
++                                    outputAvailable:(BOOL)outputAvailable
++    NS_SWIFT_NAME(setExperimentalCoreAudioInputAvailable(_:outputAvailable:));
++- (NSInteger)setExperimentalCoreAudioCaptureMuted:(BOOL)muted
++    NS_SWIFT_NAME(setExperimentalCoreAudioCaptureMuted(_:));
++@property(nonatomic, readonly) NSDictionary<NSString *, id> *experimentalCoreAudioState;
++#endif
++
+ @property(nonatomic, readonly) NSArray<RTC_OBJC_TYPE(RTCIODevice) *> *outputDevices;
+ @property(nonatomic, readonly) NSArray<RTC_OBJC_TYPE(RTCIODevice) *> *inputDevices;
+ 
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
+@@ -392,6 +392,49 @@
+   return _workerThread->BlockingCall([self] { return _native->Playing(); });
+ }
+ 
++#if TARGET_OS_OSX
++- (NSInteger)enableExperimentalCoreAudioControl {
++  return _workerThread->BlockingCall([self] { return _native->EnableExperimentalCoreAudioControl(); });
++}
++- (NSInteger)setExperimentalCoreAudioInputAvailable:(BOOL)inputAvailable outputAvailable:(BOOL)outputAvailable {
++  // Privacy closes on the caller before device work can wait on the worker.
++  if (!inputAvailable) _native->SetExperimentalCoreAudioCaptureMuted(true);
++  return _workerThread->BlockingCall([self, inputAvailable, outputAvailable] {
++    return _native->SetExperimentalCoreAudioAvailability(inputAvailable, outputAvailable);
++  });
++}
++- (NSInteger)setExperimentalCoreAudioCaptureMuted:(BOOL)muted {
++  // The per-instance atomic privacy latch must close before queued device work.
++  return _native->SetExperimentalCoreAudioCaptureMuted(muted);
++}
++- (NSDictionary<NSString *, id> *)experimentalCoreAudioState {
++  const auto state = _native->GetExperimentalCoreAudioState();
++  auto meter = [](const webrtc::AudioDeviceModule::ExperimentalCoreAudioMeter& value) -> NSDictionary * {
++    return @{ @"samples": @(value.samples), @"energy": @(value.energy), @"recentRMS": @(value.recent_rms), @"energyKnown": @(value.energy_known),
++      @"callbacks": @(value.callbacks), @"nonSilentCallbacks": @(value.non_silent_callbacks),
++      @"firstCallbackUptime": @(value.first_callback_uptime), @"lastCallbackUptime": @(value.last_callback_uptime),
++      @"firstNonSilentUptime": @(value.first_non_silent_uptime), @"lastNonSilentUptime": @(value.last_non_silent_uptime) };
++  };
++  return @{ @"supported": @(state.supported), @"enabled": @(state.enabled),
++    @"inputAvailable": @(state.input_available), @"outputAvailable": @(state.output_available),
++    @"recordingRequested": @(state.recording_requested), @"playoutRequested": @(state.playout_requested),
++    @"recordingInitialized": @(state.recording_initialized), @"playoutInitialized": @(state.playout_initialized),
++    @"recording": @(state.recording), @"playing": @(state.playing),
++    @"captureMuted": @(state.capture_muted), @"captureGeneration": @(state.capture_generation),
++    @"cleanupUnconfirmed": @(state.cleanup_unconfirmed), @"lastResult": @(state.last_result),
++    @"controlSnapshotUptime": @(state.control_snapshot_uptime),
++    @"recordingSampleRate": @(state.recording_sample_rate), @"playoutSampleRate": @(state.playout_sample_rate),
++    @"recordingChannels": @(state.recording_channels), @"playoutChannels": @(state.playout_channels),
++    @"inputMeter": meter(state.input_meter), @"outputMeter": meter(state.output_meter),
++    @"physicalOutputMeter": meter(state.physical_output_meter),
++    @"inputMeterProvenance": @"CoreAudio input IOProc float32 LPCM before local/process gates; energy only when energyKnown",
++    @"outputMeterProvenance": @"AudioDeviceBuffer playout copy requested by CoreAudio worker; not physical IO tap",
++    @"physicalOutputMeterProvenance": @"CoreAudio output IOProc after conversion; float32 LPCM energy only when energyKnown",
++    @"driverStateProvenance": @"cached at control transition; callbacks provide independent activity evidence",
++    @"clock": @"CLOCK_UPTIME_RAW (ProcessInfo.systemUptime domain)", @"sharedDeviceSupported": @NO };
++}
++#endif
++
+ - (BOOL)recording {
+   return _workerThread->BlockingCall([self] { return _native->Recording(); });
+ }
+@@ -437,6 +480,14 @@
+       }
+       return engine_device->InitAndStartRecording();
+     } else {
++#if TARGET_OS_OSX
++      if (_native->GetExperimentalCoreAudioState().enabled) {
++        // Processing belongs to the supplied per-factory APM, not the driver.
++        if (options != nil) return int32_t(-4);
++        const int32_t result = _native->InitRecording();
++        return result == 0 ? _native->StartRecording() : result;
++      }
++#endif
+       _native->InitRecording();
+       return _native->StartRecording();
+     }
+--- a/sdk/objc/components/audio/RTCDefaultAudioProcessingModule.h
++++ b/sdk/objc/components/audio/RTCDefaultAudioProcessingModule.h
+@@ -15,6 +15,7 @@
+  */
+ 
+ #import <Foundation/Foundation.h>
++#import <TargetConditionals.h>
+ 
+ #import "RTCAudioProcessingModule.h"
+ #import "RTCMacros.h"
+@@ -34,6 +35,10 @@
+ 
+ @property(nonatomic, strong) RTC_OBJC_TYPE(RTCAudioProcessingConfig) * config;
+ @property(nonatomic, assign, getter=isMuted) BOOL muted;
++#if TARGET_OS_OSX
++- (void)enableCoreAudioExperimentDiagnostics NS_SWIFT_NAME(enableCoreAudioExperimentDiagnostics());
++@property(nonatomic, readonly) NSDictionary<NSString *, id> *coreAudioExperimentProcessingState;
++#endif
+ 
+ // Dynamically update delegates at runtime
+ 
+--- a/sdk/objc/components/audio/RTCDefaultAudioProcessingModule.mm
++++ b/sdk/objc/components/audio/RTCDefaultAudioProcessingModule.mm
+@@ -108,6 +108,20 @@
+ 
+ #pragma mark - Private
+ 
++#if TARGET_OS_OSX
++- (void)enableCoreAudioExperimentDiagnostics {
++  _nativeAudioProcessingModule->EnableCoreAudioExperimentDiagnostics();
++}
++- (NSDictionary<NSString *, id> *)coreAudioExperimentProcessingState {
++  const auto state = _nativeAudioProcessingModule->GetCoreAudioExperimentProcessingState();
++  return @{ @"diagnosticsEnabled": @(state.diagnostics_enabled), @"aec3Active": @(state.aec3_active),
++    @"aec3ConstructionCount": @(state.aec3_construction_count),
++    @"captureProcessingCalls": @(state.capture_processing_calls), @"renderProcessingCalls": @(state.render_processing_calls),
++    @"aec3CaptureCalls": @(state.aec3_capture_calls), @"aec3RenderCalls": @(state.aec3_render_calls),
++    @"provenance": @"per-APM AEC3 construction and actual ProcessCapture/AnalyzeRender calls" };
++}
++#endif
++
+ - (webrtc::scoped_refptr<webrtc::AudioProcessing>)nativeAudioProcessingModule {
+   return _nativeAudioProcessingModule;
+ }
+--- a/api/audio/audio_processing.h
++++ b/api/audio/audio_processing.h
+@@ -119,6 +119,16 @@
+ //
+ class RTC_EXPORT AudioProcessing : public RefCountInterface {
+  public:
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  struct CoreAudioExperimentProcessingState {
++    bool diagnostics_enabled = false, aec3_active = false;
++    uint64_t aec3_construction_count = 0;
++    uint64_t capture_processing_calls = 0, render_processing_calls = 0;
++    uint64_t aec3_capture_calls = 0, aec3_render_calls = 0;
++  };
++  virtual void EnableCoreAudioExperimentDiagnostics() {}
++  virtual CoreAudioExperimentProcessingState GetCoreAudioExperimentProcessingState() const { return {}; }
++#endif
+   // The struct below constitutes the new parameter scheme for the audio
+   // processing. It is being introduced gradually and until it is fully
+   // introduced, it is prone to change.
+--- a/modules/audio_processing/audio_processing_impl.h
++++ b/modules/audio_processing/audio_processing_impl.h
+@@ -76,6 +76,10 @@
+       std::unique_ptr<NeuralResidualEchoEstimator>
+           neural_residual_echo_estimator);
+   ~AudioProcessingImpl() override;
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  void EnableCoreAudioExperimentDiagnostics() override;
++  CoreAudioExperimentProcessingState GetCoreAudioExperimentProcessingState() const override;
++#endif
+   int Initialize() override;
+   int Initialize(const ProcessingConfig& processing_config) override;
+   void ApplyConfig(const AudioProcessing::Config& config) override;
+@@ -159,6 +163,12 @@
+   }
+ 
+  private:
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  std::atomic<bool> core_audio_diagnostics_enabled_{false}, core_audio_aec3_active_{false};
++  std::atomic<uint64_t> core_audio_aec3_constructions_{0};
++  std::atomic<uint64_t> core_audio_capture_calls_{0}, core_audio_render_calls_{0};
++  std::atomic<uint64_t> core_audio_aec3_capture_calls_{0}, core_audio_aec3_render_calls_{0};
++#endif
+   // TODO(peah): These friend classes should be removed as soon as the new
+   // parameter setting scheme allows.
+   FRIEND_TEST_ALL_PREFIXES(ApmConfiguration, DefaultBehavior);
+--- a/modules/audio_processing/audio_processing_impl.cc
++++ b/modules/audio_processing/audio_processing_impl.cc
+@@ -1223,6 +1223,9 @@
+ }
+ 
+ int AudioProcessingImpl::ProcessCaptureStreamLocked() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_diagnostics_enabled_.load(std::memory_order_relaxed)) core_audio_capture_calls_.fetch_add(1, std::memory_order_relaxed);
++#endif
+   EmptyQueuedRenderAudioLocked();
+   HandleCaptureRuntimeSettings();
+   DenormalDisabler denormal_disabler;
+@@ -1354,6 +1357,9 @@
+ 
+       submodules_.echo_controller->ProcessCapture(
+           capture_buffer, linear_aec_buffer, capture_.echo_path_gain_change);
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++      if (core_audio_diagnostics_enabled_.load(std::memory_order_relaxed) && core_audio_aec3_active_.load(std::memory_order_relaxed)) core_audio_aec3_capture_calls_.fetch_add(1, std::memory_order_relaxed);
++#endif
+     }
+ 
+     if (config_.noise_suppression.analyze_linear_aec_output_when_available &&
+@@ -1591,6 +1597,9 @@
+ }
+ 
+ int AudioProcessingImpl::ProcessRenderStreamLocked() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (core_audio_diagnostics_enabled_.load(std::memory_order_relaxed)) core_audio_render_calls_.fetch_add(1, std::memory_order_relaxed);
++#endif
+   AudioBuffer* render_buffer = render_.render_audio.get();  // For brevity.
+ 
+   HandleRenderRuntimeSettings();
+@@ -1615,6 +1624,9 @@
+   // TODO(peah): Perform the queuing inside QueueRenderAudiuo().
+   if (submodules_.echo_controller) {
+     submodules_.echo_controller->AnalyzeRender(render_buffer);
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++    if (core_audio_diagnostics_enabled_.load(std::memory_order_relaxed) && core_audio_aec3_active_.load(std::memory_order_relaxed)) core_audio_aec3_render_calls_.fetch_add(1, std::memory_order_relaxed);
++#endif
+   }
+ 
+   if (submodule_states_.RenderMultiBandProcessingActive() &&
+@@ -1804,6 +1816,23 @@
+     aec_dump = std::move(aec_dump_);
+   }
+ }
++
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++void AudioProcessingImpl::EnableCoreAudioExperimentDiagnostics() {
++  core_audio_diagnostics_enabled_.store(true, std::memory_order_release);
++}
++AudioProcessing::CoreAudioExperimentProcessingState AudioProcessingImpl::GetCoreAudioExperimentProcessingState() const {
++  CoreAudioExperimentProcessingState state;
++  state.diagnostics_enabled = core_audio_diagnostics_enabled_.load(std::memory_order_acquire);
++  state.aec3_active = core_audio_aec3_active_.load(std::memory_order_acquire);
++  state.aec3_construction_count = core_audio_aec3_constructions_.load(std::memory_order_relaxed);
++  state.capture_processing_calls = core_audio_capture_calls_.load(std::memory_order_relaxed);
++  state.render_processing_calls = core_audio_render_calls_.load(std::memory_order_relaxed);
++  state.aec3_capture_calls = core_audio_aec3_capture_calls_.load(std::memory_order_relaxed);
++  state.aec3_render_calls = core_audio_aec3_render_calls_.load(std::memory_order_relaxed);
++  return state;
++}
++#endif
+ 
+ AudioProcessing::Config AudioProcessingImpl::GetConfig() const {
+   MutexLock lock_render(&mutex_render_);
+@@ -1845,6 +1874,9 @@
+ }
+ 
+ void AudioProcessingImpl::InitializeEchoController() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  core_audio_aec3_active_.store(false, std::memory_order_release);
++#endif
+   submodules_.echo_controller.reset();
+   capture_.linear_aec_output.reset();
+   submodules_.post_filter.reset();
+@@ -1877,6 +1909,10 @@
+           env_, config_to_use, multichannel_config_to_use,
+           submodules_.neural_residual_echo_estimator.get(),
+           proc_sample_rate_hz(), num_reverse_channels(), num_proc_channels());
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++      core_audio_aec3_constructions_.fetch_add(1, std::memory_order_relaxed);
++      core_audio_aec3_active_.store(true, std::memory_order_release);
++#endif
+     }
+ 
+     // Setup the storage for returning the linear AEC output.
+--- a/modules/audio_device/audio_device_generic.h
++++ b/modules/audio_device/audio_device_generic.h
+@@ -116,6 +116,11 @@
+   virtual int32_t PlayoutDelay(uint16_t& delayMS) const = 0;
+ 
+   // Android only
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  virtual int32_t EnableExperimentalCoreAudioControl() { return -1; }
++  // Passive atomic status; zero only while no native error has been observed.
++  virtual int32_t ExperimentalCoreAudioError() const { return -1; }
++#endif
+   virtual bool BuiltInAECIsAvailable() const;
+   virtual bool BuiltInAGCIsAvailable() const;
+   virtual bool BuiltInNSIsAvailable() const;
+--- a/modules/audio_device/BUILD.gn
++++ b/modules/audio_device/BUILD.gn
+@@ -391,6 +391,7 @@
+           "mac/audio_mixer_manager_mac.cc",
+           "mac/audio_mixer_manager_mac.h",
+           "mac/audio_ring_buffer_mac.h",
++          "mac/experimental_core_audio_capture.h",
+         ]
+         deps += [ ":audio_device_impl_frameworks" ]
+       }
+--- a/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
++++ b/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
+@@ -9,6 +9,9 @@
+  */
+ 
+ #include "modules/audio_device/mac/audio_ring_buffer_mac.h"
++#include "modules/audio_device/mac/experimental_core_audio_capture.h"
++#include "modules/audio_device/audio_device_buffer.h"
++#include "test/create_test_environment.h"
+ 
+ #include <cstddef>
+ #include <cstdint>
+@@ -20,6 +23,123 @@
+ 
+ namespace webrtc {
+ namespace {
++
++TEST(ExperimentalCoreAudioCaptureTest, PausedConsumerRejectsMutedAndOldEpochs) {
++  ExperimentalCoreAudioCapture ring(16);
++  const std::vector<float> raw = {0.25f, -0.5f};
++  ASSERT_TRUE(ring.Write(raw, 1, 1));  // Muted hardware samples queue.
++  ASSERT_TRUE(ring.Write(raw, 2, 2));  // Earlier open epoch also queues.
++  ASSERT_TRUE(ring.Write(raw, 6, 6));  // Close/open happened while consumer paused.
++  std::vector<float> output(6, 1.0f);
++  EXPECT_EQ(ring.Read(output, 6, 6), 6u);
++  EXPECT_EQ(output, (std::vector<float>{0, 0, 0, 0, 0.25f, -0.5f}));
++}
++
++TEST(ExperimentalCoreAudioCaptureTest, PausedProducerCannotPublishAcrossEpoch) {
++  ExperimentalCoreAudioCapture ring(8);
++  const uint64_t entered_local = 2, entered_process = 2;
++  // Callback entered before close/open, then resumes publication afterwards.
++  ASSERT_TRUE(ring.Write(std::vector<float>{0.8f}, entered_local, entered_process));
++  std::vector<float> output(1);
++  EXPECT_EQ(ring.Read(output, 6, 6), 1u);
++  EXPECT_EQ(output.front(), 0.0f);
++}
++
++TEST(ExperimentalCoreAudioCaptureTest, EitherGateAndEitherGenerationRejects) {
++  for (auto epochs : {std::pair{3u, 2u}, std::pair{2u, 3u},
++                      std::pair{4u, 2u}, std::pair{2u, 4u}}) {
++    ExperimentalCoreAudioCapture ring(8);
++    ASSERT_TRUE(ring.Write(std::vector<float>{0.8f}, 2, 2));
++    std::vector<float> output(1);
++    EXPECT_EQ(ring.Read(output, epochs.first, epochs.second), 1u);
++    EXPECT_EQ(output.front(), 0.0f);
++  }
++}
++
++TEST(ExperimentalCoreAudioCaptureTest, OversizeAndFullChunksDropWithoutPartialPublish) {
++  ExperimentalCoreAudioCapture ring(2);
++  EXPECT_FALSE(ring.Write(std::vector<float>(3, 1.0f), 2, 2));
++  EXPECT_EQ(ring.AvailableToRead(), 0u);
++  ASSERT_TRUE(ring.Write(std::vector<float>{0.2f}, 2, 2));
++  EXPECT_FALSE(ring.Write(std::vector<float>(2, 1.0f), 2, 2));
++  EXPECT_EQ(ring.AvailableToRead(), 1u);
++}
++
++TEST(ExperimentalCoreAudioCaptureTest, ConverterHistoryResetBeforeNewEpochIncludingABA) {
++  ExperimentalCoreAudioCaptureEpoch epoch;
++  std::vector<float> converter_history;
++  int resets = 0;
++  auto reset = [&] { ++resets; converter_history.clear(); return 0; };
++  EXPECT_EQ(epoch.Begin(2, 2, reset), 0);
++  converter_history.push_back(0.7f);
++  EXPECT_EQ(epoch.Begin(2, 2, reset), 0);
++  EXPECT_EQ(converter_history.size(), 1u);
++  // Boolean mute returns open, but changed epoch must discard held PCM.
++  EXPECT_EQ(epoch.Begin(6, 2, reset), 0);
++  EXPECT_TRUE(converter_history.empty());
++  converter_history.push_back(0.7f);
++  EXPECT_EQ(epoch.Begin(6, 6, reset), 0);
++  EXPECT_TRUE(converter_history.empty());
++  EXPECT_EQ(resets, 3);
++  EXPECT_NE(epoch.Begin(8, 8, [] { return -1; }), 0);
++  EXPECT_EQ(epoch.local(), 6u);  // Failed reset never admits the new epoch.
++}
++
++class ExperimentalCaptureTransport final : public AudioTransport {
++ public:
++  bool nonzero = false;
++  int callbacks = 0;
++  int32_t RecordedDataIsAvailable(const void* input, size_t frames, size_t,
++      size_t channels, uint32_t, uint32_t, int32_t, uint32_t, bool,
++      uint32_t&) override {
++    ++callbacks;
++    nonzero = false;
++    for (int16_t value : std::span(static_cast<const int16_t*>(input), frames * channels))
++      nonzero |= value != 0;
++    return 0;
++  }
++  int32_t NeedMorePlayData(size_t, size_t, size_t, uint32_t, void*, size_t& count,
++      int64_t*, int64_t*) override { count = 0; return 0; }
++  void PullRenderData(int, int, size_t, size_t, void*, int64_t*, int64_t*) override {}
++};
++
++TEST(ExperimentalCoreAudioCaptureTest, ConvertedBlockUsesFixedEpochAndOwnersAreIndependent) {
++  SetApplicationCaptureMuted(false);
++  const auto env = CreateTestEnvironment();
++  AudioDeviceBuffer first(env), second(env);
++  ExperimentalCaptureTransport first_transport, second_transport;
++  for (auto* buffer : {&first, &second}) {
++    buffer->EnableExperimentalCoreAudioControl();
++    buffer->SetRecordingChannels(1);
++    buffer->SetRecordingSampleRate(48000);
++    buffer->SetExperimentalCoreAudioCaptureMuted(false);
++  }
++  first.RegisterAudioCallback(&first_transport);
++  second.RegisterAudioCallback(&second_transport);
++  const auto old_local = first.ExperimentalCoreAudioCaptureState();
++  const auto process = ApplicationCaptureState();
++  first.SetExperimentalCoreAudioCaptureMuted(true);
++  first.SetExperimentalCoreAudioCaptureMuted(false);
++  std::vector<int16_t> converted(480, 1000);
++  first.SetRecordedBuffer(converted.data(), converted.size());
++  first.SetExperimentalCoreAudioRecordedCaptureState(old_local, process);
++  first.DeliverRecordedData();
++  EXPECT_EQ(first_transport.callbacks, 1);
++  EXPECT_FALSE(first_transport.nonzero);
++  second.SetRecordedBuffer(converted.data(), converted.size());
++  second.SetExperimentalCoreAudioRecordedCaptureState(
++      second.ExperimentalCoreAudioCaptureState(), process);
++  second.DeliverRecordedData();
++  EXPECT_TRUE(second_transport.nonzero);
++  // Process gate changing during conversion also rejects the complete block.
++  second.SetRecordedBuffer(converted.data(), converted.size());
++  second.SetExperimentalCoreAudioRecordedCaptureState(
++      second.ExperimentalCoreAudioCaptureState(), process);
++  SetApplicationCaptureMuted(true);
++  SetApplicationCaptureMuted(false);
++  second.DeliverRecordedData();
++  EXPECT_FALSE(second_transport.nonzero);
++}
+ 
+ TEST(AudioRingBufferMacTest, EmptyBuffer) {
+   AudioRingBufferMac<int16_t> ring_buffer(100);
+--- /dev/null
++++ b/modules/audio_device/mac/experimental_core_audio_capture.h
+@@ -0,0 +1,68 @@
++// Copyright 2026 The WebRTC project authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license.
++#ifndef MODULES_AUDIO_DEVICE_MAC_EXPERIMENTAL_CORE_AUDIO_CAPTURE_H_
++#define MODULES_AUDIO_DEVICE_MAC_EXPERIMENTAL_CORE_AUDIO_CAPTURE_H_
++
++#include <algorithm>
++#include <cstdint>
++#include <span>
++#include <vector>
++#include "modules/audio_device/mac/audio_ring_buffer_mac.h"
++
++namespace webrtc {
++// Opt-in only. Payload and both privacy epochs share one SPSC publication.
++// All storage is allocated before capture starts. Producer and consumer each
++// exclusively own their scratch vector; neither may reset an active ring.
++// Capture-worker-only epoch. Reset must finish successfully before any input
++// from a new epoch enters a stateful converter.
++class ExperimentalCoreAudioCaptureEpoch {
++ public:
++  template <typename Reset>
++  int32_t Begin(uint64_t local, uint64_t process, Reset reset) {
++    if (local != local_ || process != process_) {
++      const int32_t result = reset();
++      if (result) return result;
++      local_ = local;
++      process_ = process;
++    }
++    return 0;
++  }
++  uint64_t local() const { return local_; }
++  uint64_t process() const { return process_; }
++ private:
++  uint64_t local_ = UINT64_MAX, process_ = UINT64_MAX;
++};
++
++class ExperimentalCoreAudioCapture {
++ public:
++  explicit ExperimentalCoreAudioCapture(size_t capacity)
++      : ring_(capacity), producer_(capacity), consumer_(capacity) {}
++  void ClearWhenIdle() { ring_.Clear(); }
++  size_t AvailableToRead() const { return ring_.AvailableToRead(); }
++  size_t capacity() const { return producer_.size(); }
++  bool Write(std::span<const float> input, uint64_t local, uint64_t process) {
++    if (input.size() > producer_.size() || input.size() > ring_.AvailableToWrite()) return false;  // Drop whole oversize IO.
++    auto tagged = std::span(producer_).first(input.size());
++    auto source = input.begin();
++    for (auto& sample : tagged) sample = {*source++, local, process};
++    return ring_.Write(tagged) == tagged.size();
++  }
++  size_t Read(std::span<float> output, uint64_t local, uint64_t process) {
++    if (output.size() > consumer_.size()) return 0;
++    auto tagged = std::span(consumer_).first(output.size());
++    const size_t count = ring_.Read(tagged);
++    auto destination = output.begin();
++    for (const auto& sample : tagged.first(count)) {
++      *destination++ = (!(local & 1) && !(process & 1) &&
++                         sample.local == local && sample.process == process)
++                            ? sample.value : 0.0f;
++    }
++    return count;
++  }
++ private:
++  struct Sample { float value; uint64_t local; uint64_t process; };
++  AudioRingBufferMac<Sample> ring_;
++  std::vector<Sample> producer_, consumer_;
++};
++}  // namespace webrtc
++#endif

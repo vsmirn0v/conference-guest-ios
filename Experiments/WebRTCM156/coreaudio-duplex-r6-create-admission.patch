@@ -1,0 +1,106 @@
+--- a/Experiments/NativeGuest/GuestSystemAudio.swift
++++ b/Experiments/NativeGuest/GuestSystemAudio.swift
+@@ -495,10 +495,11 @@
+             #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
+             if backend == .coreAudioAEC3 {
+                 let evidence = module.experimentalCoreAudioDuplexState
+-                owner.locked {
++                let attached = owner.locked { () -> Bool in
+                     owner.duplexOwnerGeneration = evidence["ownerGeneration"] as? UInt64 ?? 0
+-                    _ = owner.publishDuplexIntentLocked(source: "ownerAttached", force: true)
++                    return owner.publishDuplexIntentLocked(source: "ownerAttached", force: true)
+                 }
++                guard attached else { return false }
+             }
+             #endif
+             #if DEBUG && ROCK_COREAUDIO_EXPERIMENT
+@@ -509,7 +510,15 @@
+                 #else
+                 let muted = owner.setBackendMicrophoneMuted(module, !microphoneEnabled)
+                 #endif
++                #if ROCK_COREAUDIO_DUPLEX_R6
++                // VoiceEngine/AudioState registration is lazy until a peer is
++                // created. Construction cannot admit HAL work without its pin.
++                // DesktopGuestEngine reconciles latest output after connect.
++                let available = true
++                owner.update(["duplexPreparationDeferredUntilOwnedTransport": true])
++                #else
+                 let available = owner.applyAvailability(module)
++                #endif
+                 owner.update(["voiceProcessingRequested": false, "processingImplementationRequested": "software-aec3",
+                               "muteControl": "application-buffer-generation-gate"])
+                 owner.readSnapshot(module)
+@@ -1186,6 +1195,7 @@
+             guard result.status == 0, !latest.1, latest.0 == intent.0 else { return false }
+             return locked {
+                 guard duplexSequence == intent.0, !duplexTerminal, !terminationRequested else { return false }
++                cached["duplexPreparationDeferredUntilOwnedTransport"] = false
+                 duplexSealedToken = result.sealedToken
+                 if duplexServerUnmuted && !duplexDesiredMuted {
+                     return module.commitExperimentalCoreAudioDuplexCapture(expectedToken: result.sealedToken)
+--- a/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
++++ b/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
+@@ -2,8 +2,17 @@
+ import Foundation
+ 
+ @main struct GuestSystemAudioTests {
+-    static func main() {
+-        // All fixtures are memory-only. These tests never create a factory or access audio devices.
++    static func main() async {
++        // Ordinary fixtures are memory-only. The separate R6 construction
++        // option also creates/retires a factory while forbidding HAL admission.
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6 && ROCK_COREAUDIO_DUPLEX_CONSTRUCTION_TESTS
++        await duplexConstructionDefersUntilOwnedTransport()
++        #else
++        ordinaryMemoryFixtures()
++        #endif
++    }
++
++    private static func ordinaryMemoryFixtures() {
+         for format: AVAudioCommonFormat in [.pcmFormatInt16, .pcmFormatInt32, .pcmFormatFloat32, .pcmFormatFloat64] {
+             for interleaved in [true, false] {
+                 let meter = GuestPCMMeter()
+@@ -66,6 +75,33 @@
+         preparedMeterOwnership()
+         print("PASS: memory-only PCM meters, exclusive private/meeting owner leases, speech/music constraints, video windows and audio operation timing")
+     }
++
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6 && ROCK_COREAUDIO_DUPLEX_CONSTRUCTION_TESTS
++    private static func duplexConstructionDefersUntilOwnedTransport() async {
++        let key = "ROCK_MAC_AUDIO_BACKEND", original = ProcessInfo.processInfo.environment[key]
++        defer { if let original { setenv(key, original, 1) } else { unsetenv(key) } }
++        setenv(key, "coreaudio-aec3", 1)
++        do {
++            let audio = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: true, timeout: 8)
++            let state = audio.duplexStartupEvidenceForTesting
++            precondition(state["enabled"] as? Bool == true && state["transportPinned"] as? Bool == false)
++            for field in ["phase", "physicalGeneration", "activePrepareSerial", "inputCreateCount", "inputStartCount", "outputCreateCount", "outputStartCount"] {
++                precondition((state[field] as? NSNumber)?.uint64Value == 0, field)
++            }
++            precondition(state["captureCommitted"] as? Bool == false && state["inputRunning"] as? Bool == false && state["outputRunning"] as? Bool == false)
++            let snapshot = audio.snapshot
++            precondition(snapshot["microphoneMuted"] as? Bool == true)
++            precondition(snapshot["duplexPreparationDeferredUntilOwnedTransport"] as? Bool == true)
++            precondition((snapshot["duplexPreparationReceipts"] as? [[String: Any]] ?? []).isEmpty)
++            let operations = snapshot["audioOperations"] as? [[String: Any]] ?? []
++            let calls = operations.flatMap { $0["nativeCalls"] as? [[String: Any]] ?? [] }
++            precondition(!calls.contains { $0["name"] as? String == "coreaudio-availability" })
++            let stopped = await audio.shutdown(timeout: 4)
++            precondition(stopped && audio.snapshot["cleanupSucceeded"] as? Bool == true)
++            print("PASS: real R6 factory defers Prepare before owned transport; zero HAL generations and checked retirement")
++        } catch { preconditionFailure("R6 staged factory construction failed: \(error)") }
++    }
++    #endif
+ 
+     private static func backendSelectionIsOptIn() {
+         let key = "ROCK_MAC_AUDIO_BACKEND", original = ProcessInfo.processInfo.environment[key]
+--- a/Experiments/NativeGuestTests/run-system-audio.sh
++++ b/Experiments/NativeGuestTests/run-system-audio.sh
+@@ -10,6 +10,7 @@
+     --private-input-experiment) compiler_flags=(-D DEBUG -D ROCK_PRIVATE_INPUT_EXPERIMENT) ;;
+     --all-audio-experiments) compiler_flags=(-D DEBUG -D ROCK_COREAUDIO_EXPERIMENT -D ROCK_PRIVATE_INPUT_EXPERIMENT) ;;
+     --duplex-audio-experiment) compiler_flags=(-D DEBUG -D ROCK_COREAUDIO_EXPERIMENT -D ROCK_PRIVATE_INPUT_EXPERIMENT -D ROCK_COREAUDIO_DIAGNOSTICS_R4 -D ROCK_COREAUDIO_RETIREMENT_R5 -D ROCK_STOPPED_INPUT_GRAPH -D ROCK_COREAUDIO_DUPLEX_R6) ;;
++    --duplex-construction-experiment) compiler_flags=(-D DEBUG -D ROCK_COREAUDIO_EXPERIMENT -D ROCK_PRIVATE_INPUT_EXPERIMENT -D ROCK_COREAUDIO_DIAGNOSTICS_R4 -D ROCK_COREAUDIO_RETIREMENT_R5 -D ROCK_STOPPED_INPUT_GRAPH -D ROCK_COREAUDIO_DUPLEX_R6 -D ROCK_COREAUDIO_DUPLEX_CONSTRUCTION_TESTS) ;;
+     --retirement-audio-experiment) compiler_flags=(-D DEBUG -D ROCK_COREAUDIO_EXPERIMENT -D ROCK_PRIVATE_INPUT_EXPERIMENT -D ROCK_COREAUDIO_DIAGNOSTICS_R4 -D ROCK_COREAUDIO_RETIREMENT_R5 -D ROCK_STOPPED_INPUT_GRAPH) ;;
+     *) echo "Unknown system-audio test option" >&2; exit 2 ;;
+ esac

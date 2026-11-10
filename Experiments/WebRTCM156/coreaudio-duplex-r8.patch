@@ -1,0 +1,188 @@
+--- a/modules/audio_device/mac/audio_device_mac_duplex.h
++++ b/modules/audio_device/mac/audio_device_mac_duplex.h
+@@ -90,6 +90,7 @@
+   bool BindOutput(const Route& route, uint64_t deadline, uint64_t bound_token);
+   bool StartOutput(Route& route, uint64_t intent, uint64_t deadline);
+   bool OutputControlCurrent(uint64_t intent, uint64_t deadline) const;
++  int32_t OutputOnlyCompletion(bool success, uint64_t intent, uint64_t deadline);
+   bool StopOutput(uint64_t deadline);
+   bool StopInput(uint64_t deadline);
+   bool StableRoute(Route* route, uint64_t* validated_word, uint64_t intent, uint64_t deadline);
+--- a/modules/audio_device/mac/audio_device_mac_duplex.cc
++++ b/modules/audio_device/mac/audio_device_mac_duplex.cc
+@@ -548,6 +548,33 @@
+ bool AudioDeviceMacDuplex::OutputControlCurrent(uint64_t intent, uint64_t deadline) const {
+   return Now() < deadline && Authority::Intent(authority_.Read()) == intent && !IsRetired() && OutputRequested();
+ }
++int32_t AudioDeviceMacDuplex::OutputOnlyCompletion(bool success, uint64_t intent, uint64_t deadline) {
++  auto state_result = [&]() -> int32_t {
++    const uint64_t unsafe = owner_.experimental_unsafe_errors_.mask();
++    auto incomplete = [unsafe](const auto& io) {
++      const uint64_t required = io.required_proof.load(std::memory_order_acquire);
++      return required && !ExperimentalCoreAudioRetirementComplete(io.proof.load(std::memory_order_acquire), required, unsafe);
++    };
++    // A newer intent cannot erase an actual native failure or retirement debt.
++    if (unsafe || IsRetired() || incomplete(owner_.experimental_input_io_) || incomplete(owner_.experimental_output_io_)) return kAdmission;
++    const int32_t error = owner_.ExperimentalCoreAudioError();
++    if (error) return error == kDeadline ? kDeadline : kAdmission;
++    const uint64_t word = authority_.Read();
++    if (word & Authority::kTerminal) return kAdmission;
++    if (Now() >= deadline) return Error(kDeadline);
++    if (Authority::Intent(word) != intent) return kStale;
++    return 0;
++  };
++  if (const int32_t state = state_result()) return state;
++  if (!success && !OutputRequested()) {
++    // Native playout demand can close without an app-intent sequence change.
++    // Retire once; never retry a physical Start or reset the original deadline.
++    const bool stopped = StopOutput(deadline);
++    if (const int32_t state = state_result()) return state;
++    return stopped && !OutputRequested() ? 0 : kAdmission;
++  }
++  return success ? 0 : kAdmission;
++}
+ bool AudioDeviceMacDuplex::StartRawOutput(uint64_t intent, uint64_t deadline) {
+   auto& io = owner_.experimental_output_io_;
+   if (io.started) return true;
+@@ -565,7 +592,8 @@
+       Error(kAdmission); return false;
+     }
+     if (output_history_count_.load(std::memory_order_acquire) >= output_history_.size()) { Error(-8, true); return false; }
+-    if (owner_.CreateDeviceIOProc(selected_.output, AudioDeviceMac::deviceIOProc, false, &owner_._deviceIOProcID) != noErr) return false;
++    const auto created = owner_.CreateDeviceIOProc(selected_.output, AudioDeviceMac::deviceIOProc, false, &owner_._deviceIOProcID);
++    if (created != noErr) { Error(created, true); return false; }
+     output_create_count_.fetch_add(1, std::memory_order_release);
+   }
+   if (!OutputControlCurrent(intent, deadline)) return false;
+@@ -838,7 +866,7 @@
+     if (!ReadRoute(&route, OutputRequested()) || route.input != selected_.input || route.output != selected_.output ||
+         route.input_uid != selected_.input_uid || route.output_uid != selected_.output_uid) return finish(Error(kAdmission), 0);
+     const bool success = OutputRequested() ? StartOutput(route, expected_intent, deadline) : StopOutput(deadline);
+-    return finish(success ? 0 : kAdmission, 0);
++    return finish(OutputOnlyCompletion(success, expected_intent, deadline), 0);
+   }
+   if (!Authority::AllowsPreparation(word)) return finish(kStale, 0);
+   if (!first_deadline_) first_deadline_ = deadline;
+--- a/modules/audio_device/mac/experimental_core_audio_output_negotiation_unittest.cc
++++ b/modules/audio_device/mac/experimental_core_audio_output_negotiation_unittest.cc
+@@ -79,6 +79,17 @@
+     EXPECT_EQ(observed.output_format.mSampleRate, 24000);
+     return result;
+   }
++  static int32_t OutputCompletion(AudioDeviceMac& owner, bool success, uint64_t intent, bool expired = false) {
++    auto& driver = Driver(owner);
++    return driver.OutputOnlyCompletion(success, intent, expired ? 0 : driver.Now() + 100000000);
++  }
++  static void Fail(AudioDeviceMac& owner, int32_t error, bool unsafe) { Driver(owner).Error(error, unsafe); }
++  static void Retiring(AudioDeviceMac& owner) { owner.experimental_retirement_requested_.store(true, std::memory_order_release); }
++  static void RetirementDebt(AudioDeviceMac& owner, bool complete) {
++    auto& io = owner.experimental_output_io_;
++    io.required_proof.store(AudioDeviceMac::kStopSucceeded, std::memory_order_release);
++    if (complete) io.proof.fetch_or(AudioDeviceMac::kStopSucceeded, std::memory_order_release);
++  }
+   static uint64_t RawProofMask() {
+     return AudioDeviceMac::kCellClosed | AudioDeviceMac::kCellDrained | AudioDeviceMac::kStopSucceeded |
+         AudioDeviceMac::kDestroyed | AudioDeviceMac::kWorkerJoined | AudioDeviceMac::kConverterDisposed |
+@@ -333,6 +344,102 @@
+     EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
+   }
+ }
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputCompletionSupersessionIsStaleAfterSuccessOrInterruption) {
++  for (bool success : {false, true}) {
++    AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++    auto& driver = AudioDeviceMacDuplexTestPeer::Driver(owner);
++    // Replay a track reassociation that changes only the sequence, keeping
++    // the exact muted/listening flags unchanged as in the observed failure.
++    ASSERT_NE(driver.Latch(Authority::kMuted | Authority::kSound, 2), 0u);
++    auto& raw = AudioDeviceMacDuplexTestPeer::Priming(owner);
++    raw.StartReturned(100); ASSERT_TRUE(raw.Observe(1, 2, 1024, 101));
++    const auto before = owner.GetExperimentalCoreAudioDuplexState();
++    ASSERT_NE(driver.Latch(Authority::kMuted | Authority::kSound, 3), 0u);
++    EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, success, 2), -21);
++    const auto after = owner.GetExperimentalCoreAudioDuplexState();
++    EXPECT_EQ(after.output_lifecycle, before.output_lifecycle);
++    EXPECT_EQ(after.output_start_count, before.output_start_count);
++    EXPECT_EQ(after.output_create_count, before.output_create_count);
++    EXPECT_EQ(after.raw_output_callbacks, before.raw_output_callbacks);
++    EXPECT_EQ(after.output_start_return_nanos, before.output_start_return_nanos);
++    EXPECT_FALSE(after.output_data_ready); EXPECT_EQ(owner.ExperimentalCoreAudioError(), 0);
++    EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++  }
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputCompletionCurrentFailureDoesNotPretendSupersession) {
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, false, 1), -20);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, true, 1), 0);
++  EXPECT_EQ(owner.ExperimentalCoreAudioError(), 0);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputCompletionSameIntentDemandWithdrawalRetiresWithoutRetry) {
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  const auto before = owner.GetExperimentalCoreAudioDuplexState();
++  AudioDeviceMacDuplexTestPeer::Driver(owner).Demand(false, false);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, false, 1), 0);
++  const auto after = owner.GetExperimentalCoreAudioDuplexState();
++  EXPECT_EQ(after.output_create_count, before.output_create_count);
++  EXPECT_EQ(after.output_start_count, before.output_start_count);
++  EXPECT_FALSE(after.output_data_ready); EXPECT_FALSE(after.output_running);
++  EXPECT_EQ(after.output_lifecycle, ExperimentalCoreAudioOutputAuthority::kPendingRaw);
++  EXPECT_EQ(owner.ExperimentalCoreAudioError(), 0);
++  // A fresh native demand does not make the previous false completion ready.
++  AudioDeviceMacDuplexTestPeer::Driver(owner).Demand(false, true);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, false, 1), -20);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputCompletionNativeFailureWinsOverNewIntent) {
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  ASSERT_NE(AudioDeviceMacDuplexTestPeer::Driver(owner).Latch(Authority::kMuted | Authority::kSound, 2), 0u);
++  AudioDeviceMacDuplexTestPeer::Fail(owner, -50, false);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, true, 1), -20);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, false, 1), -20);
++  EXPECT_EQ(owner.ExperimentalCoreAudioError(), -50);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputCompletionUnsafeFailureNeverBecomesStale) {
++  // No resource is registered by this uninitialized fault-injection fixture.
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  ASSERT_NE(AudioDeviceMacDuplexTestPeer::Driver(owner).Latch(Authority::kMuted | Authority::kSound, 2), 0u);
++  AudioDeviceMacDuplexTestPeer::Fail(owner, -51, true);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, true, 1), -20);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, false, 1), -20);
++  EXPECT_NE(owner.ExperimentalCoreAudioDiagnosticState().unsafe_failure_mask, 0u);
++  EXPECT_NE(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputCompletionTerminalAndRetiredOwnersNeverBecomeStale) {
++  for (bool retire : {false, true}) {
++    AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++    auto& driver = AudioDeviceMacDuplexTestPeer::Driver(owner);
++    ASSERT_NE(driver.Latch(Authority::kMuted | Authority::kSound, 2), 0u);
++    if (retire) AudioDeviceMacDuplexTestPeer::Retiring(owner);
++    else ASSERT_NE(driver.Latch(Authority::kMuted | Authority::kTerminal, 3), 0u);
++    EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, true, 1), -20);
++    EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++  }
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputCompletionOriginalDeadlineWinsAndCannotBeReset) {
++  for (bool success : {false, true}) {
++    AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++    ASSERT_NE(AudioDeviceMacDuplexTestPeer::Driver(owner).Latch(Authority::kMuted | Authority::kSound, 2), 0u);
++    EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, success, 1, true), -22);
++    EXPECT_EQ(owner.ExperimentalCoreAudioError(), -22);
++    EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, success, 1), -22);
++    EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++  }
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputCompletionPartialRetirementDebtWinsOverNewIntent) {
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  ASSERT_NE(AudioDeviceMacDuplexTestPeer::Driver(owner).Latch(Authority::kMuted | Authority::kSound, 2), 0u);
++  AudioDeviceMacDuplexTestPeer::RetirementDebt(owner, false);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, true, 1), -20);
++  // Represent the outstanding stop acknowledgement arriving; no failed proof
++  // or error is cleared, and no actual HAL resource exists in this fixture.
++  AudioDeviceMacDuplexTestPeer::RetirementDebt(owner, true);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::OutputCompletion(owner, false, 1), -21);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
+ TEST(ExperimentalCoreAudioOutputNegotiationTest, MissingRawRetirementProofKeepsLifecycleClosed) {
+   const uint64_t required = AudioDeviceMacDuplexTestPeer::RawProofMask();
+   for (uint64_t bit = 1; bit <= required; bit <<= 1) {

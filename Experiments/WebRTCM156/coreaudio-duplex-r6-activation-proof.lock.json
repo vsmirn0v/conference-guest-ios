@@ -1,0 +1,54 @@
+{
+  "formatVersion": 1,
+  "candidateRoot": ".build/airpods-transition-startup/r6-activation-proof-followup",
+  "baseAppLock": "coreaudio-duplex-r6-create-admission.lock.json",
+  "baseAppLockSHA256": "974786786863d97ee261a9d8f850384c71a10bc2d9ffd5de5fb82383d8f29f4e",
+  "sdkBinarySHA256": "ef48fbe7f13a816d7ca6ad7e4a2db1d060c04cbfe9edeab9f0df22c30978bde7",
+  "patch": "coreaudio-duplex-r6-activation-proof.patch",
+  "patchSHA256": "dfebd3190f9d1746aa51e3e3ad92c216c52fb6d71a9b17f810ea105d44aea446",
+  "evidenceSHA256": "a2e3019339673f22dafc5f1c34744c61d5c7586b2b8e0741644193800e731e9a",
+  "sourceFiles": [
+    {
+      "path": "Experiments/NativeGuest/GuestEngine.swift",
+      "baselineSHA256": "fa8fd2573efe05f123ad47e6d4eab51c57865dcb470fb4c18068f6cd12949d1c",
+      "sha256": "3c748adb7633fc65bd3e8d2307c7f7d8db287e71804b0288436e28dbfcd64ad9"
+    },
+    {
+      "path": "Experiments/NativeGuest/GuestSystemAudio.swift",
+      "baselineSHA256": "c6ece0bd3379f5a33f43a96a1b84209c6a74d1b8baa8992794e762eb35093b5e",
+      "sha256": "861921ec4ab960434c3138717599f00bb4c00f0e2fd0bd69a5cda0e15e880891"
+    },
+    {
+      "path": "Experiments/NativeGuestTests/GuestSystemAudioTests.swift",
+      "baselineSHA256": "b3445e8bb0551153a1f93737ff387f95e6854f1d6cbf9157c66fafbf8b53e036",
+      "sha256": "a251cb39f68b619a0423b950e557be83dd82ff034cc6b1b3ee8996632bc87ebc"
+    }
+  ],
+  "tests": [
+    {
+      "log": "construction-test.log",
+      "sha256": "ebd8eee86ef081de8c5c5a1f0737d3aaded6fa6918adc94de4d5275ae377e923",
+      "passed": true,
+      "compilerWarnings": 0,
+      "factoryCreated": true,
+      "nativeIOCreated": false
+    },
+    {
+      "log": "default-test.log",
+      "sha256": "854887d8278283bab61b3e2471bee851e649fa49249fa20bfff46dd12a71006d",
+      "passed": true,
+      "compilerWarnings": 0,
+      "factoryCreated": false,
+      "nativeIOCreated": false
+    },
+    {
+      "log": "r6-test.log",
+      "sha256": "854887d8278283bab61b3e2471bee851e649fa49249fa20bfff46dd12a71006d",
+      "passed": true,
+      "compilerWarnings": 0,
+      "factoryCreated": false,
+      "nativeIOCreated": false
+    }
+  ],
+  "runtimeStartupValidated": false
+}

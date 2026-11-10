@@ -1,0 +1,482 @@
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -676,20 +676,53 @@
+   auto graph = std::make_shared<PreparedInputGraph>(); graph->warm_request = request; graph->graph_id = request.graph_id;
+   return request.eligible ? BuildGraphResources(graph, request.state, request.worker_identity, request.deadline_ms) : graph;
+ }
++namespace {
++using PrivateControl=mac_adm::PrivateInputMeterControl;
++using PrivateStage=PrivateControl::Stage;
++using PrivateDetail=PrivateControl::Detail;
++void PrivateFormatDiagnostic(const AudioEngineDevice::PrivateInputMeterRequest& request,
++                             AVAudioFormat* input, AVAudioFormat* sink, bool after) {
++  auto c=request.diagnostics; if (!c) return;
++  c->SetDetail(request.token,after?PrivateDetail::kInputRateAfter:PrivateDetail::kInputRateBefore,uint64_t(input.sampleRate));
++  c->SetDetail(request.token,after?PrivateDetail::kInputChannelsAfter:PrivateDetail::kInputChannelsBefore,input.channelCount);
++  c->SetDetail(request.token,after?PrivateDetail::kInputFormatAfter:PrivateDetail::kInputFormatBefore,input.commonFormat);
++  c->SetDetail(request.token,after?PrivateDetail::kInputInterleavedAfter:PrivateDetail::kInputInterleavedBefore,input.interleaved);
++  if (sink) { c->SetDetail(request.token,PrivateDetail::kSinkRate,uint64_t(sink.sampleRate));
++    c->SetDetail(request.token,PrivateDetail::kSinkChannels,sink.channelCount); }
++}
++void PrivateExceptionDiagnostic(const AudioEngineDevice::PrivateInputMeterRequest& request, NSException* exception) {
++  // Name only: no localized reason/userInfo or arbitrary personal strings.
++  auto c=request.diagnostics; if (!c) return;
++  const uint64_t kind=[exception.name isEqualToString:NSInvalidArgumentException]?1:
++      [exception.name isEqualToString:NSInternalInconsistencyException]?2:
++      [exception.name isEqualToString:NSGenericException]?3:4;
++  c->SetDetail(request.token,PrivateDetail::kExceptionKind,kind);
++  c->SetDetail(request.token,PrivateDetail::kCaptureAfter,ApplicationCaptureState());
++  c->SetDetail(request.token,PrivateDetail::kValidAtProof,c->Valid(request.token));
++  c->SetDetail(request.token,PrivateDetail::kRevokedAtProof,c->Read().revoked);
++  c->Reject(request.token,kAudioEngineStateTransitionError);
++}
++}  // namespace
+ AudioEngineDevice::PrivateInputMeterRequest AudioEngineDevice::ReservePrivateInputMeter(uint64_t token) {
+   RTC_DCHECK_RUN_ON(thread_);
+-  PrivateInputMeterRequest request; request.token = token;
++  PrivateInputMeterRequest request; request.token = token; request.diagnostics=private_meter_control_;
++  auto c=request.diagnostics; c->SetStage(token,PrivateStage::kReserve);
+   auto& r = request.resource;
+   r.module_identity = reinterpret_cast<uintptr_t>(this); r.worker_identity = reinterpret_cast<uintptr_t>(thread_);
+   r.generation = state_generation_; r.configuration_generation = warm_configuration_generation_;
+   r.lifecycle_generation = warm_lifecycle_generation_; r.state = engine_state_;
+   r.initialized_at_reservation = initialized_; r.graph_id = ++graph_generation_;
+   r.deadline_ms = TimeMillis() + 6000; r.capture_state = ApplicationCaptureState(); r.route = CurrentDefaultRoute();
++  c->SetDetail(token,PrivateDetail::kCaptureBefore,r.capture_state);
++  c->SetDetail(token,PrivateDetail::kGenerationBefore,r.generation);
++  c->SetDetail(token,PrivateDetail::kConfigurationBefore,r.configuration_generation);
++  c->SetDetail(token,PrivateDetail::kLifecycleBefore,r.lifecycle_generation);
++  c->SetDetail(token,PrivateDetail::kInputRouteBefore,r.route.input); c->SetDetail(token,PrivateDetail::kOutputRouteBefore,r.route.output);
+   request.audible_owner = reinterpret_cast<uintptr_t>((__bridge void*)engine_device_);
+   r.eligible = private_meter_control_->Valid(token) && initialized_ && !cleanup_unconfirmed_ && engine_device_ &&
+       engine_device_.running && engine_state_.IsOutputRunning() && !engine_state_.input_available && !input_node_instantiated_ &&
+       engine_state_.input_muted && engine_state_.mute_mode == MuteMode::InputMixer && (r.capture_state & 1) && BuiltInRoute(r.route) && IsMicrophonePermissionAuthorized();
+-  r.result = r.eligible ? 0 : kAudioEngineStateTransitionError;
++  r.result = r.eligible ? 0 : c->Reject(token,kAudioEngineStateTransitionError);
+   return request;
+ }
+ bool AudioEngineDevice::ValidatePrivateInputMeter(const PrivateInputMeterRequest& request) {
+@@ -711,12 +744,12 @@
+ }
+ }  // namespace
+ int32_t AudioEngineDevice::SealPrivateInputGraph(const PrivateInputMeterRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
+-  RTC_DCHECK_RUN_ON(thread_);
++  RTC_DCHECK_RUN_ON(thread_); auto c=request.diagnostics; c->SetStage(request.token,PrivateStage::kSeal);
+   // A private graph is independently built. Never consume or modify the public stopped cache.
+   if (!ValidatePrivateInputMeter(request) || !graph || !graph->bridge->privacy.IsPrivate() ||
+       graph->warm_prepared || graph->staged || !graph->built || graph->started || graph->adopted ||
+       !StoppedGraphIsQuiescent(graph) || !PrivateInputFormatsMatch(graph) || !SameRoute(graph->prepared_route, request.resource.route))
+-    return kAudioEngineStateTransitionError;
++    return c->Reject(request.token,kAudioEngineStateTransitionError);
+   graph->bridge->private_meter = private_meter_control_; graph->bridge->private_token=request.token; graph->private_token = request.token;
+   private_meter_control_->SetGraph(graph->graph_id, uint32_t(graph->input_format.sampleRate), 1);
+   return 0;
+@@ -724,32 +757,40 @@
+ std::shared_ptr<PreparedInputGraph> AudioEngineDevice::BuildPrivateInputGraph(const PrivateInputMeterRequest& request) {
+   auto graph = std::make_shared<PreparedInputGraph>(); graph->graph_id = request.resource.graph_id;
+   graph->bridge->privacy.Seal();  // No publishing authority can ever be attached.
++  auto c=request.diagnostics; c->SetStage(request.token,PrivateStage::kBuildAllocate);
+   if (!request.resource.eligible || [NSThread isMainThread] ||
+-      request.resource.worker_identity==reinterpret_cast<uintptr_t>(Thread::Current())) return graph;
++      request.resource.worker_identity==reinterpret_cast<uintptr_t>(Thread::Current())) {
++    c->Reject(request.token,kAudioEngineStateTransitionError); return graph;
++  }
+   @try {
+-    graph->engine=[[AVAudioEngine alloc] init]; graph->input=graph->engine.inputNode;
++    graph->engine=[[AVAudioEngine alloc] init]; c->SetStage(request.token,PrivateStage::kBuildInput);
++    graph->input=graph->engine.inputNode;
+     // No outputNode access and no VPIO/AEC/AGC configuration. A private level
+     // check needs capture PCM, not another voice-processing/output owner.
+-    AVAudioFormat* format=[graph->input outputFormatForBus:0];
++    c->SetStage(request.token,PrivateStage::kBuildFormat);
++    AVAudioFormat* format=[graph->input outputFormatForBus:0]; PrivateFormatDiagnostic(request,format,nil,false);
+     if (!format.sampleRate || !format.channelCount || format.commonFormat!=AVAudioPCMFormatFloat32 ||
+-        graph->input.voiceProcessingEnabled) return graph;
++        graph->input.voiceProcessingEnabled) { c->Reject(request.token,kAudioEngineDeviceFormatError); return graph; }
+     graph->input_format=[[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
+         sampleRate:format.sampleRate channels:1 interleaved:format.interleaved];
+     graph->input_bus_format=format; graph->prepared_route=CurrentDefaultRoute(); graph->built=true;
+-  } @catch (NSException*) { graph->built=false; }
++  } @catch (NSException* exception) { PrivateExceptionDiagnostic(request,exception); graph->built=false; }
+   return graph;
+ }
+ int32_t AudioEngineDevice::StartPrivateInputGraph(const PrivateInputMeterRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
+-  auto control = graph->bridge->private_meter;
++  auto control = graph->bridge->private_meter; auto c=request.diagnostics;
++  c->SetStage(request.token,PrivateStage::kCreateSink);
+   if (!graph->bridge->privacy.IsPrivate() || !control || !control->Valid(request.token) ||
+       [NSThread isMainThread] || request.resource.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current()))
+-    return kAudioEngineStateTransitionError;
++    return c->Reject(request.token,kAudioEngineStateTransitionError);
+   @try {
+     auto callback = std::make_shared<PrivateMeterCallbackOwner>(); callback->control = control; callback->token = request.token;
+     graph->private_callback = callback;
+     graph->private_meter_sink = [[AVAudioSinkNode alloc] initWithReceiverBlock:^OSStatus(
+         const AudioTimeStamp*, AVAudioFrameCount frames, const AudioBufferList* data) {
+       if (!callback->gate.TryEnter()) return noErr;
++      callback->control->RawCallback(callback->token,frames,data->mNumberBuffers,
++          data->mNumberBuffers?data->mBuffers[0].mNumberChannels:0,data->mNumberBuffers?data->mBuffers[0].mDataByteSize:0);
+       OSStatus result = noErr;
+       if (callback->control->Valid(callback->token)) {
+         if (data->mNumberBuffers != 1 || !data->mBuffers[0].mData || frames > kMaximumFramesPerBuffer ||
+@@ -762,41 +803,72 @@
+       }
+       callback->gate.Leave(); return result;
+     }];
+-    [graph->engine attachNode:graph->private_meter_sink];
+-    [graph->engine connect:graph->input to:graph->private_meter_sink format:graph->input_format];
+-    [graph->engine prepare];
++    c->SetStage(request.token,PrivateStage::kAttachSink); [graph->engine attachNode:graph->private_meter_sink];
++    c->SetStage(request.token,PrivateStage::kConnectSink); [graph->engine connect:graph->input to:graph->private_meter_sink format:graph->input_format];
++    c->SetStage(request.token,PrivateStage::kPrepare); [graph->engine prepare];
++    c->SetStage(request.token,PrivateStage::kBeforeStart);
++    c->SetDetail(request.token,PrivateDetail::kCaptureAfter,ApplicationCaptureState());
+     if (!control->Valid(request.token) || TimeMillis() >= request.resource.deadline_ms || !(ApplicationCaptureState() & 1) ||
+-        !SameRoute(request.resource.route, CurrentDefaultRoute()) || !callback->gate.Open()) return kAudioEngineStateTransitionError;
+-    NSError* error = nil;
+-    if (![graph->engine startAndReturnError:&error]) {
+-      control->NativeRunning(request.token,graph->engine.running); return kAudioEnginePlayoutStartError;
+-    }
+-    control->NativeRunning(request.token,true);
++        !SameRoute(request.resource.route, CurrentDefaultRoute()) || !callback->gate.Open()) return c->Reject(request.token,kAudioEngineStateTransitionError);
++    c->SetStage(request.token,PrivateStage::kNativeStart); NSError* error = nil;
++    const bool native_started=[graph->engine startAndReturnError:&error];
++    c->SetDetail(request.token,PrivateDetail::kNativeStartReturned,native_started?2:1);
++    c->SetDetail(request.token,PrivateDetail::kNativeEngineRunning,graph->engine.running);
++    if (!native_started) {
++      c->SetDetail(request.token,PrivateDetail::kNSErrorCode,uint64_t(int64_t(error.code)));
++      c->SetDetail(request.token,PrivateDetail::kNSErrorDomain,[error.domain isEqualToString:AVFoundationErrorDomain]?1:
++          [error.domain isEqualToString:NSOSStatusErrorDomain]?2:3);
++      control->NativeRunning(request.token,graph->engine.running); return c->Reject(request.token,kAudioEnginePlayoutStartError);
++    }
++    control->NativeRunning(request.token,true); c->SetStage(request.token,PrivateStage::kAwaitCallback);
+     const int64_t deadline = std::min(request.resource.deadline_ms, TimeMillis()+500);
+     while (control->Valid(request.token) && TimeMillis()<deadline &&
+            control->RawCallbacks()==0) usleep(1000);
+-    UInt32 running=0, size=sizeof(running);
++    c->SetStage(request.token,PrivateStage::kUnitRunning); UInt32 running=0, size=sizeof(running);
+     const OSStatus status=AudioUnitGetProperty(graph->input.audioUnit, kAudioOutputUnitProperty_IsRunning,
+         kAudioUnitScope_Global, 0, &running, &size);
+-    graph->started = control->Valid(request.token) && status==noErr && running && graph->engine.running &&
+-        control->RawCallbacks()>0 && graph->bridge->silent_renders.load()==0 && !(graph->bridge->target.load()) &&
+-        !graph->bridge->ever_opened && graph->bridge->gate.IsClosed() && (ApplicationCaptureState() & 1) &&
+-        TimeMillis()<request.resource.deadline_ms && SameRoute(request.resource.route, CurrentDefaultRoute()) && PrivateInputFormatsMatch(graph);
++    c->SetDetail(request.token,PrivateDetail::kUnitQueried,1);
++    c->SetDetail(request.token,PrivateDetail::kUnitStatus,uint64_t(int64_t(status))); c->SetDetail(request.token,PrivateDetail::kUnitRunning,running);
++    c->SetStage(request.token,PrivateStage::kFinalProof);
++    const auto route_after=CurrentDefaultRoute();
++    c->SetDetail(request.token,PrivateDetail::kInputRouteAfter,route_after.input); c->SetDetail(request.token,PrivateDetail::kOutputRouteAfter,route_after.output);
++    c->SetDetail(request.token,PrivateDetail::kCaptureAfter,ApplicationCaptureState());
++    c->SetDetail(request.token,PrivateDetail::kValidAtProof,control->Valid(request.token));
++    c->SetDetail(request.token,PrivateDetail::kRevokedAtProof,control->Read().revoked);
++    c->SetDetail(request.token,PrivateDetail::kNativeEngineRunning,graph->engine.running);
++    // Extra format readback is diagnostic only; it cannot turn an otherwise
++    // accepted graph into a failure. The unchanged proof below owns admission.
++    @try { PrivateFormatDiagnostic(request,[graph->input outputFormatForBus:0],
++        [graph->private_meter_sink inputFormatForBus:0],true); } @catch (NSException*) {}
++    const std::array<bool,13> proofs={control->Valid(request.token),status==noErr,bool(running),bool(graph->engine.running),
++        control->RawCallbacks()>0,graph->bridge->silent_renders.load()==0,!(graph->bridge->target.load()),
++        !graph->bridge->ever_opened,graph->bridge->gate.IsClosed(),bool(ApplicationCaptureState() & 1),
++        TimeMillis()<request.resource.deadline_ms,SameRoute(request.resource.route,route_after),PrivateInputFormatsMatch(graph)};
++    uint64_t mask=0; for (size_t i=0;i<proofs.size();++i) if (proofs.at(i)) mask|=uint64_t(1)<<i;
++    c->SetDetail(request.token,PrivateDetail::kProofMask,mask); graph->started=mask==((uint64_t(1)<<proofs.size())-1);
+     if (graph->started) {
++      c->SetStage(request.token,PrivateStage::kObserver);
+       graph->private_configuration_observer=(__bridge_retained void*)[[NSNotificationCenter defaultCenter]
+           addObserverForName:AVAudioEngineConfigurationChangeNotification object:graph->engine queue:nil usingBlock:^(NSNotification*) {
+-            callback->control->Fail(callback->token,kAudioEngineStateTransitionError);
++            if (!callback->gate.TryEnter()) return;
++            callback->control->Fail(callback->token,kAudioEngineStateTransitionError,PrivateStage::kConfigurationChanged);
++            callback->gate.Leave();
+           }];
+-      if (!graph->private_configuration_observer) return kAudioEngineStateTransitionError;
+-    }
+-    return graph->started ? 0 : kAudioEngineStateTransitionError;
+-  } @catch (NSException*) { return kAudioEngineStateTransitionError; }
++      if (!graph->private_configuration_observer) return c->Reject(request.token,kAudioEngineStateTransitionError);
++    }
++    return graph->started ? 0 : c->Reject(request.token,kAudioEngineStateTransitionError);
++  } @catch (NSException* exception) { PrivateExceptionDiagnostic(request,exception); return kAudioEngineStateTransitionError; }
+ }
+ bool AudioEngineDevice::CommitPrivateInputMeter(const PrivateInputMeterRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
+-  RTC_DCHECK_RUN_ON(thread_);
+-  return graph->bridge->privacy.IsPrivate() && graph->started && graph->bridge->target.load()==nullptr &&
++  RTC_DCHECK_RUN_ON(thread_); auto c=request.diagnostics; c->SetStage(request.token,PrivateStage::kCommit);
++  c->SetDetail(request.token,PrivateDetail::kGenerationAfter,state_generation_);
++  c->SetDetail(request.token,PrivateDetail::kConfigurationAfter,warm_configuration_generation_);
++  c->SetDetail(request.token,PrivateDetail::kLifecycleAfter,warm_lifecycle_generation_);
++  const bool committed=graph->bridge->privacy.IsPrivate() && graph->started && graph->bridge->target.load()==nullptr &&
+       graph->bridge->gate.IsClosed() && !graph->bridge->ever_opened && PrivateInputFormatsMatch(graph) &&
+       ValidatePrivateInputMeter(request) && private_meter_control_->Started(request.token);
++  if (committed) c->SetStage(request.token,PrivateStage::kRunning); else c->Reject(request.token,kAudioEngineStateTransitionError);
++  return committed;
+ }
+ bool AudioEngineDevice::InputGraphIsPrivate(const std::shared_ptr<PreparedInputGraph>& graph) {
+   return graph && graph->bridge->privacy.IsPrivate();
+@@ -815,6 +887,11 @@
+ }
+ int32_t AudioEngineDevice::FinishPrivateInputMeter(uint64_t token, const std::shared_ptr<PreparedInputGraph>& graph, bool clean, int32_t result) {
+   RTC_DCHECK_RUN_ON(thread_);
++  // Worker generations at retirement are diagnostic only. Native proof/capture
++  // fields above remain the snapshot from start, before revoke/cleanup.
++  private_meter_control_->SetDetail(token,PrivateDetail::kGenerationAfter,state_generation_);
++  private_meter_control_->SetDetail(token,PrivateDetail::kConfigurationAfter,warm_configuration_generation_);
++  private_meter_control_->SetDetail(token,PrivateDetail::kLifecycleAfter,warm_lifecycle_generation_);
+   if (!clean && !cleanup_unconfirmed_) { cleanup_unconfirmed_=true; this->AddRef(); }
+   private_meter_control_->Finish(token,clean,clean?result:kAudioEngineStateTransitionError);
+   return clean ? result : kAudioEngineStateTransitionError;
+--- a/modules/audio_device/mac/private_input_meter_state.h
++++ b/modules/audio_device/mac/private_input_meter_state.h
+@@ -2,6 +2,7 @@
+ #ifndef MODULES_AUDIO_DEVICE_MAC_PRIVATE_INPUT_METER_STATE_H_
+ #define MODULES_AUDIO_DEVICE_MAC_PRIVATE_INPUT_METER_STATE_H_
+ #include <atomic>
++#include <array>
+ #include <cmath>
+ #include <cstddef>
+ #include <cstdint>
+@@ -28,6 +29,43 @@
+ class PrivateInputMeterControl {
+  public:
+   static_assert(std::atomic<uint64_t>::is_always_lock_free);
++  enum class Stage : uint32_t {
++    kIdle, kReserve, kDelegate, kBuildAllocate, kBuildInput, kBuildFormat,
++    kSeal, kCreateSink, kAttachSink, kConnectSink, kPrepare, kBeforeStart,
++    kNativeStart, kAwaitCallback, kUnitRunning, kFinalProof, kObserver,
++    kCommit, kRunning, kCallback, kConfigurationChanged
++  };
++  enum class Detail : size_t {
++    kStage, kFailureStage, kStageUptimeNS, kFailureUptimeNS, kFailureResult,
++    kCaptureBefore, kCaptureAfter, kGenerationBefore, kGenerationAfter,
++    kConfigurationBefore, kConfigurationAfter, kLifecycleBefore, kLifecycleAfter,
++    kInputRouteBefore, kOutputRouteBefore, kInputRouteAfter, kOutputRouteAfter,
++    kInputRateBefore, kInputChannelsBefore, kInputRateAfter, kInputChannelsAfter,
++    kSinkRate, kSinkChannels, kInputFormatBefore, kInputFormatAfter,
++    kInputInterleavedBefore, kInputInterleavedAfter,
++    kRawCallbackAttempts, kRawCallbacksAccepted, kFirstRawCallbackNS, kLastRawCallbackNS,
++    kCallbackFrames, kCallbackBuffers, kCallbackChannels, kCallbackBytes,
++    kNativeStartReturned, kNativeEngineRunning, kUnitQueried, kUnitStatus, kUnitRunning,
++    kNSErrorCode, kNSErrorDomain, kExceptionKind, kValidAtProof, kFailedToken,
++    kRevokedAtProof, kProofMask, kCount
++  };
++  static constexpr size_t kDetailCount=static_cast<size_t>(Detail::kCount);
++  static const char* StageName(uint64_t value) {
++    switch (static_cast<Stage>(value)) {
++      case Stage::kIdle: return "idle"; case Stage::kReserve: return "reserve";
++      case Stage::kDelegate: return "delegate"; case Stage::kBuildAllocate: return "build-allocate";
++      case Stage::kBuildInput: return "build-input"; case Stage::kBuildFormat: return "build-format";
++      case Stage::kSeal: return "seal"; case Stage::kCreateSink: return "create-sink";
++      case Stage::kAttachSink: return "attach-sink"; case Stage::kConnectSink: return "connect-sink";
++      case Stage::kPrepare: return "prepare"; case Stage::kBeforeStart: return "before-start";
++      case Stage::kNativeStart: return "native-start"; case Stage::kAwaitCallback: return "await-callback";
++      case Stage::kUnitRunning: return "unit-running"; case Stage::kFinalProof: return "final-proof";
++      case Stage::kObserver: return "configuration-observer"; case Stage::kCommit: return "commit";
++      case Stage::kRunning: return "running"; case Stage::kCallback: return "callback";
++      case Stage::kConfigurationChanged: return "configuration-change";
++    }
++    return "unknown";
++  }
+   struct Meter {
+     uint64_t samples=0, callbacks=0, non_silent_callbacks=0;
+     double energy=0, recent_rms=0, first=0, last=0, first_non_silent=0, last_non_silent=0;
+@@ -40,6 +78,7 @@
+     bool confirmed_stopped=true, cleanup_unconfirmed=false;
+     int32_t result=0;
+     Meter meter;
++    std::array<uint64_t,kDetailCount> diagnostic{};
+   };
+   static uint64_t Now() {
+     timespec t; clock_gettime(CLOCK_UPTIME_RAW, &t);
+@@ -51,6 +90,7 @@
+     do { if (token<=previous) return false; }
+     while (!newest_.compare_exchange_weak(previous,token));
+     if (token<=revoked_.load() || terminal_.load()) return false;
++    for (auto& value:diagnostic_) value.store(0,std::memory_order_relaxed);
+     samples_=0; energy_=0; callbacks_=0; non_silent_=0; recent_energy_=0; recent_samples_=0;
+     first_=0; last_=0; first_non_silent_=0; last_non_silent_=0; silent_output_=0; known_=true;
+     rate_=0; channels_=0; graph_id_=0; result_=0; active_=false; running_=false;
+@@ -76,6 +116,37 @@
+         (confirmed_stopped_.load(std::memory_order_acquire) && token<=revoked_.load(std::memory_order_acquire));
+   }
+   bool Outstanding() const { return !confirmed_stopped_.load(std::memory_order_acquire); }
++  // Diagnostic counters carry no PCM/level and remain readable after revoke.
++  // They never confer meter or publication permission. Old tokens cannot write
++  // a replacement's diagnostic; reset requires the same drained lease as PCM.
++  void SetDetail(uint64_t token, Detail key, uint64_t value) {
++    if (token_.load(std::memory_order_acquire)==token)
++      diagnostic_.at(static_cast<size_t>(key)).store(value,std::memory_order_release);
++  }
++  void SetStage(uint64_t token, Stage stage) {
++    SetDetail(token,Detail::kStage,static_cast<uint64_t>(stage));
++    SetDetail(token,Detail::kStageUptimeNS,Now());
++  }
++  int32_t Reject(uint64_t token, int32_t result, Stage failed=Stage::kIdle) {
++    if (token_.load(std::memory_order_acquire)==token) {
++      uint64_t zero=0;
++      const auto stage=failed==Stage::kIdle ? diagnostic_.at(static_cast<size_t>(Detail::kStage)).load() : static_cast<uint64_t>(failed);
++      if (diagnostic_.at(static_cast<size_t>(Detail::kFailureStage)).compare_exchange_strong(zero,stage)) {
++        SetDetail(token,Detail::kFailureResult,uint64_t(int64_t(result)));
++        SetDetail(token,Detail::kFailureUptimeNS,Now());
++      }
++    }
++    return result;
++  }
++  void RawCallback(uint64_t token, uint64_t frames, uint64_t buffers, uint64_t channels, uint64_t bytes) {
++    if (token_.load(std::memory_order_acquire)!=token) return;
++    diagnostic_.at(static_cast<size_t>(Detail::kRawCallbackAttempts)).fetch_add(1,std::memory_order_relaxed);
++    const uint64_t now=Now(); uint64_t zero=0;
++    diagnostic_.at(static_cast<size_t>(Detail::kFirstRawCallbackNS)).compare_exchange_strong(zero,now);
++    SetDetail(token,Detail::kLastRawCallbackNS,now); SetDetail(token,Detail::kCallbackFrames,frames);
++    SetDetail(token,Detail::kCallbackBuffers,buffers); SetDetail(token,Detail::kCallbackChannels,channels);
++    SetDetail(token,Detail::kCallbackBytes,bytes);
++  }
+   void SetGraph(uint64_t id, uint32_t rate, uint32_t channels) { graph_id_=id; rate_=rate; channels_=channels; }
+   void NativeRunning(uint64_t token, bool running) { if (token_.load()==token) running_=running; }
+   bool Started(uint64_t token) {
+@@ -90,7 +161,8 @@
+     if (clean) { running_=false; confirmed_stopped_=true; }
+     else { cleanup_=true; confirmed_stopped_=false; }
+   }
+-  void Fail(uint64_t token, int32_t) {
++  void Fail(uint64_t token, int32_t result, Stage failed=Stage::kCallback) {
++    Reject(token,result,failed);
+     uint64_t previous=failed_token_.load();
+     while (previous<token && !failed_token_.compare_exchange_weak(previous,token)) {}
+     Revoke(token);  // A late callback from an older graph cannot revoke a replacement.
+@@ -110,10 +182,13 @@
+     uint64_t zero=0; first_.compare_exchange_strong(zero,now); last_=now;
+     if (q) { zero=0; first_non_silent_.compare_exchange_strong(zero,now); last_non_silent_=now; non_silent_.fetch_add(1); }
+     callbacks_.fetch_add(1,std::memory_order_release);
++    SetDetail(token,Detail::kRawCallbacksAccepted,callbacks_.load());
+     return Valid(token);
+   }
+   State Read() const {
+-    State s; s.token=token_.load(); s.revoked=revoked_.load(); s.graph_id=graph_id_.load();
++    State s; for (size_t i=0;i<kDetailCount;++i) s.diagnostic.at(i)=diagnostic_.at(i).load(std::memory_order_acquire);
++    s.diagnostic.at(static_cast<size_t>(Detail::kFailedToken))=failed_token_.load();
++    s.token=token_.load(); s.revoked=revoked_.load(); s.graph_id=graph_id_.load();
+     s.requested=requested_.load(); s.active=active_.load(); s.start_in_flight=in_flight_.load();
+     s.input_running=running_.load(); s.confirmed_stopped=confirmed_stopped_.load(); s.cleanup_unconfirmed=cleanup_.load();
+     s.result=result_.load(); if (s.token && failed_token_.load()==s.token) s.result=-5001; s.sample_rate=rate_.load(); s.channels=channels_.load(); s.silent_output_callbacks=silent_output_.load();
+@@ -131,6 +206,7 @@
+     return s;
+   }
+  private:
++  std::array<std::atomic<uint64_t>,kDetailCount> diagnostic_{};
+   std::atomic<uint64_t> token_{0},newest_{0},revoked_{0},failed_token_{0},graph_id_{0},silent_output_{0};
+   std::atomic<bool> terminal_{false},requested_{false},active_{false},in_flight_{false},running_{false},confirmed_stopped_{true},cleanup_{false},known_{true};
+   std::atomic<int32_t> result_{0};
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
+@@ -438,6 +438,35 @@
+   auto* module = AudioEngineDeviceOrNull(_native.get(),_audioDeviceModuleType);
+   if (!module) return @{ @"supported": @NO };
+   const auto s=module->PrivateInputMeterState(); const auto& m=s.meter;
++  using Control=webrtc::mac_adm::PrivateInputMeterControl; using D=Control::Detail;
++  const auto value=[&](D key) { return s.diagnostic.at(static_cast<size_t>(key)); };
++  NSDictionary* diagnostic=@{
++    @"stage": @(Control::StageName(value(D::kStage))), @"failureStage": @(Control::StageName(value(D::kFailureStage))),
++    @"stageUptime": @(value(D::kStageUptimeNS)*1e-9), @"failureUptime": @(value(D::kFailureUptimeNS)*1e-9),
++    @"failureResult": @(int64_t(value(D::kFailureResult))),
++    @"captureStateBefore": @(value(D::kCaptureBefore)), @"captureStateAfter": @(value(D::kCaptureAfter)),
++    @"generationBefore": @(value(D::kGenerationBefore)), @"generationAfter": @(value(D::kGenerationAfter)),
++    @"configurationBefore": @(value(D::kConfigurationBefore)), @"configurationAfter": @(value(D::kConfigurationAfter)),
++    @"lifecycleBefore": @(value(D::kLifecycleBefore)), @"lifecycleAfter": @(value(D::kLifecycleAfter)),
++    @"inputRouteBefore": @(value(D::kInputRouteBefore)), @"outputRouteBefore": @(value(D::kOutputRouteBefore)),
++    @"inputRouteAfter": @(value(D::kInputRouteAfter)), @"outputRouteAfter": @(value(D::kOutputRouteAfter)),
++    @"inputRateBefore": @(value(D::kInputRateBefore)), @"inputChannelsBefore": @(value(D::kInputChannelsBefore)),
++    @"inputRateAfter": @(value(D::kInputRateAfter)), @"inputChannelsAfter": @(value(D::kInputChannelsAfter)),
++    @"sinkRate": @(value(D::kSinkRate)), @"sinkChannels": @(value(D::kSinkChannels)),
++    @"inputPCMFormatBefore": @(value(D::kInputFormatBefore)), @"inputPCMFormatAfter": @(value(D::kInputFormatAfter)),
++    @"inputInterleavedBefore": @(bool(value(D::kInputInterleavedBefore))), @"inputInterleavedAfter": @(bool(value(D::kInputInterleavedAfter))),
++    @"rawCallbackAttempts": @(value(D::kRawCallbackAttempts)), @"rawCallbacksAccepted": @(value(D::kRawCallbacksAccepted)),
++    @"firstRawCallbackUptime": @(value(D::kFirstRawCallbackNS)*1e-9), @"lastRawCallbackUptime": @(value(D::kLastRawCallbackNS)*1e-9),
++    @"callbackFrames": @(value(D::kCallbackFrames)), @"callbackBuffers": @(value(D::kCallbackBuffers)),
++    @"callbackChannels": @(value(D::kCallbackChannels)), @"callbackBytes": @(value(D::kCallbackBytes)),
++    @"nativeStartReturn": @(value(D::kNativeStartReturned)), @"nativeEngineRunning": @(bool(value(D::kNativeEngineRunning))),
++    @"unitQueried": @(bool(value(D::kUnitQueried))), @"unitStatus": @(int64_t(value(D::kUnitStatus))), @"unitRunning": @(value(D::kUnitRunning)),
++    @"nativeErrorCode": @(int64_t(value(D::kNSErrorCode))), @"nativeErrorDomain": @(value(D::kNSErrorDomain)),
++    @"exceptionKind": @(value(D::kExceptionKind)), @"tokenValidAtProof": @(bool(value(D::kValidAtProof))),
++    @"failedToken": @(value(D::kFailedToken)), @"revokedThroughAtProof": @(value(D::kRevokedAtProof)),
++    @"proofMask": @(value(D::kProofMask)), @"containsPCMOrLevel": @NO,
++    @"provenance": @"SDK numeric startup/callback metadata retained after revoke; no meter or publish authorization"
++  };
+   return @{ @"supported": @YES, @"token": @(s.token), @"revokedThroughToken": @(s.revoked),
+     @"requested": @(s.requested), @"active": @(s.active), @"startInFlight": @(s.start_in_flight),
+     @"inputRunning": @(s.input_running), @"confirmedStopped": @(s.confirmed_stopped),
+@@ -445,6 +474,7 @@
+     @"sampleRate": @(s.sample_rate), @"channels": @(s.channels), @"silentOutputCallbacks": @(s.silent_output_callbacks),
+     @"publishingAllowed": @NO, @"silentOutputOnly": @YES, @"privateOutputInstantiated": @NO,
+     @"outputMode": @"none", @"processing": @"plain AVAudioEngine input; no requested VPIO/AEC/AGC",
++    @"startupDiagnostics": diagnostic,
+     @"meter": @{ @"samples": @(m.samples), @"energy": @(m.energy), @"recentRMS": @(m.recent_rms),
+       @"energyKnown": @(m.energy_known), @"callbacks": @(m.callbacks), @"nonSilentCallbacks": @(m.non_silent_callbacks),
+       @"firstCallbackUptime": @(m.first), @"lastCallbackUptime": @(m.last),
+@@ -466,7 +496,8 @@
+   if (result==0) {
+     result=_workerThread->BlockingCall([self,module,request,&delegate] {
+       delegate=_observer->delegate_;
+-      if (!delegate || !module->ValidatePrivateInputMeter(request)) return int32_t(webrtc::kAudioEngineStateTransitionError);
++      request.diagnostics->SetStage(request.token,webrtc::mac_adm::PrivateInputMeterControl::Stage::kDelegate);
++      if (!delegate || !module->ValidatePrivateInputMeter(request)) return request.diagnostics->Reject(request.token,webrtc::kAudioEngineStateTransitionError);
+       // Private capture owns independent resources. The normal stopped first-mic
+       // graph and its delegate/taps remain exactly where they were.
+       return int32_t(0);
+@@ -478,8 +509,9 @@
+     }
+     if (result==0) result=webrtc::AudioEngineDevice::StartPrivateInputGraph(request,_privateInputGraph);
+     if (result==0) result=_workerThread->BlockingCall([self,module,request,delegate] {
++      request.diagnostics->SetStage(request.token,webrtc::mac_adm::PrivateInputMeterControl::Stage::kCommit);
+       return _observer->delegate_==delegate && module->CommitPrivateInputMeter(request,_privateInputGraph)
+-          ? int32_t(0) : int32_t(webrtc::kAudioEngineStateTransitionError);
++          ? int32_t(0) : request.diagnostics->Reject(request.token,webrtc::kAudioEngineStateTransitionError);
+     });
+   }
+   if (result==0) return 0;
+--- a/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
++++ b/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
+@@ -121,6 +121,34 @@
+   ASSERT_TRUE(c.Begin(1)); c.Terminate();
+   EXPECT_FALSE(c.Valid(1)); EXPECT_FALSE(c.Started(1)); c.Finish(1,true,0);
+   EXPECT_FALSE(c.Begin(2));
++}
++
++TEST(PrivateInputMeterTest, StartupDiagnosticsSurviveRevokeWithoutMeterPermission) {
++  using C=mac_adm::PrivateInputMeterControl; using D=C::Detail; using S=C::Stage;
++  C c; ASSERT_TRUE(c.Begin(1)); c.SetStage(1,S::kNativeStart);
++  c.RawCallback(1,128,1,1,512); EXPECT_TRUE(c.Record(1,std::vector<float>{0.3f}));
++  c.SetDetail(1,D::kUnitStatus,uint64_t(int64_t(-10867))); c.Reject(1,-5001);
++  c.Revoke(1); c.Finish(1,true,-5001);
++  const auto state=c.Read(); EXPECT_EQ(state.meter.callbacks,0u); EXPECT_FALSE(state.active);
++  EXPECT_EQ(state.diagnostic.at(size_t(D::kRawCallbackAttempts)),1u);
++  EXPECT_EQ(state.diagnostic.at(size_t(D::kRawCallbacksAccepted)),1u);
++  EXPECT_EQ(state.diagnostic.at(size_t(D::kFailureStage)),uint64_t(S::kNativeStart));
++  EXPECT_EQ(int64_t(state.diagnostic.at(size_t(D::kUnitStatus))),-10867);
++  EXPECT_GT(state.diagnostic.at(size_t(D::kFirstRawCallbackNS)),0u);
++  EXPECT_TRUE(state.confirmed_stopped);
++}
++TEST(PrivateInputMeterTest, FirstDiagnosticFailureIsRetainedAndOldTokenCannotReplaceIt) {
++  using C=mac_adm::PrivateInputMeterControl; using D=C::Detail; using S=C::Stage;
++  C c; ASSERT_TRUE(c.Begin(1)); c.SetStage(1,S::kConnectSink); c.Reject(1,-2005);
++  c.SetStage(1,S::kSeal); c.Reject(1,-5001); c.Finish(1,true,-5001);
++  EXPECT_EQ(c.Read().diagnostic.at(size_t(D::kFailureStage)),uint64_t(S::kConnectSink));
++  EXPECT_EQ(int64_t(c.Read().diagnostic.at(size_t(D::kFailureResult))),-2005);
++  ASSERT_TRUE(c.Begin(2)); c.SetStage(2,S::kNativeStart);
++  c.RawCallback(1,128,1,1,512); c.SetDetail(1,D::kUnitRunning,1); c.Reject(1,-5001); c.Fail(1,-5001);
++  EXPECT_EQ(c.Read().diagnostic.at(size_t(D::kFailureStage)),0u);
++  EXPECT_EQ(c.Read().diagnostic.at(size_t(D::kRawCallbackAttempts)),0u);
++  EXPECT_EQ(c.Read().diagnostic.at(size_t(D::kUnitRunning)),0u);
++  EXPECT_TRUE(c.Valid(2)); c.Finish(2,true,0);
+ }
+ 
+ TEST(ExperimentalCoreAudioCaptureTest, PausedConsumerRejectsMutedAndOldEpochs) {
+--- a/modules/audio_device/audio_engine_device.h
++++ b/modules/audio_device/audio_engine_device.h
+@@ -390,6 +390,7 @@
+   };
+   struct PrivateInputMeterRequest {
+     StoppedInputPreparationRequest resource;
++    std::shared_ptr<mac_adm::PrivateInputMeterControl> diagnostics;
+     uint64_t token = 0;
+     uintptr_t audible_owner = 0;
+   };

@@ -1,0 +1,1339 @@
+--- a/api/audio/audio_device.h
++++ b/api/audio/audio_device.h
+@@ -51,7 +51,8 @@
+     kStartRecordingTopology, kStartPlayoutTopology, kCaptureStopTimeout,
+     kSharedStopTimeout, kRenderStopTimeout, kDeviceList, kStreamFormat,
+     kDataSource, kInputCallbackShape, kInputConverterShape,
+-    kCaptureConverterReset, kCaptureConverterFill, kRenderConverterFill
++    kCaptureConverterReset, kCaptureConverterFill, kRenderConverterFill,
++    kCallbackCellExhausted, kCallbackDrainTimeout, kResourceProof
+   };
+   struct ExperimentalCoreAudioErrorContext {
+     ExperimentalCoreAudioErrorOrigin origin = ExperimentalCoreAudioErrorOrigin::kUnknown;
+@@ -60,11 +61,19 @@
+     double uptime = 0;
+   };
+   struct ExperimentalCoreAudioDiagnostics {
++    bool durable_ownership = false;
+     int32_t first_error = 0;
+     bool first_error_metadata_ready = false;
+     ExperimentalCoreAudioErrorContext first_error_context;
+     uint64_t observed_route_generation = 0;
+     uint32_t selected_input_device_id = 0, selected_output_device_id = 0;
++    uint64_t unsafe_failure_mask = 0, unsafe_failure_count = 0;
++    bool retirement_requested = false, retirement_confirmed = false;
++    uint64_t input_retirement_proof = 0, output_retirement_proof = 0;
++    uint64_t input_retirement_required = 0, output_retirement_required = 0;
++    int32_t input_stop_status = 0, input_destroy_status = 0;
++    int32_t output_stop_status = 0, output_destroy_status = 0;
++    size_t callback_cells_used = 0, callback_cell_bytes = 0;
+   };
+   struct ExperimentalCoreAudioState {
+     bool supported = false, enabled = false;
+@@ -86,6 +95,7 @@
+   virtual int32_t SetExperimentalCoreAudioAvailability(bool, bool) { return -1; }
+   virtual int32_t SetExperimentalCoreAudioCaptureMuted(bool) { return -1; }
+   virtual ExperimentalCoreAudioState GetExperimentalCoreAudioState() const { return {}; }
++  virtual int32_t RetireExperimentalCoreAudioOwner() { return -1; }
+ #endif
+   enum AudioLayer {
+     kPlatformDefaultAudio = 0,
+--- a/modules/audio_device/audio_device_generic.h
++++ b/modules/audio_device/audio_device_generic.h
+@@ -121,6 +121,7 @@
+   // Passive atomic status; zero only while no native error has been observed.
+   virtual int32_t ExperimentalCoreAudioError() const { return -1; }
+   virtual AudioDeviceModule::ExperimentalCoreAudioDiagnostics ExperimentalCoreAudioDiagnosticState() const { return {}; }
++  virtual int32_t RetireExperimentalCoreAudioOwner() { return -1; }
+ #endif
+   virtual bool BuiltInAECIsAvailable() const;
+   virtual bool BuiltInAGCIsAvailable() const;
+--- a/modules/audio_device/audio_device_impl.cc
++++ b/modules/audio_device/audio_device_impl.cc
+@@ -60,6 +60,25 @@
+   }
+ 
+ namespace webrtc {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++namespace {
++using ExperimentalOwnerAnchors = ExperimentalCoreAudioOwnerAnchorPool<scoped_refptr<AudioDeviceModule>, 128>;
++ExperimentalOwnerAnchors& CoreAudioOwnerAnchors() {
++  alignas(ExperimentalOwnerAnchors) static std::byte storage[sizeof(ExperimentalOwnerAnchors)];
++  static auto* anchors = new (storage) ExperimentalOwnerAnchors;
++  return *anchors;
++}
++}  // namespace
++absl_nullable scoped_refptr<AudioDeviceModuleImpl> AudioDeviceModuleImpl::CreateExperimentalCoreAudioRetirement(const Environment& env) {
++  auto module = make_ref_counted<AudioDeviceModuleImpl>(env, kPlatformDefaultAudio,
++      std::make_unique<AudioDeviceMac>(true), false);
++  if (module->CheckPlatform() != 0 || module->AttachAudioBuffer() != 0) return nullptr;
++  // Install the COMPLETE ADM/ADB owner before exposing it to any Init/factory.
++  if (!CoreAudioOwnerAnchors().Retain(module)) return nullptr;
++  module->core_audio_anchor_owned_ = true;
++  return module;
++}
++#endif
+ 
+ absl_nullable scoped_refptr<AudioDeviceModuleImpl>
+ AudioDeviceModuleImpl::Create(const Environment& env, AudioLayer audio_layer) {
+@@ -283,6 +302,13 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::Init() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (audio_device_) {
++    const auto diagnostic = audio_device_->ExperimentalCoreAudioDiagnosticState();
++    if (!ExperimentalCoreAudioOwnerMayInitialize(diagnostic.durable_ownership,
++        diagnostic.retirement_requested, diagnostic.retirement_confirmed, audio_device_->ExperimentalCoreAudioError())) return -3;
++  }
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+   if (initialized_)
+     return 0;
+@@ -328,8 +354,9 @@
+   core_audio_play_initialized_.store(audio_device_->PlayoutIsInitialized(), std::memory_order_relaxed);
+   core_audio_recording_.store(audio_device_->Recording(), std::memory_order_relaxed);
+   core_audio_playing_.store(audio_device_->Playing(), std::memory_order_relaxed);
+-  if (audio_device_->ExperimentalCoreAudioError() != 0) {
+-    core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++  const auto diagnostic = audio_device_->ExperimentalCoreAudioDiagnosticState();
++  if (diagnostic.unsafe_failure_mask != 0) core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++  if (audio_device_->ExperimentalCoreAudioError() != 0 && !diagnostic.retirement_confirmed) {
+     audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
+     if (result == 0) result = -3;
+   }
+@@ -339,6 +366,7 @@
+   return result;
+ }
+ int32_t AudioDeviceModuleImpl::EnableExperimentalCoreAudioControl() {
++  if (audio_device_->ExperimentalCoreAudioDiagnosticState().retirement_requested) return -3;
+   if (core_audio_enabled_.load(std::memory_order_acquire)) return 0;
+   if (platform_type_ != kPlatformMac || audio_layer_ != kPlatformDefaultAudio ||
+       audio_device_->Playing() || audio_device_->Recording() ||
+@@ -353,6 +381,8 @@
+ }
+ int32_t AudioDeviceModuleImpl::ApplyCoreAudioDirection(bool input, bool run) {
+   if (run) {
++    if (audio_device_->ExperimentalCoreAudioError() || audio_device_->ExperimentalCoreAudioDiagnosticState().retirement_requested)
++      return CacheCoreAudioState(-3);
+     if (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire)) return -3;
+     bool initialized = input ? audio_device_->RecordingIsInitialized() : audio_device_->PlayoutIsInitialized();
+     int32_t result = initialized ? 0 : (input ? audio_device_->InitRecording() : audio_device_->InitPlayout());
+@@ -387,6 +417,8 @@
+   return CacheCoreAudioState(result);
+ }
+ int32_t AudioDeviceModuleImpl::InitCoreAudioDirection(bool input) {
++  if (audio_device_->ExperimentalCoreAudioError() || audio_device_->ExperimentalCoreAudioDiagnosticState().retirement_requested)
++    return CacheCoreAudioState(-3);
+   if (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire)) return -3;
+   const bool available = input ? core_audio_input_available_.load(std::memory_order_acquire)
+                                : core_audio_output_available_.load(std::memory_order_acquire);
+@@ -401,6 +433,7 @@
+ }
+ int32_t AudioDeviceModuleImpl::SetExperimentalCoreAudioAvailability(bool input, bool output) {
+   if (!core_audio_enabled_.load(std::memory_order_acquire)) return -1;
++  if ((input || output) && audio_device_->ExperimentalCoreAudioDiagnosticState().retirement_requested) return -3;
+   if (!input) audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
+   core_audio_input_available_.store(input, std::memory_order_release);
+   core_audio_output_available_.store(output, std::memory_order_release);
+@@ -414,15 +447,25 @@
+ }
+ int32_t AudioDeviceModuleImpl::SetExperimentalCoreAudioCaptureMuted(bool muted) {
+   if (!core_audio_enabled_.load(std::memory_order_acquire)) return -1;
+-  if (!muted && (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || audio_device_->ExperimentalCoreAudioError())) return -3;
++  if (!muted && (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || audio_device_->ExperimentalCoreAudioError() ||
++      audio_device_->ExperimentalCoreAudioDiagnosticState().retirement_requested)) return -3;
+   audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(muted);
+   return 0;
+ }
+ AudioDeviceModule::ExperimentalCoreAudioState AudioDeviceModuleImpl::GetExperimentalCoreAudioState() const {
+   ExperimentalCoreAudioState result;
++  result.native_diagnostics = audio_device_->ExperimentalCoreAudioDiagnosticState();
+   result.enabled = core_audio_enabled_.load(std::memory_order_acquire);
+   result.supported = result.enabled;
+-  if (!result.enabled) return result;
++  if (!result.enabled) {
++    const auto& diagnostic = result.native_diagnostics;
++    result.supported = diagnostic.durable_ownership;
++    result.cleanup_unconfirmed = diagnostic.unsafe_failure_mask != 0 ||
++        core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) ||
++        (audio_device_->ExperimentalCoreAudioError() != 0 && !diagnostic.retirement_confirmed);
++    result.last_result = core_audio_last_result_.load(std::memory_order_relaxed);
++    return result;
++  }
+   result.input_available = core_audio_input_available_.load(std::memory_order_acquire);
+   result.output_available = core_audio_output_available_.load(std::memory_order_acquire);
+   result.recording_requested = core_audio_record_requested_.load(std::memory_order_acquire);
+@@ -433,9 +476,11 @@
+   result.playing = core_audio_playing_.load(std::memory_order_acquire);
+   result.capture_generation = audio_device_buffer_.ExperimentalCoreAudioCaptureState();
+   result.capture_muted = (result.capture_generation & 1) != 0;
+-  result.cleanup_unconfirmed = core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || audio_device_->ExperimentalCoreAudioError() != 0;
++  const auto diagnostic = audio_device_->ExperimentalCoreAudioDiagnosticState();
++  result.cleanup_unconfirmed = core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || diagnostic.unsafe_failure_mask != 0 ||
++      (audio_device_->ExperimentalCoreAudioError() != 0 && !diagnostic.retirement_confirmed);
+   result.last_result = core_audio_last_result_.load(std::memory_order_relaxed);
+-  if (audio_device_->ExperimentalCoreAudioError() && result.last_result == 0) result.last_result = -3;
++  if (audio_device_->ExperimentalCoreAudioError() && !diagnostic.retirement_confirmed && result.last_result == 0) result.last_result = -3;
+   result.control_snapshot_uptime = core_audio_snapshot_nanos_.load(std::memory_order_acquire) * 1e-9;
+   result.input_meter = audio_device_buffer_.ExperimentalCoreAudioInputMeter();
+   result.output_meter = audio_device_buffer_.ExperimentalCoreAudioOutputMeter();
+@@ -447,6 +492,34 @@
+   result.playout_channels = audio_device_buffer_.PlayoutChannels();
+   return result;
+ }
++int32_t AudioDeviceModuleImpl::RetireExperimentalCoreAudioOwner() {
++  if (!audio_device_->ExperimentalCoreAudioDiagnosticState().durable_ownership) return -1;
++  scoped_refptr<AudioDeviceModule> keep_alive(this);
++  audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
++  core_audio_input_available_.store(false, std::memory_order_release);
++  core_audio_output_available_.store(false, std::memory_order_release);
++  core_audio_record_requested_.store(false, std::memory_order_release);
++  core_audio_play_requested_.store(false, std::memory_order_release);
++  const int32_t result = audio_device_->RetireExperimentalCoreAudioOwner();
++  if (audio_device_buffer_.IsRecording()) audio_device_buffer_.StopRecording();
++  if (audio_device_buffer_.IsPlaying()) audio_device_buffer_.StopPlayout();
++  const auto diagnostic = audio_device_->ExperimentalCoreAudioDiagnosticState();
++  const bool confirmed = result == 0 && diagnostic.retirement_confirmed && diagnostic.unsafe_failure_mask == 0 &&
++      !core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) &&
++      !audio_device_->Recording() && !audio_device_->Playing() &&
++      !audio_device_->RecordingIsInitialized() && !audio_device_->PlayoutIsInitialized();
++  if (!confirmed) core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++  if (confirmed) initialized_ = false;
++  const int32_t cached = CacheCoreAudioState(confirmed ? 0 : -1);
++  if (confirmed && cached == 0 && core_audio_anchor_owned_) {
++    if (!CoreAudioOwnerAnchors().ReleaseConfirmed(keep_alive, true)) {
++      core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++      return CacheCoreAudioState(-1);
++    }
++    core_audio_anchor_owned_ = false;
++  }
++  return cached;
++}
+ #endif
+ 
+ int32_t AudioDeviceModuleImpl::InitSpeaker() {
+--- a/modules/audio_device/mac/audio_device_mac.h
++++ b/modules/audio_device/mac/audio_device_mac.h
+@@ -61,11 +61,12 @@
+ 
+ class AudioDeviceMac : public AudioDeviceGeneric {
+  public:
+-  AudioDeviceMac();
++  explicit AudioDeviceMac(bool experimental_ownership = false);
+   ~AudioDeviceMac();
+   virtual int32_t EnableExperimentalCoreAudioControl();
+   virtual int32_t ExperimentalCoreAudioError() const;
+   virtual AudioDeviceModule::ExperimentalCoreAudioDiagnostics ExperimentalCoreAudioDiagnosticState() const;
++  virtual int32_t RetireExperimentalCoreAudioOwner();
+ 
+   // Retrieve the currently utilized audio layer
+   virtual int32_t ActiveAudioLayer(
+@@ -265,6 +266,7 @@
+ 
+   bool KeyPressed();
+ 
++  const bool experimental_ownership_;
+   AudioDeviceBuffer* _ptrAudioBuffer;
+ 
+   Mutex mutex_;
+@@ -293,6 +295,42 @@
+   std::atomic<uint32_t> experimental_selected_input_id_{0}, experimental_selected_output_id_{0};
+   void RecordExperimentalCoreAudioError(int32_t error, ErrorOrigin origin, uint32_t source_line,
+       AudioObjectID object = 0, AudioObjectPropertySelector selector = 0, AudioObjectPropertyScope scope = 0);
++  static constexpr OSStatus kDiagnosticNotAttempted = -2147483647;
++  enum RetirementProof : uint64_t {
++    kCreated = 1, kStarted = 2, kStopSucceeded = 4, kDestroyed = 8,
++    kCellClosed = 16, kCellDrained = 32, kWorkerJoined = 64,
++    kConverterDisposed = 128, kListenersRemoved = 256, kDirectionClean = 512
++  };
++  struct ExperimentalIOResource {
++    AudioDeviceID device = 0;
++    AudioDeviceIOProcID proc = nullptr;
++    ExperimentalCoreAudioCallbackCell* cell = nullptr;
++    bool created = false, started = false;
++    uint64_t serial = 0;
++    std::atomic<uint64_t> ack_serial{0}, proof{0}, required_proof{0};
++    std::atomic<OSStatus> stop_status{kDiagnosticNotAttempted}, destroy_status{kDiagnosticNotAttempted};
++  };
++  struct ExperimentalListenerResource {
++    AudioObjectID object = 0;
++    AudioObjectPropertyAddress address{};
++    ExperimentalCoreAudioCallbackCell* cell = nullptr;
++    bool registered = false;
++  };
++  std::array<ExperimentalListenerResource, 8> experimental_listeners_;
++  ExperimentalIOResource experimental_input_io_, experimental_output_io_;
++  bool experimental_capture_converter_owned_ = false, experimental_render_converter_owned_ = false;
++  bool experimental_capture_semaphore_owned_ = false, experimental_render_semaphore_owned_ = false;
++  ExperimentalCoreAudioUnsafeErrors experimental_unsafe_errors_;
++  std::atomic<bool> experimental_retirement_requested_{false}, experimental_retirement_confirmed_{false};
++  OSStatus AddDeviceListener(AudioObjectID object, const AudioObjectPropertyAddress* address);
++  OSStatus RemoveDeviceListener(AudioObjectID object, const AudioObjectPropertyAddress* address);
++  OSStatus CreateDeviceIOProc(AudioDeviceID device, AudioDeviceIOProc callback, bool input, AudioDeviceIOProcID* proc);
++  OSStatus CompleteExperimentalIOStop(bool input);
++  int32_t StopExperimentalDirection(bool input);
++  bool DrainCallbackCell(ExperimentalCoreAudioCallbackCell* cell);
++  static OSStatus guardedObjectListenerProc(AudioObjectID, UInt32, const AudioObjectPropertyAddress[], void*);
++  static OSStatus guardedDeviceIOProc(AudioDeviceID, const AudioTimeStamp*, const AudioBufferList*, const AudioTimeStamp*, AudioBufferList*, const AudioTimeStamp*, void*);
++  static OSStatus guardedInputIOProc(AudioDeviceID, const AudioTimeStamp*, const AudioBufferList*, const AudioTimeStamp*, AudioBufferList*, const AudioTimeStamp*, void*);
+   AudioDeviceIOProcID _inDeviceIOProcID;
+   AudioDeviceIOProcID _deviceIOProcID;
+   bool _inputDeviceIsSpecified;
+--- a/modules/audio_device/mac/audio_device_mac.cc
++++ b/modules/audio_device/mac/audio_device_mac.cc
+@@ -10,6 +10,8 @@
+ 
+ #include "modules/audio_device/mac/audio_device_mac.h"
+ #include <cmath>
++#include <algorithm>
++#include <time.h>
+ 
+ #include <ApplicationServices/ApplicationServices.h>
+ #include <mach/mach.h>   // mach_task_self()
+@@ -23,6 +25,7 @@
+ #include "rtc_base/checks.h"
+ #include "rtc_base/platform_thread.h"
+ #include "rtc_base/system/arch.h"
++#include "rtc_base/time_utils.h"
+ 
+ namespace webrtc {
+ 
+@@ -99,8 +102,9 @@
+ #endif
+ }
+ 
+-AudioDeviceMac::AudioDeviceMac()
+-    : _ptrAudioBuffer(NULL),
++AudioDeviceMac::AudioDeviceMac(bool experimental_ownership)
++    : experimental_ownership_(experimental_ownership),
++      _ptrAudioBuffer(NULL),
+       _mixerManager(),
+       _inputDeviceIndex(0),
+       _outputDeviceIndex(0),
+@@ -152,12 +156,12 @@
+   RTC_DCHECK(render_worker_thread_.empty());
+ 
+   kern_return_t kernErr = KERN_SUCCESS;
+-  kernErr = semaphore_destroy(mach_task_self(), _renderSemaphore);
++  kernErr = (!experimental_ownership_ || experimental_render_semaphore_owned_) ? semaphore_destroy(mach_task_self(), _renderSemaphore) : KERN_SUCCESS;
+   if (kernErr != KERN_SUCCESS) {
+     RTC_LOG(LS_ERROR) << "semaphore_destroy() error: " << kernErr;
+   }
+ 
+-  kernErr = semaphore_destroy(mach_task_self(), _captureSemaphore);
++  kernErr = (!experimental_ownership_ || experimental_capture_semaphore_owned_) ? semaphore_destroy(mach_task_self(), _captureSemaphore) : KERN_SUCCESS;
+   if (kernErr != KERN_SUCCESS) {
+     RTC_LOG(LS_ERROR) << "semaphore_destroy() error: " << kernErr;
+   }
+@@ -181,6 +185,10 @@
+ 
+ int32_t AudioDeviceMac::EnableExperimentalCoreAudioControl() {
+   MutexLock lock(&mutex_);
++  if (!experimental_ownership_ || ExperimentalCoreAudioError()) return -1;
++  if (experimental_retirement_requested_.load(std::memory_order_acquire) ||
++      experimental_input_io_.created || experimental_output_io_.created ||
++      experimental_capture_converter_owned_ || experimental_render_converter_owned_) return -1;
+   if (_playing || _recording || _playIsInitialized || _recIsInitialized) return -1;
+   AudioDeviceID input = 0, output = 0;
+   UInt32 size = sizeof(AudioDeviceID);
+@@ -204,6 +212,7 @@
+ }
+ AudioDeviceModule::ExperimentalCoreAudioDiagnostics AudioDeviceMac::ExperimentalCoreAudioDiagnosticState() const {
+   AudioDeviceModule::ExperimentalCoreAudioDiagnostics result;
++  result.durable_ownership = experimental_ownership_;
+   const auto first = experimental_core_audio_error_.Read();
+   result.first_error = first.error;
+   result.first_error_metadata_ready = first.metadata_ready;
+@@ -211,11 +220,29 @@
+   result.observed_route_generation = experimental_observed_route_generation_.load(std::memory_order_acquire);
+   result.selected_input_device_id = experimental_selected_input_id_.load(std::memory_order_acquire);
+   result.selected_output_device_id = experimental_selected_output_id_.load(std::memory_order_acquire);
++  result.unsafe_failure_mask = experimental_unsafe_errors_.mask();
++  result.unsafe_failure_count = experimental_unsafe_errors_.count();
++  result.retirement_requested = experimental_retirement_requested_.load(std::memory_order_acquire);
++  result.retirement_confirmed = experimental_retirement_confirmed_.load(std::memory_order_acquire);
++  result.input_retirement_proof = experimental_input_io_.proof.load(std::memory_order_acquire);
++  result.output_retirement_proof = experimental_output_io_.proof.load(std::memory_order_acquire);
++  result.input_retirement_required = experimental_input_io_.required_proof.load(std::memory_order_acquire);
++  result.output_retirement_required = experimental_output_io_.required_proof.load(std::memory_order_acquire);
++  result.input_stop_status = experimental_input_io_.stop_status.load(std::memory_order_acquire);
++  result.input_destroy_status = experimental_input_io_.destroy_status.load(std::memory_order_acquire);
++  result.output_stop_status = experimental_output_io_.stop_status.load(std::memory_order_acquire);
++  result.output_destroy_status = experimental_output_io_.destroy_status.load(std::memory_order_acquire);
++  result.callback_cells_used = ExperimentalCoreAudioCallbackCells().used();
++  result.callback_cell_bytes = sizeof(ExperimentalCoreAudioCallbackCell);
+   return result;
+ }
+ void AudioDeviceMac::RecordExperimentalCoreAudioError(int32_t error, ErrorOrigin origin,
+     uint32_t source_line, AudioObjectID object, AudioObjectPropertySelector selector, AudioObjectPropertyScope scope) {
+-  if (error && experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++  if (!experimental_ownership_) return;
++  if (error && origin != ErrorOrigin::kDeviceList && origin != ErrorOrigin::kStreamFormat && origin != ErrorOrigin::kDataSource) {
++    experimental_unsafe_errors_.Record(static_cast<uint32_t>(origin));
++  }
++  if (error) {
+     experimental_core_audio_error_.Record(error, [=, this] {
+       AudioDeviceModule::ExperimentalCoreAudioErrorContext context;
+       context.origin = origin; context.source_line = source_line;
+@@ -229,6 +256,214 @@
+   }
+ }
+ 
++bool AudioDeviceMac::DrainCallbackCell(ExperimentalCoreAudioCallbackCell* cell) {
++  if (!cell) return true;
++  cell->Close();
++  const int64_t deadline = TimeMillis() + 2000;
++  while (!cell->ClosedAndDrained() && TimeMillis() < deadline) {
++    struct timespec pause{0, 1000000};
++    nanosleep(&pause, nullptr);
++  }
++  if (cell->ClosedAndDrained()) return true;
++  RecordExperimentalCoreAudioError(-9, ErrorOrigin::kCallbackDrainTimeout, __LINE__);
++  return false;
++}
++OSStatus AudioDeviceMac::AddDeviceListener(AudioObjectID object, const AudioObjectPropertyAddress* address) {
++  if (!experimental_ownership_) return AudioObjectAddPropertyListener(object, address, objectListenerProc, this);
++  auto slot = std::find_if(experimental_listeners_.begin(), experimental_listeners_.end(),
++      [](const auto& entry) { return entry.cell == nullptr; });
++  auto* cell = slot == experimental_listeners_.end() ? nullptr : ExperimentalCoreAudioCallbackCells().Allocate(this);
++  if (!cell) {
++    RecordExperimentalCoreAudioError(-8, ErrorOrigin::kCallbackCellExhausted, __LINE__);
++    return -8;
++  }
++  slot->object = object; slot->address = *address; slot->cell = cell;
++  // Callback state and route handling are ready before registration can notify.
++  if (!cell->Open()) { RecordExperimentalCoreAudioError(-10, ErrorOrigin::kResourceProof, __LINE__); return -10; }
++  const OSStatus status = AudioObjectAddPropertyListener(object, address, guardedObjectListenerProc, cell);
++  if (status == noErr) slot->registered = true;
++  else cell->Close();  // Drain later on retirement, outside the Init mutex.
++  return status;
++}
++OSStatus AudioDeviceMac::RemoveDeviceListener(AudioObjectID object, const AudioObjectPropertyAddress* address) {
++  if (!experimental_ownership_) return AudioObjectRemovePropertyListener(object, address, objectListenerProc, this);
++  for (auto& entry : experimental_listeners_) {
++    if (!entry.registered || entry.object != object || entry.address.mSelector != address->mSelector ||
++        entry.address.mScope != address->mScope || entry.address.mElement != address->mElement) continue;
++    entry.cell->Close();
++    const OSStatus status = AudioObjectRemovePropertyListener(object, address, guardedObjectListenerProc, entry.cell);
++    const bool drained = DrainCallbackCell(entry.cell);
++    if (status == noErr && drained) { entry.registered = false; entry.cell = nullptr; }
++    return status != noErr ? status : (drained ? noErr : -9);
++  }
++  return noErr;  // The ledger proves no successful registration is owned.
++}
++OSStatus AudioDeviceMac::CreateDeviceIOProc(AudioDeviceID device, AudioDeviceIOProc callback, bool input, AudioDeviceIOProcID* proc) {
++  if (!experimental_ownership_) return AudioDeviceCreateIOProcID(device, callback, this, proc);
++  auto& io = input ? experimental_input_io_ : experimental_output_io_;
++  if (io.created) { RecordExperimentalCoreAudioError(-10, ErrorOrigin::kResourceProof, __LINE__); return -10; }
++  auto* cell = ExperimentalCoreAudioCallbackCells().Allocate(this);
++  if (!cell) { RecordExperimentalCoreAudioError(-8, ErrorOrigin::kCallbackCellExhausted, __LINE__); return -8; }
++  io.device = device; io.cell = cell; io.started = false; ++io.serial;
++  io.ack_serial.store(0, std::memory_order_release); io.proof.store(0, std::memory_order_release);
++  io.required_proof.store(0, std::memory_order_release);
++  io.stop_status.store(kDiagnosticNotAttempted, std::memory_order_release);
++  io.destroy_status.store(kDiagnosticNotAttempted, std::memory_order_release);
++  const OSStatus status = AudioDeviceCreateIOProcID(device, input ? guardedInputIOProc : guardedDeviceIOProc, cell, proc);
++  if (status == noErr) {
++    io.proc = *proc; io.created = true; io.proof.store(kCreated, std::memory_order_release);
++    if (!cell->Open()) { RecordExperimentalCoreAudioError(-10, ErrorOrigin::kResourceProof, __LINE__); return -10; }
++  }
++  return status;
++}
++OSStatus AudioDeviceMac::CompleteExperimentalIOStop(bool input) {
++  auto& io = input ? experimental_input_io_ : experimental_output_io_;
++  const OSStatus stopped = AudioDeviceStop(io.device, io.proc);
++  io.stop_status.store(stopped, std::memory_order_release);
++  if (stopped != noErr) RecordExperimentalCoreAudioError(stopped, ErrorOrigin::kHALCall, __LINE__);
++  else io.proof.fetch_or(kStopSucceeded, std::memory_order_release);
++  const OSStatus destroyed = AudioDeviceDestroyIOProcID(io.device, io.proc);
++  io.destroy_status.store(destroyed, std::memory_order_release);
++  if (destroyed != noErr) RecordExperimentalCoreAudioError(destroyed, ErrorOrigin::kHALCall, __LINE__);
++  else io.proof.fetch_or(kDestroyed, std::memory_order_release);
++  io.ack_serial.store(io.serial, std::memory_order_release);
++  return stopped != noErr ? stopped : destroyed;
++}
++int32_t AudioDeviceMac::StopExperimentalDirection(bool input) {
++  auto& io = input ? experimental_input_io_ : experimental_output_io_;
++  auto& worker = input ? capture_worker_thread_ : render_worker_thread_;
++  auto& owned_converter = input ? experimental_capture_converter_owned_ : experimental_render_converter_owned_;
++  auto& converter = input ? _captureConverter : _renderConverter;
++  uint64_t required = kWorkerJoined | kConverterDisposed | kListenersRemoved;
++  if (io.cell) required |= kCellClosed | kCellDrained;
++  if (io.created) required |= kDestroyed;
++  if (io.started) required |= kStopSucceeded;
++  io.required_proof.fetch_or(required, std::memory_order_release);
++  // Control calls are worker-serialized; never wait, join or call HAL under mutex_.
++  if (io.created && io.started && !(io.proof.load(std::memory_order_acquire) & kCellClosed)) {
++    {
++      MutexLock lock(&mutex_);
++      if (input) { _recording = false; _doStopRec = true; }
++      else { _playing = false; _doStop = true; }
++    }
++    const bool signaled = input ? _stopEventRec.Wait(TimeDelta::Seconds(2)) : _stopEvent.Wait(TimeDelta::Seconds(2));
++    const bool acknowledged = io.ack_serial.load(std::memory_order_acquire) == io.serial;
++    if (!signaled || !acknowledged) {
++      RecordExperimentalCoreAudioError(-7, input ? ErrorOrigin::kCaptureStopTimeout : ErrorOrigin::kRenderStopTimeout, __LINE__);
++      // No concurrent fallback destroy: the original callback may still be in HAL.
++    }
++  } else if (io.created && !io.started && !(io.proof.load(std::memory_order_acquire) & kDestroyed)) {
++    const OSStatus status = AudioDeviceDestroyIOProcID(io.device, io.proc);
++    io.destroy_status.store(status, std::memory_order_release);
++    if (status != noErr) RecordExperimentalCoreAudioError(status, ErrorOrigin::kHALCall, __LINE__);
++    else io.proof.fetch_or(kDestroyed, std::memory_order_release);
++  }
++  if (io.cell) {
++    io.cell->Close(); io.proof.fetch_or(kCellClosed, std::memory_order_release);
++    if (!DrainCallbackCell(io.cell)) return -1;
++    io.proof.fetch_or(kCellDrained, std::memory_order_release);
++  }
++  if (input) _captureDeviceIsAlive = 0; else _renderDeviceIsAlive = 0;
++  if (!worker.empty()) {
++    const kern_return_t wake = semaphore_signal_all(input ? _captureSemaphore : _renderSemaphore);
++    if (wake != KERN_SUCCESS) RecordExperimentalCoreAudioError(wake, ErrorOrigin::kResourceProof, __LINE__);
++    worker.Finalize();
++  }
++  io.proof.fetch_or(kWorkerJoined, std::memory_order_release);
++  if (io.created) {
++    if (!ExperimentalCoreAudioNativeStopComplete(io.started, io.stop_status.load(std::memory_order_acquire),
++        io.destroy_status.load(std::memory_order_acquire))) {
++      RecordExperimentalCoreAudioError(-10, ErrorOrigin::kResourceProof, __LINE__); return -1;
++    }
++    io.created = false; io.started = false; io.proc = nullptr;
++    if (input) _inDeviceIOProcID = nullptr; else _deviceIOProcID = nullptr;
++  }
++  if (experimental_unsafe_errors_.mask()) return -1;
++  const auto scope = input ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput;
++  for (auto& entry : experimental_listeners_) {
++    if (!entry.registered || entry.object == kAudioObjectSystemObject || entry.address.mScope != scope) continue;
++    const OSStatus status = RemoveDeviceListener(entry.object, &entry.address);
++    if (status != noErr) RecordExperimentalCoreAudioError(status, ErrorOrigin::kHALCall, __LINE__);
++  }
++  if (experimental_unsafe_errors_.mask()) return -1;
++  io.proof.fetch_or(kListenersRemoved, std::memory_order_release);
++  if (owned_converter) {
++    const OSStatus status = AudioConverterDispose(converter);
++    if (status != noErr) { RecordExperimentalCoreAudioError(status, ErrorOrigin::kHALCall, __LINE__); return -1; }
++    owned_converter = false; converter = nullptr;
++  }
++  io.proof.fetch_or(kConverterDisposed, std::memory_order_release);
++  if (!ExperimentalCoreAudioRetirementComplete(io.proof.load(std::memory_order_acquire),
++      io.required_proof.load(std::memory_order_acquire), experimental_unsafe_errors_.mask())) {
++    RecordExperimentalCoreAudioError(-10, ErrorOrigin::kResourceProof, __LINE__); return -1;
++  }
++  if (input) { _captureBuffer.Clear(); if (experimental_capture_buffer_) experimental_capture_buffer_->ClearWhenIdle(); }
++  else _renderBuffer.Clear();
++  io.proof.fetch_or(kDirectionClean, std::memory_order_release);
++  if (input) { _recIsInitialized = false; _recording = false; _doStopRec = false; }
++  else { _playIsInitialized = false; _playing = false; _doStop = false; }
++  return 0;
++}
++int32_t AudioDeviceMac::RetireExperimentalCoreAudioOwner() {
++  if (!experimental_ownership_) return -1;
++  if (experimental_retirement_confirmed_.load(std::memory_order_acquire)) return 0;
++  experimental_retirement_requested_.store(true, std::memory_order_release);
++  if (_ptrAudioBuffer) _ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++  const int32_t input = StopExperimentalDirection(true), output = StopExperimentalDirection(false);
++  for (auto& entry : experimental_listeners_) if (entry.cell && !entry.registered) DrainCallbackCell(entry.cell);
++  if (input || output || experimental_unsafe_errors_.mask()) return -1;
++  for (auto& entry : experimental_listeners_) {
++    if (!entry.registered) continue;
++    const OSStatus status = RemoveDeviceListener(entry.object, &entry.address);
++    if (status != noErr) RecordExperimentalCoreAudioError(status, ErrorOrigin::kHALCall, __LINE__);
++  }
++  if (experimental_unsafe_errors_.mask()) return -1;
++  _mixerManager.Close();
++  const OSStatus unloaded = _initialized ? AudioHardwareUnload() : noErr;
++  if (unloaded != noErr) { RecordExperimentalCoreAudioError(unloaded, ErrorOrigin::kHALCall, __LINE__); return -1; }
++  if (experimental_capture_semaphore_owned_) {
++    const kern_return_t status = semaphore_destroy(mach_task_self(), _captureSemaphore);
++    if (status != KERN_SUCCESS) { RecordExperimentalCoreAudioError(status, ErrorOrigin::kResourceProof, __LINE__); return -1; }
++    experimental_capture_semaphore_owned_ = false;
++  }
++  if (experimental_render_semaphore_owned_) {
++    const kern_return_t status = semaphore_destroy(mach_task_self(), _renderSemaphore);
++    if (status != KERN_SUCCESS) { RecordExperimentalCoreAudioError(status, ErrorOrigin::kResourceProof, __LINE__); return -1; }
++    experimental_render_semaphore_owned_ = false;
++  }
++  _initialized = false; _isShutDown = true;
++  _outputDeviceIsSpecified = false; _inputDeviceIsSpecified = false;
++  experimental_retirement_confirmed_.store(true, std::memory_order_release);
++  return 0;
++}
++OSStatus AudioDeviceMac::guardedObjectListenerProc(AudioObjectID object, UInt32 count,
++    const AudioObjectPropertyAddress addresses[], void* context) {
++  ExperimentalCoreAudioCallbackCell::Lease lease(static_cast<ExperimentalCoreAudioCallbackCell*>(context));
++  auto* owner = static_cast<AudioDeviceMac*>(lease.owner());
++  return owner ? owner->implObjectListenerProc(object, count, addresses) : noErr;
++}
++OSStatus AudioDeviceMac::guardedDeviceIOProc(AudioDeviceID, const AudioTimeStamp*,
++    const AudioBufferList* input, const AudioTimeStamp* input_time, AudioBufferList* output,
++    const AudioTimeStamp* output_time, void* context) {
++  ExperimentalCoreAudioCallbackCell::Lease lease(static_cast<ExperimentalCoreAudioCallbackCell*>(context));
++  if (auto* owner = static_cast<AudioDeviceMac*>(lease.owner())) {
++    owner->implDeviceIOProc(input, input_time, output, output_time);
++  } else if (output) {
++    for (UInt32 index = 0; index < output->mNumberBuffers; ++index) {
++      auto& buffer = output->mBuffers[index];
++      if (buffer.mData) memset(buffer.mData, 0, buffer.mDataByteSize);
++    }
++  }
++  return noErr;
++}
++OSStatus AudioDeviceMac::guardedInputIOProc(AudioDeviceID, const AudioTimeStamp*,
++    const AudioBufferList* input, const AudioTimeStamp* input_time, AudioBufferList*,
++    const AudioTimeStamp*, void* context) {
++  ExperimentalCoreAudioCallbackCell::Lease lease(static_cast<ExperimentalCoreAudioCallbackCell*>(context));
++  if (auto* owner = static_cast<AudioDeviceMac*>(lease.owner())) owner->implInDeviceIOProc(input, input_time);
++  return noErr;
++}
++
+ int32_t AudioDeviceMac::ActiveAudioLayer(
+     AudioDeviceModule::AudioLayer& audioLayer) const {
+   audioLayer = AudioDeviceModule::kPlatformDefaultAudio;
+@@ -236,6 +471,10 @@
+ }
+ 
+ AudioDeviceGeneric::InitStatus AudioDeviceMac::Init() {
++  if (!ExperimentalCoreAudioOwnerMayInitialize(experimental_ownership_,
++      experimental_retirement_requested_.load(std::memory_order_acquire),
++      experimental_retirement_confirmed_.load(std::memory_order_acquire), ExperimentalCoreAudioError()))
++    return InitStatus::OTHER_ERROR;
+   MutexLock lock(&mutex_);
+ 
+   if (_initialized) {
+@@ -253,16 +492,22 @@
+   kernErr = semaphore_create(mach_task_self(), &_renderSemaphore,
+                              SYNC_POLICY_FIFO, 0);
+   if (kernErr != KERN_SUCCESS) {
++    RecordExperimentalCoreAudioError(kernErr, ErrorOrigin::kResourceProof, __LINE__);
+     RTC_LOG(LS_ERROR) << "semaphore_create() error: " << kernErr;
+     return InitStatus::OTHER_ERROR;
+   }
++
++  experimental_render_semaphore_owned_ = true;
+ 
+   kernErr = semaphore_create(mach_task_self(), &_captureSemaphore,
+                              SYNC_POLICY_FIFO, 0);
+   if (kernErr != KERN_SUCCESS) {
++    RecordExperimentalCoreAudioError(kernErr, ErrorOrigin::kResourceProof, __LINE__);
+     RTC_LOG(LS_ERROR) << "semaphore_create() error: " << kernErr;
+     return InitStatus::OTHER_ERROR;
+   }
++
++  experimental_capture_semaphore_owned_ = true;
+ 
+   // Setting RunLoop to NULL here instructs HAL to manage its own thread for
+   // notifications. This was the default behaviour on OS X 10.5 and earlier,
+@@ -283,8 +528,7 @@
+ 
+   // Listen for any device changes.
+   propertyAddress.mSelector = kAudioHardwarePropertyDevices;
+-  WEBRTC_CA_LOG_ERR(AudioObjectAddPropertyListener(
+-      kAudioObjectSystemObject, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_ERR(AddDeviceListener(kAudioObjectSystemObject, &propertyAddress));
+ 
+   // Determine if this is a MacBook Pro
+   _macBookPro = false;
+@@ -309,6 +553,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::Terminate() {
++  if (experimental_ownership_) return RetireExperimentalCoreAudioOwner();
+   if (!_initialized) {
+     return 0;
+   }
+@@ -332,8 +577,7 @@
+   AudioObjectPropertyAddress propertyAddress = {
+       kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal,
+       kAudioObjectPropertyElementMain};
+-  WEBRTC_CA_LOG_WARN(AudioObjectRemovePropertyListener(
+-      kAudioObjectSystemObject, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(RemoveDeviceListener(kAudioObjectSystemObject, &propertyAddress));
+ 
+   err = AudioHardwareUnload();
+   if (err != noErr) {
+@@ -406,6 +650,7 @@
+     RecordExperimentalCoreAudioError(-2, ErrorOrigin::kInitSpeakerTopology, __LINE__); return -1;
+   }
+   if (_mixerManager.OpenSpeaker(_outputDeviceID) == -1) {
++    RecordExperimentalCoreAudioError(-1, ErrorOrigin::kResourceProof, __LINE__);
+     return -1;
+   }
+ 
+@@ -465,6 +710,7 @@
+     RecordExperimentalCoreAudioError(-2, ErrorOrigin::kInitMicrophoneTopology, __LINE__); return -1;
+   }
+   if (_mixerManager.OpenMicrophone(_inputDeviceID) == -1) {
++    RecordExperimentalCoreAudioError(-1, ErrorOrigin::kResourceProof, __LINE__);
+     return -1;
+   }
+ 
+@@ -937,6 +1183,8 @@
+ }
+ 
+ int32_t AudioDeviceMac::InitPlayout() {
++  if (experimental_ownership_ && (!experimental_core_audio_enabled_.load(std::memory_order_acquire) ||
++      experimental_retirement_requested_.load(std::memory_order_acquire) || ExperimentalCoreAudioError())) return -1;
+   RTC_LOG(LS_INFO) << "InitPlayout";
+   MutexLock lock(&mutex_);
+ 
+@@ -1002,8 +1250,7 @@
+       }
+ 
+       // Add a listener to determine if the status changes.
+-      WEBRTC_CA_LOG_WARN(AudioObjectAddPropertyListener(
+-          _outputDeviceID, &propertyAddress, &objectListenerProc, this));
++      WEBRTC_CA_LOG_WARN(AddDeviceListener(_outputDeviceID, &propertyAddress));
+     }
+   }
+ 
+@@ -1057,17 +1304,14 @@
+ 
+   // Listen for format changes.
+   propertyAddress.mSelector = kAudioDevicePropertyStreamFormat;
+-  WEBRTC_CA_LOG_WARN(AudioObjectAddPropertyListener(
+-      _outputDeviceID, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(AddDeviceListener(_outputDeviceID, &propertyAddress));
+ 
+   // Listen for processor overloads.
+   propertyAddress.mSelector = kAudioDeviceProcessorOverload;
+-  WEBRTC_CA_LOG_WARN(AudioObjectAddPropertyListener(
+-      _outputDeviceID, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(AddDeviceListener(_outputDeviceID, &propertyAddress));
+ 
+   if (_twoDevices || !_recIsInitialized) {
+-    WEBRTC_CA_RETURN_ON_ERR(AudioDeviceCreateIOProcID(
+-        _outputDeviceID, deviceIOProc, this, &_deviceIOProcID));
++    WEBRTC_CA_RETURN_ON_ERR(CreateDeviceIOProc(_outputDeviceID, deviceIOProc, false, &_deviceIOProcID));
+   }
+ 
+   _playIsInitialized = true;
+@@ -1076,6 +1320,8 @@
+ }
+ 
+ int32_t AudioDeviceMac::InitRecording() {
++  if (experimental_ownership_ && (!experimental_core_audio_enabled_.load(std::memory_order_acquire) ||
++      experimental_retirement_requested_.load(std::memory_order_acquire) || ExperimentalCoreAudioError())) return -1;
+   RTC_LOG(LS_INFO) << "InitRecording";
+   MutexLock lock(&mutex_);
+ 
+@@ -1200,6 +1446,7 @@
+ 
+   WEBRTC_CA_RETURN_ON_ERR(AudioConverterNew(&_inStreamFormat, &_inDesiredFormat,
+                                             &_captureConverter));
++  experimental_capture_converter_owned_ = true;
+ 
+   // First try to set buffer size to desired value (10 ms * N_BLOCKS_IO)
+   // TODO(xians): investigate this block.
+@@ -1257,20 +1504,16 @@
+   // Listen for format changes
+   // TODO(xians): should we be using kAudioDevicePropertyDeviceHasChanged?
+   propertyAddress.mSelector = kAudioDevicePropertyStreamFormat;
+-  WEBRTC_CA_LOG_WARN(AudioObjectAddPropertyListener(
+-      _inputDeviceID, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(AddDeviceListener(_inputDeviceID, &propertyAddress));
+ 
+   // Listen for processor overloads
+   propertyAddress.mSelector = kAudioDeviceProcessorOverload;
+-  WEBRTC_CA_LOG_WARN(AudioObjectAddPropertyListener(
+-      _inputDeviceID, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(AddDeviceListener(_inputDeviceID, &propertyAddress));
+ 
+   if (_twoDevices) {
+-    WEBRTC_CA_RETURN_ON_ERR(AudioDeviceCreateIOProcID(
+-        _inputDeviceID, inDeviceIOProc, this, &_inDeviceIOProcID));
++    WEBRTC_CA_RETURN_ON_ERR(CreateDeviceIOProc(_inputDeviceID, inDeviceIOProc, true, &_inDeviceIOProcID));
+   } else if (!_playIsInitialized) {
+-    WEBRTC_CA_RETURN_ON_ERR(AudioDeviceCreateIOProcID(
+-        _inputDeviceID, deviceIOProc, this, &_deviceIOProcID));
++    WEBRTC_CA_RETURN_ON_ERR(CreateDeviceIOProc(_inputDeviceID, deviceIOProc, false, &_deviceIOProcID));
+   }
+ 
+   // Mark recording side as initialized
+@@ -1280,6 +1523,8 @@
+ }
+ 
+ int32_t AudioDeviceMac::StartRecording() {
++  if (experimental_ownership_ && (!experimental_core_audio_enabled_.load(std::memory_order_acquire) ||
++      experimental_retirement_requested_.load(std::memory_order_acquire) || ExperimentalCoreAudioError())) return -1;
+   RTC_LOG(LS_INFO) << "StartRecording";
+   MutexLock lock(&mutex_);
+   if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
+@@ -1329,6 +1574,10 @@
+   if (_twoDevices) {
+     WEBRTC_CA_RETURN_ON_ERR(
+         AudioDeviceStart(_inputDeviceID, _inDeviceIOProcID));
++    if (experimental_ownership_) {
++    experimental_input_io_.started = true;
++    experimental_input_io_.proof.fetch_or(kStarted, std::memory_order_release);
++    }
+   } else if (!_playing) {
+     WEBRTC_CA_RETURN_ON_ERR(AudioDeviceStart(_inputDeviceID, _deviceIOProcID));
+   }
+@@ -1339,6 +1588,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StopRecording() {
++  if (experimental_ownership_) return StopExperimentalDirection(true);
+   RTC_LOG(LS_INFO) << "StopRecording";
+   MutexLock lock(&mutex_);
+ 
+@@ -1423,12 +1673,10 @@
+   // Remove listeners.
+   AudioObjectPropertyAddress propertyAddress = {
+       kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeInput, 0};
+-  WEBRTC_CA_LOG_WARN(AudioObjectRemovePropertyListener(
+-      _inputDeviceID, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(RemoveDeviceListener(_inputDeviceID, &propertyAddress));
+ 
+   propertyAddress.mSelector = kAudioDeviceProcessorOverload;
+-  WEBRTC_CA_LOG_WARN(AudioObjectRemovePropertyListener(
+-      _inputDeviceID, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(RemoveDeviceListener(_inputDeviceID, &propertyAddress));
+ 
+   _recIsInitialized = false;
+   _recording = false;
+@@ -1449,6 +1697,8 @@
+ }
+ 
+ int32_t AudioDeviceMac::StartPlayout() {
++  if (experimental_ownership_ && (!experimental_core_audio_enabled_.load(std::memory_order_acquire) ||
++      experimental_retirement_requested_.load(std::memory_order_acquire) || ExperimentalCoreAudioError())) return -1;
+   RTC_LOG(LS_INFO) << "StartPlayout";
+   MutexLock lock(&mutex_);
+   if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
+@@ -1492,6 +1742,10 @@
+   if (_twoDevices || !_recording) {
+     OSStatus err = noErr;
+     WEBRTC_CA_RETURN_ON_ERR(AudioDeviceStart(_outputDeviceID, _deviceIOProcID));
++    if (experimental_ownership_) {
++    experimental_output_io_.started = true;
++    experimental_output_io_.proof.fetch_or(kStarted, std::memory_order_release);
++    }
+   }
+   _playing = true;
+ 
+@@ -1499,6 +1753,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StopPlayout() {
++  if (experimental_ownership_) return StopExperimentalDirection(false);
+   RTC_LOG(LS_INFO) << "StopPlayout";
+   MutexLock lock(&mutex_);
+ 
+@@ -1562,20 +1817,17 @@
+   // Remove listeners.
+   AudioObjectPropertyAddress propertyAddress = {
+       kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, 0};
+-  WEBRTC_CA_LOG_WARN(AudioObjectRemovePropertyListener(
+-      _outputDeviceID, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(RemoveDeviceListener(_outputDeviceID, &propertyAddress));
+ 
+   propertyAddress.mSelector = kAudioDeviceProcessorOverload;
+-  WEBRTC_CA_LOG_WARN(AudioObjectRemovePropertyListener(
+-      _outputDeviceID, &propertyAddress, &objectListenerProc, this));
++  WEBRTC_CA_LOG_WARN(RemoveDeviceListener(_outputDeviceID, &propertyAddress));
+ 
+   if (_macBookPro) {
+     Boolean hasProperty =
+         AudioObjectHasProperty(_outputDeviceID, &propertyAddress);
+     if (hasProperty) {
+       propertyAddress.mSelector = kAudioDevicePropertyDataSource;
+-      WEBRTC_CA_LOG_WARN(AudioObjectRemovePropertyListener(
+-          _outputDeviceID, &propertyAddress, &objectListenerProc, this));
++      WEBRTC_CA_LOG_WARN(RemoveDeviceListener(_outputDeviceID, &propertyAddress));
+     }
+   }
+ 
+@@ -1891,6 +2143,7 @@
+   OSStatus err = noErr;
+   WEBRTC_CA_RETURN_ON_ERR(AudioConverterNew(
+       &_outDesiredFormat, &_outStreamFormat, &_renderConverter));
++  experimental_render_converter_owned_ = true;
+ 
+   // Try to set buffer size to desired value set to 20ms.
+   const uint16_t kPlayBufDelayFixed = 20;
+@@ -1991,7 +2244,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::HandleDeviceChange() {
+-  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++  if (experimental_ownership_) {
+     experimental_observed_route_generation_.fetch_add(1, std::memory_order_acq_rel);
+     RecordExperimentalCoreAudioError(-6, ErrorOrigin::kDeviceList, __LINE__, kAudioObjectSystemObject, kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal);
+     if (_ptrAudioBuffer) _ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
+@@ -2048,7 +2301,7 @@
+ int32_t AudioDeviceMac::HandleStreamFormatChange(
+     const AudioObjectID objectId,
+     const AudioObjectPropertyAddress propertyAddress) {
+-  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++  if (experimental_ownership_) {
+     experimental_observed_route_generation_.fetch_add(1, std::memory_order_acq_rel);
+     RecordExperimentalCoreAudioError(-6, ErrorOrigin::kStreamFormat, __LINE__, objectId, propertyAddress.mSelector, propertyAddress.mScope);
+     if (_ptrAudioBuffer) _ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
+@@ -2145,7 +2398,7 @@
+ int32_t AudioDeviceMac::HandleDataSourceChange(
+     const AudioObjectID objectId,
+     const AudioObjectPropertyAddress propertyAddress) {
+-  if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
++  if (experimental_ownership_) {
+     experimental_observed_route_generation_.fetch_add(1, std::memory_order_acq_rel);
+     RecordExperimentalCoreAudioError(-6, ErrorOrigin::kDataSource, __LINE__, objectId, propertyAddress.mSelector, propertyAddress.mScope);
+     if (_ptrAudioBuffer) _ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
+@@ -2274,9 +2527,13 @@
+       if (_twoDevices || (!_recording && !_playing)) {
+         // In the case of a shared device, the single driving ioProc
+         // is stopped here
++        if (experimental_ownership_) {
++          err = CompleteExperimentalIOStop(false);
++        } else {
+         WEBRTC_CA_LOG_ERR(AudioDeviceStop(_outputDeviceID, _deviceIOProcID));
+         WEBRTC_CA_LOG_WARN(
+             AudioDeviceDestroyIOProcID(_outputDeviceID, _deviceIOProcID));
++        }
+         if (err == noErr) {
+           RTC_LOG(LS_VERBOSE) << "Playout or shared device stopped";
+         }
+@@ -2372,6 +2629,7 @@
+ 
+   kern_return_t kernErr = semaphore_signal_all(_renderSemaphore);
+   if (kernErr != KERN_SUCCESS) {
++    RecordExperimentalCoreAudioError(kernErr, ErrorOrigin::kResourceProof, __LINE__);
+     RTC_LOG(LS_ERROR) << "semaphore_signal_all() error: " << kernErr;
+     return 1;
+   }
+@@ -2395,9 +2653,13 @@
+     MutexLock lock(&mutex_);
+     if (_doStopRec) {
+       // This will be signalled only when a shared device is not in use.
++      if (experimental_ownership_) {
++        err = CompleteExperimentalIOStop(true);
++      } else {
+       WEBRTC_CA_LOG_ERR(AudioDeviceStop(_inputDeviceID, _inDeviceIOProcID));
+       WEBRTC_CA_LOG_WARN(
+           AudioDeviceDestroyIOProcID(_inputDeviceID, _inDeviceIOProcID));
++      }
+       if (err == noErr) {
+         RTC_LOG(LS_VERBOSE) << "Recording device stopped";
+       }
+@@ -2461,6 +2723,7 @@
+ 
+   kern_return_t kernErr = semaphore_signal_all(_captureSemaphore);
+   if (kernErr != KERN_SUCCESS) {
++    RecordExperimentalCoreAudioError(kernErr, ErrorOrigin::kResourceProof, __LINE__);
+     RTC_LOG(LS_ERROR) << "semaphore_signal_all() error: " << kernErr;
+   }
+ 
+@@ -2493,6 +2756,7 @@
+         return 1;
+       }
+     } else if (kernErr != KERN_SUCCESS) {
++      RecordExperimentalCoreAudioError(kernErr, ErrorOrigin::kResourceProof, __LINE__);
+       RTC_LOG(LS_ERROR) << "semaphore_wait() error: " << kernErr;
+     }
+   }
+--- a/modules/audio_device/mac/experimental_core_audio_capture.h
++++ b/modules/audio_device/mac/experimental_core_audio_capture.h
+@@ -5,12 +5,124 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <array>
++#include <cstddef>
++#include <new>
++#include <mutex>
+ #include <cstdint>
+ #include <span>
+ #include <vector>
+ #include "modules/audio_device/mac/audio_ring_buffer_mac.h"
+ 
+ namespace webrtc {
++inline bool ExperimentalCoreAudioOwnerMayInitialize(bool durable, bool retiring, bool retired, int32_t error) {
++  return !durable || (!retiring && !retired && error == 0);
++}
++template <typename Owner, size_t Capacity>
++class ExperimentalCoreAudioOwnerAnchorPool {
++ public:
++  bool Retain(const Owner& owner) {
++    if (!owner) return false;
++    std::lock_guard<std::mutex> lock(mutex_);
++    for (auto& slot : owners_) if (!slot) { slot = owner; return true; }
++    return false;
++  }
++  bool ReleaseConfirmed(const Owner& owner, bool confirmed) {
++    if (!confirmed) return false;
++    Owner retired;
++    {
++      std::lock_guard<std::mutex> lock(mutex_);
++      for (auto& slot : owners_) if (slot.get() == owner.get()) { retired = std::move(slot); break; }
++    }
++    return bool(retired);  // Release the anchor outside its mutex.
++  }
++ private:
++  std::mutex mutex_;
++  std::array<Owner, Capacity> owners_;
++};
++inline bool ExperimentalCoreAudioRetirementComplete(uint64_t observed, uint64_t required, uint64_t unsafe) {
++  return unsafe == 0 && (observed & required) == required;
++}
++inline bool ExperimentalCoreAudioNativeStopComplete(bool started, int32_t stopped, int32_t destroyed) {
++  return (!started || stopped == 0) && destroyed == 0;
++}
++class ExperimentalCoreAudioUnsafeErrors {
++ public:
++  void Record(uint32_t origin) {
++    mask_.fetch_or(uint64_t{1} << origin, std::memory_order_acq_rel);
++    count_.fetch_add(1, std::memory_order_acq_rel);
++  }
++  uint64_t mask() const { return mask_.load(std::memory_order_acquire); }
++  uint64_t count() const { return count_.load(std::memory_order_acquire); }
++ private:
++  static_assert(std::atomic<uint64_t>::is_always_lock_free);
++  std::atomic<uint64_t> mask_{0}, count_{0};
++};
++// HAL may queue a callback beyond unregister. Cells are never reclaimed/reused.
++// A single atomic closes admission and counts admitted owner accesses.
++class ExperimentalCoreAudioCallbackCell {
++ public:
++  static constexpr uint64_t kClosed = uint64_t{1} << 63;
++  static constexpr uint64_t kPublished = uint64_t{1} << 62;
++  static constexpr uint64_t kCountMask = kPublished - 1;
++  void Prepare(void* owner) { owner_ = owner; }
++  bool Open() {
++    uint64_t expected = kClosed;
++    return state_.compare_exchange_strong(expected, kPublished, std::memory_order_release, std::memory_order_relaxed);
++  }
++  void Close() { state_.fetch_or(kClosed, std::memory_order_acq_rel); }
++  bool ClosedAndDrained() const {
++    const uint64_t state = state_.load(std::memory_order_acquire);
++    return (state & kClosed) && !(state & kCountMask);
++  }
++  class Lease {
++   public:
++    explicit Lease(ExperimentalCoreAudioCallbackCell* cell) : cell_(cell) {
++      uint64_t state = cell_->state_.load(std::memory_order_acquire);
++      while (!(state & kClosed) && (state & kCountMask) < kCountMask) {
++        if (cell_->state_.compare_exchange_weak(state, state + 1, std::memory_order_acq_rel)) {
++          owner_ = cell_->owner_; return;
++        }
++      }
++    }
++    ~Lease() { if (owner_) cell_->state_.fetch_sub(1, std::memory_order_release); }
++    Lease(const Lease&) = delete;
++    Lease& operator=(const Lease&) = delete;
++    void* owner() const { return owner_; }
++   private:
++    ExperimentalCoreAudioCallbackCell* cell_;
++    void* owner_ = nullptr;
++  };
++ private:
++  static_assert(std::atomic<uint64_t>::is_always_lock_free);
++  std::atomic<uint64_t> state_{kClosed};
++  void* owner_ = nullptr;  // Immutable before Open; read only after admission.
++};
++template <size_t Capacity>
++class ExperimentalCoreAudioCallbackPool {
++ public:
++  ExperimentalCoreAudioCallbackCell* Allocate(void* owner) {
++    if (!owner) return nullptr;
++    size_t next = used_.load(std::memory_order_acquire);
++    while (next < Capacity) {
++      if (used_.compare_exchange_weak(next, next + 1, std::memory_order_acq_rel)) {
++        cells_[next].Prepare(owner); return &cells_[next];
++      }
++    }
++    return nullptr;
++  }
++  size_t used() const { return used_.load(std::memory_order_acquire); }
++ private:
++  std::array<ExperimentalCoreAudioCallbackCell, Capacity> cells_;
++  std::atomic<size_t> used_{0};
++};
++inline ExperimentalCoreAudioCallbackPool<1024>& ExperimentalCoreAudioCallbackCells() {
++  // Static storage with no destructor: HAL tombstones also survive exit teardown.
++  using Pool = ExperimentalCoreAudioCallbackPool<1024>;
++  alignas(Pool) static std::byte storage[sizeof(Pool)];
++  static Pool* cells = new (storage) Pool;
++  return *cells;
++}
+ // The original sticky error CAS remains the first publication. Only its winner
+ // writes immutable metadata; readers never inspect it before release/acquire.
+ // A reader may observe the error before its metadata is ready and reports that.
+--- a/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
++++ b/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
+@@ -17,6 +17,7 @@
+ 
+ #include <cstddef>
+ #include <cstdint>
++#include <memory>
+ #include <span>
+ #include <thread>
+ #include <vector>
+@@ -27,6 +28,99 @@
+ namespace {
+ 
+ struct FirstErrorTestContext { uint64_t generation = 0; uint32_t origin = 0; };
++TEST(ExperimentalCoreAudioRetirementTest, RetiredOrInvalidatedOwnerCannotInitializeAgain) {
++  EXPECT_TRUE(ExperimentalCoreAudioOwnerMayInitialize(true, false, false, 0));
++  EXPECT_FALSE(ExperimentalCoreAudioOwnerMayInitialize(true, true, false, 0));
++  EXPECT_FALSE(ExperimentalCoreAudioOwnerMayInitialize(true, true, true, 0));
++  EXPECT_FALSE(ExperimentalCoreAudioOwnerMayInitialize(true, false, true, 0));
++  EXPECT_FALSE(ExperimentalCoreAudioOwnerMayInitialize(true, false, false, -6));
++  EXPECT_TRUE(ExperimentalCoreAudioOwnerMayInitialize(false, false, false, -6));
++}
++TEST(ExperimentalCoreAudioRetirementTest, WholeOwnerAnchorSurvivesFactoryFailureUntilConfirmed) {
++  ExperimentalCoreAudioOwnerAnchorPool<std::shared_ptr<int>, 1> anchors;
++  auto owner = std::make_shared<int>(7); std::weak_ptr<int> weak = owner;
++  ASSERT_TRUE(anchors.Retain(owner)); owner.reset();
++  ASSERT_FALSE(weak.expired());
++  EXPECT_FALSE(anchors.ReleaseConfirmed(weak.lock(), false));
++  ASSERT_FALSE(weak.expired());
++  EXPECT_TRUE(anchors.ReleaseConfirmed(weak.lock(), true));
++  EXPECT_TRUE(weak.expired());
++}
++TEST(ExperimentalCoreAudioRetirementTest, FullAnchorPoolRejectsBeforeAnyInitialization) {
++  ExperimentalCoreAudioOwnerAnchorPool<std::shared_ptr<int>, 1> anchors;
++  auto first = std::make_shared<int>(1); ASSERT_TRUE(anchors.Retain(first));
++  auto second = std::make_shared<int>(2); bool initialized = false;
++  if (anchors.Retain(second)) initialized = true;
++  EXPECT_FALSE(initialized);
++  EXPECT_TRUE(anchors.ReleaseConfirmed(first, true));
++  EXPECT_TRUE(anchors.Retain(second));
++  EXPECT_TRUE(anchors.ReleaseConfirmed(second, true));
++}
++TEST(ExperimentalCoreAudioRetirementTest, ClosedCellRejectsQueuedCallbackAfterOwnerRelease) {
++  ExperimentalCoreAudioCallbackPool<2> pool;
++  auto owner = std::make_unique<int>(31);
++  auto* old = pool.Allocate(owner.get()); ASSERT_NE(old, nullptr); old->Open();
++  std::atomic<bool> entered{false}, release{false};
++  std::thread callback([&] {
++    ExperimentalCoreAudioCallbackCell::Lease lease(old);
++    EXPECT_EQ(lease.owner(), owner.get());
++    entered.store(true, std::memory_order_release);
++    while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
++    EXPECT_EQ(*static_cast<int*>(lease.owner()), 31);
++  });
++  while (!entered.load(std::memory_order_acquire)) std::this_thread::yield();
++  old->Close();
++  EXPECT_FALSE(old->ClosedAndDrained());
++  { ExperimentalCoreAudioCallbackCell::Lease late(old); EXPECT_EQ(late.owner(), nullptr); }
++  release.store(true, std::memory_order_release); callback.join();
++  ASSERT_TRUE(old->ClosedAndDrained()); owner.reset();
++  int replacement = 42;
++  auto* fresh = pool.Allocate(&replacement); ASSERT_NE(fresh, nullptr); fresh->Open();
++  { ExperimentalCoreAudioCallbackCell::Lease late(old); EXPECT_EQ(late.owner(), nullptr); }
++  { ExperimentalCoreAudioCallbackCell::Lease current(fresh); EXPECT_EQ(current.owner(), &replacement); }
++  fresh->Close(); EXPECT_TRUE(fresh->ClosedAndDrained());
++}
++TEST(ExperimentalCoreAudioRetirementTest, FixedPoolNeverReusesAndRefusesExhaustion) {
++  ExperimentalCoreAudioCallbackPool<2> pool; int owner = 0;
++  auto* first = pool.Allocate(&owner); ASSERT_NE(first, nullptr);
++  { ExperimentalCoreAudioCallbackCell::Lease unpublished(first); EXPECT_EQ(unpublished.owner(), nullptr); }
++  first->Open(); first->Close(); EXPECT_TRUE(first->ClosedAndDrained());
++  EXPECT_FALSE(first->Open());  // A tombstone cannot be reopened.
++  auto* second = pool.Allocate(&owner); ASSERT_NE(second, nullptr); EXPECT_NE(first, second);
++  EXPECT_EQ(pool.Allocate(&owner), nullptr); EXPECT_EQ(pool.used(), 2u);
++  EXPECT_EQ(sizeof(ExperimentalCoreAudioCallbackCell), 16u);
++}
++TEST(ExperimentalCoreAudioRetirementTest, RouteFirstErrorCannotHideLaterUnsafeFailure) {
++  ExperimentalCoreAudioFirstError<FirstErrorTestContext> first;
++  ExperimentalCoreAudioUnsafeErrors unsafe;
++  first.Record(-6, [] { return FirstErrorTestContext{1, 10}; });
++  unsafe.Record(1); first.Record(-50, [] { return FirstErrorTestContext{2, 1}; });
++  unsafe.Record(1);
++  EXPECT_EQ(first.Read().error, -6); EXPECT_EQ(first.Read().context.origin, 10u);
++  EXPECT_EQ(unsafe.mask(), uint64_t{1} << 1); EXPECT_EQ(unsafe.count(), 2u);
++  EXPECT_FALSE(ExperimentalCoreAudioRetirementComplete(0x1ff, 0x1fc, unsafe.mask()));
++}
++TEST(ExperimentalCoreAudioRetirementTest, StopAndDestroySuccessAreIndependentOfSignaledEvent) {
++  EXPECT_FALSE(ExperimentalCoreAudioNativeStopComplete(true, -50, 0));
++  EXPECT_FALSE(ExperimentalCoreAudioNativeStopComplete(true, 0, -50));
++  EXPECT_FALSE(ExperimentalCoreAudioNativeStopComplete(true, -2147483647, 0));
++  EXPECT_TRUE(ExperimentalCoreAudioNativeStopComplete(true, 0, 0));
++  EXPECT_TRUE(ExperimentalCoreAudioNativeStopComplete(false, -2147483647, 0));
++}
++TEST(ExperimentalCoreAudioRetirementTest, EveryRequiredStopDrainAndDisposalProofIsNecessary) {
++  constexpr uint64_t required = 4 | 8 | 16 | 32 | 64 | 128 | 256;
++  EXPECT_TRUE(ExperimentalCoreAudioRetirementComplete(required, required, 0));
++  for (uint64_t bit = 4; bit <= 256; bit <<= 1)
++    EXPECT_FALSE(ExperimentalCoreAudioRetirementComplete(required & ~bit, required, 0));
++  EXPECT_FALSE(ExperimentalCoreAudioRetirementComplete(required, required, 2));
++}
++TEST(ExperimentalCoreAudioRetirementTest, PartialInitializationStillRequiresOwnedResources) {
++  constexpr uint64_t partial = 64 | 128 | 256;  // No created IOProc, but worker/converter/listeners.
++  EXPECT_FALSE(ExperimentalCoreAudioRetirementComplete(64, partial, 0));
++  EXPECT_FALSE(ExperimentalCoreAudioRetirementComplete(64 | 128, partial, 0));
++  EXPECT_TRUE(ExperimentalCoreAudioRetirementComplete(partial, partial, 0));
++  EXPECT_FALSE(ExperimentalCoreAudioRetirementComplete(partial, partial, 2));
++}
+ TEST(ExperimentalCoreAudioFirstErrorTest, FirstWriterRetainsErrorAndContext) {
+   ExperimentalCoreAudioFirstError<FirstErrorTestContext> error;
+   EXPECT_EQ(error.Read().error, 0);
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
+@@ -27,6 +27,9 @@
+ typedef NS_ENUM(NSInteger, RTC_OBJC_TYPE(RTCAudioDeviceModuleType)) {
+   RTC_OBJC_TYPE(RTCAudioDeviceModuleTypePlatformDefault),
+   RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeAudioEngine),
++#if TARGET_OS_OSX
++  RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioRetirement),
++#endif
+ };
+ 
+ typedef NS_ENUM(NSInteger, RTC_OBJC_TYPE(RTCSpeechActivityEvent)) {
+@@ -231,6 +234,8 @@
+ @property(nonatomic, readonly) NSDictionary<NSString *, id> *experimentalCoreAudioState;
+ // Explicit diagnostic hardware reads on the SDK worker. Never call from audio/HAL callbacks.
+ @property(nonatomic, readonly) NSDictionary<NSString *, id> *experimentalCoreAudioRouteSnapshot;
++// Permanently closes this opt-in owner. Zero requires checked native retirement.
++- (NSInteger)retireExperimentalCoreAudioOwner NS_SWIFT_NAME(retireExperimentalCoreAudioOwner());
+ #endif
+ 
+ @property(nonatomic, readonly) NSArray<RTC_OBJC_TYPE(RTCIODevice) *> *outputDevices;
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
+@@ -597,6 +597,10 @@
+   // The per-instance atomic privacy latch must close before queued device work.
+   return _native->SetExperimentalCoreAudioCaptureMuted(muted);
+ }
++- (NSInteger)retireExperimentalCoreAudioOwner {
++  _native->SetExperimentalCoreAudioCaptureMuted(true);
++  return _workerThread->BlockingCall([self] { return _native->RetireExperimentalCoreAudioOwner(); });
++}
+ - (NSDictionary<NSString *, id> *)experimentalCoreAudioState {
+   const auto state = _native->GetExperimentalCoreAudioState();
+   const auto& diagnostic = state.native_diagnostics;
+@@ -623,6 +627,14 @@
+         @"processCaptureGeneration": @(first.process_capture_generation), @"uptime": @(first.uptime) } : [NSNull null],
+       @"observedRouteGeneration": @(diagnostic.observed_route_generation),
+       @"selectedInputDeviceID": @(diagnostic.selected_input_device_id), @"selectedOutputDeviceID": @(diagnostic.selected_output_device_id),
++      @"unsafeFailureMask": @(diagnostic.unsafe_failure_mask), @"unsafeFailureCount": @(diagnostic.unsafe_failure_count),
++      @"retirementRequested": @(diagnostic.retirement_requested), @"retirementConfirmed": @(diagnostic.retirement_confirmed),
++      @"inputRetirementProof": @(diagnostic.input_retirement_proof), @"outputRetirementProof": @(diagnostic.output_retirement_proof),
++      @"inputRetirementRequired": @(diagnostic.input_retirement_required), @"outputRetirementRequired": @(diagnostic.output_retirement_required),
++      @"inputStopStatus": @(diagnostic.input_stop_status), @"inputDestroyStatus": @(diagnostic.input_destroy_status),
++      @"outputStopStatus": @(diagnostic.output_stop_status), @"outputDestroyStatus": @(diagnostic.output_destroy_status),
++      @"callbackCellsUsed": @(diagnostic.callback_cells_used), @"callbackCellCapacity": @1024,
++      @"callbackCellBytes": @(diagnostic.callback_cell_bytes), @"callbackCellStorageBytes": @(diagnostic.callback_cell_bytes * 1024),
+       @"contextProvenance": @"first CAS winner; approximate post-CAS observations; epochs are diagnostics, not authorization" },
+     @"controlSnapshotUptime": @(state.control_snapshot_uptime),
+     @"recordingSampleRate": @(state.recording_sample_rate), @"playoutSampleRate": @(state.playout_sample_rate),
+@@ -640,6 +652,7 @@
+     const double start = CoreAudioDiagnosticUptime();
+     const auto state = _native->GetExperimentalCoreAudioState();
+     if (!state.enabled) return @{ @"supported": @NO };
++    if (state.native_diagnostics.retirement_confirmed) return @{ @"supported": @NO, @"retired": @YES };
+     const auto before = state.native_diagnostics;
+     const auto input = CoreAudioDiagnosticRead<AudioDeviceID>(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal);
+     const auto output = CoreAudioDiagnosticRead<AudioDeviceID>(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal);
+--- a/modules/audio_device/audio_device_impl.h
++++ b/modules/audio_device/audio_device_impl.h
+@@ -47,6 +47,9 @@
+   static absl_nullable scoped_refptr<AudioDeviceModuleImpl> Create(
+       const Environment& env,
+       AudioLayer audio_layer);
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  static absl_nullable scoped_refptr<AudioDeviceModuleImpl> CreateExperimentalCoreAudioRetirement(const Environment& env);
++#endif
+ 
+   AudioDeviceModuleImpl(const Environment& env, AudioLayer audio_layer);
+   // If `create_detached` is true, created ADM can be used on another thread
+@@ -76,6 +79,7 @@
+   int32_t SetExperimentalCoreAudioAvailability(bool input, bool output) override;
+   int32_t SetExperimentalCoreAudioCaptureMuted(bool muted) override;
+   ExperimentalCoreAudioState GetExperimentalCoreAudioState() const override;
++  int32_t RetireExperimentalCoreAudioOwner() override;
+ #endif
+ 
+   // Device enumeration
+@@ -181,6 +185,7 @@
+   int32_t InitCoreAudioDirection(bool input);
+   int32_t CacheCoreAudioState(int32_t result);
+   std::atomic<bool> core_audio_enabled_{false};
++  bool core_audio_anchor_owned_ = false;  // Control-thread-only native lifetime anchor.
+   std::atomic<bool> core_audio_input_available_{false}, core_audio_output_available_{false};
+   std::atomic<bool> core_audio_record_requested_{false}, core_audio_play_requested_{false};
+   std::atomic<bool> core_audio_record_initialized_{false}, core_audio_play_initialized_{false};
+--- a/api/audio/create_audio_device_module.h
++++ b/api/audio/create_audio_device_module.h
+@@ -21,6 +21,9 @@
+ absl_nullable scoped_refptr<AudioDeviceModule> CreateAudioDeviceModule(
+     const Environment& env,
+     AudioDeviceModule::AudioLayer audio_layer);
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++absl_nullable scoped_refptr<AudioDeviceModule> CreateExperimentalCoreAudioRetirementAudioDeviceModule(const Environment& env);
++#endif
+ 
+ }  // namespace webrtc
+ 
+--- a/api/audio/create_audio_device_module.cc
++++ b/api/audio/create_audio_device_module.cc
+@@ -23,5 +23,10 @@
+     AudioDeviceModule::AudioLayer audio_layer) {
+   return AudioDeviceModuleImpl::Create(env, audio_layer);
+ }
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++absl_nullable scoped_refptr<AudioDeviceModule> CreateExperimentalCoreAudioRetirementAudioDeviceModule(const Environment& env) {
++  return AudioDeviceModuleImpl::CreateExperimentalCoreAudioRetirement(env);
++}
++#endif
+ 
+ }  // namespace webrtc
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+@@ -294,6 +294,16 @@
+   return [self initWithMediaAndDependencies:dependencies];
+ }
+ 
++#if TARGET_OS_OSX
++- (nullable instancetype)initExperimentalCoreAudioRetirementWithEncoderFactory:
++    (nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
++    decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
++    audioProcessingModule:(nullable id<RTC_OBJC_TYPE(RTCAudioProcessingModule)>)audioProcessingModule {
++  return [self initWithAudioDeviceModuleType:RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioRetirement)
++      bypassVoiceProcessing:YES encoderFactory:encoderFactory decoderFactory:decoderFactory audioProcessingModule:audioProcessingModule];
++}
++#endif
++
+ - (instancetype)
+     initWithAudioDeviceModuleType:(RTC_OBJC_TYPE(RTCAudioDeviceModuleType))audioDeviceModuleType
+             bypassVoiceProcessing:(BOOL)bypassVoiceProcessing
+@@ -382,10 +392,17 @@
+         });
+         _ownsConferenceAudioDevice = YES;
+ #else
+-        dependencies.adm = _workerThread->BlockingCall([&dependencies] {
+-          return webrtc::CreateAudioDeviceModule(
+-              *dependencies.env, webrtc::AudioDeviceModule::kPlatformDefaultAudio);
+-        });
++        if (_requestedAudioDeviceModuleType == RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioRetirement)) {
++          dependencies.adm = _workerThread->BlockingCall([&dependencies] {
++            return webrtc::CreateExperimentalCoreAudioRetirementAudioDeviceModule(*dependencies.env);
++          });
++          if (!dependencies.adm) return nil;  // Explicit experiment never falls back.
++        } else {
++          dependencies.adm = _workerThread->BlockingCall([&dependencies] {
++            return webrtc::CreateAudioDeviceModule(
++                *dependencies.env, webrtc::AudioDeviceModule::kPlatformDefaultAudio);
++          });
++        }
+ #endif
+       }
+     }
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+@@ -87,6 +87,13 @@
+                 (nullable id<RTC_OBJC_TYPE(RTCAudioProcessingModule)>)audioProcessingModule;
+ 
+ @property(nonatomic, readonly) RTC_OBJC_TYPE(RTCAudioDeviceModule) *audioDeviceModule;
++#if TARGET_OS_OSX
++- (nullable instancetype)initExperimentalCoreAudioRetirementWithEncoderFactory:
++    (nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
++    decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
++    audioProcessingModule:(nullable id<RTC_OBJC_TYPE(RTCAudioProcessingModule)>)audioProcessingModule
++    NS_SWIFT_NAME(init(experimentalCoreAudioRetirementWithEncoderFactory:decoderFactory:audioProcessingModule:));
++#endif
+ 
+ /** Diagnostic snapshot of the shared audio processing module's state: per
+  *  component, what was requested, what the resolver decided per path, and

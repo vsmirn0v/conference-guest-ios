@@ -1,0 +1,242 @@
+--- a/Experiments/NativeGuest/GuestSystemAudio.swift
++++ b/Experiments/NativeGuest/GuestSystemAudio.swift
+@@ -380,6 +380,46 @@
+         token & (1 | 32) == (1 | 32) && token & (8 | 16 | 128) == 0
+     }
+ }
++
++#if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++// Native snapshots only reject work. The latest intent is consumed under the
++// owner's lock; final publication still requires the native exact-token CAS.
++enum GuestDuplexPreparationConsumption {
++    enum Decision: String { case reject, retryLatest, accept }
++
++    static func nativeFailed(core: [String: Any], duplex: [String: Any], expectedOwner: UInt64) -> Bool {
++        guard expectedOwner != 0, core["supported"] as? Bool == true, core["enabled"] as? Bool == true,
++              let cleanup = core["cleanupUnconfirmed"] as? Bool,
++              let diagnostic = core["nativeDiagnostics"] as? [String: Any],
++              let firstError = diagnostic["firstError"] as? Int,
++              let unsafe = diagnostic["unsafeFailureMask"] as? UInt64,
++              let retiring = diagnostic["retirementRequested"] as? Bool,
++              let retired = diagnostic["retirementConfirmed"] as? Bool,
++              let inputProof = diagnostic["inputRetirementProof"] as? UInt64,
++              let inputRequired = diagnostic["inputRetirementRequired"] as? UInt64,
++              let outputProof = diagnostic["outputRetirementProof"] as? UInt64,
++              let outputRequired = diagnostic["outputRetirementRequired"] as? UInt64,
++              let authority = duplex["authority"] as? UInt64,
++              duplex["ownerGeneration"] as? UInt64 == expectedOwner,
++              duplex["transportPinned"] as? Bool == true,
++              let quarantined = duplex["transportQuarantined"] as? Bool else { return true }
++        return cleanup || firstError != 0 || unsafe != 0 || retiring || retired || quarantined || authority & 8 != 0 ||
++            inputProof & inputRequired != inputRequired || outputProof & outputRequired != outputRequired
++    }
++
++    // Caller holds the same intent lock used by every local/native latch.
++    static func decide(status: Int, expected: UInt32, latest: UInt32, receiptMatches: Bool,
++                       terminal: Bool, nativeFailure: Bool, permitActive: Bool,
++                       now: TimeInterval, deadline: TimeInterval) -> Decision {
++        guard receiptMatches, !terminal, !nativeFailure, permitActive,
++              now.isFinite, deadline.isFinite, now < deadline,
++              expected > 0, latest > 0, expected <= 0x0fff_ffff, latest <= 0x0fff_ffff,
++              status == 0 || status == -21 else { return .reject }
++        if latest > expected { return .retryLatest }
++        return latest == expected && status == 0 ? .accept : .reject
++    }
++}
++#endif
+ 
+ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @unchecked Sendable {
+     private let audioQueue = DispatchQueue(label: "NativeGuest.system-audio", qos: .userInitiated)
+@@ -1597,7 +1637,7 @@
+         for _ in 0..<4 {
+             guard receiveDemandPermit?.isActive != false else { return true }
+             let intent = locked { (duplexSequence, duplexTerminal || terminationRequested,
+-                receiveDemandPermit != nil && duplexInputAuthorized && !duplexActivationObligation.prepared) }
++                receiveDemandPermit != nil && duplexInputAuthorized && !duplexActivationObligation.prepared, duplexOwnerGeneration) }
+             guard !intent.1 else { return false }
+             // A queued receive hint must never steal the first input transaction
+             // from the explicit activation operation and its original deadline.
+@@ -1608,44 +1648,56 @@
+             let finished = ProcessInfo.processInfo.systemUptime
+             operationTrace.endNativeCall(result: "status=\(result.status) expectedIntent=\(result.expectedIntent) observedAuthority=\(result.observedAuthority)", at: finished)
+             let superseded = result.abortReason == "intentSuperseded" || result.abortReason == "terminalIntent"
+-            let receipt: [String: Any] = ["ownerGeneration": result.ownerGeneration,
++            var receipt: [String: Any] = ["ownerGeneration": result.ownerGeneration,
+                 "physicalGeneration": result.physicalGeneration, "audioOperationID": duplexOperationID,
+                 "nativeCallID": nativeID, "nativePrepareSerial": result.prepareSerial,
+-                "nativeStartedAt": started, "nativeFinishedAt": finished,
++                "nativeStartedAt": started, "nativeFinishedAt": finished, "nativeDeadlineUptime": deadline,
+                 "expectedIntent": result.expectedIntent, "entryAuthority": result.entryAuthority,
+                 "observedAuthority": result.observedAuthority, "observedIntent": result.observedAuthority >> 36,
+                 "observationUptime": Double(result.observationNanos) * 1e-9,
+                 "status": result.status, "abortReason": result.abortReason, "sealedToken": result.sealedToken,
+                 "commitDisposition": superseded ? "notAttemptedBecauseSuperseded" : "notAttemptedPreparationOnly"]
+-            locked {
++            // These getters are direct bounded native snapshots, with no HAL
++            // or worker hop. Keep allocation/getter work outside the intent lock.
++            let nativeFailure = GuestDuplexPreparationConsumption.nativeFailed(
++                core: module.experimentalCoreAudioState, duplex: module.experimentalCoreAudioDuplexState,
++                expectedOwner: intent.3) || result.observedAuthority & 8 != 0
++            let decision = locked { () -> GuestDuplexPreparationConsumption.Decision in
++                var decision = GuestDuplexPreparationConsumption.decide(status: result.status,
++                    expected: intent.0, latest: duplexSequence,
++                    receiptMatches: result.expectedIntent == UInt64(intent.0) && result.ownerGeneration == intent.3 &&
++                        duplexOwnerGeneration == intent.3 && ownedFactory?.audioDeviceModule === module && !closed,
++                    terminal: duplexTerminal || terminationRequested, nativeFailure: nativeFailure,
++                    permitActive: receiveDemandPermit?.isActive != false,
++                    now: ProcessInfo.processInfo.systemUptime, deadline: deadline)
++                let inputReady = GuestDuplexInputPreparationProof.accepts(status: result.status,
++                    owner: result.ownerGeneration, expectedOwner: duplexOwnerGeneration,
++                    physicalGeneration: result.physicalGeneration, token: result.sealedToken,
++                    observedAuthority: result.observedAuthority, expectedIntent: UInt64(intent.0))
++                if decision == .accept {
++                    if requireInputReady && !inputReady {
++                        cached["lastRejectedOperation"] = "duplex-input-not-prepared"
++                        decision = .reject
++                    } else if duplexServerUnmuted && !duplexDesiredMuted &&
++                        !module.commitExperimentalCoreAudioDuplexCapture(expectedToken: result.sealedToken) {
++                        decision = .reject
++                    } else {
++                        cached["duplexPreparationDeferredUntilOwnedTransport"] = false
++                        duplexSealedToken = result.sealedToken
++                        if inputReady { duplexActivationObligation.acceptInputProof() }
++                    }
++                }
++                receipt["consumptionDecision"] = decision.rawValue
++                receipt["consumedIntent"] = duplexSequence
++                if decision == .retryLatest { receipt["commitDisposition"] = "notAttemptedBecauseSuperseded" }
+                 var receipts = cached["duplexPreparationReceipts"] as? [[String: Any]] ?? []
+                 receipts.append(receipt); cached["duplexPreparationReceipts"] = Array(receipts.suffix(16))
+-            }
+-            let latest = locked { (duplexSequence, duplexTerminal || terminationRequested) }
+-            if result.status == -21, !latest.1, latest.0 != intent.0 { continue }
+-            guard result.status == 0, !latest.1, latest.0 == intent.0 else { return false }
+-            return locked {
+-                guard duplexSequence == intent.0, !duplexTerminal, !terminationRequested else { return false }
+-                if requireInputReady && !GuestDuplexInputPreparationProof.accepts(status: result.status,
+-                    owner: result.ownerGeneration, expectedOwner: duplexOwnerGeneration,
+-                    physicalGeneration: result.physicalGeneration, token: result.sealedToken,
+-                    observedAuthority: result.observedAuthority,
+-                    expectedIntent: UInt64(intent.0)) {
+-                    cached["lastRejectedOperation"] = "duplex-input-not-prepared"
+-                    return false
+-                }
+-                cached["duplexPreparationDeferredUntilOwnedTransport"] = false
+-                duplexSealedToken = result.sealedToken
+-                if GuestDuplexInputPreparationProof.accepts(status: result.status,
+-                    owner: result.ownerGeneration, expectedOwner: duplexOwnerGeneration,
+-                    physicalGeneration: result.physicalGeneration, token: result.sealedToken,
+-                    observedAuthority: result.observedAuthority, expectedIntent: UInt64(intent.0)) {
+-                    duplexActivationObligation.acceptInputProof()
+-                }
+-                if duplexServerUnmuted && !duplexDesiredMuted {
+-                    return module.commitExperimentalCoreAudioDuplexCapture(expectedToken: result.sealedToken)
+-                }
+-                return true
++                return decision
++            }
++            switch decision {
++            case .retryLatest: continue
++            case .accept: return true
++            case .reject: return false
+             }
+         }
+         return false
+--- a/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
++++ b/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
+@@ -73,6 +73,9 @@
+         ownerLeaseAndProfiles()
+         operationTraceEvidence()
+         duplexInputReadinessProof()
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        duplexPreparationConsumption()
++        #endif
+         preparedMeterOwnership()
+         print("PASS: memory-only PCM meters, exclusive private/meeting owner leases, speech/music constraints, video windows and audio operation timing")
+     }
+@@ -97,6 +100,85 @@
+         precondition(!accepts(0, 7, 1, token, 9, token | 128))
+         precondition(!accepts(0, 7, 1, token, 9, token + (2 << 8)))
+     }
++
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++    private static func duplexPreparationConsumption() {
++        typealias Consumption = GuestDuplexPreparationConsumption
++        let diagnostic: [String: Any] = ["firstError": 0, "unsafeFailureMask": UInt64(0),
++            "retirementRequested": false, "retirementConfirmed": false,
++            "inputRetirementProof": UInt64(0), "inputRetirementRequired": UInt64(0),
++            "outputRetirementProof": UInt64(3), "outputRetirementRequired": UInt64(0)]
++        let core: [String: Any] = ["supported": true, "enabled": true, "cleanupUnconfirmed": false,
++            "nativeDiagnostics": diagnostic]
++        let duplex: [String: Any] = ["authority": UInt64(9 << 36) | 6 | 128, "ownerGeneration": UInt64(7),
++            "transportPinned": true, "transportQuarantined": false]
++        func failed(_ coreValue: [String: Any] = core, _ duplexValue: [String: Any] = duplex) -> Bool {
++            Consumption.nativeFailed(core: coreValue, duplex: duplexValue, expectedOwner: 7)
++        }
++        func decision(_ status: Int = 0, latest: UInt32 = 9, terminal: Bool = false,
++                      failure: Bool = false, matches: Bool = true, permit: Bool = true,
++                      now: TimeInterval = 10, deadline: TimeInterval = 11) -> Consumption.Decision {
++            Consumption.decide(status: status, expected: 9, latest: latest, receiptMatches: matches,
++                terminal: terminal, nativeFailure: failure, permitActive: permit, now: now, deadline: deadline)
++        }
++        precondition(!failed())
++        precondition(decision() == .accept && decision(-21) == .reject)
++        for status in [0, -21] {
++            precondition(decision(status, latest: 10) == .retryLatest)
++            precondition(decision(status, latest: 10, terminal: true) == .reject)
++            precondition(decision(status, latest: 10, failure: true) == .reject)
++            precondition(decision(status, latest: 10, matches: false) == .reject)
++            precondition(decision(status, latest: 10, permit: false) == .reject)
++            precondition(decision(status, latest: 10, now: 11) == .reject)
++            precondition(decision(status, latest: 10, now: .nan) == .reject)
++            precondition(decision(status, latest: 10, deadline: .infinity) == .reject)
++        }
++        for status in [-1, -20, -22, -23] { precondition(decision(status, latest: 10) == .reject) }
++        precondition(decision(latest: 8) == .reject)
++        // Native completion can be healthy before the latest local latch. The
++        // only consumption read is under the same lock as that latch.
++        final class IntentBox: @unchecked Sendable {
++            let lock = NSLock()
++            var sequence: UInt32 = 9
++            func read() -> UInt32 { lock.lock(); defer { lock.unlock() }; return sequence }
++            func latch(_ next: UInt32) { lock.lock(); sequence = next; lock.unlock() }
++            func consume(_ body: (UInt32) -> Consumption.Decision) -> Consumption.Decision {
++                lock.lock(); defer { lock.unlock() }; return body(sequence)
++            }
++        }
++        let box = IntentBox(), latchMayRun = DispatchSemaphore(value: 0), latchDone = DispatchSemaphore(value: 0)
++        DispatchQueue.global().async { latchMayRun.wait(); box.latch(10); latchDone.signal() }
++        let obsoleteOutsideRead = box.read()
++        precondition(obsoleteOutsideRead == 9)
++        latchMayRun.signal(); precondition(latchDone.wait(timeout: .now() + 1) == .success)
++        precondition(box.consume { decision(0, latest: $0) } == .retryLatest)
++        precondition(decision(0, latest: obsoleteOutsideRead) == .accept) // Negative control for the removed split read.
++        var invalid = core; invalid["nativeDiagnostics"] = nil; precondition(failed(invalid))
++        for (key, value) in [("firstError", -6 as Any), ("unsafeFailureMask", UInt64(1) as Any),
++            ("retirementRequested", true as Any), ("retirementConfirmed", true as Any),
++            ("inputRetirementRequired", UInt64(4) as Any), ("outputRetirementRequired", UInt64(4) as Any)] {
++            var state = diagnostic; state[key] = value
++            var value = core; value["nativeDiagnostics"] = state
++            precondition(failed(value))
++            precondition(decision(0, latest: 10, failure: failed(value)) == .reject)
++        }
++        for key in diagnostic.keys {
++            var state = diagnostic; state[key] = nil
++            var value = core; value["nativeDiagnostics"] = state; precondition(failed(value))
++        }
++        for key in ["supported", "enabled", "cleanupUnconfirmed"] {
++            var value = core; value[key] = nil; precondition(failed(value))
++        }
++        for key in ["authority", "ownerGeneration", "transportPinned", "transportQuarantined"] {
++            var value = duplex; value[key] = nil; precondition(failed(core, value))
++        }
++        var invalidDuplex = duplex; invalidDuplex["authority"] = UInt64(9 << 36) | 8
++        precondition(failed(core, invalidDuplex))
++        invalidDuplex = duplex; invalidDuplex["ownerGeneration"] = UInt64(8); precondition(failed(core, invalidDuplex))
++        invalidDuplex = duplex; invalidDuplex["transportPinned"] = false; precondition(failed(core, invalidDuplex))
++        invalidDuplex = duplex; invalidDuplex["transportQuarantined"] = true; precondition(failed(core, invalidDuplex))
++    }
++    #endif
+ 
+     #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6 && ROCK_COREAUDIO_DUPLEX_CONSTRUCTION_TESTS
+     private static func duplexConstructionDefersUntilOwnedTransport() async {

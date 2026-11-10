@@ -1,0 +1,139 @@
+{
+  "baseLock": "coreaudio-duplex-r7.lock.json",
+  "baseLockSHA256": "b933199b37a57d71043b1a2f235c853447e68615d228f16874ba0163b9d57fb2",
+  "buildEvidenceSHA256": "1bb21c8f3f2946356ff48863c75c35cf74ce2007b573bf5fd27247181dff0d50",
+  "candidateRoot": ".build/airpods-transition-startup/coreaudio-duplex-r8",
+  "canonicalSDKLockSHA256": "4e3c160d2af5e745bcf93fe2fdf6c64a883f07f1978b7f80fb39a85a5e5b9f32",
+  "capabilities": {
+    "cleanObsoleteWarmFallback": true,
+    "experimentalCoreAudio": true,
+    "experimentalCoreAudioDiagnostics": true,
+    "experimentalCoreAudioDuplexStartup": true,
+    "experimentalCoreAudioHealthyOutputSupersession": true,
+    "experimentalCoreAudioPendingRawOutput": true,
+    "experimentalCoreAudioPresealOutputPriming": true,
+    "experimentalCoreAudioResourceScopedFormatSeal": true,
+    "experimentalCoreAudioRetirement": true,
+    "experimentalPrivateInput": true,
+    "stoppedInputGraph": true
+  },
+  "compilerSHA256": "f3f0259de6f7bf1c026760855d505b07ee626b6e64ecd9600f252ed0faac95ff",
+  "formatVersion": 1,
+  "frameworkBinarySHA256": "b70fbdfcf9b012db54ea7760080a16240abf935a37b460e5a2844ebae7487353",
+  "gnArgsSHA256": "a60e3c5807c949d14b2db2f293062066e107963a031eea17be48bce7a51ac6b8",
+  "limits": {
+    "AECQualityValidated": false,
+    "borrowedPrivateBeforePersistentInputSupported": false,
+    "boundedWholeLeaveClaim": false,
+    "builtInRouteOnly": false,
+    "callbackCellCapacity": 1024,
+    "defaultBackendSelectionChanged": false,
+    "defaultPromoted": false,
+    "diagnosticHardwareReadsInstrumentTiming": false,
+    "dormantOutputFormatChangePreservesCapture": true,
+    "existingOutputRunningRequired": false,
+    "explicitRouteSnapshotsInstrumentTiming": true,
+    "externalProviderR6InitialPlayoutQualified": false,
+    "firstInputNegotiationAttempts": 1,
+    "fixedSettleDelayMilliseconds": 0,
+    "iOSBehaviorChanged": false,
+    "invalidatedOwnerNeverReopens": true,
+    "longHALOnWebRTCWorkerR6": false,
+    "malformedHALLayoutAudioOutcomeQualified": false,
+    "noAutomaticOutputFallback": true,
+    "outputGenerationArchiveCapacity": 128,
+    "outputSupersessionResetsDeadline": false,
+    "physicalContinuityValidated": false,
+    "privateOutputMode": "none (constructed graph; not global device state)",
+    "quietBeforeStartSupported": true,
+    "rawOutputIsSilenceOnly": true,
+    "routeEventJournalCapacity": 64,
+    "routeRecoverySupported": false,
+    "runtimeValidated": false,
+    "sameIntentOutputDemandABADuringBindQualified": false,
+    "sameOutputRegistrationBoundWithoutSecondStart": true,
+    "sealedInputOrBoundOutputTransitionFailsMuted": true,
+    "strictContinuityGateMilliseconds": 350,
+    "transportQuarantinePinsActualAudioState": true,
+    "uncertainStopRequiresRetainedOwner": true,
+    "unusedOutputFormatHasIndependentEpoch": true,
+    "wholeOwnerAnchorCapacity": 128
+  },
+  "patch": "coreaudio-duplex-r8.patch",
+  "patchSHA256": "28013a5cefdd3de33074de7c3b5e926dd2eb7433b1294ee925a07598172e77d4",
+  "sourceFiles": [
+    {
+      "baselineSHA256": "d83b7a20cc67af3e277fdbe5cc9fbd154c03b2ac86e70d0be438249cba547b5e",
+      "new": false,
+      "path": "modules/audio_device/mac/audio_device_mac_duplex.h",
+      "sha256": "889836baac15c68bc8f19c39675028d4e5a66bfd93cfb87062fe71e2a97f2269"
+    },
+    {
+      "baselineSHA256": "163d7036170e7de86b4cc98fa61954f9236890378d2a6ff808229bb880da79a2",
+      "new": false,
+      "path": "modules/audio_device/mac/audio_device_mac_duplex.cc",
+      "sha256": "02a1e39fba986e25d56cc043aa46ec7d60e6fa94b430c1e596826132417c6bd9"
+    },
+    {
+      "baselineSHA256": "31cf6dbd6345cf5281970efb360d295cbcbbe8fa8e0251a54f1a758f95058899",
+      "new": false,
+      "path": "modules/audio_device/mac/experimental_core_audio_output_negotiation_unittest.cc",
+      "sha256": "55b9841bccb6afa6203dd94954310a09d33702c76a703de0d5e51472bca695a0"
+    }
+  ],
+  "sourceManifestSHA256": "6d79d17b5a79aa82c560bff7519db947f47a223f3228692a2e963b81012526ad",
+  "sourceOverlaySHA256": "fc9da461932af405e20f567c63a332f4e5db69819e19ab6cd50fd3bd70a7c600",
+  "sourceVerificationSHA256": "47d9cf80303433e2b23ee1d4dfb3c0c0866093e5a44ca1843110946606e39c58",
+  "status": "experimental candidate; runtime/continuity/acoustic qualification pending",
+  "swiftValidation": {
+    "allPassed": true,
+    "noHardwareIO": true,
+    "scope": "Construction and default/R6 SystemAudio against new SDK; Swift source/public API unchanged. Engine memory fixtures were not repeated.",
+    "tests": [
+      {
+        "command": [
+          "bash",
+          "Experiments/NativeGuestTests/run-system-audio.sh",
+          "/Users/v.smirnov/docs/conference-guest-ios/.build/airpods-transition-startup/coreaudio-duplex-r8/LiveKitWebRTC.xcframework/macos-arm64",
+          "--duplex-construction-experiment"
+        ],
+        "exitCode": 0,
+        "log": "swift-construction.log",
+        "name": "swift-construction",
+        "seconds": 6.812349457992241
+      },
+      {
+        "command": [
+          "bash",
+          "Experiments/NativeGuestTests/run-system-audio.sh",
+          "/Users/v.smirnov/docs/conference-guest-ios/.build/airpods-transition-startup/coreaudio-duplex-r8/LiveKitWebRTC.xcframework/macos-arm64"
+        ],
+        "exitCode": 0,
+        "log": "swift-default-system-audio.log",
+        "name": "swift-default-system-audio",
+        "seconds": 3.20442299998831
+      },
+      {
+        "command": [
+          "bash",
+          "Experiments/NativeGuestTests/run-system-audio.sh",
+          "/Users/v.smirnov/docs/conference-guest-ios/.build/airpods-transition-startup/coreaudio-duplex-r8/LiveKitWebRTC.xcframework/macos-arm64",
+          "--duplex-audio-experiment"
+        ],
+        "exitCode": 0,
+        "log": "swift-r6-system-audio.log",
+        "name": "swift-r6-system-audio",
+        "seconds": 4.012207833002321
+      }
+    ]
+  },
+  "unitTests": {
+    "failed": 0,
+    "hardwareOpened": false,
+    "passed": 94,
+    "results": [
+      "provenance/sdk-unit-tests.json",
+      "provenance/sdk-audio-state-tests.json"
+    ]
+  }
+}

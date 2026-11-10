@@ -1,0 +1,222 @@
+--- a/NativeMacGuest/Engines/NativeDesktopGuestEngine.swift
++++ b/NativeMacGuest/Engines/NativeDesktopGuestEngine.swift
+@@ -39,11 +39,11 @@
+     func cameraCaptureDevice() async -> AVCaptureDevice? {
+         let token = revision, native = currentNativeEngine
+         let device = await native?.cameraCaptureDevice()
+-        guard token == revision, native === currentNativeEngine, !leaving else { return nil }
++        guard token == revision, native === currentNativeEngine, !leaving, !mediaRevokedForLeave else { return nil }
+         return device
+     }
+     func startPrivateAudioCheck() async throws {
+-        guard let session, let owner = systemAudio, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
++        guard !mediaRevokedForLeave, let session, let owner = systemAudio, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
+         let token = revision
+         guard try await GuestCaptureAuthorization.request(.audio) else { throw NativeDesktopGuestError.permissionDenied }
+         try check(token, session: session)
+@@ -63,6 +63,11 @@
+     private var outputIntent = true
+     private var leaving = false
+     private var cleanupSucceeded = true
++    private var mediaRevokedForLeave = false
++    private var lateOwnerRetirementFailed = false
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++    var audioOwnerCreatedForTesting: ((GuestSystemAudio) async -> Void)?
++    #endif
+     private var chatHistoryRequested = false
+     private var transcriptHistoryRequested = false
+     private var chatHistoryTask: Task<Void, Never>?
+@@ -72,7 +77,7 @@
+     init(icePolicy: GuestICEPolicy = .automatic) { self.icePolicy = icePolicy }
+ 
+     func connect(invitation: URL, name: String, quiet: Bool) async throws {
+-        guard session == nil, [.idle, .left, .failed].contains(snapshot.phase), cleanupSucceeded else {
++        guard !mediaRevokedForLeave, session == nil, [.idle, .left, .failed].contains(snapshot.phase), cleanupSucceeded else {
+             throw NativeDesktopGuestError.cleanupFailed
+         }
+         let target = try GuestInvitation.parse(invitation)
+@@ -82,9 +87,23 @@
+         guestSnapshot = .init(); onFeatures?(guestSnapshot); emit()
+         let profile = GuestAudioProfile.saved
+         let session = GuestSession(makeEngine: { [weak self] in
+-            guard let self, revision == token, !leaving, !Task.isCancelled else { throw CancellationError() }
++            guard let self, revision == token, !leaving, !mediaRevokedForLeave, !Task.isCancelled else { throw CancellationError() }
+             let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: outputIntent, profile: profile)
+-            guard revision == token, !leaving, !Task.isCancelled else { _ = await owner.shutdown(); throw CancellationError() }
++            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            if let audioOwnerCreatedForTesting { await audioOwnerCreatedForTesting(owner) }
++            #endif
++            guard revision == token, !leaving, !mediaRevokedForLeave, !Task.isCancelled else {
++                #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++                let stopped = await owner.shutdown()
++                if owner.backend == .coreAudioAEC3, !stopped {
++                    lateOwnerRetirementFailed = true; cleanupSucceeded = false
++                    throw NativeDesktopGuestError.cleanupFailed
++                }
++                #else
++                _ = await owner.shutdown()
++                #endif
++                throw CancellationError()
++            }
+             systemAudio = owner
+             let engine = NativeGuestEngine(label: name, systemAudio: owner, icePolicy: icePolicy, verifyReceivedPixels: false)
+             let cameraSessionReuse = engine.cameraSessionReuse
+@@ -96,11 +115,13 @@
+         })
+         self.session = session
+         session.onEngineChange = { [weak self, weak session] engine in
+-            guard let self, self.revision == token, self.session === session else { return }
++            guard let self else { return }
++            if self.mediaRevokedForLeave, let engine { engine.suppressOutgoingMedia(); return }
++            guard self.revision == token, self.session === session else { return }
+             bind(engine, token: token)
+         }
+         session.onStateChange = { [weak self, weak session] state in
+-            guard let self, self.revision == token, self.session === session else { return }
++            guard let self, self.revision == token, self.session === session, !self.mediaRevokedForLeave else { return }
+             refresh(state)
+         }
+         do {
+@@ -117,7 +138,7 @@
+                 snapshot.phase = .failed; snapshot.lastError = error.localizedDescription; emit()
+                 let stopped = await session.leave()
+                 if revision == token, self.session === session {
+-                    cleanupSucceeded = stopped
++                    cleanupSucceeded = stopped && !lateOwnerRetirementFailed
+                     self.session = nil; systemAudio = nil; bind(nil, token: token)
+                     snapshot.phase = .failed; snapshot.lastError = error.localizedDescription; emit()
+                 }
+@@ -129,7 +150,7 @@
+     /// Uses the session's bounded recovery path, preserving only current media
+     /// intent and microphone authorization, while rebuilding all transport state.
+     func reconnect() async throws {
+-        guard let session, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
++        guard !mediaRevokedForLeave, let session, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
+         let token = revision
+         currentNativeEngine?.setScreenShareIntent(false)
+         snapshot.phase = .reconnecting; snapshot.sharing = false; emit()
+@@ -210,7 +231,7 @@
+     /// Authorization already exists; priming never changes the muted intent.
+     func prepareMutedCaptureForAccessories() async throws {
+         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+-              let session, !leaving, snapshot.phase == .connected,
++              let session, !leaving, !mediaRevokedForLeave, snapshot.phase == .connected,
+               session.snapshot.desiredIntent?.audioMuted == true,
+               !session.snapshot.microphoneActivated else { return }
+         let token = revision, command = microphoneRevision
+@@ -242,15 +263,29 @@
+         if let session { refresh(session.snapshot) }
+     }
+ 
++    func revokeMediaForLeave() {
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        guard systemAudio?.backend == .coreAudioAEC3 ||
++              (systemAudio == nil && GuestSystemAudioBackend.selected == .coreAudioAEC3) else { return }
++        mediaRevokedForLeave = true
++        // The new owner may already be assigned while the engine is not bound.
++        systemAudio?.invalidateStoppedInputPreparation()
++        currentNativeEngine?.suppressOutgoingMedia()
++        #endif
++    }
++
+     func leave() async -> Bool {
+-        guard !leaving else { return await session?.leave() ?? cleanupSucceeded }
++        guard !leaving else {
++            let stopped = await session?.leave() ?? cleanupSucceeded
++            return stopped && !lateOwnerRetirementFailed
++        }
+         leaving = true; microphoneRevision &+= 1; cameraRevision &+= 1
+         currentNativeEngine?.suppressOutgoingMedia()
+         cancelHistory()
+         snapshot.phase = .leaving; snapshot.microphoneOn = false; snapshot.cameraOn = false; snapshot.sharing = false
+         snapshot.microphoneLevel = nil; emit()
+         let old = session
+-        let stopped = await old?.leave() ?? cleanupSucceeded
++        let stopped = (await old?.leave() ?? cleanupSucceeded) && !lateOwnerRetirementFailed
+         revision = UUID(); cleanupSucceeded = stopped
+         old?.onEngineChange = nil; old?.onStateChange = nil
+         session = nil; systemAudio = nil; detachEngine()
+@@ -261,14 +296,14 @@
+     }
+ 
+     private func activeSession() throws -> GuestSession {
+-        guard let session, !leaving, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else {
++        guard let session, !leaving, !mediaRevokedForLeave, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else {
+             throw NativeDesktopGuestError.notConnected
+         }
+         return session
+     }
+     private func check(_ token: UUID, session: GuestSession) throws {
+         try Task.checkCancellation()
+-        guard revision == token, self.session === session, !leaving else { throw NativeDesktopGuestError.staleOperation }
++        guard revision == token, self.session === session, !leaving, !mediaRevokedForLeave else { throw NativeDesktopGuestError.staleOperation }
+     }
+     private func emit() { onState?(snapshot) }
+     private func cancelHistory() {
+--- a/Experiments/NativeGuest/GuestSystemAudio.swift
++++ b/Experiments/NativeGuest/GuestSystemAudio.swift
+@@ -468,7 +468,14 @@
+                 "recentLevel": meter.level.map { $0 as Any } ?? NSNull()].merging(meterAuthority.evidence) { _, new in new }
+     }
+     func setPrivateInputMeterEnabled(_ enabled: Bool) {
+-        locked { inputMeterEnabled = enabled; inputCheckBegan = enabled ? ProcessInfo.processInfo.systemUptime : nil }
++        locked {
++            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            let admitted = enabled && (backend != .coreAudioAEC3 || (!terminationRequested && !duplexTerminal))
++            #else
++            let admitted = enabled
++            #endif
++            inputMeterEnabled = admitted; inputCheckBegan = admitted ? ProcessInfo.processInfo.systemUptime : nil
++        }
+         inputMeter.reset()
+     }
+ 
+@@ -875,6 +882,18 @@
+         #endif
+         setPrivateInputMeterEnabled(false)
+         return await perform("private-input-release", timeout: timeout) {
++            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            if self.backend == .coreAudioAEC3 {
++                // R6 borrowing never owns hardware availability: pre-opt-in
++                // borrowing is rejected, and persistent input lives until full
++                // shutdown. Release only the meter/local lease, even on Terminal.
++                self.inputActivation.endCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
++                self.update(["microphoneOptIn": self.microphoneOptIn,
++                    "privateInputReleaseScope": "borrowedMeterAndLocalLeaseOnly"])
++                if !self.closed, let module = self.currentModule { self.readSnapshot(module) }
++                return true
++            }
++            #endif
+             guard !self.closed, let module = self.currentModule else { return true }
+             self.inputActivation.endCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
+             let success = self.applyAvailability(module)
+--- a/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
++++ b/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
+@@ -118,9 +118,26 @@
+             let operations = snapshot["audioOperations"] as? [[String: Any]] ?? []
+             let calls = operations.flatMap { $0["nativeCalls"] as? [[String: Any]] ?? [] }
+             precondition(!calls.contains { $0["name"] as? String == "coreaudio-availability" })
++            // This arms only the local meter, not a real borrowed input check.
++            // Release after terminal revocation must not re-Prepare a staged owner.
++            audio.setPrivateInputMeterEnabled(true)
++            audio.invalidateStoppedInputPreparation()
++            // A successful borrow's late continuation cannot re-arm the meter.
++            audio.setPrivateInputMeterEnabled(true)
++            precondition(audio.privateInputMeterEvidence["enabled"] as? Bool == false)
++            precondition(audio.privateInputLevel == nil)
++            let localReleased = await audio.endPrivateInputCheck()
++            precondition(localReleased && audio.privateInputLevel == nil)
++            precondition(audio.privateInputMeterEvidence["enabled"] as? Bool == false)
++            let released = audio.snapshot
++            precondition(released["privateInputReleaseScope"] as? String == "borrowedMeterAndLocalLeaseOnly")
++            precondition((released["duplexPreparationReceipts"] as? [[String: Any]] ?? []).isEmpty)
++            let releasedCalls = (released["audioOperations"] as? [[String: Any]] ?? [])
++                .flatMap { $0["nativeCalls"] as? [[String: Any]] ?? [] }
++            precondition(!releasedCalls.contains { $0["name"] as? String == "coreaudio-availability" })
+             let stopped = await audio.shutdown(timeout: 4)
+             precondition(stopped && audio.snapshot["cleanupSucceeded"] as? Bool == true)
+-            print("PASS: real R6 factory defers Prepare before owned transport; zero HAL generations and checked retirement")
++            print("PASS: real R6 factory defers Prepare before owned transport; terminal local meter release never re-Prepares; zero HAL generations and checked retirement")
+         } catch { preconditionFailure("R6 staged factory construction failed: \(error)") }
+     }
+     #endif

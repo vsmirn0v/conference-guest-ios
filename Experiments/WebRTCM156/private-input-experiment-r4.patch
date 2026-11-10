@@ -1,0 +1,66 @@
+--- a/modules/audio_device/audio_engine_device.h
++++ b/modules/audio_device/audio_engine_device.h
+@@ -667,8 +667,9 @@
+   // AVAudioEngine objects
+   AVAudioEngine* engine_device_ RTC_GUARDED_BY(thread_);
+   // True once the current `engine_device_` instance has instantiated its
+-  // inputNode. Reset whenever a new engine is allocated, meaningless while
+-  // engine_device_ is nil. Never read engine_device_.inputNode directly, go
++  // inputNode. Reset on allocation and after confirmed Mac engine retirement;
++  // stopped preparation observes it even with no engine. Never read inputNode
++  // directly; go
+   // through InputNode() or InputNodeOrNil() so this flag stays accurate.
+   bool input_node_instantiated_ RTC_GUARDED_BY(thread_) = false;
+   AVAudioEngine* engine_manual_input_ RTC_GUARDED_BY(thread_);
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -3237,6 +3237,11 @@
+ int32_t AudioEngineDevice::ApplyDeviceEngineState(EngineStateUpdate state) {
+   RTC_DCHECK_RUN_ON(thread_);
+   RTC_DCHECK(engine_manual_input_ == nullptr);
++#if TARGET_OS_OSX
++  // Only this invocation's successful physical stop and release can certify
++  // retirement. An engine absent on entry provides no such proof.
++  bool input_instance_retired = false;
++#endif
+ 
+   // --- Diagnostic: state transition summary ---
+   auto mute_mode_str = [](MuteMode m) -> const char* {
+@@ -3439,9 +3444,8 @@
+     active_bridge_ = (prepared_input_graph_enabled_ || BridgeMode()) ? std::make_shared<AudioGraphCallbackBridge>() : nullptr;
+     active_prepared_graph_.reset();
+ #endif
+-    // Per engine instance: a fresh engine has no input node yet. This is the
+-    // only place the flag needs resetting, it is unobservable while
+-    // engine_device_ is nil.
++    // Per engine instance: a fresh engine has no input node yet. Mac stopped
++    // preparation also observes this flag after the previous instance retires.
+     input_node_instantiated_ = false;
+ 
+     rollback_actions.push_back([this]() {
+@@ -4292,6 +4296,9 @@
+ 
+     LOGI() << "Releasing AVAudioEngine...";
+     engine_device_ = nil;
++#if TARGET_OS_OSX
++    input_instance_retired = units_stopped;
++#endif
+   }
+ 
+   // --- Diagnostic: final state after apply ---
+@@ -4309,7 +4316,14 @@
+   }
+ 
+ #if TARGET_OS_OSX
+-  if (!engine_device_) { active_bridge_.reset(); active_prepared_graph_.reset(); }
++  if (!engine_device_) {
++    active_bridge_.reset(); active_prepared_graph_.reset();
++    // A stopped reservation may follow ordinary input teardown. Only forget
++    // that instance's input node after its graph owners, nodes, converter and
++    // observer have retired; an uncertain retained owner stays ineligible.
++    if (input_instance_retired && !source_node_ && !sink_node_ && !input_mixer_node_ && !converter_ref_ &&
++        !converter_buffer_ && !configuration_observer_) input_node_instantiated_ = false;
++  }
+ #endif
+   return 0;
+ }

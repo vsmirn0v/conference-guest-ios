@@ -1,0 +1,75 @@
+{
+  "formatVersion": 1,
+  "scope": "DEBUG R6 app-only single-lock completion consumption; SDK/defaults/DSP unchanged",
+  "SDKRoot": ".build/airpods-transition-startup/coreaudio-duplex-r8",
+  "SDKBinarySHA256": "b70fbdfcf9b012db54ea7760080a16240abf935a37b460e5a2844ebae7487353",
+  "SDKBuildEvidenceSHA256": "1bb21c8f3f2946356ff48863c75c35cf74ce2007b573bf5fd27247181dff0d50",
+  "baseSDKLock": "coreaudio-duplex-r8.lock.json",
+  "baseSDKLockSHA256": "10eae08d4857358d72ac1ceeb44cfc6e208a72a7009cb16aaf4a99e76464713b",
+  "SDKRebuilt": false,
+  "patch": "coreaudio-duplex-r8-app-consumption.patch",
+  "patchSHA256": "be8b8df6923a0b5de55e8df682efab649498c6c0fd9468c4078c1721b6487872",
+  "reviewRevision": "revision-2",
+  "reviewer": "/root/astra_airpods_plan_review",
+  "sourceFiles": [
+    {
+      "path": "Experiments/NativeGuest/GuestSystemAudio.swift",
+      "baselineSHA256": "afd79aa6193ad9417fccc89982fa476bbbef8425fc2a15fbeed15e326dfdb58c",
+      "sha256": "9d19d7bdcbe36fe6ffa5ee18fd6948b0c3dbb40c9fb0b6826c00008107c1c574"
+    },
+    {
+      "path": "Experiments/NativeGuestTests/GuestSystemAudioTests.swift",
+      "baselineSHA256": "76e6b480eec4e9e237a0969c793d6866c4ddf8b89297ca71dd76e67b515f798a",
+      "sha256": "55cbcce8e455712d20827bf8714944e9cb7ca9511d33cd0b6690e9c7fcdf41b0"
+    }
+  ],
+  "sourceManifestSHA256": "d3c55731784b3747f040870da6ff428929a613e31c8c3ebd94d7e61f7eabac43",
+  "patchAppliesWithoutFuzz": true,
+  "tests": {
+    "allPassed": true,
+    "tests": [
+      {
+        "name": "swift-construction",
+        "command": [
+          "bash",
+          "Experiments/NativeGuestTests/run-system-audio.sh",
+          "/Users/v.smirnov/docs/conference-guest-ios/.build/airpods-transition-startup/coreaudio-duplex-r8/LiveKitWebRTC.xcframework/macos-arm64",
+          "--duplex-construction-experiment"
+        ],
+        "exitCode": 0,
+        "seconds": 9.801634624949656,
+        "log": "swift-construction.log"
+      },
+      {
+        "name": "swift-default-system-audio",
+        "command": [
+          "bash",
+          "Experiments/NativeGuestTests/run-system-audio.sh",
+          "/Users/v.smirnov/docs/conference-guest-ios/.build/airpods-transition-startup/coreaudio-duplex-r8/LiveKitWebRTC.xcframework/macos-arm64"
+        ],
+        "exitCode": 0,
+        "seconds": 5.781003916985355,
+        "log": "swift-default-system-audio.log"
+      },
+      {
+        "name": "swift-r6-system-audio",
+        "command": [
+          "bash",
+          "Experiments/NativeGuestTests/run-system-audio.sh",
+          "/Users/v.smirnov/docs/conference-guest-ios/.build/airpods-transition-startup/coreaudio-duplex-r8/LiveKitWebRTC.xcframework/macos-arm64",
+          "--duplex-audio-experiment"
+        ],
+        "exitCode": 0,
+        "seconds": 9.784984583966434,
+        "log": "swift-r6-system-audio.log"
+      }
+    ],
+    "SDKRebuilt": false,
+    "noHardwareIO": true
+  },
+  "testStatusSHA256": "5439ea69a2c5cd96e0bc71bb979777755172f5db786c6203cf7aaa358afdbf27",
+  "canonicalSDKLockSHA256": "4e3c160d2af5e745bcf93fe2fdf6c64a883f07f1978b7f80fb39a85a5e5b9f32",
+  "runtimeValidated": false,
+  "defaultPromoted": false,
+  "buildEvidenceSHA256": "f39a6bd019d7920af55aecfa73dce248e0217991948de9497e7325319d845f96"
+}

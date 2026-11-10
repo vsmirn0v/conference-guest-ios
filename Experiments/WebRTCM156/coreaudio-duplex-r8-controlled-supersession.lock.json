@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "artifact": "R8 DEBUG controlled initial raw-output-start supersession diagnostic",
+  "SDKChanged": false,
+  "defaultsChanged": false,
+  "DSPChanged": false,
+  "SDKBinarySHA256": "b70fbdfcf9b012db54ea7760080a16240abf935a37b460e5a2844ebae7487353",
+  "sourcePatchSHA256": "6dd4bc276a74777a0e9290a0e54102931ec913e048b4e5e5a9c4f54682242877",
+  "sourceManifestSHA256": "64d878762e8d3571edd822a627c5f114eabb7156a04b906d1121ce23c3bb6958",
+  "testStatusSHA256": "bbe304d2c3c8d04e6f4fbb55980a237e6065a4aa1fce38f6313b119b5cdb84d7",
+  "allFocusedChecksPassed": true,
+  "currentSourceChecks": [
+    {
+      "path": "NativeMacGuest/MicrophoneActivationExperiment.swift",
+      "sha256": "a853e2df5449e5e909607337c7178b3acdeeafb897c86cc2aeb558deb021a531",
+      "matchesFrozen": true
+    },
+    {
+      "path": "NativeMacGuest/StartupRawOutputSupersession.swift",
+      "sha256": "81320f0448d523a12d9b5219cb29895997b53f6960b57e8336b78e64f90fd0e2",
+      "matchesFrozen": true
+    },
+    {
+      "path": "Experiments/NativeGuestTests/RawOutputSupersessionTests.swift",
+      "sha256": "a963ba6fdd7c7ba7419837674d86bc93e503888c31cbf88f442caa9df82de0d5",
+      "matchesFrozen": true
+    },
+    {
+      "path": "Experiments/NativeGuestTests/run-raw-output-supersession.sh",
+      "sha256": "d483d310c644e9cbfcb0a5c43d542c9fec0ffb08bf6dfe5634c670bf5e7a1135",
+      "matchesFrozen": true
+    }
+  ],
+  "runtimeStatus": "pending; a missed window is not exercised",
+  "timingQualification": false,
+  "artifactRoot": ".build/airpods-transition-startup/controlled-raw-start-supersession/revision-2",
+  "evidenceSHA256": "5285012d2dd0780804fb976701dd072f8101f97bfaeb02cddab447fa9d30008d",
+  "environmentFlag": "ROCK_MIC_RAW_START_TRACK_SUPERSESSION=1"
+}

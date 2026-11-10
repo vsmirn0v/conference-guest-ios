@@ -1,0 +1,22 @@
+{
+  "baseFrameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "baseSourceManifestSHA256": "c721741efe93373c953cc4bacc78438104862e8a8050b73a04313a36ac274adb",
+  "capabilities": {
+    "stoppedInputGraph": true
+  },
+  "compilerSHA256": "f3f0259de6f7bf1c026760855d505b07ee626b6e64ecd9600f252ed0faac95ff",
+  "formatVersion": 1,
+  "frameworkBinarySHA256": "e205e24477aedaf72b83e23f87d6d9d0e045c9176a2300dab847bbaeeca289b7",
+  "gnArgsSHA256": "a60e3c5807c949d14b2db2f293062066e107963a031eea17be48bce7a51ac6b8",
+  "patchSHA256": "5a618a41fad8a01c685c0b6a65fd4242cdeec60db8826243454c79da693de944",
+  "sourceManifestSHA256": "4df1de9f55cba175bb6673ca32c7e64a3e313c958c06b4571128ec56241112d8",
+  "sourceOverrides": {
+    "modules/audio_device/BUILD.gn": "f3a709e4fa5884d416dbb14dd54623d748beedbe6b9704e710718e182d616da8",
+    "modules/audio_device/audio_engine_device.h": "68d0f40708e8d7bf271a5d3a2ab20230bae4c5c6a5695accaf76c2994a31e4cf",
+    "modules/audio_device/audio_engine_device.mm": "66e833d85d96cf952621656500b94c6d158920b2794c2ff8e8b2f4716b08832c",
+    "modules/audio_device/mac/prepared_graph_callback_gate.h": "b92e27b4d8d57017da1fda3126e06cff3c3b19d779d5ba3efbb7eab2063e86e0",
+    "sdk/objc/api/peerconnection/RTCAudioDeviceModule.h": "00a42e09c873847e024e34fa0d49924a080217490c4986f3a3dfb7d6f524a39b",
+    "sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm": "ca612c7722f2494c00ff957d0e6bf7e6d32b8937431cb861a6909c630514621a"
+  },
+  "upstreamRevision": "19576e37870bfe5a0a910a32f98ff411f722f43a"
+}

@@ -1,0 +1,177 @@
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -427,6 +427,7 @@
+   __strong AVAudioSinkNode* private_meter_sink = nil;
+   std::shared_ptr<PrivateMeterCallbackOwner> private_callback;
+   uint64_t private_token = 0;
++  mac_adm::PrivateInputFormatContract private_format_contract;
+   void* private_configuration_observer = nullptr;
+   __strong AVAudioFormat* input_format = nil;
+   __strong AVAudioFormat* output_format = nil;
+@@ -742,6 +743,24 @@
+       !graph->output && !graph->source && !graph->mixer && !graph->sink && !graph->input.voiceProcessingEnabled; }
+   @catch (NSException*) { return false; }
+ }
++mac_adm::PrivateInputPcmFormat PrivatePcmFormat(AVAudioFormat* format) {
++  return {format.sampleRate,format.channelCount,format.commonFormat==AVAudioPCMFormatFloat32,bool(format.interleaved)};
++}
++bool PrivateInputRequestedFormatsMatch(const std::shared_ptr<PreparedInputGraph>& graph,
++                                     AVAudioFormat* input, AVAudioFormat* sink) {
++  @try { return input && sink && [input isEqual:graph->input_format] && [sink isEqual:graph->input_format] &&
++      graph->private_format_contract.MatchesRequested(PrivatePcmFormat(input),PrivatePcmFormat(sink)) &&
++      !graph->output && !graph->source && !graph->mixer && !graph->sink && !graph->input.voiceProcessingEnabled; }
++  @catch (NSException*) { return false; }
++}
++bool PrivateInputRuntimeFormatsMatch(const std::shared_ptr<PreparedInputGraph>& graph) {
++  @try {
++    AVAudioFormat* input=[graph->input outputFormatForBus:0];
++    AVAudioFormat* sink=[graph->private_meter_sink inputFormatForBus:0];
++    return PrivateInputFormatsMatch(graph) && PrivateInputRequestedFormatsMatch(graph,input,sink) &&
++        graph->private_format_contract.MatchesAdopted(PrivatePcmFormat(input),PrivatePcmFormat(sink));
++  } @catch (NSException*) { return false; }
++}
+ }  // namespace
+ int32_t AudioEngineDevice::SealPrivateInputGraph(const PrivateInputMeterRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
+   RTC_DCHECK_RUN_ON(thread_); auto c=request.diagnostics; c->SetStage(request.token,PrivateStage::kSeal);
+@@ -773,6 +792,9 @@
+         graph->input.voiceProcessingEnabled) { c->Reject(request.token,kAudioEngineDeviceFormatError); return graph; }
+     graph->input_format=[[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
+         sampleRate:format.sampleRate channels:1 interleaved:format.interleaved];
++    if (!graph->private_format_contract.Configure(PrivatePcmFormat(graph->input_format))) {
++      c->Reject(request.token,kAudioEngineDeviceFormatError); return graph;
++    }
+     graph->input_bus_format=format; graph->prepared_route=CurrentDefaultRoute(); graph->built=true;
+   } @catch (NSException* exception) { PrivateExceptionDiagnostic(request,exception); graph->built=false; }
+   return graph;
+@@ -836,17 +858,23 @@
+     c->SetDetail(request.token,PrivateDetail::kValidAtProof,control->Valid(request.token));
+     c->SetDetail(request.token,PrivateDetail::kRevokedAtProof,control->Read().revoked);
+     c->SetDetail(request.token,PrivateDetail::kNativeEngineRunning,graph->engine.running);
+-    // Extra format readback is diagnostic only; it cannot turn an otherwise
+-    // accepted graph into a failure. The unchanged proof below owns admission.
+-    @try { PrivateFormatDiagnostic(request,[graph->input outputFormatForBus:0],
+-        [graph->private_meter_sink inputFormatForBus:0],true); } @catch (NSException*) {}
+-    const std::array<bool,13> proofs={control->Valid(request.token),status==noErr,bool(running),bool(graph->engine.running),
++    // Private admission compares both negotiated endpoints with the exact
++    // requested mono format; the original hardware bus may have more channels.
++    AVAudioFormat* actual_input=nil; AVAudioFormat* actual_sink=nil;
++    @try { actual_input=[graph->input outputFormatForBus:0]; actual_sink=[graph->private_meter_sink inputFormatForBus:0];
++      PrivateFormatDiagnostic(request,actual_input,actual_sink,true); } @catch (NSException*) {}
++    const std::array<bool,mac_adm::PrivateInputFormatContract::kStartupProofCount> proofs={control->Valid(request.token),status==noErr,bool(running),bool(graph->engine.running),
+         control->RawCallbacks()>0,graph->bridge->silent_renders.load()==0,!(graph->bridge->target.load()),
+         !graph->bridge->ever_opened,graph->bridge->gate.IsClosed(),bool(ApplicationCaptureState() & 1),
+-        TimeMillis()<request.resource.deadline_ms,SameRoute(request.resource.route,route_after),PrivateInputFormatsMatch(graph)};
++        TimeMillis()<request.resource.deadline_ms,SameRoute(request.resource.route,route_after),
++        PrivateInputRequestedFormatsMatch(graph,actual_input,actual_sink)};
+     uint64_t mask=0; for (size_t i=0;i<proofs.size();++i) if (proofs.at(i)) mask|=uint64_t(1)<<i;
+-    c->SetDetail(request.token,PrivateDetail::kProofMask,mask); graph->started=mask==((uint64_t(1)<<proofs.size())-1);
++    c->SetDetail(request.token,PrivateDetail::kProofMask,mask);
++    graph->started=graph->private_format_contract.AdoptAfterStartup(PrivatePcmFormat(actual_input),PrivatePcmFormat(actual_sink),mask);
+     if (graph->started) {
++      // Only a completely admitted private graph may replace its pre-start
++      // native bus baseline with the exact requested negotiated mono format.
++      graph->input_bus_format=actual_input;
+       c->SetStage(request.token,PrivateStage::kObserver);
+       graph->private_configuration_observer=(__bridge_retained void*)[[NSNotificationCenter defaultCenter]
+           addObserverForName:AVAudioEngineConfigurationChangeNotification object:graph->engine queue:nil usingBlock:^(NSNotification*) {
+@@ -865,7 +893,7 @@
+   c->SetDetail(request.token,PrivateDetail::kConfigurationAfter,warm_configuration_generation_);
+   c->SetDetail(request.token,PrivateDetail::kLifecycleAfter,warm_lifecycle_generation_);
+   const bool committed=graph->bridge->privacy.IsPrivate() && graph->started && graph->bridge->target.load()==nullptr &&
+-      graph->bridge->gate.IsClosed() && !graph->bridge->ever_opened && PrivateInputFormatsMatch(graph) &&
++      graph->bridge->gate.IsClosed() && !graph->bridge->ever_opened && PrivateInputRuntimeFormatsMatch(graph) &&
+       ValidatePrivateInputMeter(request) && private_meter_control_->Started(request.token);
+   if (committed) c->SetStage(request.token,PrivateStage::kRunning); else c->Reject(request.token,kAudioEngineStateTransitionError);
+   return committed;
+--- a/modules/audio_device/mac/private_input_meter_state.h
++++ b/modules/audio_device/mac/private_input_meter_state.h
+@@ -10,6 +10,39 @@
+ #include <time.h>
+ 
+ namespace webrtc::mac_adm {
++// This contract is private-meter-only. The pre-start native bus may expose
++// multiple hardware channels; admission uses the exact requested mono format
++// actually negotiated on both connected endpoints, after every startup proof.
++struct PrivateInputPcmFormat {
++  double sample_rate=0;
++  uint32_t channels=0;
++  bool float32=false, interleaved=false;
++  bool operator==(const PrivateInputPcmFormat&) const = default;
++};
++class PrivateInputFormatContract {
++ public:
++  static constexpr size_t kStartupProofCount=13;
++  static constexpr uint64_t kAllStartupProofs=(uint64_t(1)<<kStartupProofCount)-1;
++  bool Configure(PrivateInputPcmFormat requested) {
++    if (configured_ || !std::isfinite(requested.sample_rate) || requested.sample_rate<=0 ||
++        requested.channels!=1 || !requested.float32) return false;
++    requested_=requested; configured_=true; return true;
++  }
++  bool MatchesRequested(PrivateInputPcmFormat input, PrivateInputPcmFormat sink) const {
++    return configured_ && input==requested_ && sink==requested_;
++  }
++  bool AdoptAfterStartup(PrivateInputPcmFormat input, PrivateInputPcmFormat sink, uint64_t proofs) {
++    if (adopted_ || proofs!=kAllStartupProofs || !MatchesRequested(input,sink)) return false;
++    actual_=input; adopted_=true; return true;
++  }
++  bool MatchesAdopted(PrivateInputPcmFormat input, PrivateInputPcmFormat sink) const {
++    return adopted_ && input==actual_ && MatchesRequested(input,sink);
++  }
++ private:
++  PrivateInputPcmFormat requested_,actual_;
++  bool configured_=false,adopted_=false;
++};
++
+ class PrivateInputGraphSeal {
+  public:
+   void Seal() { private_.store(true, std::memory_order_release); }
+--- a/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
++++ b/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
+@@ -149,6 +149,47 @@
+   EXPECT_EQ(c.Read().diagnostic.at(size_t(D::kRawCallbackAttempts)),0u);
+   EXPECT_EQ(c.Read().diagnostic.at(size_t(D::kUnitRunning)),0u);
+   EXPECT_TRUE(c.Valid(2)); c.Finish(2,true,0);
++}
++
++TEST(PrivateInputMeterTest, PrivateMonoContractUsesBothNegotiatedEndpoints) {
++  using F=mac_adm::PrivateInputPcmFormat; using C=mac_adm::PrivateInputFormatContract;
++  const F native{44100,3,true,false}, requested{44100,1,true,false};
++  C c; ASSERT_TRUE(c.Configure(requested));
++  EXPECT_FALSE(c.MatchesRequested(native,requested));
++  EXPECT_FALSE(c.MatchesRequested(requested,native));
++  EXPECT_TRUE(c.MatchesRequested(requested,requested));
++  EXPECT_FALSE(c.MatchesAdopted(requested,requested));
++  EXPECT_TRUE(c.AdoptAfterStartup(requested,requested,C::kAllStartupProofs));
++  EXPECT_TRUE(c.MatchesAdopted(requested,requested));
++}
++TEST(PrivateInputMeterTest, PrivateMonoContractRejectsEveryEndpointMismatch) {
++  using F=mac_adm::PrivateInputPcmFormat; using C=mac_adm::PrivateInputFormatContract;
++  const F requested{44100,1,true,false}; C c; ASSERT_TRUE(c.Configure(requested));
++  for (const F wrong: {F{48000,1,true,false},F{44100,3,true,false},F{44100,1,false,false},F{44100,1,true,true}}) {
++    EXPECT_FALSE(c.MatchesRequested(wrong,requested)); EXPECT_FALSE(c.MatchesRequested(requested,wrong));
++    EXPECT_FALSE(c.AdoptAfterStartup(wrong,requested,C::kAllStartupProofs));
++    EXPECT_FALSE(c.AdoptAfterStartup(requested,wrong,C::kAllStartupProofs));
++  }
++  for (const F wrong: {F{0,1,true,false},F{44100,3,true,false},F{44100,1,false,false}}) {
++    C invalid; EXPECT_FALSE(invalid.Configure(wrong));
++  }
++}
++TEST(PrivateInputMeterTest, PrivateFormatCannotBeAdoptedWithAnyFailedStartupProof) {
++  using F=mac_adm::PrivateInputPcmFormat; using C=mac_adm::PrivateInputFormatContract;
++  const F requested{44100,1,true,false};
++  for (size_t bit=0;bit<C::kStartupProofCount;++bit) {
++    C c; ASSERT_TRUE(c.Configure(requested));
++    EXPECT_FALSE(c.AdoptAfterStartup(requested,requested,C::kAllStartupProofs & ~(uint64_t(1)<<bit)));
++    EXPECT_FALSE(c.MatchesAdopted(requested,requested));
++  }
++}
++TEST(PrivateInputMeterTest, PrivateAdoptedFormatRejectsDriftAndCannotBeRebased) {
++  using F=mac_adm::PrivateInputPcmFormat; using C=mac_adm::PrivateInputFormatContract;
++  const F requested{44100,1,true,false}, changed{48000,1,true,false}; C c;
++  ASSERT_TRUE(c.Configure(requested)); ASSERT_TRUE(c.AdoptAfterStartup(requested,requested,C::kAllStartupProofs));
++  EXPECT_FALSE(c.MatchesAdopted(changed,requested)); EXPECT_FALSE(c.MatchesAdopted(requested,changed));
++  EXPECT_FALSE(c.Configure(changed)); EXPECT_FALSE(c.AdoptAfterStartup(changed,changed,C::kAllStartupProofs));
++  EXPECT_TRUE(c.MatchesAdopted(requested,requested));
+ }
+ 
+ TEST(ExperimentalCoreAudioCaptureTest, PausedConsumerRejectsMutedAndOldEpochs) {

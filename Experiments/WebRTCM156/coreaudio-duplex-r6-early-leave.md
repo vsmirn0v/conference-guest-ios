@@ -1,0 +1,15 @@
+# R6 adapter early Leave barrier
+
+App-only adapter delta after the immutable receive-demand follow-up. Root owns the protocol, DesktopMeetingModel ordering and parity fixtures; this adapter/audio-release delta must be reviewed and composed with them.
+
+`revokeMediaForLeave()` is synchronous. Under DEBUG + R6, only the actual CoreAudio owner (or the selected CoreAudio constructor before owner assignment) sets a distinct permanent adapter barrier. It closes the assigned system-audio owner directly and suppresses the current native engine, which may still be the previous engine during replacement. The bounded native terminal latch precedes the existing synchronous track/screen privacy metadata operations. The ordinary teardown-once `leaving` flag is not set early.
+
+The barrier rejects connect/reconnect, both sides of factory creation, active media controls and their post-await checks, private check/accessory preparation, and late engine publication. A returned nonnil engine is suppressed instead of bound. Late state callbacks cannot claim a fresh connection. A local factory already being constructed is checked-retired before assignment; uncertain shutdown is a sticky adapter cleanup failure, preserved through catch and every leave result. The barrier is never cleared or reused within this adapter.
+
+The DEBUG R6-only test hook is `audioOwnerCreatedForTesting: ((GuestSystemAudio) async -> Void)?`. It runs after real owner creation and before post-create admission/assignment, allowing a zero-HAL construction test to hold the local owner, revoke Leave, then prove checked retirement and no peer exposure. Nil does no work during ordinary execution.
+
+Default/old-SDK execution never sets either new flag; the hook body is a no-op and no SDK API or behavior changes. The native authority closes before the existing synchronous metadata suppression; full HAL cleanup remains asynchronous. Actual held-Prepare Leave must separately demonstrate terminal authority before the control task returns.
+
+R6 borrowed private release runs after the existing standalone-owner and isolated-token branches. Accepted borrowing only adds a meter/local check to persistent input, so completion always disables/resets the meter and serializes local endCheck bookkeeping without Prepare, in both live and terminal states. Its success means the borrowed meter/local lease released; full shutdown must still prove HAL retirement. The no-HAL construction test arms only a local meter, terminalizes the staged owner, proves release does not add any Prepare/receipt, and still requires checked shutdown. It does not claim an actual begun hardware-backed borrow. Root owns the separate actual postpersistent active-preview Leave workflow.
+
+R6 meter enable checks terminal/termination flags under the same intent lock. A late successful borrow continuation therefore cannot re-arm the meter after the early barrier; disables and default behavior are unchanged. The staged-owner fixture explicitly attempts this late re-enable before local release.

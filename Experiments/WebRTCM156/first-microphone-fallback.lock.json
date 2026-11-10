@@ -1,0 +1,29 @@
+{
+  "baseBuildEvidenceSHA256": "f0ac4878bf0131f688ccff0f6d2cb494e48d7fe690af3fc187b2f8289470206b",
+  "baseFrameworkBinarySHA256": "e205e24477aedaf72b83e23f87d6d9d0e045c9176a2300dab847bbaeeca289b7",
+  "baseLock": "first-microphone-handover.lock.json",
+  "baseLockSHA256": "7e82f603441dac89c3f085181e8b2f103207c0330ee387fbdc5ad528ebbef1a6",
+  "basePatchSHA256": "5a618a41fad8a01c685c0b6a65fd4242cdeec60db8826243454c79da693de944",
+  "baseSourceManifestSHA256": "4df1de9f55cba175bb6673ca32c7e64a3e313c958c06b4571128ec56241112d8",
+  "capabilities": {
+    "cleanObsoleteWarmFallback": true,
+    "stoppedInputGraph": true
+  },
+  "compilerSHA256": "f3f0259de6f7bf1c026760855d505b07ee626b6e64ecd9600f252ed0faac95ff",
+  "formatVersion": 1,
+  "frameworkBinarySHA256": "072fd15fac2944dc54784562066ded5cbfa68cdde748ff5bd9d1f35a1805c843",
+  "gnArgsSHA256": "a60e3c5807c949d14b2db2f293062066e107963a031eea17be48bce7a51ac6b8",
+  "patchSHA256": "3d8b217d5db036b6d99172c1f071f12eec4388f8f4ce6c6ab0bf3012efed26f2",
+  "reconstructionEvidenceSHA256": "01095bbff09678625df30b83a314b9eb5624e9ae8ed30b8e97c1f0012cdc96da",
+  "sourceManifestSHA256": "12cf96cde0e53575acd4abe71c1860fad6ea27b2949fc00a65131eb92786420b",
+  "sourceOverrides": {
+    "modules/audio_device/BUILD.gn": "f3a709e4fa5884d416dbb14dd54623d748beedbe6b9704e710718e182d616da8",
+    "modules/audio_device/audio_engine_device.h": "e3edddb1272401409730780dfb9372d1994f6189cc05205c7eae02585ede1e83",
+    "modules/audio_device/audio_engine_device.mm": "675acbce6275688275d6dd223cb95ca99c927f77e2829111f4999c022cca3faf",
+    "modules/audio_device/mac/prepared_graph_callback_gate.h": "b92e27b4d8d57017da1fda3126e06cff3c3b19d779d5ba3efbb7eab2063e86e0",
+    "sdk/objc/api/peerconnection/RTCAudioDeviceModule.h": "00a42e09c873847e024e34fa0d49924a080217490c4986f3a3dfb7d6f524a39b",
+    "sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm": "de024872669e4cdee1aa00bdb8844782f4302a1601e09980b494df71ff67e32b"
+  },
+  "upstreamRevision": "19576e37870bfe5a0a910a32f98ff411f722f43a",
+  "validatedCandidateEvidenceSHA256": "3b898c216062fff0f58db79dcdf244a978f48961c12e7d03460ac4ec73fc5b34"
+}

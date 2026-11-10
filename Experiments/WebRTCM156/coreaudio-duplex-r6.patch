@@ -1,0 +1,3244 @@
+--- a/api/audio/audio_device.h
++++ b/api/audio/audio_device.h
+@@ -52,7 +52,8 @@
+     kSharedStopTimeout, kRenderStopTimeout, kDeviceList, kStreamFormat,
+     kDataSource, kInputCallbackShape, kInputConverterShape,
+     kCaptureConverterReset, kCaptureConverterFill, kRenderConverterFill,
+-    kCallbackCellExhausted, kCallbackDrainTimeout, kResourceProof
++    kCallbackCellExhausted, kCallbackDrainTimeout, kResourceProof,
++    kOutputConverterShape, kDuplexAdmission, kDuplexDeadline
+   };
+   struct ExperimentalCoreAudioErrorContext {
+     ExperimentalCoreAudioErrorOrigin origin = ExperimentalCoreAudioErrorOrigin::kUnknown;
+@@ -90,6 +91,55 @@
+     ExperimentalCoreAudioMeter input_meter, output_meter, physical_output_meter;
+     ExperimentalCoreAudioDiagnostics native_diagnostics;
+   };
++  struct ExperimentalCoreAudioDuplexResult {
++    int32_t status = -1;
++    uint64_t sealed_token = 0;
++    uint64_t owner_generation = 0, physical_generation = 0, prepare_serial = 0;
++    uint64_t expected_intent = 0, entry_authority = 0, observed_authority = 0, observation_nanos = 0;
++    // 0 none, 1 intentSuperseded, 2 terminalIntent, 3 routeInvalidated,
++    // 4 deadline, 5 admissionFailed, 6 busy.
++    uint32_t abort_reason = 5;
++  };
++  struct ExperimentalCoreAudioDuplexState {
++    bool supported = false, enabled = false, prepared = false;
++    bool transport_pinned = false, transport_quarantined = false;
++    bool hold_active = false, output_running = false, input_running = false, capture_committed = false;
++    uint64_t owner_generation = 0;
++    uint64_t physical_generation = 0, active_prepare_serial = 0;
++    uint64_t input_create_count = 0, input_start_count = 0, output_create_count = 0, output_start_count = 0;
++    uint64_t input_drops = 0;
++    uint64_t authority = 0, input_callbacks = 0, output_callbacks = 0;
++    uint64_t first_input_nanos = 0, last_input_nanos = 0;
++    uint64_t phase_nanos[13] = {};
++    uint32_t phase = 0;
++    uint64_t archived_output_generations = 0;
++    struct OutputRetirement {
++      uint64_t serial = 0, proof = 0, required = 0;
++      int32_t stop_status = 0, destroy_status = 0;
++      double sample_rate = 0;
++      uint32_t format_id = 0, flags = 0, bytes_per_packet = 0, frames_per_packet = 0;
++      uint32_t bytes_per_frame = 0, channels = 0, bits_per_channel = 0, reserved = 0;
++    } output_history[128];
++    struct RouteEvent {
++      uint64_t authority = 0, nanos = 0;
++      uint32_t object = 0, selector = 0, scope = 0;
++      bool ready = false;
++    } events[64];
++    size_t output_history_size = 0, event_size = 0;
++    uint64_t observed_events = 0;
++  };
++  // R6 construction capability only. Latch/revoke/commit are bounded atomics;
++  // preparation executes on the caller's serialized audio control executor.
++  virtual bool HasExperimentalCoreAudioDuplexStartup() const { return false; }
++  virtual int32_t RegisterExperimentalCoreAudioDuplexTransport(AudioTransport*, scoped_refptr<RefCountInterface>) { return -1; }
++  virtual int32_t CompleteExperimentalCoreAudioDuplexControl(bool) { return -1; }
++  virtual bool ExperimentalCoreAudioDuplexTransportQuarantined() const { return false; }
++  virtual uint64_t LatchExperimentalCoreAudioDuplexIntent(uint32_t, uint32_t) { return 0; }
++  virtual bool RevokeExperimentalCoreAudioDuplexIntent(uint64_t) { return false; }
++  virtual ExperimentalCoreAudioDuplexResult PrepareExperimentalCoreAudioDuplex(uint64_t, double) { return {}; }
++  virtual bool CommitExperimentalCoreAudioDuplexCapture(uint64_t) { return false; }
++  virtual ExperimentalCoreAudioDuplexState GetExperimentalCoreAudioDuplexState() const { return {}; }
++  virtual void SetExperimentalCoreAudioDuplexHoldPhase(uint32_t, uint32_t) {}
+   // Opt-in, per-owner Mac diagnostic control. Never aliases hardware mixer mute.
+   virtual int32_t EnableExperimentalCoreAudioControl() { return -1; }
+   virtual int32_t SetExperimentalCoreAudioAvailability(bool, bool) { return -1; }
+--- a/api/audio/create_audio_device_module.cc
++++ b/api/audio/create_audio_device_module.cc
+@@ -27,6 +27,9 @@
+ absl_nullable scoped_refptr<AudioDeviceModule> CreateExperimentalCoreAudioRetirementAudioDeviceModule(const Environment& env) {
+   return AudioDeviceModuleImpl::CreateExperimentalCoreAudioRetirement(env);
+ }
++absl_nullable scoped_refptr<AudioDeviceModule> CreateExperimentalCoreAudioDuplexStartupAudioDeviceModule(const Environment& env) {
++  return AudioDeviceModuleImpl::CreateExperimentalCoreAudioDuplexStartup(env);
++}
+ #endif
+ 
+ }  // namespace webrtc
+--- a/api/audio/create_audio_device_module.h
++++ b/api/audio/create_audio_device_module.h
+@@ -23,6 +23,7 @@
+     AudioDeviceModule::AudioLayer audio_layer);
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+ absl_nullable scoped_refptr<AudioDeviceModule> CreateExperimentalCoreAudioRetirementAudioDeviceModule(const Environment& env);
++absl_nullable scoped_refptr<AudioDeviceModule> CreateExperimentalCoreAudioDuplexStartupAudioDeviceModule(const Environment& env);
+ #endif
+ 
+ }  // namespace webrtc
+--- a/audio/BUILD.gn
++++ b/audio/BUILD.gn
+@@ -127,6 +127,25 @@
+   ]
+ }
+ if (rtc_include_tests) {
++  if (is_mac && !is_ios && !build_with_chromium) {
++    rtc_cc_test("audio_state_duplex_unittest") {
++      sources = [ "audio_state_duplex_unittest.cc" ]
++      deps = [
++        ":audio",
++        "../api:make_ref_counted",
++        "../api:mock_audio_mixer",
++        "../api/audio:audio_device",
++        "../api/audio:audio_frame_api",
++        "../api/units:time_delta",
++        "../call:call_interfaces",
++        "../call:mock_call_interfaces",
++        "../modules/audio_device:mock_audio_device",
++        "../rtc_base:rtc_event",
++        "../rtc_base:task_queue_for_test",
++        "../test:test_support",
++      ]
++    }
++  }
+   rtc_library("audio_end_to_end_test") {
+     testonly = true
+ 
+--- a/audio/audio_state.cc
++++ b/audio/audio_state.cc
+@@ -183,13 +183,33 @@
+ }
+ 
+ void AudioState::UpdateNullAudioPollerState() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (config_.audio_device_module->HasExperimentalCoreAudioDuplexStartup() &&
++      config_.audio_device_module->ExperimentalCoreAudioDuplexTransportQuarantined()) {
++    null_audio_poller_.Stop();
++    return;
++  }
++#endif
+   // Run NullAudioPoller when there are receiving streams and playout is
+   // disabled.
+   if (!receiving_streams_.empty() && !playout_enabled_) {
+     if (!null_audio_poller_.Running()) {
+       AudioTransport* audio_transport = &audio_transport_;
+       null_audio_poller_ = RepeatingTaskHandle::Start(
+-          TaskQueueBase::Current(), [audio_transport] {
++          TaskQueueBase::Current(),
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++          [this, audio_transport] {
++#else
++          [audio_transport] {
++#endif
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++            RTC_DCHECK_RUN_ON(&worker_thread_checker_);
++            if (config_.audio_device_module->HasExperimentalCoreAudioDuplexStartup() &&
++                config_.audio_device_module->ExperimentalCoreAudioDuplexTransportQuarantined()) {
++              null_audio_poller_.Stop();
++              return TimeDelta::PlusInfinity();
++            }
++#endif
+             static constexpr size_t kNumChannels = 1;
+             static constexpr uint32_t kSamplesPerSecond = 48'000;
+             // 10ms of samples
+--- a/media/engine/webrtc_voice_engine.cc
++++ b/media/engine/webrtc_voice_engine.cc
+@@ -569,7 +569,14 @@
+   // Connect the ADM to our audio path. It's important to do this after applying
+   // the configuration so that the audio callback receives calls with the
+   // correct init options already applied.
+-  adm()->RegisterAudioCallback(audio_state()->audio_transport());
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (adm()->HasExperimentalCoreAudioDuplexStartup()) {
++    adm()->RegisterExperimentalCoreAudioDuplexTransport(audio_state()->audio_transport(), audio_state_);
++  } else
++#endif
++  {
++    adm()->RegisterAudioCallback(audio_state()->audio_transport());
++  }
+ 
+   initialized_ = true;
+ }
+--- a/modules/audio_device/BUILD.gn
++++ b/modules/audio_device/BUILD.gn
+@@ -387,12 +387,15 @@
+           "mac/private_input_meter_state.h",
+           "mac/audio_device_mac.cc",
+           "mac/audio_device_mac.h",
++          "mac/audio_device_mac_duplex.cc",
++          "mac/audio_device_mac_duplex.h",
+           "mac/audio_device_utils_mac.cc",
+           "mac/audio_device_utils_mac.h",
+           "mac/audio_mixer_manager_mac.cc",
+           "mac/audio_mixer_manager_mac.h",
+           "mac/audio_ring_buffer_mac.h",
+           "mac/experimental_core_audio_capture.h",
++          "mac/experimental_core_audio_duplex.h",
+         ]
+         deps += [ ":audio_device_impl_frameworks" ]
+       }
+@@ -565,9 +568,15 @@
+ 
+   if (is_mac) {
+     rtc_cc_test("audio_ring_buffer_mac_unittest") {
+-      sources = [ "mac/audio_ring_buffer_mac_unittest.cc" ]
++      sources = [
++        "mac/audio_ring_buffer_mac_unittest.cc",
++        "mac/experimental_core_audio_duplex_transport_unittest.cc",
++      ]
+       deps = [
+         ":audio_device_buffer",
++        ":mock_audio_device",
++        "../../api:make_ref_counted",
++        "../../api:ref_count",
+         ":audio_device_impl",
+         "../../api/audio:audio_device",
+         "../../api/environment",
+--- a/modules/audio_device/audio_device_buffer.cc
++++ b/modules/audio_device/audio_device_buffer.cc
+@@ -33,6 +33,10 @@
+ #include "system_wrappers/include/metrics.h"
+ 
+ #include <time.h>
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++#include "modules/audio_device/mac/experimental_core_audio_duplex.h"
++#include "modules/audio_device/mac/experimental_core_audio_capture.h"
++#endif
+ 
+ namespace webrtc {
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+@@ -93,6 +97,63 @@
+ void AudioDeviceBuffer::EnableExperimentalCoreAudioControl() {
+   experimental_capture_state_.store(1, std::memory_order_release);
+   experimental_core_audio_enabled_.store(true, std::memory_order_release);
++}
++void AudioDeviceBuffer::AttachExperimentalCoreAudioDuplexAuthority(ExperimentalCoreAudioDuplexAuthority* authority) {
++  if (authority) experimental_duplex_enabled_.store(true, std::memory_order_release);
++  experimental_duplex_authority_.store(authority, std::memory_order_release);
++}
++ExperimentalCoreAudioCallbackCell* AudioDeviceBuffer::ExperimentalCoreAudioDuplexDeliveryCell(bool input) const {
++  return (input ? experimental_duplex_capture_delivery_ : experimental_duplex_render_delivery_).load(std::memory_order_acquire);
++}
++void AudioDeviceBuffer::OpenExperimentalCoreAudioDuplexDelivery(bool input) {
++  if (ExperimentalCoreAudioDuplexDeliveryUnsafe() || !ExperimentalCoreAudioDuplexTransportPinned()) {
++    if (auto* authority = experimental_duplex_authority_.load(std::memory_order_acquire)) authority->FailTerminal();
++    return;
++  }
++  auto* cell = ExperimentalCoreAudioCallbackCells().Allocate(this);
++  if (!cell || !cell->Open()) {
++    if (auto* authority = experimental_duplex_authority_.load(std::memory_order_acquire)) authority->FailTerminal();
++    return;
++  }
++  (input ? experimental_duplex_capture_delivery_ : experimental_duplex_render_delivery_).store(cell, std::memory_order_release);
++}
++bool AudioDeviceBuffer::CloseExperimentalCoreAudioDuplexDelivery(bool input, double requested_deadline) {
++  auto* cell = ExperimentalCoreAudioDuplexDeliveryCell(input);
++  if (!cell) return !experimental_duplex_delivery_unsafe_.load(std::memory_order_acquire);
++  cell->Close();
++  if (experimental_duplex_delivery_unsafe_.load(std::memory_order_acquire)) return false;
++  // Stop/Register must NEVER return with an old raw transport access in flight:
++  // WebRtcVoiceEngine ignores their errors before destroying AudioState. There
++  // is no HAL call/join here and no caller lock may be held. On timeout the
++  // actual AudioState owner pin AND the complete ADM anchor remain quarantined.
++  const double deadline = requested_deadline > 0 ? requested_deadline : ExperimentalCoreAudioUptime() + 2;
++  while (!cell->ClosedAndDrained() && ExperimentalCoreAudioUptime() < deadline) {
++    const timespec pause{0, 1000000}; nanosleep(&pause, nullptr);
++  }
++  if (!cell->ClosedAndDrained()) {
++    experimental_duplex_delivery_unsafe_.store(true, std::memory_order_release);
++    if (auto* authority = experimental_duplex_authority_.load(std::memory_order_acquire)) authority->FailTerminal();
++  }
++  return !experimental_duplex_delivery_unsafe_.load(std::memory_order_acquire);
++}
++bool AudioDeviceBuffer::ExperimentalCoreAudioDuplexDeliveryUnsafe() const {
++  return experimental_duplex_delivery_unsafe_.load(std::memory_order_acquire);
++}
++bool AudioDeviceBuffer::ExperimentalCoreAudioDuplexTransportPinned() const {
++  return experimental_duplex_transport_pinned_.load(std::memory_order_acquire);
++}
++int32_t AudioDeviceBuffer::RegisterExperimentalCoreAudioDuplexTransport(AudioTransport* callback, scoped_refptr<RefCountInterface> owner) {
++  RTC_DCHECK_RUN_ON(&main_thread_checker_);
++  if (!callback || !owner || experimental_duplex_transport_owner_ || ExperimentalCoreAudioDuplexDeliveryUnsafe()) return -1;
++  // Install the actual AudioState owner BEFORE raw callback publication.
++  experimental_duplex_transport_owner_ = std::move(owner);
++  experimental_duplex_transport_pinned_.store(true, std::memory_order_release);
++  experimental_duplex_enabled_.store(true, std::memory_order_release);
++  audio_transport_cb_ = callback;
++  return 0;
++}
++void AudioDeviceBuffer::SetExperimentalCoreAudioRecordedDuplexAuthority(uint64_t authority) {
++  recorded_duplex_authority_ = authority;
+ }
+ void AudioDeviceBuffer::SetExperimentalCoreAudioCaptureMuted(bool muted) {
+   uint64_t previous = experimental_capture_state_.load(std::memory_order_acquire);
+@@ -232,6 +293,20 @@
+     AudioTransport* audio_callback) {
+   RTC_DCHECK_RUN_ON(&main_thread_checker_);
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (experimental_duplex_enabled_.load(std::memory_order_acquire)) {
++    const double deadline = ExperimentalCoreAudioUptime() + 2;
++    const bool capture = CloseExperimentalCoreAudioDuplexDelivery(true, deadline);
++    const bool render = CloseExperimentalCoreAudioDuplexDelivery(false, deadline);
++    if (!capture || !render || ExperimentalCoreAudioDuplexDeliveryUnsafe()) return -1;
++    if (audio_callback) return -1;  // R6 requires an actual owned registration.
++    audio_transport_cb_ = audio_callback;
++    // Always on the original worker, while VoiceEngine.audio_state_ is strong.
++    experimental_duplex_transport_owner_ = nullptr;
++    experimental_duplex_transport_pinned_.store(false, std::memory_order_release);
++    return 0;
++  }
++#endif
+   if (playing_ || recording_) {
+     RTC_LOG(LS_ERROR) << "Failed to set audio transport since media was active";
+     return -1;
+@@ -260,6 +335,9 @@
+   // Clear members that are only touched on the main (creating) thread.
+   play_start_time_ = now_time;
+   playing_ = true;
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (experimental_duplex_enabled_.load(std::memory_order_acquire)) OpenExperimentalCoreAudioDuplexDelivery(false);
++#endif
+ }
+ 
+ void AudioDeviceBuffer::StartRecording() {
+@@ -282,10 +360,16 @@
+   // It is safe to do so since we know by design that the owning ADM has not
+   // yet started the native audio recording.
+   only_silence_recorded_ = true;
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (experimental_duplex_enabled_.load(std::memory_order_acquire)) OpenExperimentalCoreAudioDuplexDelivery(true);
++#endif
+ }
+ 
+ void AudioDeviceBuffer::StopPlayout() {
+   RTC_DCHECK_RUN_ON(&main_thread_checker_);
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (experimental_duplex_enabled_.load(std::memory_order_acquire) && !CloseExperimentalCoreAudioDuplexDelivery(false)) return;
++#endif
+   if (!playing_) {
+     return;
+   }
+@@ -301,6 +385,9 @@
+ 
+ void AudioDeviceBuffer::StopRecording() {
+   RTC_DCHECK_RUN_ON(&main_thread_checker_);
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (experimental_duplex_enabled_.load(std::memory_order_acquire) && !CloseExperimentalCoreAudioDuplexDelivery(true)) return;
++#endif
+   if (!recording_) {
+     return;
+   }
+@@ -473,6 +560,11 @@
+ int32_t AudioDeviceBuffer::DeliverRecordedData() {
+   const uint64_t capture_state = ApplicationCaptureState();
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (const auto* authority = experimental_duplex_authority_.load(std::memory_order_acquire)) {
++    const uint64_t word = authority->Read();
++    if (!ExperimentalCoreAudioDuplexAuthority::AllowsPublication(word) || word != recorded_duplex_authority_)
++      SilenceRecordedBuffer();
++  }
+   if (experimental_core_audio_enabled_.load(std::memory_order_acquire)) {
+     const uint64_t local_state = ExperimentalCoreAudioCaptureState();
+     if ((local_state & 1) || local_state != recorded_experimental_capture_state_) {
+--- a/modules/audio_device/audio_device_buffer.h
++++ b/modules/audio_device/audio_device_buffer.h
+@@ -30,6 +30,11 @@
+ 
+ namespace webrtc {
+ 
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++class ExperimentalCoreAudioDuplexAuthority;
++class ExperimentalCoreAudioCallbackCell;
++#endif
++
+ // Process-wide capture boundary. The OS accessory callback only writes this
+ // packed atomic; transport/capture threads never wait for the app's queues.
+ // Low bit is mute; remaining bits distinguish samples across rapid toggles.
+@@ -107,6 +112,13 @@
+   bool IsRecording();
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   void EnableExperimentalCoreAudioControl();
++  void AttachExperimentalCoreAudioDuplexAuthority(ExperimentalCoreAudioDuplexAuthority* authority);
++  void SetExperimentalCoreAudioRecordedDuplexAuthority(uint64_t authority);
++  ExperimentalCoreAudioCallbackCell* ExperimentalCoreAudioDuplexDeliveryCell(bool input) const;
++  bool CloseExperimentalCoreAudioDuplexDelivery(bool input, double deadline = 0);
++  int32_t RegisterExperimentalCoreAudioDuplexTransport(AudioTransport* callback, scoped_refptr<RefCountInterface> owner);
++  bool ExperimentalCoreAudioDuplexDeliveryUnsafe() const;
++  bool ExperimentalCoreAudioDuplexTransportPinned() const;
+   void SetExperimentalCoreAudioCaptureMuted(bool muted);
+   uint64_t ExperimentalCoreAudioCaptureState() const;
+   AudioDeviceModule::ExperimentalCoreAudioMeter ExperimentalCoreAudioInputMeter() const;
+@@ -284,6 +296,13 @@
+     AudioDeviceModule::ExperimentalCoreAudioMeter Read() const;
+   };
+   std::atomic<bool> experimental_core_audio_enabled_{false};
++  std::atomic<ExperimentalCoreAudioDuplexAuthority*> experimental_duplex_authority_{nullptr};
++  std::atomic<bool> experimental_duplex_enabled_{false};
++  scoped_refptr<RefCountInterface> experimental_duplex_transport_owner_;
++  std::atomic<bool> experimental_duplex_delivery_unsafe_{false}, experimental_duplex_transport_pinned_{false};
++  std::atomic<ExperimentalCoreAudioCallbackCell*> experimental_duplex_capture_delivery_{nullptr}, experimental_duplex_render_delivery_{nullptr};
++  void OpenExperimentalCoreAudioDuplexDelivery(bool input);
++  uint64_t recorded_duplex_authority_ = 0;
+   std::atomic<uint64_t> experimental_capture_state_{1};
+   uint64_t recorded_experimental_capture_state_ = 1;
+   ExperimentalMeter experimental_input_meter_, experimental_output_meter_;
+--- a/modules/audio_device/audio_device_generic.h
++++ b/modules/audio_device/audio_device_generic.h
+@@ -117,6 +117,13 @@
+ 
+   // Android only
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  virtual bool HasExperimentalCoreAudioDuplexStartup() const { return false; }
++  virtual uint64_t LatchExperimentalCoreAudioDuplexIntent(uint32_t, uint32_t) { return 0; }
++  virtual bool RevokeExperimentalCoreAudioDuplexIntent(uint64_t) { return false; }
++  virtual AudioDeviceModule::ExperimentalCoreAudioDuplexResult PrepareExperimentalCoreAudioDuplex(uint64_t, double) { return {}; }
++  virtual bool CommitExperimentalCoreAudioDuplexCapture(uint64_t) { return false; }
++  virtual AudioDeviceModule::ExperimentalCoreAudioDuplexState GetExperimentalCoreAudioDuplexState() const { return {}; }
++  virtual void SetExperimentalCoreAudioDuplexHoldPhase(uint32_t, uint32_t) {}
+   virtual int32_t EnableExperimentalCoreAudioControl() { return -1; }
+   // Passive atomic status; zero only while no native error has been observed.
+   virtual int32_t ExperimentalCoreAudioError() const { return -1; }
+--- a/modules/audio_device/audio_device_impl.cc
++++ b/modules/audio_device/audio_device_impl.cc
+@@ -38,6 +38,7 @@
+ #include "sdk/objc/native/src/audio/audio_device_ios.h"
+ #elif defined(WEBRTC_MAC)
+ #include "modules/audio_device/mac/audio_device_mac.h"
++#include "modules/audio_device/mac/experimental_core_audio_duplex.h"
+ #endif
+ #if defined(WEBRTC_DUMMY_FILE_DEVICES)
+ #include "modules/audio_device/dummy/file_audio_device.h"
+@@ -74,6 +75,14 @@
+       std::make_unique<AudioDeviceMac>(true), false);
+   if (module->CheckPlatform() != 0 || module->AttachAudioBuffer() != 0) return nullptr;
+   // Install the COMPLETE ADM/ADB owner before exposing it to any Init/factory.
++  if (!CoreAudioOwnerAnchors().Retain(module)) return nullptr;
++  module->core_audio_anchor_owned_ = true;
++  return module;
++}
++absl_nullable scoped_refptr<AudioDeviceModuleImpl> AudioDeviceModuleImpl::CreateExperimentalCoreAudioDuplexStartup(const Environment& env) {
++  auto module = make_ref_counted<AudioDeviceModuleImpl>(env, kPlatformDefaultAudio,
++      std::make_unique<AudioDeviceMac>(true, true), false);
++  if (module->CheckPlatform() != 0 || module->AttachAudioBuffer() != 0) return nullptr;
+   if (!CoreAudioOwnerAnchors().Retain(module)) return nullptr;
+   module->core_audio_anchor_owned_ = true;
+   return module;
+@@ -327,6 +336,12 @@
+ 
+ int32_t AudioDeviceModuleImpl::Terminate() {
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) {
++    StopRecording(); StopPlayout();
++    return audio_device_->ExperimentalCoreAudioDiagnosticState().retirement_confirmed ? CacheCoreAudioState(0) : -3;
++  }
++#endif
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   if (core_audio_enabled_.load(std::memory_order_acquire)) {
+     SetExperimentalCoreAudioCaptureMuted(true);
+     const int32_t recording = StopRecording(), playout = StopPlayout();
+@@ -349,7 +364,84 @@
+ }
+ 
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++bool AudioDeviceModuleImpl::HasExperimentalCoreAudioDuplexStartup() const {
++  return audio_device_->HasExperimentalCoreAudioDuplexStartup();
++}
++int32_t AudioDeviceModuleImpl::RegisterExperimentalCoreAudioDuplexTransport(AudioTransport* transport, scoped_refptr<RefCountInterface> owner) {
++  if (!HasExperimentalCoreAudioDuplexStartup()) return -1;
++  const int32_t result = audio_device_buffer_.RegisterExperimentalCoreAudioDuplexTransport(transport, std::move(owner));
++  if (result) {
++    core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++    audio_device_->RevokeExperimentalCoreAudioDuplexIntent(
++        ExperimentalCoreAudioDuplexAuthority::Intent(audio_device_->GetExperimentalCoreAudioDuplexState().authority));
++  }
++  return result;
++}
++bool AudioDeviceModuleImpl::ExperimentalCoreAudioDuplexTransportQuarantined() const {
++  return HasExperimentalCoreAudioDuplexStartup() && audio_device_buffer_.ExperimentalCoreAudioDuplexDeliveryUnsafe();
++}
++uint64_t AudioDeviceModuleImpl::LatchExperimentalCoreAudioDuplexIntent(uint32_t flags, uint32_t sequence) {
++  return audio_device_->LatchExperimentalCoreAudioDuplexIntent(flags, sequence);
++}
++bool AudioDeviceModuleImpl::RevokeExperimentalCoreAudioDuplexIntent(uint64_t intent) {
++  return audio_device_->RevokeExperimentalCoreAudioDuplexIntent(intent);
++}
++AudioDeviceModule::ExperimentalCoreAudioDuplexResult AudioDeviceModuleImpl::PrepareExperimentalCoreAudioDuplex(uint64_t intent, double deadline) {
++  if (!HasExperimentalCoreAudioDuplexStartup() || !core_audio_enabled_.load(std::memory_order_acquire) ||
++      core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || ExperimentalCoreAudioDuplexTransportQuarantined() ||
++      !audio_device_buffer_.ExperimentalCoreAudioDuplexTransportPinned()) return {};
++  auto result = audio_device_->PrepareExperimentalCoreAudioDuplex(intent, deadline);
++  CacheCoreAudioState(result.status);
++  return result;
++}
++bool AudioDeviceModuleImpl::CommitExperimentalCoreAudioDuplexCapture(uint64_t token) {
++  return HasExperimentalCoreAudioDuplexStartup() && !core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) &&
++      !ExperimentalCoreAudioDuplexTransportQuarantined() && audio_device_->CommitExperimentalCoreAudioDuplexCapture(token);
++}
++AudioDeviceModule::ExperimentalCoreAudioDuplexState AudioDeviceModuleImpl::GetExperimentalCoreAudioDuplexState() const {
++  auto state = audio_device_->GetExperimentalCoreAudioDuplexState();
++  state.enabled = core_audio_enabled_.load(std::memory_order_acquire);
++  state.transport_pinned = audio_device_buffer_.ExperimentalCoreAudioDuplexTransportPinned();
++  state.transport_quarantined = audio_device_buffer_.ExperimentalCoreAudioDuplexDeliveryUnsafe();
++  return state;
++}
++void AudioDeviceModuleImpl::SetExperimentalCoreAudioDuplexHoldPhase(uint32_t phase, uint32_t milliseconds) {
++  audio_device_->SetExperimentalCoreAudioDuplexHoldPhase(phase, milliseconds);
++}
++int32_t AudioDeviceModuleImpl::CompleteExperimentalCoreAudioDuplexControl(bool retiring) {
++  if (!HasExperimentalCoreAudioDuplexStartup()) return -1;
++  scoped_refptr<AudioDeviceModule> keep_alive(this);
++  if (retiring) {
++    const double deadline = AudioDeviceBuffer::ExperimentalCoreAudioUptime() + 2;
++    audio_device_buffer_.CloseExperimentalCoreAudioDuplexDelivery(true, deadline);
++    audio_device_buffer_.CloseExperimentalCoreAudioDuplexDelivery(false, deadline);
++  }
++  if ((retiring || !audio_device_->Recording()) && audio_device_buffer_.IsRecording()) audio_device_buffer_.StopRecording();
++  if ((retiring || !audio_device_->Playing()) && audio_device_buffer_.IsPlaying()) audio_device_buffer_.StopPlayout();
++  if (!retiring) return CacheCoreAudioState(0);
++  const auto diagnostic = audio_device_->ExperimentalCoreAudioDiagnosticState();
++  if (!diagnostic.retirement_confirmed || diagnostic.unsafe_failure_mask || ExperimentalCoreAudioDuplexTransportQuarantined()) {
++    core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++    return CacheCoreAudioState(-3);
++  }
++  // Original WebRTC worker only. AudioState's VoiceEngine owner is still strong.
++  if (audio_device_buffer_.RegisterAudioCallback(nullptr) != 0 || audio_device_buffer_.ExperimentalCoreAudioDuplexTransportPinned()) {
++    core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++    return CacheCoreAudioState(-3);
++  }
++  const int32_t result = CacheCoreAudioState(0);
++  if (result == 0 && core_audio_anchor_owned_) {
++    if (!CoreAudioOwnerAnchors().ReleaseConfirmed(keep_alive, true)) {
++      core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
++      return CacheCoreAudioState(-3);
++    }
++    core_audio_anchor_owned_ = false; initialized_ = false;
++  }
++  return result;
++}
+ int32_t AudioDeviceModuleImpl::CacheCoreAudioState(int32_t result) {
++  if (audio_device_buffer_.ExperimentalCoreAudioDuplexDeliveryUnsafe())
++    core_audio_cleanup_unconfirmed_.store(true, std::memory_order_release);
+   core_audio_record_initialized_.store(audio_device_->RecordingIsInitialized(), std::memory_order_relaxed);
+   core_audio_play_initialized_.store(audio_device_->PlayoutIsInitialized(), std::memory_order_relaxed);
+   core_audio_recording_.store(audio_device_->Recording(), std::memory_order_relaxed);
+@@ -432,6 +524,18 @@
+   return CacheCoreAudioState(result);
+ }
+ int32_t AudioDeviceModuleImpl::SetExperimentalCoreAudioAvailability(bool input, bool output) {
++  if (HasExperimentalCoreAudioDuplexStartup()) {
++    if (!core_audio_enabled_.load(std::memory_order_acquire)) return -1;
++    const uint64_t word = audio_device_->GetExperimentalCoreAudioDuplexState().authority;
++    input = (word & ExperimentalCoreAudioDuplexAuthority::kAuthorized) && !(word &
++        (ExperimentalCoreAudioDuplexAuthority::kTerminal | ExperimentalCoreAudioDuplexAuthority::kPrivate));
++    output = (word & ExperimentalCoreAudioDuplexAuthority::kSound) && !(word & ExperimentalCoreAudioDuplexAuthority::kTerminal);
++    core_audio_input_available_.store(input, std::memory_order_release);
++    core_audio_output_available_.store(output, std::memory_order_release);
++    if (input && core_audio_record_requested_.load(std::memory_order_acquire) && !audio_device_buffer_.IsRecording()) audio_device_buffer_.StartRecording();
++    if (output && core_audio_play_requested_.load(std::memory_order_acquire) && !audio_device_buffer_.IsPlaying()) audio_device_buffer_.StartPlayout();
++    return CacheCoreAudioState(0);
++  }
+   if (!core_audio_enabled_.load(std::memory_order_acquire)) return -1;
+   if ((input || output) && audio_device_->ExperimentalCoreAudioDiagnosticState().retirement_requested) return -3;
+   if (!input) audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
+@@ -446,6 +550,7 @@
+   return CacheCoreAudioState(result);
+ }
+ int32_t AudioDeviceModuleImpl::SetExperimentalCoreAudioCaptureMuted(bool muted) {
++  if (HasExperimentalCoreAudioDuplexStartup() && !muted) return -1;  // Exact typed commit only.
+   if (!core_audio_enabled_.load(std::memory_order_acquire)) return -1;
+   if (!muted && (core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || audio_device_->ExperimentalCoreAudioError() ||
+       audio_device_->ExperimentalCoreAudioDiagnosticState().retirement_requested)) return -3;
+@@ -476,6 +581,8 @@
+   result.playing = core_audio_playing_.load(std::memory_order_acquire);
+   result.capture_generation = audio_device_buffer_.ExperimentalCoreAudioCaptureState();
+   result.capture_muted = (result.capture_generation & 1) != 0;
++  if (HasExperimentalCoreAudioDuplexStartup()) result.capture_muted = result.capture_muted ||
++      !ExperimentalCoreAudioDuplexAuthority::AllowsPublication(audio_device_->GetExperimentalCoreAudioDuplexState().authority);
+   const auto diagnostic = audio_device_->ExperimentalCoreAudioDiagnosticState();
+   result.cleanup_unconfirmed = core_audio_cleanup_unconfirmed_.load(std::memory_order_acquire) || diagnostic.unsafe_failure_mask != 0 ||
+       (audio_device_->ExperimentalCoreAudioError() != 0 && !diagnostic.retirement_confirmed);
+@@ -493,6 +600,15 @@
+   return result;
+ }
+ int32_t AudioDeviceModuleImpl::RetireExperimentalCoreAudioOwner() {
++  if (HasExperimentalCoreAudioDuplexStartup()) {
++    audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
++    core_audio_input_available_.store(false, std::memory_order_release);
++    core_audio_output_available_.store(false, std::memory_order_release);
++    core_audio_record_requested_.store(false, std::memory_order_release);
++    core_audio_play_requested_.store(false, std::memory_order_release);
++    // Direct serialized control executor; no ADB bookkeeping/pin release here.
++    return CacheCoreAudioState(audio_device_->RetireExperimentalCoreAudioOwner());
++  }
+   if (!audio_device_->ExperimentalCoreAudioDiagnosticState().durable_ownership) return -1;
+   scoped_refptr<AudioDeviceModule> keep_alive(this);
+   audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true);
+@@ -704,6 +820,9 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::SetStereoRecording(bool enable) {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) return enable ? -1 : 0;
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__ << "(" << enable << ")";
+   CHECKinitialized_();
+   if (audio_device_->RecordingIsInitialized()) {
+@@ -750,6 +869,9 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::SetStereoPlayout(bool enable) {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) return enable ? 0 : -1;
++#endif
+   RTC_LOG(LS_INFO) << __FUNCTION__ << "(" << enable << ")";
+   CHECKinitialized_();
+   if (audio_device_->PlayoutIsInitialized()) {
+@@ -909,6 +1031,9 @@
+ 
+ int32_t AudioDeviceModuleImpl::InitPlayout() {
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) return CacheCoreAudioState(0);
++#endif
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   if (core_audio_enabled_.load(std::memory_order_acquire)) return InitCoreAudioDirection(false);
+ #endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+@@ -925,6 +1050,9 @@
+ 
+ int32_t AudioDeviceModuleImpl::InitRecording() {
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) return CacheCoreAudioState(0);
++#endif
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   if (core_audio_enabled_.load(std::memory_order_acquire)) return InitCoreAudioDirection(true);
+ #endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+@@ -952,6 +1080,15 @@
+ }
+ 
+ int32_t AudioDeviceModuleImpl::StartPlayout() {
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) {
++    core_audio_play_requested_.store(true, std::memory_order_release);
++    audio_device_->StartPlayout();
++    if (core_audio_enabled_.load(std::memory_order_acquire) && core_audio_output_available_.load(std::memory_order_acquire) &&
++        !audio_device_buffer_.IsPlaying()) audio_device_buffer_.StartPlayout();
++    return CacheCoreAudioState(0);
++  }
++#endif
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   if (core_audio_enabled_.load(std::memory_order_acquire)) { core_audio_play_requested_.store(true, std::memory_order_release); return core_audio_output_available_.load(std::memory_order_acquire) ? ApplyCoreAudioDirection(false, true) : CacheCoreAudioState(0); }
+ #endif
+@@ -970,6 +1107,14 @@
+ 
+ int32_t AudioDeviceModuleImpl::StopPlayout() {
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) {
++    core_audio_play_requested_.store(false, std::memory_order_release);
++    audio_device_->StopPlayout();
++    if (audio_device_buffer_.IsPlaying()) audio_device_buffer_.StopPlayout();
++    return CacheCoreAudioState(0);
++  }
++#endif
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   if (core_audio_enabled_.load(std::memory_order_acquire)) { core_audio_play_requested_.store(false, std::memory_order_release); return ApplyCoreAudioDirection(false, false); }
+ #endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+@@ -993,6 +1138,15 @@
+ 
+ int32_t AudioDeviceModuleImpl::StartRecording() {
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) {
++    core_audio_record_requested_.store(true, std::memory_order_release);
++    audio_device_->StartRecording();
++    if (core_audio_enabled_.load(std::memory_order_acquire) && core_audio_input_available_.load(std::memory_order_acquire) &&
++        !audio_device_buffer_.IsRecording()) audio_device_buffer_.StartRecording();
++    return CacheCoreAudioState(0);
++  }
++#endif
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   if (core_audio_enabled_.load(std::memory_order_acquire)) { core_audio_record_requested_.store(true, std::memory_order_release); return core_audio_input_available_.load(std::memory_order_acquire) ? ApplyCoreAudioDirection(true, true) : CacheCoreAudioState(0); }
+ #endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+@@ -1010,6 +1164,14 @@
+ 
+ int32_t AudioDeviceModuleImpl::StopRecording() {
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup()) {
++    core_audio_record_requested_.store(false, std::memory_order_release);
++    audio_device_->StopRecording();
++    if (audio_device_buffer_.IsRecording()) audio_device_buffer_.StopRecording();
++    return CacheCoreAudioState(0);
++  }
++#endif
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   if (core_audio_enabled_.load(std::memory_order_acquire)) { core_audio_record_requested_.store(false, std::memory_order_release); audio_device_buffer_.SetExperimentalCoreAudioCaptureMuted(true); return ApplyCoreAudioDirection(true, false); }
+ #endif
+   RTC_LOG(LS_INFO) << __FUNCTION__;
+@@ -1034,6 +1196,9 @@
+ int32_t AudioDeviceModuleImpl::RegisterAudioCallback(
+     AudioTransport* audioCallback) {
+   RTC_LOG(LS_INFO) << __FUNCTION__;
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++  if (HasExperimentalCoreAudioDuplexStartup() && audioCallback) return -1;
++#endif
+   return audio_device_buffer_.RegisterAudioCallback(audioCallback);
+ }
+ 
+--- a/modules/audio_device/audio_device_impl.h
++++ b/modules/audio_device/audio_device_impl.h
+@@ -49,6 +49,7 @@
+       AudioLayer audio_layer);
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   static absl_nullable scoped_refptr<AudioDeviceModuleImpl> CreateExperimentalCoreAudioRetirement(const Environment& env);
++  static absl_nullable scoped_refptr<AudioDeviceModuleImpl> CreateExperimentalCoreAudioDuplexStartup(const Environment& env);
+ #endif
+ 
+   AudioDeviceModuleImpl(const Environment& env, AudioLayer audio_layer);
+@@ -76,6 +77,16 @@
+   bool Initialized() const override;
+ #if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+   int32_t EnableExperimentalCoreAudioControl() override;
++  bool HasExperimentalCoreAudioDuplexStartup() const override;
++  int32_t RegisterExperimentalCoreAudioDuplexTransport(AudioTransport*, scoped_refptr<RefCountInterface>) override;
++  int32_t CompleteExperimentalCoreAudioDuplexControl(bool retiring) override;
++  bool ExperimentalCoreAudioDuplexTransportQuarantined() const override;
++  uint64_t LatchExperimentalCoreAudioDuplexIntent(uint32_t flags, uint32_t sequence) override;
++  bool RevokeExperimentalCoreAudioDuplexIntent(uint64_t intent) override;
++  ExperimentalCoreAudioDuplexResult PrepareExperimentalCoreAudioDuplex(uint64_t intent, double deadline) override;
++  bool CommitExperimentalCoreAudioDuplexCapture(uint64_t token) override;
++  ExperimentalCoreAudioDuplexState GetExperimentalCoreAudioDuplexState() const override;
++  void SetExperimentalCoreAudioDuplexHoldPhase(uint32_t phase, uint32_t milliseconds) override;
+   int32_t SetExperimentalCoreAudioAvailability(bool input, bool output) override;
+   int32_t SetExperimentalCoreAudioCaptureMuted(bool muted) override;
+   ExperimentalCoreAudioState GetExperimentalCoreAudioState() const override;
+--- a/modules/audio_device/mac/audio_device_mac.cc
++++ b/modules/audio_device/mac/audio_device_mac.cc
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include "modules/audio_device/mac/audio_device_mac.h"
++#include "modules/audio_device/mac/audio_device_mac_duplex.h"
+ #include <cmath>
+ #include <algorithm>
+ #include <time.h>
+@@ -18,6 +19,7 @@
+ #include <sys/sysctl.h>  // sysctlbyname()
+ 
+ #include <memory>
++#include <optional>
+ #include <span>
+ #include <vector>
+ 
+@@ -102,8 +104,9 @@
+ #endif
+ }
+ 
+-AudioDeviceMac::AudioDeviceMac(bool experimental_ownership)
+-    : experimental_ownership_(experimental_ownership),
++AudioDeviceMac::AudioDeviceMac(bool experimental_ownership, bool duplex_startup)
++    : experimental_ownership_(experimental_ownership || duplex_startup),
++      duplex_(duplex_startup ? std::make_unique<AudioDeviceMacDuplex>(*this) : nullptr),
+       _ptrAudioBuffer(NULL),
+       _mixerManager(),
+       _inputDeviceIndex(0),
+@@ -183,7 +186,24 @@
+   _ptrAudioBuffer->SetPlayoutChannels(N_PLAY_CHANNELS);
+ }
+ 
++bool AudioDeviceMac::HasExperimentalCoreAudioDuplexStartup() const { return duplex_ != nullptr; }
++uint64_t AudioDeviceMac::LatchExperimentalCoreAudioDuplexIntent(uint32_t flags, uint32_t sequence) {
++  return duplex_ ? duplex_->Latch(flags, sequence) : 0;
++}
++bool AudioDeviceMac::RevokeExperimentalCoreAudioDuplexIntent(uint64_t intent) { return duplex_ && duplex_->Revoke(intent); }
++AudioDeviceModule::ExperimentalCoreAudioDuplexResult AudioDeviceMac::PrepareExperimentalCoreAudioDuplex(uint64_t intent, double deadline) {
++  return duplex_ ? duplex_->Prepare(intent, deadline) : AudioDeviceModule::ExperimentalCoreAudioDuplexResult{};
++}
++bool AudioDeviceMac::CommitExperimentalCoreAudioDuplexCapture(uint64_t token) { return duplex_ && duplex_->Commit(token); }
++AudioDeviceModule::ExperimentalCoreAudioDuplexState AudioDeviceMac::GetExperimentalCoreAudioDuplexState() const {
++  return duplex_ ? duplex_->State() : AudioDeviceModule::ExperimentalCoreAudioDuplexState{};
++}
++void AudioDeviceMac::SetExperimentalCoreAudioDuplexHoldPhase(uint32_t phase, uint32_t milliseconds) {
++  if (duplex_) duplex_->HoldForTesting(phase, milliseconds);
++}
++
+ int32_t AudioDeviceMac::EnableExperimentalCoreAudioControl() {
++  if (duplex_) return duplex_->Enable();
+   MutexLock lock(&mutex_);
+   if (!experimental_ownership_ || ExperimentalCoreAudioError()) return -1;
+   if (experimental_retirement_requested_.load(std::memory_order_acquire) ||
+@@ -239,6 +259,7 @@
+ void AudioDeviceMac::RecordExperimentalCoreAudioError(int32_t error, ErrorOrigin origin,
+     uint32_t source_line, AudioObjectID object, AudioObjectPropertySelector selector, AudioObjectPropertyScope scope) {
+   if (!experimental_ownership_) return;
++  if (error && duplex_) duplex_->InvalidatePublication();
+   if (error && origin != ErrorOrigin::kDeviceList && origin != ErrorOrigin::kStreamFormat && origin != ErrorOrigin::kDataSource) {
+     experimental_unsafe_errors_.Record(static_cast<uint32_t>(origin));
+   }
+@@ -405,6 +426,7 @@
+   return 0;
+ }
+ int32_t AudioDeviceMac::RetireExperimentalCoreAudioOwner() {
++  if (duplex_) return duplex_->Retire();
+   if (!experimental_ownership_) return -1;
+   if (experimental_retirement_confirmed_.load(std::memory_order_acquire)) return 0;
+   experimental_retirement_requested_.store(true, std::memory_order_release);
+@@ -447,7 +469,29 @@
+     const AudioTimeStamp* output_time, void* context) {
+   ExperimentalCoreAudioCallbackCell::Lease lease(static_cast<ExperimentalCoreAudioCallbackCell*>(context));
+   if (auto* owner = static_cast<AudioDeviceMac*>(lease.owner())) {
+-    owner->implDeviceIOProc(input, input_time, output, output_time);
++    if (owner->duplex_) {
++      bool valid = output && output->mNumberBuffers == 1 && output_time &&
++          (output_time->mFlags & kAudioTimeStampHostTimeValid);
++      if (valid) valid = output->mBuffers[0].mData &&
++          output->mBuffers[0].mNumberChannels == owner->_outStreamFormat.mChannelsPerFrame &&
++          owner->_outStreamFormat.mBytesPerFrame != 0 && output->mBuffers[0].mDataByteSize > 0 &&
++          output->mBuffers[0].mDataByteSize <= 65536 * sizeof(float) &&
++          output->mBuffers[0].mDataByteSize % owner->_outStreamFormat.mBytesPerFrame == 0 &&
++          output->mBuffers[0].mDataByteSize / owner->_outStreamFormat.mBytesPerFrame <= owner->duplex_->OutputFrameCapacity();
++      if (!valid || !owner->duplex_->OutputAllowed()) {
++        if (output) for (UInt32 i = 0; i < output->mNumberBuffers; ++i)
++          if (output->mBuffers[i].mData) memset(output->mBuffers[i].mData, 0, output->mBuffers[i].mDataByteSize);
++        if (!valid) owner->RecordExperimentalCoreAudioError(-5, ErrorOrigin::kRenderConverterFill, __LINE__);
++        return noErr;
++      }
++    }
++    const auto result = owner->implDeviceIOProc(input, input_time, output, output_time);
++    if (owner->duplex_) {
++      if (result == noErr && owner->duplex_->OutputAllowed()) owner->duplex_->OutputCallback(output);
++      if (result != noErr || !owner->duplex_->OutputAllowed())
++        for (UInt32 i = 0; i < output->mNumberBuffers; ++i)
++          if (output->mBuffers[i].mData) memset(output->mBuffers[i].mData, 0, output->mBuffers[i].mDataByteSize);
++    }
+   } else if (output) {
+     for (UInt32 index = 0; index < output->mNumberBuffers; ++index) {
+       auto& buffer = output->mBuffers[index];
+@@ -471,6 +515,11 @@
+ }
+ 
+ AudioDeviceGeneric::InitStatus AudioDeviceMac::Init() {
++  if (duplex_) {
++    if (duplex_->IsRetired() || ExperimentalCoreAudioError()) return InitStatus::OTHER_ERROR;
++    duplex_module_initialized_.store(true, std::memory_order_release);
++    return InitStatus::OK;  // No HAL work on the factory/WebRTC worker.
++  }
+   if (!ExperimentalCoreAudioOwnerMayInitialize(experimental_ownership_,
+       experimental_retirement_requested_.load(std::memory_order_acquire),
+       experimental_retirement_confirmed_.load(std::memory_order_acquire), ExperimentalCoreAudioError()))
+@@ -553,6 +602,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::Terminate() {
++  if (duplex_) return experimental_retirement_confirmed_.load(std::memory_order_acquire) ? 0 : -1;
+   if (experimental_ownership_) return RetireExperimentalCoreAudioOwner();
+   if (!_initialized) {
+     return 0;
+@@ -594,10 +644,12 @@
+ }
+ 
+ bool AudioDeviceMac::Initialized() const {
++  if (duplex_) return duplex_module_initialized_.load(std::memory_order_acquire) && !duplex_->IsRetired();
+   return (_initialized);
+ }
+ 
+ int32_t AudioDeviceMac::SpeakerIsAvailable(bool& available) {
++  if (duplex_) { available = !duplex_->IsRetired() && !ExperimentalCoreAudioError(); return 0; }
+   MutexLock lock(&mutex_);
+   return SpeakerIsAvailableLocked(available);
+ }
+@@ -627,6 +679,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::InitSpeaker() {
++  if (duplex_) return 0;
+   MutexLock lock(&mutex_);
+   return InitSpeakerLocked();
+ }
+@@ -658,6 +711,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::MicrophoneIsAvailable(bool& available) {
++  if (duplex_) { available = !duplex_->IsRetired() && !ExperimentalCoreAudioError(); return 0; }
+   MutexLock lock(&mutex_);
+   return MicrophoneIsAvailableLocked(available);
+ }
+@@ -687,6 +741,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::InitMicrophone() {
++  if (duplex_) return 0;
+   MutexLock lock(&mutex_);
+   return InitMicrophoneLocked();
+ }
+@@ -718,10 +773,12 @@
+ }
+ 
+ bool AudioDeviceMac::SpeakerIsInitialized() const {
++  if (duplex_) return duplex_module_initialized_.load(std::memory_order_acquire);
+   return (_mixerManager.SpeakerIsInitialized());
+ }
+ 
+ bool AudioDeviceMac::MicrophoneIsInitialized() const {
++  if (duplex_) return duplex_module_initialized_.load(std::memory_order_acquire);
+   return (_mixerManager.MicrophoneIsInitialized());
+ }
+ 
+@@ -878,6 +935,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StereoRecordingIsAvailable(bool& available) {
++  if (duplex_) { available = false; return 0; }
+   bool isAvailable(false);
+   bool wasInitialized = _mixerManager.MicrophoneIsInitialized();
+ 
+@@ -902,6 +960,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::SetStereoRecording(bool enable) {
++  if (duplex_) return enable ? -1 : 0;
+   if (enable)
+     _recChannels = 2;
+   else
+@@ -911,6 +970,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StereoRecording(bool& enabled) const {
++  if (duplex_) { enabled = false; return 0; }
+   if (_recChannels == 2)
+     enabled = true;
+   else
+@@ -920,6 +980,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StereoPlayoutIsAvailable(bool& available) {
++  if (duplex_) { available = true; return 0; }
+   bool isAvailable(false);
+   bool wasInitialized = _mixerManager.SpeakerIsInitialized();
+ 
+@@ -944,6 +1005,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::SetStereoPlayout(bool enable) {
++  if (duplex_) return enable ? 0 : -1;
+   if (enable)
+     _playChannels = 2;
+   else
+@@ -953,6 +1015,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StereoPlayout(bool& enabled) const {
++  if (duplex_) { enabled = true; return 0; }
+   if (_playChannels == 2)
+     enabled = true;
+   else
+@@ -1033,6 +1096,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::SetPlayoutDevice(uint16_t index) {
++  if (duplex_) return index == 0 ? 0 : -1;
+   MutexLock lock(&mutex_);
+ 
+   if (_playIsInitialized) {
+@@ -1108,6 +1172,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::SetRecordingDevice(uint16_t index) {
++  if (duplex_) return index == 0 ? 0 : -1;
+   if (_recIsInitialized) {
+     return -1;
+   }
+@@ -1137,6 +1202,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::PlayoutIsAvailable(bool& available) {
++  if (duplex_) { available = !duplex_->IsRetired() && !ExperimentalCoreAudioError(); return 0; }
+   available = true;
+ 
+   // Try to initialize the playout side
+@@ -1160,6 +1226,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::RecordingIsAvailable(bool& available) {
++  if (duplex_) { available = !duplex_->IsRetired() && !ExperimentalCoreAudioError(); return 0; }
+   available = true;
+ 
+   // Try to initialize the recording side
+@@ -1183,6 +1250,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::InitPlayout() {
++  if (duplex_) return duplex_->IsRetired() ? -1 : 0;
+   if (experimental_ownership_ && (!experimental_core_audio_enabled_.load(std::memory_order_acquire) ||
+       experimental_retirement_requested_.load(std::memory_order_acquire) || ExperimentalCoreAudioError())) return -1;
+   RTC_LOG(LS_INFO) << "InitPlayout";
+@@ -1320,6 +1388,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::InitRecording() {
++  if (duplex_) return duplex_->IsRetired() ? -1 : 0;
+   if (experimental_ownership_ && (!experimental_core_audio_enabled_.load(std::memory_order_acquire) ||
+       experimental_retirement_requested_.load(std::memory_order_acquire) || ExperimentalCoreAudioError())) return -1;
+   RTC_LOG(LS_INFO) << "InitRecording";
+@@ -1523,6 +1592,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StartRecording() {
++  if (duplex_) { duplex_->Demand(true, true); return 0; }
+   if (experimental_ownership_ && (!experimental_core_audio_enabled_.load(std::memory_order_acquire) ||
+       experimental_retirement_requested_.load(std::memory_order_acquire) || ExperimentalCoreAudioError())) return -1;
+   RTC_LOG(LS_INFO) << "StartRecording";
+@@ -1588,6 +1658,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StopRecording() {
++  if (duplex_) { duplex_->Demand(true, false); return 0; }
+   if (experimental_ownership_) return StopExperimentalDirection(true);
+   RTC_LOG(LS_INFO) << "StopRecording";
+   MutexLock lock(&mutex_);
+@@ -1685,6 +1756,7 @@
+ }
+ 
+ bool AudioDeviceMac::RecordingIsInitialized() const {
++  if (duplex_) return duplex_->InputInitialized();
+   return (_recIsInitialized);
+ }
+ 
+@@ -1693,10 +1765,12 @@
+ }
+ 
+ bool AudioDeviceMac::PlayoutIsInitialized() const {
++  if (duplex_) return duplex_->OutputInitialized();
+   return (_playIsInitialized);
+ }
+ 
+ int32_t AudioDeviceMac::StartPlayout() {
++  if (duplex_) { duplex_->Demand(false, true); return 0; }
+   if (experimental_ownership_ && (!experimental_core_audio_enabled_.load(std::memory_order_acquire) ||
+       experimental_retirement_requested_.load(std::memory_order_acquire) || ExperimentalCoreAudioError())) return -1;
+   RTC_LOG(LS_INFO) << "StartPlayout";
+@@ -1753,6 +1827,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::StopPlayout() {
++  if (duplex_) { duplex_->Demand(false, false); return 0; }
+   if (experimental_ownership_) return StopExperimentalDirection(false);
+   RTC_LOG(LS_INFO) << "StopPlayout";
+   MutexLock lock(&mutex_);
+@@ -1838,6 +1913,7 @@
+ }
+ 
+ int32_t AudioDeviceMac::PlayoutDelay(uint16_t& delayMS) const {
++  if (duplex_) { delayMS = duplex_->PlayoutDelayMs(); return 0; }
+   int32_t renderDelayUs = _renderDelayUs;
+   delayMS =
+       static_cast<uint16_t>(1e-3 * (renderDelayUs + _renderLatencyUs) + 0.5);
+@@ -2556,11 +2632,13 @@
+   UInt32 size =
+       outputData->mBuffers->mDataByteSize / _outStreamFormat.mBytesPerFrame;
+ 
++  const UInt32 requested_frames = size;
+   // TODO(xians): signal an error somehow?
+   err = AudioConverterFillComplexBuffer(_renderConverter, outConverterProc,
+                                         this, &size, outputData, NULL);
+   if (err != noErr) {
+     RecordExperimentalCoreAudioError(err, ErrorOrigin::kRenderConverterFill, __LINE__);
++    if (duplex_) return 1;
+     if (err == 1) {
+       // This is our own error.
+       RTC_LOG(LS_ERROR) << "Error in AudioConverterFillComplexBuffer()";
+@@ -2572,18 +2650,33 @@
+     }
+   }
+ 
++  if (duplex_ && size != requested_frames) {
++    RecordExperimentalCoreAudioError(-5, ErrorOrigin::kOutputConverterShape, __LINE__);
++    return 1;
++  }
+   size_t bufSizeSamples = _renderBuffer.AvailableToRead();
+ 
+-  int32_t renderDelayUs =
+-      static_cast<int32_t>(1e-3 * (outputTimeNs - nowNs) + 0.5);
+-  renderDelayUs += static_cast<int32_t>(
+-      (1.0e6 * bufSizeSamples) / _outDesiredFormat.mChannelsPerFrame /
+-          _outDesiredFormat.mSampleRate +
+-      0.5);
++  int32_t renderDelayUs;
++  if (duplex_) {
++    const long double delay = (static_cast<long double>(outputTimeNs) - nowNs) * 1e-3L;
++    renderDelayUs = static_cast<int32_t>(std::clamp(delay, 0.0L, static_cast<long double>(INT32_MAX)));
++  } else {
++    renderDelayUs = static_cast<int32_t>(1e-3 * (outputTimeNs - nowNs) + 0.5);
++  }
++  if (duplex_) {
++    const long double queued = (1.0e6L * bufSizeSamples) / _outDesiredFormat.mChannelsPerFrame / _outDesiredFormat.mSampleRate;
++    renderDelayUs = static_cast<int32_t>(std::clamp(static_cast<long double>(renderDelayUs) + queued,
++        0.0L, static_cast<long double>(INT32_MAX)));
++  } else {
++    renderDelayUs += static_cast<int32_t>(
++        (1.0e6 * bufSizeSamples) / _outDesiredFormat.mChannelsPerFrame /
++            _outDesiredFormat.mSampleRate +
++        0.5);
++  }
+ 
+   _renderDelayUs = renderDelayUs;
+ 
+-  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) && _ptrAudioBuffer) {
++  if (experimental_core_audio_enabled_.load(std::memory_order_acquire) && _ptrAudioBuffer && !duplex_) {
+     // Bounded scalar inspection only: no allocation, logs, locks or app callback.
+     bool known = _outStreamFormat.mFormatID == kAudioFormatLinearPCM &&
+         (_outStreamFormat.mFormatFlags & kAudioFormatFlagIsFloat) &&
+@@ -2615,8 +2708,17 @@
+ 
+ OSStatus AudioDeviceMac::implOutConverterProc(UInt32* numberDataPackets,
+                                               AudioBufferList* data) {
++  if (duplex_) {
++    const uint64_t samples = uint64_t{*numberDataPackets} * _outDesiredFormat.mChannelsPerFrame;
++    if (!data || data->mNumberBuffers != 1 || !samples || samples > std::size(_renderConvertData) ||
++        uint64_t{*numberDataPackets} * _outDesiredFormat.mBytesPerPacket > UINT32_MAX) {
++      *numberDataPackets = 0;
++      RecordExperimentalCoreAudioError(-5, ErrorOrigin::kOutputConverterShape, __LINE__);
++      return 1;
++    }
++  }
+   RTC_DCHECK(data->mNumberBuffers == 1);
+-  size_t numSamples = *numberDataPackets * _outDesiredFormat.mChannelsPerFrame;
++  size_t numSamples = size_t{*numberDataPackets} * _outDesiredFormat.mChannelsPerFrame;
+ 
+   data->mBuffers->mNumberChannels = _outDesiredFormat.mChannelsPerFrame;
+   // Always give the converter as much as it wants, zero padding as required.
+@@ -2630,6 +2732,7 @@
+   kern_return_t kernErr = semaphore_signal_all(_renderSemaphore);
+   if (kernErr != KERN_SUCCESS) {
+     RecordExperimentalCoreAudioError(kernErr, ErrorOrigin::kResourceProof, __LINE__);
++    if (duplex_) return 1;
+     RTC_LOG(LS_ERROR) << "semaphore_signal_all() error: " << kernErr;
+     return 1;
+   }
+@@ -2806,11 +2909,20 @@
+     return false;
+   }
+ 
++  // R6 transport admission covers only Request/Get, never the ring wait.
++  std::optional<ExperimentalCoreAudioCallbackCell::Lease> delivery;
++  if (duplex_) {
++    auto* cell = _ptrAudioBuffer->ExperimentalCoreAudioDuplexDeliveryCell(false);
++    if (!cell) return false;
++    delivery.emplace(cell);
++    if (!delivery->owner()) return false;
++  }
+   // Ask for new PCM data to be played out using the AudioDeviceBuffer.
+   uint32_t nSamples =
+       _ptrAudioBuffer->RequestPlayoutData(ENGINE_PLAY_BUF_SIZE_IN_SAMPLES);
+ 
+   nSamples = _ptrAudioBuffer->GetPlayoutData(playBuffer);
++  delivery.reset();
+   if (nSamples != ENGINE_PLAY_BUF_SIZE_IN_SAMPLES) {
+     RTC_LOG(LS_ERROR) << "invalid number of output samples(" << nSamples << ")";
+   }
+--- a/modules/audio_device/mac/audio_device_mac.h
++++ b/modules/audio_device/mac/audio_device_mac.h
+@@ -59,10 +59,18 @@
+ 
+ const int kGetMicVolumeIntervalMs = 1000;
+ 
++class AudioDeviceMacDuplex;
+ class AudioDeviceMac : public AudioDeviceGeneric {
+  public:
+-  explicit AudioDeviceMac(bool experimental_ownership = false);
++  explicit AudioDeviceMac(bool experimental_ownership = false, bool duplex_startup = false);
+   ~AudioDeviceMac();
++  virtual bool HasExperimentalCoreAudioDuplexStartup() const;
++  virtual uint64_t LatchExperimentalCoreAudioDuplexIntent(uint32_t flags, uint32_t sequence);
++  virtual bool RevokeExperimentalCoreAudioDuplexIntent(uint64_t intent);
++  virtual AudioDeviceModule::ExperimentalCoreAudioDuplexResult PrepareExperimentalCoreAudioDuplex(uint64_t intent, double deadline);
++  virtual bool CommitExperimentalCoreAudioDuplexCapture(uint64_t token);
++  virtual AudioDeviceModule::ExperimentalCoreAudioDuplexState GetExperimentalCoreAudioDuplexState() const;
++  virtual void SetExperimentalCoreAudioDuplexHoldPhase(uint32_t phase, uint32_t milliseconds);
+   virtual int32_t EnableExperimentalCoreAudioControl();
+   virtual int32_t ExperimentalCoreAudioError() const;
+   virtual AudioDeviceModule::ExperimentalCoreAudioDiagnostics ExperimentalCoreAudioDiagnosticState() const;
+@@ -267,6 +275,9 @@
+   bool KeyPressed();
+ 
+   const bool experimental_ownership_;
++  friend class AudioDeviceMacDuplex;
++  std::unique_ptr<AudioDeviceMacDuplex> duplex_;
++  std::atomic<bool> duplex_module_initialized_{false};
+   AudioDeviceBuffer* _ptrAudioBuffer;
+ 
+   Mutex mutex_;
+@@ -299,7 +310,8 @@
+   enum RetirementProof : uint64_t {
+     kCreated = 1, kStarted = 2, kStopSucceeded = 4, kDestroyed = 8,
+     kCellClosed = 16, kCellDrained = 32, kWorkerJoined = 64,
+-    kConverterDisposed = 128, kListenersRemoved = 256, kDirectionClean = 512
++    kConverterDisposed = 128, kListenersRemoved = 256, kDirectionClean = 512,
++    kDataCellClosed = 1024, kDataCellDrained = 2048
+   };
+   struct ExperimentalIOResource {
+     AudioDeviceID device = 0;
+--- a/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
++++ b/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
+@@ -10,9 +10,12 @@
+ 
+ #include "modules/audio_device/mac/audio_ring_buffer_mac.h"
+ #include "modules/audio_device/mac/experimental_core_audio_capture.h"
++#include "modules/audio_device/mac/experimental_core_audio_duplex.h"
+ #include "modules/audio_device/mac/private_input_meter_state.h"
+ #include "modules/audio_device/mac/prepared_graph_callback_gate.h"
+ #include "modules/audio_device/audio_device_buffer.h"
++#include "modules/audio_device/audio_device_impl.h"
++#include "modules/audio_device/mac/audio_device_mac.h"
+ #include "test/create_test_environment.h"
+ 
+ #include <cstddef>
+@@ -26,6 +29,266 @@
+ 
+ namespace webrtc {
+ namespace {
++
++using DuplexAuthority = ExperimentalCoreAudioDuplexAuthority;
++TEST(ExperimentalCoreAudioDuplexTest, ADMInitializationKeepsFixedConverterChannelContractWithoutHAL) {
++  auto module = AudioDeviceModuleImpl::CreateExperimentalCoreAudioDuplexStartup(CreateTestEnvironment());
++  ASSERT_NE(module, nullptr);
++  ASSERT_EQ(module->Init(), 0);
++  // Replay adm_helpers::Init's device/channel negotiation through real ADM.
++  ASSERT_EQ(module->SetPlayoutDevice(uint16_t{0}), 0);
++  ASSERT_EQ(module->InitSpeaker(), 0);
++  bool available = false;
++  ASSERT_EQ(module->StereoPlayoutIsAvailable(&available), 0);
++  ASSERT_TRUE(available);
++  ASSERT_EQ(module->SetStereoPlayout(available), 0);
++  ASSERT_EQ(module->SetRecordingDevice(uint16_t{0}), 0);
++  ASSERT_EQ(module->InitMicrophone(), 0);
++  ASSERT_EQ(module->StereoRecordingIsAvailable(&available), 0);
++  ASSERT_FALSE(available);
++  ASSERT_EQ(module->SetStereoRecording(available), 0);
++  auto* buffer = module->GetAudioDeviceBuffer();
++  EXPECT_EQ(buffer->PlayoutChannels(), N_PLAY_CHANNELS);
++  EXPECT_EQ(buffer->RecordingChannels(), N_REC_CHANNELS);
++  EXPECT_EQ(buffer->PlayoutSampleRate(), N_PLAY_SAMPLES_PER_SEC);
++  EXPECT_EQ(buffer->RecordingSampleRate(), N_REC_SAMPLES_PER_SEC);
++  EXPECT_EQ(module->SetStereoPlayout(false), -1);
++  EXPECT_EQ(module->SetStereoRecording(true), -1);
++  EXPECT_EQ(buffer->PlayoutChannels(), N_PLAY_CHANNELS);
++  EXPECT_EQ(buffer->RecordingChannels(), N_REC_CHANNELS);
++  const auto state = module->GetExperimentalCoreAudioDuplexState();
++  EXPECT_EQ(state.input_create_count, 0u);
++  EXPECT_EQ(state.input_start_count, 0u);
++  EXPECT_EQ(state.output_create_count, 0u);
++  EXPECT_EQ(state.output_start_count, 0u);
++  EXPECT_EQ(module->RetireExperimentalCoreAudioOwner(), 0);
++  EXPECT_EQ(module->CompleteExperimentalCoreAudioDuplexControl(true), 0);
++  EXPECT_NE(module->Init(), 0);
++}
++TEST(ExperimentalCoreAudioDuplexTest, IntentAndRouteEpochsDoNotOverlap) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t token = 0;
++  ASSERT_TRUE(authority.Latch(17, DuplexAuthority::kAuthorized | DuplexAuthority::kMuted, &token));
++  EXPECT_EQ(DuplexAuthority::Intent(token), 17u);
++  for (size_t i = 0; i < 37; ++i) token = authority.RouteEvent();
++  EXPECT_EQ(DuplexAuthority::Intent(token), 17u);
++  EXPECT_EQ(DuplexAuthority::Route(token), 38u);
++  EXPECT_FALSE(DuplexAuthority::AllowsPublication(token));
++}
++TEST(ExperimentalCoreAudioDuplexTest, DelayedOldIntentCannotClearMutePrivateOrLeave) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t token = 0;
++  ASSERT_TRUE(authority.Latch(2, DuplexAuthority::kMuted | DuplexAuthority::kPrivate, &token));
++  EXPECT_FALSE(authority.Latch(1, DuplexAuthority::kAuthorized, nullptr));
++  EXPECT_FALSE(authority.Latch(2, DuplexAuthority::kAuthorized, nullptr));
++  EXPECT_EQ(authority.Read(), token);
++  ASSERT_TRUE(authority.Latch(3, DuplexAuthority::kTerminal, &token));
++  EXPECT_FALSE(authority.Latch(4, DuplexAuthority::kAuthorized, nullptr));
++  EXPECT_EQ(authority.Read(), token);
++}
++TEST(ExperimentalCoreAudioDuplexTest, PresealEventsCoalesceWithoutAllocatingGeneration) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t token = 0, sealed = 0;
++  ASSERT_TRUE(authority.Latch(1, DuplexAuthority::kAuthorized | DuplexAuthority::kMuted, &token));
++  for (size_t i = 0; i < 8; ++i) authority.RouteEvent();
++  EXPECT_FALSE(authority.Seal(token, &sealed));
++  token = authority.Read();
++  ASSERT_TRUE(authority.Seal(token, &sealed));
++  EXPECT_EQ(DuplexAuthority::Route(sealed), 9u);
++  EXPECT_FALSE(authority.Seal(sealed, nullptr));
++  EXPECT_FALSE(authority.Commit(sealed, nullptr));
++}
++TEST(ExperimentalCoreAudioDuplexTest, EventBetweenReadAndSealRejectsCandidate) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t token = 0;
++  ASSERT_TRUE(authority.Latch(1, DuplexAuthority::kAuthorized, &token));
++  authority.RouteEvent();
++  EXPECT_FALSE(authority.Seal(token, nullptr));
++}
++TEST(ExperimentalCoreAudioDuplexTest, PostsealEventPermanentlyRejectsCommit) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t token = 0;
++  ASSERT_TRUE(authority.Latch(1, DuplexAuthority::kAuthorized, &token));
++  ASSERT_TRUE(authority.Seal(token, &token));
++  authority.RouteEvent();
++  EXPECT_FALSE(authority.Commit(token, nullptr));
++  EXPECT_FALSE(authority.Latch(2, DuplexAuthority::kAuthorized, nullptr));
++  EXPECT_TRUE(authority.Read() & DuplexAuthority::kTerminal);
++}
++TEST(ExperimentalCoreAudioDuplexTest, LatestMuteSoundOrPrivateWinsFinalCAS) {
++  for (uint32_t flags : {uint32_t(DuplexAuthority::kMuted), uint32_t(DuplexAuthority::kPrivate),
++                         uint32_t(DuplexAuthority::kTerminal), uint32_t(0)}) {
++    DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++    uint64_t token = 0;
++    ASSERT_TRUE(authority.Latch(1, DuplexAuthority::kAuthorized | DuplexAuthority::kSound, &token));
++    ASSERT_TRUE(authority.Seal(token, &token));
++    ASSERT_TRUE(authority.Latch(2, flags, nullptr));
++    EXPECT_FALSE(authority.Commit(token, nullptr));
++    EXPECT_FALSE(DuplexAuthority::AllowsPublication(authority.Read()));
++  }
++}
++TEST(ExperimentalCoreAudioDuplexTest, WarmTogglePreservesSealButRequiresNewExactCommit) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t token = 0, old = 0;
++  ASSERT_TRUE(authority.Latch(1, DuplexAuthority::kAuthorized, &token));
++  ASSERT_TRUE(authority.Seal(token, &token));
++  ASSERT_TRUE(authority.Commit(token, &old));
++  ASSERT_TRUE(DuplexAuthority::AllowsPublication(old));
++  ASSERT_TRUE(authority.Latch(2, DuplexAuthority::kAuthorized | DuplexAuthority::kMuted, &token));
++  EXPECT_TRUE(token & DuplexAuthority::kSealed);
++  EXPECT_FALSE(DuplexAuthority::AllowsPublication(token));
++  ASSERT_TRUE(authority.Latch(3, DuplexAuthority::kAuthorized, &token));
++  EXPECT_FALSE(authority.Commit(old, nullptr));
++  ASSERT_TRUE(authority.Commit(token, &token));
++  EXPECT_TRUE(DuplexAuthority::AllowsPublication(token));
++}
++TEST(ExperimentalCoreAudioDuplexTest, TimeoutRevocationRejectsLateCompletionAndReopen) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t token = 0;
++  ASSERT_TRUE(authority.Latch(1, DuplexAuthority::kAuthorized, &token));
++  ASSERT_TRUE(authority.Seal(token, &token));
++  ASSERT_TRUE(authority.Revoke(DuplexAuthority::Intent(token)));
++  EXPECT_FALSE(authority.Commit(token, nullptr));
++  EXPECT_FALSE(authority.Latch(2, DuplexAuthority::kAuthorized, nullptr));
++  EXPECT_FALSE(authority.Revoke(2));
++}
++TEST(ExperimentalCoreAudioDuplexTest, DemandStopStartCannotRestoreOldSealOrRecordedTag) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t token = 0;
++  ASSERT_TRUE(authority.Latch(1, DuplexAuthority::kAuthorized, &token));
++  ASSERT_TRUE(authority.Seal(token, &token));
++  const uint64_t old_seal = token;
++  ASSERT_TRUE(authority.Commit(token, &token));
++  const uint64_t old_recorded_tag = token;
++  authority.SetCaptureDemand(false);
++  authority.SetCaptureDemand(true);
++  EXPECT_NE(authority.Read(), old_seal);
++  EXPECT_FALSE(authority.Commit(old_seal, nullptr));
++  EXPECT_FALSE(DuplexAuthority::AllowsPublication(authority.Read()));
++  EXPECT_NE(authority.Read(), old_recorded_tag);
++  const uint64_t current = authority.Read();
++  authority.SetCaptureDemand(true);
++  EXPECT_EQ(authority.Read(), current);
++}
++TEST(ExperimentalCoreAudioDuplexTest, PresealDemandStopStartInvalidatesObservedRoute) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  uint64_t observed = 0;
++  ASSERT_TRUE(authority.Latch(1, DuplexAuthority::kAuthorized, &observed));
++  authority.SetCaptureDemand(false);
++  authority.SetCaptureDemand(true);
++  EXPECT_FALSE(authority.Seal(observed, nullptr));
++  EXPECT_TRUE(authority.Seal(authority.Read(), nullptr));
++}
++TEST(ExperimentalCoreAudioDuplexTest, WarmMicrophoneIntentLeavesValidOutputUninterrupted) {
++  DuplexAuthority capture;
++  ExperimentalCoreAudioOutputAuthority output;
++  const uint64_t output_token = output.Read();
++  ASSERT_TRUE(output.Authorize(output_token));
++  capture.SetCaptureDemand(true);
++  uint64_t token = 0;
++  ASSERT_TRUE(capture.Latch(1, DuplexAuthority::kAuthorized | DuplexAuthority::kSound, &token));
++  ASSERT_TRUE(capture.Seal(token, &token));
++  ASSERT_TRUE(capture.Commit(token, nullptr));
++  ASSERT_TRUE(capture.Latch(2, DuplexAuthority::kAuthorized | DuplexAuthority::kMuted | DuplexAuthority::kSound, &token));
++  capture.SetCaptureDemand(false);
++  EXPECT_TRUE(output.Allows());
++  EXPECT_EQ(output.Read(), output_token | ExperimentalCoreAudioOutputAuthority::kActive);
++}
++TEST(ExperimentalCoreAudioDuplexTest, SoundOffOnRejectsNativeStartFromOldOutputEpoch) {
++  ExperimentalCoreAudioOutputAuthority output;
++  const uint64_t stale_start = output.Read();
++  ASSERT_TRUE(output.Revoke());
++  EXPECT_FALSE(output.Authorize(stale_start));
++  const uint64_t fresh_start = output.Read();
++  ASSERT_TRUE(output.Authorize(fresh_start));
++  ASSERT_TRUE(output.Revoke());
++  EXPECT_FALSE(output.Allows());
++  EXPECT_FALSE(output.Authorize(fresh_start));
++}
++TEST(ExperimentalCoreAudioDuplexTest, DelaySumWidensAndClampsBeforePublicNarrowing) {
++  EXPECT_EQ(ExperimentalCoreAudioDuplexDelayMs(-1, 0), 0u);
++  EXPECT_EQ(ExperimentalCoreAudioDuplexDelayMs(-1, 1500), 2u);
++  EXPECT_EQ(ExperimentalCoreAudioDuplexDelayMs(500, 1000), 2u);
++  EXPECT_EQ(ExperimentalCoreAudioDuplexDelayMs(INT32_MAX, UINT32_MAX), UINT16_MAX);
++  EXPECT_EQ(ExperimentalCoreAudioDuplexDelayMs(0, 65535000), UINT16_MAX);
++}
++TEST(ExperimentalCoreAudioDuplexTest, IntentOverflowFailsTerminalWithoutWrapping) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  EXPECT_FALSE(authority.Latch(uint32_t(DuplexAuthority::kEpochMax + 1), 0, nullptr));
++  EXPECT_TRUE(authority.Read() & DuplexAuthority::kTerminal);
++  EXPECT_EQ(DuplexAuthority::Intent(authority.Read()), 0u);
++}
++TEST(ExperimentalCoreAudioDuplexTest, InvalidFlagCannotSmuggleCommitAuthority) {
++  DuplexAuthority authority;
++  authority.SetCaptureDemand(true);
++  EXPECT_FALSE(authority.Latch(1, DuplexAuthority::kCommitted, nullptr));
++  EXPECT_FALSE(DuplexAuthority::AllowsPublication(authority.Read()));
++}
++TEST(ExperimentalCoreAudioDuplexTest, CallbackLoadedOldTargetBeforeCloseCannotReadDestroyedGeneration) {
++  ExperimentalCoreAudioCallbackPool<2> targets;
++  auto generation = std::make_unique<int>(37);
++  auto* old = targets.Allocate(generation.get());
++  ASSERT_TRUE(old->Open());
++  std::atomic<ExperimentalCoreAudioCallbackCell*> target{old};
++  auto* delayed_load = target.load(std::memory_order_acquire);
++  old->Close();
++  target.store(nullptr, std::memory_order_release);
++  ASSERT_TRUE(old->ClosedAndDrained());
++  generation.reset();
++  ExperimentalCoreAudioCallbackCell::Lease late(delayed_load);
++  EXPECT_EQ(late.owner(), nullptr);
++  auto replacement = std::make_unique<int>(42);
++  auto* fresh = targets.Allocate(replacement.get());
++  ASSERT_TRUE(fresh->Open());
++  target.store(fresh, std::memory_order_release);
++  EXPECT_FALSE(old->Open());
++  ExperimentalCoreAudioCallbackCell::Lease admitted(target.load(std::memory_order_acquire));
++  ASSERT_NE(admitted.owner(), nullptr);
++  EXPECT_EQ(*static_cast<int*>(admitted.owner()), 42);
++  fresh->Close();
++}
++TEST(ExperimentalCoreAudioDuplexTest, AlreadyAdmittedCallbackMustDrainBeforeDisposal) {
++  ExperimentalCoreAudioCallbackPool<1> targets;
++  int generation = 37;
++  auto* cell = targets.Allocate(&generation);
++  ASSERT_TRUE(cell->Open());
++  {
++    ExperimentalCoreAudioCallbackCell::Lease admitted(cell);
++    ASSERT_EQ(admitted.owner(), &generation);
++    cell->Close();
++    EXPECT_FALSE(cell->ClosedAndDrained());
++    EXPECT_EQ(*static_cast<int*>(admitted.owner()), 37);
++  }
++  EXPECT_TRUE(cell->ClosedAndDrained());
++}
++TEST(ExperimentalCoreAudioDuplexTest, ShapeRejectsUnsupportedOrUnboundedPayloadWithoutReading) {
++  EXPECT_TRUE(ExperimentalCoreAudioDuplexBufferShape(1, 1, 960, 1, 4, 240));
++  EXPECT_FALSE(ExperimentalCoreAudioDuplexBufferShape(2, 1, 960, 1, 4, 240));
++  EXPECT_FALSE(ExperimentalCoreAudioDuplexBufferShape(1, 2, 960, 1, 4, 240));
++  EXPECT_FALSE(ExperimentalCoreAudioDuplexBufferShape(1, 1, 960, 1, 0, 240));
++  EXPECT_FALSE(ExperimentalCoreAudioDuplexBufferShape(1, 1, 961, 1, 4, 240));
++  EXPECT_FALSE(ExperimentalCoreAudioDuplexBufferShape(1, 1, 964, 1, 4, 240));
++  EXPECT_FALSE(ExperimentalCoreAudioDuplexBufferShape(1, 1, 0, 1, 4, 240));
++}
++TEST(ExperimentalCoreAudioDuplexTest, TimelinePreservesFirstPhaseTimestamp) {
++  ExperimentalCoreAudioDuplexTimeline timeline;
++  timeline.Enter(ExperimentalCoreAudioDuplexPhase::kStartInput, 100);
++  timeline.Enter(ExperimentalCoreAudioDuplexPhase::kStartInput, 200);
++  timeline.Enter(ExperimentalCoreAudioDuplexPhase::kNegotiate, 210);
++  EXPECT_EQ(timeline.times[static_cast<size_t>(ExperimentalCoreAudioDuplexPhase::kStartInput)].load(), 100u);
++  EXPECT_EQ(timeline.phase.load(), static_cast<uint32_t>(ExperimentalCoreAudioDuplexPhase::kNegotiate));
++}
+ 
+ struct FirstErrorTestContext { uint64_t generation = 0; uint32_t origin = 0; };
+ TEST(ExperimentalCoreAudioRetirementTest, RetiredOrInvalidatedOwnerCannotInitializeAgain) {
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
+@@ -29,6 +29,7 @@
+   RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeAudioEngine),
+ #if TARGET_OS_OSX
+   RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioRetirement),
++  RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioDuplexStartup),
+ #endif
+ };
+ 
+@@ -213,6 +214,23 @@
+ 
+ @end
+ 
++#if TARGET_OS_OSX
++// Exact typed token; never round-trip authorization through a JSON Double.
++RTC_OBJC_EXPORT
++@interface RTC_OBJC_TYPE(RTCCoreAudioDuplexPreparation) : NSObject
++@property(nonatomic, readonly) NSInteger status;
++@property(nonatomic, readonly) uint64_t sealedToken;
++@property(nonatomic, readonly) uint64_t ownerGeneration;
++@property(nonatomic, readonly) uint64_t physicalGeneration;
++@property(nonatomic, readonly) uint64_t prepareSerial;
++@property(nonatomic, readonly) uint64_t expectedIntent;
++@property(nonatomic, readonly) uint64_t entryAuthority;
++@property(nonatomic, readonly) uint64_t observedAuthority;
++@property(nonatomic, readonly) uint64_t observationNanos;
++@property(nonatomic, readonly) NSString *abortReason;
++@end
++#endif
++
+ RTC_OBJC_EXPORT
+ @interface RTC_OBJC_TYPE(RTCAudioDeviceModule) : NSObject
+ 
+@@ -226,6 +244,17 @@
+ 
+ // Opt-in per-ADM CoreAudio experiment. State is passive atomics, never hardware probes.
+ - (NSInteger)enableExperimentalCoreAudioControl NS_SWIFT_NAME(enableExperimentalCoreAudioControl());
++- (uint64_t)latchExperimentalCoreAudioDuplexIntent:(uint32_t)flags sequence:(uint32_t)sequence
++    NS_SWIFT_NAME(latchExperimentalCoreAudioDuplexIntent(flags:sequence:));
++- (BOOL)revokeExperimentalCoreAudioDuplexIntent:(uint64_t)intent
++    NS_SWIFT_NAME(revokeExperimentalCoreAudioDuplexIntent(expectedIntent:));
++- (RTC_OBJC_TYPE(RTCCoreAudioDuplexPreparation) *)prepareExperimentalCoreAudioDuplex:(uint64_t)intent
++    deadlineUptime:(double)deadline NS_SWIFT_NAME(prepareExperimentalCoreAudioDuplex(expectedIntent:deadlineUptime:));
++- (BOOL)commitExperimentalCoreAudioDuplexCapture:(uint64_t)token
++    NS_SWIFT_NAME(commitExperimentalCoreAudioDuplexCapture(expectedToken:));
++- (void)setExperimentalCoreAudioDuplexHoldPhase:(uint32_t)phase milliseconds:(uint32_t)milliseconds
++    NS_SWIFT_NAME(setExperimentalCoreAudioDuplexHoldPhase(_:milliseconds:));
++@property(nonatomic, readonly) NSDictionary<NSString *, id> *experimentalCoreAudioDuplexState;
+ - (NSInteger)setExperimentalCoreAudioInputAvailable:(BOOL)inputAvailable
+                                     outputAvailable:(BOOL)outputAvailable
+     NS_SWIFT_NAME(setExperimentalCoreAudioInputAvailable(_:outputAvailable:));
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
+@@ -300,6 +300,49 @@
+     @"transport": CoreAudioDiagnosticScalar(CoreAudioDiagnosticRead<UInt32>(device, kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal)),
+     @"dataSource": CoreAudioDiagnosticScalar(CoreAudioDiagnosticRead<UInt32>(device, kAudioDevicePropertyDataSource, scope)) };
+ }
++#endif
++
++#if TARGET_OS_OSX
++@interface RTC_OBJC_TYPE(RTCCoreAudioDuplexPreparation) ()
++- (instancetype)initWithStatus:(NSInteger)status sealedToken:(uint64_t)token;
++- (instancetype)initWithResult:(const webrtc::AudioDeviceModule::ExperimentalCoreAudioDuplexResult&)result;
++@end
++@implementation RTC_OBJC_TYPE(RTCCoreAudioDuplexPreparation)
++@synthesize status = _status;
++@synthesize sealedToken = _sealedToken;
++@synthesize ownerGeneration = _ownerGeneration;
++@synthesize physicalGeneration = _physicalGeneration;
++@synthesize prepareSerial = _prepareSerial;
++@synthesize expectedIntent = _expectedIntent;
++@synthesize entryAuthority = _entryAuthority;
++@synthesize observedAuthority = _observedAuthority;
++@synthesize observationNanos = _observationNanos;
++@synthesize abortReason = _abortReason;
++- (instancetype)initWithStatus:(NSInteger)status sealedToken:(uint64_t)token {
++  self = [super init];
++  if (self) { _status = status; _sealedToken = token; _abortReason = @"admissionFailed"; }
++  return self;
++}
++- (instancetype)initWithResult:(const webrtc::AudioDeviceModule::ExperimentalCoreAudioDuplexResult&)result {
++  self = [self initWithStatus:result.status sealedToken:result.sealed_token];
++  if (self) {
++    _ownerGeneration = result.owner_generation; _physicalGeneration = result.physical_generation;
++    _prepareSerial = result.prepare_serial; _expectedIntent = result.expected_intent;
++    _entryAuthority = result.entry_authority; _observedAuthority = result.observed_authority;
++    _observationNanos = result.observation_nanos;
++    switch (result.abort_reason) {
++      case 0: _abortReason = @"none"; break;
++      case 1: _abortReason = @"intentSuperseded"; break;
++      case 2: _abortReason = @"terminalIntent"; break;
++      case 3: _abortReason = @"routeInvalidated"; break;
++      case 4: _abortReason = @"deadline"; break;
++      case 6: _abortReason = @"busy"; break;
++      default: _abortReason = @"admissionFailed"; break;
++    }
++  }
++  return self;
++}
++@end
+ #endif
+ 
+ @implementation RTC_OBJC_TYPE (RTCAudioDeviceModule) {
+@@ -586,6 +629,68 @@
+ - (NSInteger)enableExperimentalCoreAudioControl {
+   return _workerThread->BlockingCall([self] { return _native->EnableExperimentalCoreAudioControl(); });
+ }
++- (uint64_t)latchExperimentalCoreAudioDuplexIntent:(uint32_t)flags sequence:(uint32_t)sequence {
++  return _native->LatchExperimentalCoreAudioDuplexIntent(flags, sequence);
++}
++- (BOOL)revokeExperimentalCoreAudioDuplexIntent:(uint64_t)intent {
++  return _native->RevokeExperimentalCoreAudioDuplexIntent(intent);
++}
++- (RTC_OBJC_TYPE(RTCCoreAudioDuplexPreparation) *)prepareExperimentalCoreAudioDuplex:(uint64_t)intent deadlineUptime:(double)deadline {
++  if (!_native->HasExperimentalCoreAudioDuplexStartup() || _workerThread->IsCurrent() || [NSThread isMainThread])
++    return [[RTC_OBJC_TYPE(RTCCoreAudioDuplexPreparation) alloc] initWithStatus:-1 sealedToken:0];
++  // Only the small ADB checker-thread bookends run on the WebRTC worker.
++  // All HAL/start/negotiation/drain/converter work stays on caller audioQueue.
++  const auto began = _workerThread->BlockingCall([self] {
++    return _native->SetExperimentalCoreAudioAvailability(false, false);
++  });
++  if (began != 0) return [[RTC_OBJC_TYPE(RTCCoreAudioDuplexPreparation) alloc] initWithStatus:began sealedToken:0];
++  auto result = _native->PrepareExperimentalCoreAudioDuplex(intent, deadline);
++  const auto finished = _workerThread->BlockingCall([self] { return _native->CompleteExperimentalCoreAudioDuplexControl(false); });
++  if (result.status == 0 && finished != 0) result.status = finished;
++  return [[RTC_OBJC_TYPE(RTCCoreAudioDuplexPreparation) alloc] initWithResult:result];
++}
++- (BOOL)commitExperimentalCoreAudioDuplexCapture:(uint64_t)token {
++  return _native->CommitExperimentalCoreAudioDuplexCapture(token);
++}
++- (void)setExperimentalCoreAudioDuplexHoldPhase:(uint32_t)phase milliseconds:(uint32_t)milliseconds {
++  _native->SetExperimentalCoreAudioDuplexHoldPhase(phase, milliseconds);
++}
++- (NSDictionary<NSString *, id> *)experimentalCoreAudioDuplexState {
++  const auto state = _native->GetExperimentalCoreAudioDuplexState();
++  NSMutableArray *times = [NSMutableArray arrayWithCapacity:13];
++  for (uint64_t time : state.phase_nanos) [times addObject:@(time)];
++  NSMutableArray *history = [NSMutableArray arrayWithCapacity:state.output_history_size];
++  for (size_t i = 0; i < state.output_history_size; ++i) {
++    const auto& item = state.output_history[i];
++    [history addObject:@{ @"serial": @(item.serial), @"proof": @(item.proof), @"required": @(item.required),
++      @"stopStatus": @(item.stop_status), @"destroyStatus": @(item.destroy_status),
++      @"format": @{ @"sampleRate": @(item.sample_rate), @"formatID": @(item.format_id), @"flags": @(item.flags),
++        @"bytesPerPacket": @(item.bytes_per_packet), @"framesPerPacket": @(item.frames_per_packet),
++        @"bytesPerFrame": @(item.bytes_per_frame), @"channels": @(item.channels),
++        @"bitsPerChannel": @(item.bits_per_channel), @"reserved": @(item.reserved) } }];
++  }
++  NSMutableArray *events = [NSMutableArray arrayWithCapacity:state.event_size];
++  for (size_t i = 0; i < state.event_size; ++i) {
++    const auto& item = state.events[i];
++    [events addObject:item.ready ? (id)@{ @"authority": @(item.authority), @"nanos": @(item.nanos),
++      @"objectID": @(item.object), @"selector": @(item.selector), @"scope": @(item.scope) } : [NSNull null]];
++  }
++  return @{ @"supported": @(state.supported), @"enabled": @(state.enabled), @"prepared": @(state.prepared), @"authority": @(state.authority),
++    @"phase": @(state.phase), @"phaseFirstNanos": times,
++    @"holdActive": @(state.hold_active), @"outputRunning": @(state.output_running), @"inputRunning": @(state.input_running),
++    @"captureCommitted": @(state.capture_committed), @"ownerGeneration": @(state.owner_generation),
++    @"physicalGeneration": @(state.physical_generation), @"activePrepareSerial": @(state.active_prepare_serial),
++    @"inputCreateCount": @(state.input_create_count), @"inputStartCount": @(state.input_start_count),
++    @"outputCreateCount": @(state.output_create_count), @"outputStartCount": @(state.output_start_count),
++    @"phaseNames": @[@"idle", @"quiesceOutput", @"startInput", @"negotiate", @"seal", @"buildCapture", @"buildOutput", @"verify", @"ready", @"committed", @"retire", @"stopped", @"failed"],
++    @"inputCallbacks": @(state.input_callbacks), @"outputCallbacks": @(state.output_callbacks),
++    @"firstInputNanos": @(state.first_input_nanos), @"lastInputNanos": @(state.last_input_nanos),
++    @"inputDrops": @(state.input_drops), @"archivedOutputGenerations": @(state.archived_output_generations),
++    @"outputRetirementHistory": history, @"routeEvents": events, @"observedRouteEvents": @(state.observed_events),
++    @"transportPinned": @(state.transport_pinned), @"transportQuarantined": @(state.transport_quarantined),
++    @"provenance": @"passive bounded atomics; fields are independent observations; UInt64 authority is not a Double token",
++    @"clock": @"CLOCK_UPTIME_RAW nanoseconds" };
++}
+ - (NSInteger)setExperimentalCoreAudioInputAvailable:(BOOL)inputAvailable outputAvailable:(BOOL)outputAvailable {
+   // Privacy closes on the caller before device work can wait on the worker.
+   if (!inputAvailable) _native->SetExperimentalCoreAudioCaptureMuted(true);
+@@ -599,6 +704,12 @@
+ }
+ - (NSInteger)retireExperimentalCoreAudioOwner {
+   _native->SetExperimentalCoreAudioCaptureMuted(true);
++  if (_native->HasExperimentalCoreAudioDuplexStartup()) {
++    if (_workerThread->IsCurrent() || [NSThread isMainThread]) return -1;
++    const int32_t result = _native->RetireExperimentalCoreAudioOwner();
++    const int32_t completed = _workerThread->BlockingCall([self] { return _native->CompleteExperimentalCoreAudioDuplexControl(true); });
++    return result != 0 ? result : completed;
++  }
+   return _workerThread->BlockingCall([self] { return _native->RetireExperimentalCoreAudioOwner(); });
+ }
+ - (NSDictionary<NSString *, id> *)experimentalCoreAudioState {
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+@@ -88,6 +88,11 @@
+ 
+ @property(nonatomic, readonly) RTC_OBJC_TYPE(RTCAudioDeviceModule) *audioDeviceModule;
+ #if TARGET_OS_OSX
++- (nullable instancetype)initExperimentalCoreAudioDuplexStartupWithEncoderFactory:
++    (nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
++    decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
++    audioProcessingModule:(nullable id<RTC_OBJC_TYPE(RTCAudioProcessingModule)>)audioProcessingModule
++    NS_SWIFT_NAME(init(experimentalCoreAudioDuplexStartupWithEncoderFactory:decoderFactory:audioProcessingModule:));
+ - (nullable instancetype)initExperimentalCoreAudioRetirementWithEncoderFactory:
+     (nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
+     decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+@@ -295,6 +295,13 @@
+ }
+ 
+ #if TARGET_OS_OSX
++- (nullable instancetype)initExperimentalCoreAudioDuplexStartupWithEncoderFactory:
++    (nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
++    decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
++    audioProcessingModule:(nullable id<RTC_OBJC_TYPE(RTCAudioProcessingModule)>)audioProcessingModule {
++  return [self initWithAudioDeviceModuleType:RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioDuplexStartup)
++      bypassVoiceProcessing:YES encoderFactory:encoderFactory decoderFactory:decoderFactory audioProcessingModule:audioProcessingModule];
++}
+ - (nullable instancetype)initExperimentalCoreAudioRetirementWithEncoderFactory:
+     (nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
+     decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
+@@ -392,7 +399,12 @@
+         });
+         _ownsConferenceAudioDevice = YES;
+ #else
+-        if (_requestedAudioDeviceModuleType == RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioRetirement)) {
++        if (_requestedAudioDeviceModuleType == RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioDuplexStartup)) {
++          dependencies.adm = _workerThread->BlockingCall([&dependencies] {
++            return webrtc::CreateExperimentalCoreAudioDuplexStartupAudioDeviceModule(*dependencies.env);
++          });
++          if (!dependencies.adm) return nil;
++        } else if (_requestedAudioDeviceModuleType == RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioRetirement)) {
+           dependencies.adm = _workerThread->BlockingCall([&dependencies] {
+             return webrtc::CreateExperimentalCoreAudioRetirementAudioDeviceModule(*dependencies.env);
+           });
+@@ -416,6 +428,18 @@
+     [self prepareConferencePlayout];
+     _nativeFactory =
+         webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
++#if TARGET_OS_OSX
++    if (!_nativeFactory && _requestedAudioDeviceModuleType == RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeExperimentalCoreAudioDuplexStartup)) {
++      // Before factory exposure R6 Init/Start are demand-only: Prepare cannot
++      // have registered HAL resources. Release its whole-owner anchor/pin only
++      // through checked empty retirement on the original AudioState worker.
++      _workerThread->BlockingCall([self] {
++        if (_nativeAudioDeviceModule->RetireExperimentalCoreAudioOwner() == 0)
++          _nativeAudioDeviceModule->CompleteExperimentalCoreAudioDuplexControl(true);
++      });
++      return nil;
++    }
++#endif
+     NSAssert(_nativeFactory, @"Failed to initialize PeerConnectionFactory!");
+   }
+   return self;
+--- /dev/null
++++ b/modules/audio_device/mac/experimental_core_audio_duplex.h
+@@ -0,0 +1,182 @@
++/*
++ * Copyright 2026 The WebRTC project authors. All Rights Reserved.
++ * Use of this source code is governed by a BSD-style license in LICENSE.
++ */
++#ifndef MODULES_AUDIO_DEVICE_MAC_EXPERIMENTAL_CORE_AUDIO_DUPLEX_H_
++#define MODULES_AUDIO_DEVICE_MAC_EXPERIMENTAL_CORE_AUDIO_DUPLEX_H_
++
++#include <array>
++#include <atomic>
++#include <cstdint>
++#include <limits>
++
++namespace webrtc {
++
++// R6 only. One publication word linearizes app intent, format invalidation and
++// the final capture commit. No callback needs the control/Swift lock.
++class ExperimentalCoreAudioDuplexAuthority {
++ public:
++  enum Flag : uint64_t {
++    kAuthorized = 1, kMuted = 2, kSound = 4, kTerminal = 8,
++    kPrivate = 16, kSealed = 32, kCommitted = 64, kDemandClosed = 128
++  };
++  // The lower epoch invalidates on actual route events OR native capture
++  // demand transitions. Actual HAL notifications have a separate journal/count.
++  static constexpr unsigned kRouteShift = 8, kIntentShift = 36;
++  static constexpr uint64_t kEpochMax = (uint64_t{1} << 28) - 1;
++  static constexpr uint64_t kRouteMask = kEpochMax << kRouteShift;
++  static constexpr uint64_t kIntentMask = kEpochMax << kIntentShift;
++  static constexpr uint64_t kPublicFlags = kAuthorized | kMuted | kSound | kTerminal | kPrivate;
++  static_assert((kRouteMask & kIntentMask) == 0);
++  static_assert((kPublicFlags & (kRouteMask | kIntentMask)) == 0);
++  static_assert(std::atomic<uint64_t>::is_always_lock_free);
++
++  uint64_t Read() const { return word_.load(std::memory_order_acquire); }
++  static uint64_t Intent(uint64_t word) { return word >> kIntentShift; }
++  static uint64_t Route(uint64_t word) { return (word & kRouteMask) >> kRouteShift; }
++  static bool AllowsPublication(uint64_t word) {
++    return (word & (kAuthorized | kSealed | kCommitted)) ==
++               (kAuthorized | kSealed | kCommitted) &&
++           !(word & (kMuted | kTerminal | kPrivate | kDemandClosed));
++  }
++  static bool AllowsPreparation(uint64_t word) {
++    return (word & kAuthorized) && !(word & (kTerminal | kPrivate | kDemandClosed));
++  }
++  // App sequence is allocated under the same lock as its intent flags. Older
++  // latches cannot overwrite new mute/Leave/private authority after queue delay.
++  bool Latch(uint32_t sequence, uint32_t flags, uint64_t* result) {
++    if (!sequence || sequence > kEpochMax || (flags & ~kPublicFlags)) {
++      FailTerminal(); return false;
++    }
++    uint64_t old = Read();
++    do {
++      if (sequence <= Intent(old) || (old & kTerminal)) return false;
++      const uint64_t next = (uint64_t{sequence} << kIntentShift) |
++          (old & (kRouteMask | kSealed | kDemandClosed)) | flags;
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) {
++        if (result) *result = next;
++        return true;
++      }
++    } while (true);
++  }
++  // Before seal, notifications are a bounded negotiation journal. After seal,
++  // even a same-format notification invalidates this generation permanently.
++  uint64_t RouteEvent() {
++    uint64_t old = Read();
++    do {
++      const uint64_t route = Route(old);
++      uint64_t next = old & ~uint64_t{kCommitted};
++      if (route == kEpochMax || (old & kSealed)) next |= kTerminal | kMuted;
++      if (route != kEpochMax) next = (next & ~kRouteMask) | ((route + 1) << kRouteShift);
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return next;
++    } while (true);
++  }
++  bool Seal(uint64_t expected, uint64_t* sealed) {
++    if (!AllowsPreparation(expected) || (expected & kSealed)) return false;
++    const uint64_t next = expected | kSealed;
++    if (!word_.compare_exchange_strong(expected, next, std::memory_order_acq_rel)) return false;
++    if (sealed) *sealed = next;
++    return true;
++  }
++  bool Commit(uint64_t expected, uint64_t* committed) {
++    if (!(expected & kSealed) || !AllowsPreparation(expected) || (expected & kMuted)) return false;
++    const uint64_t next = expected | kCommitted;
++    if (!word_.compare_exchange_strong(expected, next, std::memory_order_acq_rel)) return false;
++    if (committed) *committed = next;
++    return true;
++  }
++  // Deadline expiry is terminal for this one attempt, including a late native
++  // completion. A newer user intent cannot reopen the invalidated owner.
++  bool Revoke(uint64_t expected_intent) {
++    uint64_t old = Read();
++    do {
++      if (Intent(old) != expected_intent) return false;
++      const uint64_t next = (old | kTerminal | kMuted) & ~uint64_t{kCommitted};
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return true;
++    } while (true);
++  }
++  void FailTerminal() {
++    uint64_t old = Read();
++    while (!word_.compare_exchange_weak(old,
++        (old | kTerminal | kMuted) & ~uint64_t{kCommitted}, std::memory_order_acq_rel)) {}
++  }
++  void SetCaptureDemand(bool run) {
++    uint64_t old = Read();
++    do {
++      if (bool(old & kDemandClosed) == !run) return;
++      const uint64_t epoch = Route(old);
++      uint64_t next = run ? (old & ~uint64_t{kDemandClosed}) :
++          ((old | kDemandClosed) & ~uint64_t{kCommitted});
++      if (epoch == kEpochMax) next = (next | kTerminal | kMuted) & ~uint64_t{kCommitted};
++      else next = (next & ~kRouteMask) | ((epoch + 1) << kRouteShift);
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return;
++    } while (true);
++  }
++
++ private:
++  std::atomic<uint64_t> word_{kMuted | kDemandClosed};
++};
++
++// Output has its own authority domain. An input mute/demand epoch must not
++// interrupt a valid render generation. Sound/output-demand ABA still revokes
++// a native Start already in progress; only that exact output token can open.
++class ExperimentalCoreAudioOutputAuthority {
++ public:
++  static constexpr uint64_t kActive = 1, kTerminal = uint64_t{1} << 63;
++  static constexpr uint64_t kEpochMask = kTerminal - 2;
++  uint64_t Read() const { return word_.load(std::memory_order_acquire); }
++  bool Allows() const { const uint64_t word = Read(); return (word & kActive) && !(word & kTerminal); }
++  bool Revoke() {
++    uint64_t old = Read();
++    do {
++      if (old & kTerminal) return false;
++      const uint64_t epoch = old & kEpochMask;
++      const uint64_t next = epoch == kEpochMask ? kTerminal : epoch + 2;
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return !(next & kTerminal);
++    } while (true);
++  }
++  bool Authorize(uint64_t expected) {
++    if (expected & (kTerminal | kActive)) return false;
++    return word_.compare_exchange_strong(expected, expected | kActive, std::memory_order_acq_rel);
++  }
++ private:
++  std::atomic<uint64_t> word_{0};
++};
++
++enum class ExperimentalCoreAudioDuplexPhase : uint32_t {
++  kIdle, kQuiesceOutput, kStartInput, kNegotiate, kSeal, kBuildCapture,
++  kBuildOutput, kVerify, kReady, kCommitted, kRetire, kStopped, kFailed, kCount
++};
++
++// Each phase has a first raw monotonic timestamp. Reads are passive atomics.
++// Callback metadata is bounded and published once per journal entry.
++struct ExperimentalCoreAudioDuplexTimeline {
++  static constexpr size_t kPhases = static_cast<size_t>(ExperimentalCoreAudioDuplexPhase::kCount);
++  void Enter(ExperimentalCoreAudioDuplexPhase next, uint64_t now) {
++    uint64_t unset = 0;
++    times[static_cast<size_t>(next)].compare_exchange_strong(unset, now, std::memory_order_release);
++    phase.store(static_cast<uint32_t>(next), std::memory_order_release);
++  }
++  std::atomic<uint32_t> phase{0};
++  std::array<std::atomic<uint64_t>, kPhases> times{};
++};
++
++// No payload parsing is necessary to advance negotiation. Byte/channel layout
++// validation belongs to an immutable generation after the full ASBD is sealed.
++inline bool ExperimentalCoreAudioDuplexBufferShape(uint32_t buffers,
++    uint32_t channels, uint32_t bytes, uint32_t expected_channels,
++    uint32_t bytes_per_frame, uint32_t capacity_frames) {
++  return buffers == 1 && channels == expected_channels && channels > 0 &&
++      bytes_per_frame > 0 && bytes > 0 && bytes % bytes_per_frame == 0 &&
++      bytes / bytes_per_frame <= capacity_frames;
++}
++
++inline uint16_t ExperimentalCoreAudioDuplexDelayMs(int32_t queue_us, uint32_t device_us) {
++  const uint64_t delay = uint64_t(queue_us > 0 ? queue_us : 0) + device_us;
++  const uint64_t milliseconds = (delay + 500) / 1000;
++  return milliseconds > std::numeric_limits<uint16_t>::max() ?
++      std::numeric_limits<uint16_t>::max() : static_cast<uint16_t>(milliseconds);
++}
++
++}  // namespace webrtc
++#endif
+--- /dev/null
++++ b/modules/audio_device/mac/audio_device_mac_duplex.h
+@@ -0,0 +1,127 @@
++/* Copyright 2026 The WebRTC project authors. BSD license in LICENSE. */
++#ifndef MODULES_AUDIO_DEVICE_MAC_AUDIO_DEVICE_MAC_DUPLEX_H_
++#define MODULES_AUDIO_DEVICE_MAC_AUDIO_DEVICE_MAC_DUPLEX_H_
++
++#include <CoreAudio/CoreAudio.h>
++#include <array>
++#include <atomic>
++#include <memory>
++#include <string>
++#include "api/audio/audio_device.h"
++#include "modules/audio_device/mac/experimental_core_audio_capture.h"
++#include "modules/audio_device/mac/experimental_core_audio_duplex.h"
++
++namespace webrtc {
++class AudioDeviceMac;
++
++// Exists only for the explicit R6 construction factory. R5/legacy never enter
++// this controller. All HAL lifecycle calls run on one caller control executor;
++// callbacks only admit, signal bounded metadata, or process an immutable epoch.
++class AudioDeviceMacDuplex {
++ public:
++  explicit AudioDeviceMacDuplex(AudioDeviceMac& owner);
++  ~AudioDeviceMacDuplex();
++  int32_t Init();
++  int32_t Enable();
++  int32_t Retire();
++  uint64_t Latch(uint32_t flags, uint32_t sequence);
++  bool Revoke(uint64_t expected_intent);
++  bool Commit(uint64_t expected);
++  AudioDeviceModule::ExperimentalCoreAudioDuplexResult Prepare(
++      uint64_t expected_intent, double deadline_uptime);
++  AudioDeviceModule::ExperimentalCoreAudioDuplexState State() const;
++  bool OutputAllowed() const;
++  bool OutputRequested() const;
++  void OutputCallback(const AudioBufferList* data);
++  uint32_t OutputFrameCapacity() const;
++  uint16_t PlayoutDelayMs() const;
++  void InvalidatePublication();
++  bool InputInitialized() const;
++  bool OutputInitialized() const;
++  bool OnControl() const;
++  bool IsRetired() const;
++  void Demand(bool input, bool run);
++  void HoldForTesting(uint32_t phase, uint32_t milliseconds);
++
++ private:
++  struct CaptureGeneration;
++  struct Route {
++    AudioDeviceID input = 0, output = 0;
++    AudioStreamBasicDescription input_format{}, output_format{};
++    std::string input_uid, output_uid;
++  };
++  struct Listener {
++    AudioObjectID object = 0;
++    AudioObjectPropertyAddress address{};
++    ExperimentalCoreAudioCallbackCell* cell = nullptr;
++    bool installed = false;
++  };
++  struct OutputRetirement {
++    uint64_t serial = 0, proof = 0, required = 0;
++    int32_t stop = 0, destroy = 0;
++    AudioStreamBasicDescription format{};
++  };
++  struct Event {
++    std::atomic<bool> ready{false};
++    uint64_t word = 0, nanos = 0;
++    uint32_t object = 0, selector = 0, scope = 0;
++  };
++  class Control;
++  static thread_local AudioDeviceMacDuplex* active_control_;
++  static uint64_t Now();
++  void EnterPhase(ExperimentalCoreAudioDuplexPhase phase);
++  bool Current(uint64_t intent, uint64_t deadline) const;
++  int32_t Error(int32_t result, bool unsafe = false);
++  bool ReadRoute(Route* result);
++  bool SameRoute(const Route& a, const Route& b) const;
++  bool InstallListeners();
++  bool RemoveListeners(uint64_t deadline);
++  bool Drain(ExperimentalCoreAudioCallbackCell* cell, uint64_t deadline);
++  bool StartRawInput(uint64_t intent, uint64_t deadline);
++  bool BuildCapture(const Route& route, uint64_t cutoff);
++  bool StartOutput(const Route& route);
++  bool StopOutput(uint64_t deadline);
++  bool StopInput(uint64_t deadline);
++  bool StableRoute(Route* route, uint64_t* validated_word, uint64_t intent, uint64_t deadline);
++  bool TestHold(uint32_t phase, uint64_t intent, uint64_t deadline);
++  void RouteChanged(AudioObjectID, const AudioObjectPropertyAddress&);
++  OSStatus Input(const AudioBufferList*, const AudioTimeStamp*);
++  static OSStatus ListenerProc(AudioObjectID, UInt32, const AudioObjectPropertyAddress[], void*);
++  static OSStatus InputProc(AudioDeviceID, const AudioTimeStamp*, const AudioBufferList*, const AudioTimeStamp*, AudioBufferList*, const AudioTimeStamp*, void*);
++
++  AudioDeviceMac& owner_;
++  const uint64_t owner_generation_;
++  ExperimentalCoreAudioDuplexAuthority authority_;
++  ExperimentalCoreAudioDuplexTimeline timeline_;
++  std::atomic<bool> controlling_{false}, initialized_{false}, prepared_{false};
++  std::atomic<bool> intent_latching_{false};
++  std::atomic<bool> negotiating_{false};
++  std::atomic<bool> input_initialized_{false}, output_initialized_{false};
++  std::atomic<uint64_t> input_drops_{0};
++  std::atomic<uint32_t> render_latency_us_{0};
++  std::atomic<uint32_t> output_frames_capacity_{0};
++  std::atomic<bool> recording_demand_{false}, playout_demand_{false};
++  std::atomic<bool> render_exited_{true};
++  ExperimentalCoreAudioOutputAuthority output_authority_;
++  std::atomic<uint64_t> callbacks_{0}, first_input_{0}, last_input_{0}, output_callbacks_{0};
++  std::atomic<uint64_t> output_start_callbacks_{0};
++  std::atomic<uint64_t> physical_generation_{0}, prepare_serial_{0};
++  std::atomic<uint64_t> input_create_count_{0}, input_start_count_{0}, output_create_count_{0}, output_start_count_{0};
++  std::atomic<uint32_t> input_channels_{0}, input_bytes_{0}, input_buffers_{0};
++  std::atomic<ExperimentalCoreAudioCallbackCell*> capture_target_{nullptr};
++  std::unique_ptr<CaptureGeneration> capture_;
++  std::array<Listener, 12> listeners_{};
++  std::array<OutputRetirement, 128> output_history_{};
++  std::atomic<size_t> output_history_count_{0};
++  std::array<Event, 64> events_{};
++  std::atomic<size_t> event_count_{0};
++  std::atomic<uint32_t> hold_phase_{0}, hold_milliseconds_{0};
++  std::atomic<bool> hold_active_{false};
++  std::atomic<uint64_t> hold_deadline_{0};
++  Route selected_;
++  Route sealed_route_;
++  bool sealed_candidate_ = false;
++  uint64_t first_deadline_ = 0;
++};
++}  // namespace webrtc
++#endif
+--- /dev/null
++++ b/modules/audio_device/mac/audio_device_mac_duplex.cc
+@@ -0,0 +1,857 @@
++/* Copyright 2026 The WebRTC project authors. BSD license in LICENSE. */
++#include "modules/audio_device/mac/audio_device_mac_duplex.h"
++
++#include <AudioToolbox/AudioConverter.h>
++#include <CoreAudio/HostTime.h>
++#include <mach/mach.h>
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++#include <limits>
++#include <span>
++#include <time.h>
++#include <vector>
++#include "modules/audio_device/mac/audio_device_mac.h"
++
++namespace webrtc {
++namespace {
++using Authority = ExperimentalCoreAudioDuplexAuthority;
++using Phase = ExperimentalCoreAudioDuplexPhase;
++constexpr size_t kCaptureSamples = 65536;
++constexpr int32_t kAdmission = -20, kStale = -21, kDeadline = -22;
++uint64_t NextOwnerGeneration() {
++  static std::atomic<uint64_t> next{1};
++  uint64_t old = next.load(std::memory_order_acquire);
++  while (old != UINT64_MAX) if (next.compare_exchange_weak(old, old + 1, std::memory_order_acq_rel)) return old;
++  return 0;
++}
++void Poll() { const timespec pause{0, 1000000}; nanosleep(&pause, nullptr); }
++bool Format(const AudioStreamBasicDescription& f) {
++  return std::isfinite(f.mSampleRate) && f.mSampleRate > 0 &&
++      f.mSampleRate <= std::numeric_limits<int32_t>::max() &&
++      f.mFormatID == kAudioFormatLinearPCM &&
++      (f.mFormatFlags & kAudioFormatFlagIsFloat) &&
++      !(f.mFormatFlags & (kAudioFormatFlagIsNonInterleaved | kAudioFormatFlagIsBigEndian)) &&
++      f.mBitsPerChannel == 32 && f.mChannelsPerFrame > 0 && f.mChannelsPerFrame <= N_DEVICE_CHANNELS &&
++      f.mFramesPerPacket == 1 && f.mBytesPerFrame == f.mChannelsPerFrame * sizeof(float) &&
++      f.mBytesPerPacket == f.mBytesPerFrame;
++}
++bool SameFormat(const AudioStreamBasicDescription& a, const AudioStreamBasicDescription& b) {
++  return a.mSampleRate == b.mSampleRate && a.mFormatID == b.mFormatID &&
++      a.mFormatFlags == b.mFormatFlags && a.mBytesPerPacket == b.mBytesPerPacket &&
++      a.mFramesPerPacket == b.mFramesPerPacket && a.mBytesPerFrame == b.mBytesPerFrame &&
++      a.mChannelsPerFrame == b.mChannelsPerFrame && a.mBitsPerChannel == b.mBitsPerChannel &&
++      a.mReserved == b.mReserved;
++}
++template <typename T> bool Property(AudioObjectID object, AudioObjectPropertySelector selector,
++    AudioObjectPropertyScope scope, T* value) {
++  AudioObjectPropertyAddress address{selector, scope, kAudioObjectPropertyElementMain};
++  UInt32 bytes = sizeof(T);
++  return AudioObjectGetPropertyData(object, &address, 0, nullptr, &bytes, value) == noErr && bytes == sizeof(T);
++}
++bool UID(AudioDeviceID device, std::string* result) {
++  CFStringRef uid = nullptr;
++  if (!Property(device, kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal, &uid) || !uid) return false;
++  char bytes[1024];
++  const bool success = CFStringGetCString(uid, bytes, sizeof(bytes), kCFStringEncodingUTF8);
++  CFRelease(uid);
++  if (success) *result = bytes;
++  return success;
++}
++bool Latency(AudioDeviceID device, AudioObjectPropertyScope scope, double rate, uint32_t* microseconds) {
++  UInt32 device_frames = 0;
++  if (!Property(device, kAudioDevicePropertyLatency, scope, &device_frames)) return false;
++  AudioObjectPropertyAddress address{kAudioDevicePropertyStreams, scope, kAudioObjectPropertyElementMain};
++  UInt32 bytes = 0;
++  if (AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &bytes) != noErr ||
++      !bytes || bytes % sizeof(AudioStreamID) || bytes / sizeof(AudioStreamID) > 64) return false;
++  std::array<AudioStreamID, 64> streams{};
++  const UInt32 expected = bytes;
++  if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &bytes, streams.data()) != noErr || bytes != expected) return false;
++  UInt32 stream_frames = 0;
++  for (size_t i = 0; i < bytes / sizeof(AudioStreamID); ++i) {
++    UInt32 frames = 0;
++    if (!Property(streams[i], kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal, &frames)) return false;
++    stream_frames = std::max(stream_frames, frames);
++  }
++  const double value = (double(device_frames) + stream_frames) * 1e6 / rate;
++  if (!std::isfinite(value) || value < 0 || value > INT32_MAX) return false;
++  *microseconds = uint32_t(value);
++  return true;
++}
++}  // namespace
++
++thread_local AudioDeviceMacDuplex* AudioDeviceMacDuplex::active_control_ = nullptr;
++class AudioDeviceMacDuplex::Control {
++ public:
++  explicit Control(AudioDeviceMacDuplex& owner) : owner_(owner) {
++    bool expected = false;
++    valid_ = !active_control_ && owner_.controlling_.compare_exchange_strong(expected, true, std::memory_order_acq_rel);
++    if (valid_) active_control_ = &owner_;
++  }
++  ~Control() { if (valid_) { active_control_ = nullptr; owner_.controlling_.store(false, std::memory_order_release); } }
++  explicit operator bool() const { return valid_; }
++ private:
++  AudioDeviceMacDuplex& owner_;
++  bool valid_ = false;
++};
++
++struct AudioDeviceMacDuplex::CaptureGeneration {
++  CaptureGeneration(AudioDeviceMacDuplex& controller, const AudioStreamBasicDescription& format, uint64_t cutoff, uint32_t latency)
++      : control(controller), source(format), cutoff_host(cutoff), device_latency_us(latency), ring(kCaptureSamples), scratch(kCaptureSamples) {}
++  AudioDeviceMacDuplex& control;
++  const AudioStreamBasicDescription source;
++  const uint64_t cutoff_host;
++  const uint32_t device_latency_us;
++  std::atomic<uint32_t> callback_delay_us{0};
++  AudioConverterRef converter = nullptr;
++  ExperimentalCoreAudioCallbackCell* cell = nullptr;
++  ExperimentalCoreAudioCapture ring;
++  ExperimentalCoreAudioCaptureEpoch epoch;
++  std::vector<float> scratch;
++  PlatformThread worker;
++  std::atomic<bool> running{false}, exited{true};
++  std::atomic<uint64_t> converted{0};
++  static OSStatus Supply(AudioConverterRef, UInt32* packets, AudioBufferList* data,
++      AudioStreamPacketDescription**, void* context) {
++    auto& self = *static_cast<CaptureGeneration*>(context);
++    const uint64_t samples = uint64_t{*packets} * self.source.mChannelsPerFrame;
++    if (!samples || samples > self.scratch.size()) { *packets = 0; return 1; }
++    while (self.running.load(std::memory_order_acquire) && self.ring.AvailableToRead() < samples) {
++      mach_timespec_t timeout{0, 10000000};
++      const auto status = semaphore_timedwait(self.control.owner_._captureSemaphore, timeout);
++      if (status != KERN_SUCCESS && status != KERN_OPERATION_TIMED_OUT) {
++        self.control.Error(status, true); *packets = 0; return 1;
++      }
++    }
++    if (!self.running.load(std::memory_order_acquire)) { *packets = 0; return 1; }
++    self.ring.Read(std::span<float>(self.scratch).first(samples), self.epoch.local(), self.epoch.process());
++    data->mNumberBuffers = 1;
++    data->mBuffers[0].mNumberChannels = self.source.mChannelsPerFrame;
++    data->mBuffers[0].mDataByteSize = *packets * self.source.mBytesPerFrame;
++    data->mBuffers[0].mData = self.scratch.data();
++    return noErr;
++  }
++  void Run() {
++    int16_t pcm[ENGINE_REC_BUF_SIZE_IN_SAMPLES]{};
++    while (running.load(std::memory_order_acquire)) {
++      auto* buffer = control.owner_._ptrAudioBuffer;
++      const uint64_t local = buffer->ExperimentalCoreAudioCaptureState(), process = ApplicationCaptureState();
++      const uint64_t authority = control.authority_.Read();
++      const OSStatus reset = epoch.Begin(local, process, [this] { return AudioConverterReset(converter); });
++      if (reset != noErr) { control.Error(reset, true); break; }
++      AudioBufferList data{}; data.mNumberBuffers = 1;
++      data.mBuffers[0] = {1, sizeof(pcm), pcm};
++      UInt32 frames = ENGINE_REC_BUF_SIZE_IN_SAMPLES;
++      const OSStatus result = AudioConverterFillComplexBuffer(converter, Supply, this, &frames, &data, nullptr);
++      if (!running.load(std::memory_order_acquire)) break;
++      if (result != noErr || frames != ENGINE_REC_BUF_SIZE_IN_SAMPLES) { control.Error(result ? result : kAdmission, true); break; }
++      auto* delivery_cell = buffer->ExperimentalCoreAudioDuplexDeliveryCell(true);
++      if (!delivery_cell) continue;
++      ExperimentalCoreAudioCallbackCell::Lease delivery(delivery_cell);
++      if (!delivery.owner()) continue;
++      buffer->SetRecordedBuffer(pcm, frames);
++      buffer->SetExperimentalCoreAudioRecordedCaptureState(epoch.local(), epoch.process());
++      buffer->SetExperimentalCoreAudioRecordedDuplexAuthority(authority);
++      const uint64_t capture_delay = uint64_t{callback_delay_us.load(std::memory_order_acquire)} + device_latency_us;
++      const uint64_t render_delay = uint64_t(std::max(control.owner_._renderDelayUs.load(std::memory_order_acquire), 0)) +
++          control.render_latency_us_.load(std::memory_order_acquire);
++      buffer->SetVQEData(int(std::min<uint64_t>(render_delay / 1000, INT32_MAX)),
++          int(std::min<uint64_t>(capture_delay / 1000, INT32_MAX)));
++      buffer->DeliverRecordedData();
++      converted.fetch_add(1, std::memory_order_release);
++    }
++    exited.store(true, std::memory_order_release);
++  }
++};
++
++AudioDeviceMacDuplex::AudioDeviceMacDuplex(AudioDeviceMac& owner) : owner_(owner), owner_generation_(NextOwnerGeneration()) {
++  if (!owner_generation_) authority_.FailTerminal();
++}
++AudioDeviceMacDuplex::~AudioDeviceMacDuplex() = default;
++uint64_t AudioDeviceMacDuplex::Now() { return uint64_t(AudioDeviceBuffer::ExperimentalCoreAudioUptime() * 1e9); }
++void AudioDeviceMacDuplex::EnterPhase(ExperimentalCoreAudioDuplexPhase phase) { timeline_.Enter(phase, Now()); }
++bool AudioDeviceMacDuplex::OnControl() const { return active_control_ == this; }
++bool AudioDeviceMacDuplex::IsRetired() const { return owner_.experimental_retirement_requested_.load(std::memory_order_acquire); }
++bool AudioDeviceMacDuplex::InputInitialized() const { return input_initialized_.load(std::memory_order_acquire); }
++bool AudioDeviceMacDuplex::OutputInitialized() const { return output_initialized_.load(std::memory_order_acquire); }
++void AudioDeviceMacDuplex::InvalidatePublication() {
++  authority_.FailTerminal();
++  if (owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++}
++bool AudioDeviceMacDuplex::Current(uint64_t intent, uint64_t deadline) const {
++  const uint64_t word = authority_.Read();
++  return Now() < deadline && Authority::Intent(word) == intent && Authority::AllowsPreparation(word) && !IsRetired();
++}
++int32_t AudioDeviceMacDuplex::Error(int32_t result, bool unsafe) {
++  if (!result) result = kAdmission;
++  authority_.FailTerminal();
++  if (owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++  if (unsafe) owner_.RecordExperimentalCoreAudioError(result, AudioDeviceMac::ErrorOrigin::kResourceProof, __LINE__);
++  else owner_.experimental_core_audio_error_.Record(result, [this, result] {
++    AudioDeviceModule::ExperimentalCoreAudioErrorContext context;
++    context.origin = result == kDeadline ? AudioDeviceMac::ErrorOrigin::kDuplexDeadline : AudioDeviceMac::ErrorOrigin::kDuplexAdmission;
++    context.uptime = AudioDeviceBuffer::ExperimentalCoreAudioUptime();
++    context.route_generation = Authority::Route(authority_.Read());
++    context.capture_generation = owner_._ptrAudioBuffer ? owner_._ptrAudioBuffer->ExperimentalCoreAudioCaptureState() : 0;
++    context.process_capture_generation = ApplicationCaptureState();
++    return context;
++  });
++  EnterPhase(Phase::kFailed);
++  return result;
++}
++uint64_t AudioDeviceMacDuplex::Latch(uint32_t flags, uint32_t sequence) {
++  bool available = false;
++  if (!intent_latching_.compare_exchange_strong(available, true, std::memory_order_acq_rel)) {
++    authority_.FailTerminal(); output_authority_.Revoke(); return 0;
++  }
++  struct Release { std::atomic<bool>& flag; ~Release() { flag.store(false, std::memory_order_release); } } release{intent_latching_};
++  const uint64_t previous = authority_.Read();
++  uint64_t token = 0;
++  if (!authority_.Latch(sequence, flags, &token)) return 0;
++  if (bool(previous & Authority::kSound) != bool(flags & Authority::kSound) || (flags & Authority::kTerminal))
++    if (!output_authority_.Revoke()) authority_.FailTerminal();
++  if (owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++  return token;
++}
++bool AudioDeviceMacDuplex::Revoke(uint64_t intent) {
++  const bool result = authority_.Revoke(intent);
++  if (result && owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++  return result;
++}
++bool AudioDeviceMacDuplex::Commit(uint64_t token) {
++  if (!prepared_.load(std::memory_order_acquire) || IsRetired()) return false;
++  uint64_t committed = 0;
++  if (!authority_.Commit(token, &committed)) return false;
++  // The authority word is checked independently at DeliverRecordedData. A
++  // concurrent revocation wins even if this secondary gate opens afterward.
++  owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(false);
++  EnterPhase(Phase::kCommitted);
++  return Authority::AllowsPublication(authority_.Read()) && authority_.Read() == committed;
++}
++void AudioDeviceMacDuplex::Demand(bool input, bool run) {
++  const bool previous = (input ? recording_demand_ : playout_demand_).exchange(run, std::memory_order_acq_rel);
++  if (input) authority_.SetCaptureDemand(run);
++  if (!input && previous != run && !output_authority_.Revoke()) authority_.FailTerminal();
++  if (input && !run && owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++}
++bool AudioDeviceMacDuplex::OutputAllowed() const {
++  return output_authority_.Allows() && OutputRequested();
++}
++bool AudioDeviceMacDuplex::OutputRequested() const {
++  const uint64_t word = authority_.Read();
++  return (word & Authority::kSound) && !(word & Authority::kTerminal) && playout_demand_.load(std::memory_order_acquire);
++}
++uint32_t AudioDeviceMacDuplex::OutputFrameCapacity() const { return output_frames_capacity_.load(std::memory_order_acquire); }
++uint16_t AudioDeviceMacDuplex::PlayoutDelayMs() const {
++  return ExperimentalCoreAudioDuplexDelayMs(owner_._renderDelayUs.load(std::memory_order_acquire),
++      render_latency_us_.load(std::memory_order_acquire));
++}
++void AudioDeviceMacDuplex::OutputCallback(const AudioBufferList* data) {
++  const auto& buffer = data->mBuffers[0];
++  const auto samples = std::span<const float>(static_cast<const float*>(buffer.mData), buffer.mDataByteSize / sizeof(float));
++  double energy = 0;
++  for (float sample : samples) {
++    if (!std::isfinite(sample) || sample < -8 || sample > 8) { Error(kAdmission, true); return; }
++    energy += double(sample) * sample;
++  }
++  owner_._ptrAudioBuffer->RecordExperimentalCoreAudioPhysicalOutput(uint64_t(energy * 1073741824.0), samples.size(), true);
++  output_callbacks_.fetch_add(1, std::memory_order_release);
++}
++
++bool AudioDeviceMacDuplex::ReadRoute(Route* result) {
++  Route next;
++  if (!Property(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, &next.input) ||
++      !Property(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, &next.output) ||
++      !next.input || !next.output || next.input == next.output || !UID(next.input, &next.input_uid) || !UID(next.output, &next.output_uid) ||
++      !Property(next.input, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeInput, &next.input_format) ||
++      !Property(next.output, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, &next.output_format) ||
++      !Format(next.input_format) || !Format(next.output_format)) return false;
++  UInt32 input_alive = 0, output_alive = 0;
++  if (!Property(next.input, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal, &input_alive) ||
++      !Property(next.output, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal, &output_alive) ||
++      !input_alive || !output_alive) return false;
++  *result = std::move(next); return true;
++}
++bool AudioDeviceMacDuplex::SameRoute(const Route& a, const Route& b) const {
++  return a.input == b.input && a.output == b.output && a.input_uid == b.input_uid && a.output_uid == b.output_uid &&
++      SameFormat(a.input_format, b.input_format) && SameFormat(a.output_format, b.output_format);
++}
++int32_t AudioDeviceMacDuplex::Init() {
++  Control control(*this);
++  if (!control || IsRetired() || owner_.ExperimentalCoreAudioError() || (authority_.Read() & Authority::kTerminal)) return -1;
++  if (initialized_.load(std::memory_order_acquire)) return 0;
++  if (!ReadRoute(&selected_)) return Error(kAdmission);
++  owner_._inputDeviceID = selected_.input; owner_._outputDeviceID = selected_.output;
++  owner_.experimental_selected_input_id_.store(selected_.input, std::memory_order_release);
++  owner_.experimental_selected_output_id_.store(selected_.output, std::memory_order_release);
++  owner_._twoDevices = true; owner_._inputDeviceIsSpecified = owner_._outputDeviceIsSpecified = true;
++  auto status = semaphore_create(mach_task_self(), &owner_._renderSemaphore, SYNC_POLICY_FIFO, 0);
++  if (status != KERN_SUCCESS) return Error(status, true);
++  owner_.experimental_render_semaphore_owned_ = true;
++  status = semaphore_create(mach_task_self(), &owner_._captureSemaphore, SYNC_POLICY_FIFO, 0);
++  if (status != KERN_SUCCESS) return Error(status, true);
++  owner_.experimental_capture_semaphore_owned_ = true;
++  if (!InstallListeners()) return -1;
++  owner_._initialized = true; owner_._isShutDown = false;
++  initialized_.store(true, std::memory_order_release);
++  return 0;
++}
++int32_t AudioDeviceMacDuplex::Enable() {
++  if (IsRetired() || owner_.ExperimentalCoreAudioError()) return -1;
++  owner_._ptrAudioBuffer->AttachExperimentalCoreAudioDuplexAuthority(&authority_);
++  owner_.experimental_core_audio_enabled_.store(true, std::memory_order_release);
++  return 0;
++}
++bool AudioDeviceMacDuplex::InstallListeners() {
++  auto add = [this](AudioObjectID object, AudioObjectPropertySelector selector, AudioObjectPropertyScope scope, bool optional) {
++    AudioObjectPropertyAddress address{selector, scope, kAudioObjectPropertyElementMain};
++    if (optional && !AudioObjectHasProperty(object, &address)) return true;
++    auto slot = std::find_if(listeners_.begin(), listeners_.end(), [](const auto& entry) { return !entry.cell; });
++    if (slot == listeners_.end()) { Error(-8, true); return false; }
++    auto* cell = ExperimentalCoreAudioCallbackCells().Allocate(this);
++    if (!cell) { Error(-8, true); return false; }
++    slot->object = object; slot->address = address; slot->cell = cell;
++    if (!cell->Open()) { Error(-10, true); return false; }
++    const auto result = AudioObjectAddPropertyListener(object, &address, ListenerProc, cell);
++    if (result != noErr) { cell->Close(); Error(result, true); return false; }
++    slot->installed = true;
++    return true;
++  };
++  return add(kAudioObjectSystemObject, kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, false) &&
++      add(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, false) &&
++      add(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, false) &&
++      add(selected_.input, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeInput, false) &&
++      add(selected_.output, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, false) &&
++      add(selected_.input, kAudioDevicePropertyDataSource, kAudioDevicePropertyScopeInput, true) &&
++      add(selected_.output, kAudioDevicePropertyDataSource, kAudioDevicePropertyScopeOutput, true) &&
++      add(selected_.input, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal, false) &&
++      add(selected_.output, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal, false);
++}
++bool AudioDeviceMacDuplex::Drain(ExperimentalCoreAudioCallbackCell* cell, uint64_t deadline) {
++  if (!cell) return true;
++  cell->Close();
++  while (!cell->ClosedAndDrained() && Now() < deadline) Poll();
++  if (cell->ClosedAndDrained()) return true;
++  Error(-9, true); return false;
++}
++bool AudioDeviceMacDuplex::RemoveListeners(uint64_t deadline) {
++  bool success = true;
++  for (auto& entry : listeners_) {
++    if (!entry.cell) continue;
++    entry.cell->Close();
++    if (entry.installed) {
++      const auto status = AudioObjectRemovePropertyListener(entry.object, &entry.address, ListenerProc, entry.cell);
++      if (status != noErr) { Error(status, true); success = false; }
++      else entry.installed = false;
++    }
++    if (!Drain(entry.cell, deadline)) success = false;
++  }
++  return success;
++}
++void AudioDeviceMacDuplex::RouteChanged(AudioObjectID object, const AudioObjectPropertyAddress& address) {
++  const bool negotiable = negotiating_.load(std::memory_order_acquire) &&
++      address.mSelector == kAudioDevicePropertyStreamFormat &&
++      ((object == selected_.input && address.mScope == kAudioDevicePropertyScopeInput) ||
++       (object == selected_.output && address.mScope == kAudioDevicePropertyScopeOutput));
++  const uint64_t word = authority_.RouteEvent();
++  owner_.experimental_observed_route_generation_.fetch_add(1, std::memory_order_acq_rel);
++  const size_t slot = event_count_.fetch_add(1, std::memory_order_acq_rel);
++  if (slot < events_.size()) {
++    auto& event = events_[slot]; event.word = word; event.nanos = Now();
++    event.object = object; event.selector = address.mSelector; event.scope = address.mScope;
++    event.ready.store(true, std::memory_order_release);
++  } else authority_.FailTerminal();
++  if (!negotiable || (word & Authority::kTerminal) || slot >= events_.size()) {
++    authority_.FailTerminal();
++    const auto origin = address.mSelector == kAudioDevicePropertyStreamFormat ? AudioDeviceMac::ErrorOrigin::kStreamFormat :
++        address.mSelector == kAudioDevicePropertyDataSource ? AudioDeviceMac::ErrorOrigin::kDataSource : AudioDeviceMac::ErrorOrigin::kDeviceList;
++    owner_.RecordExperimentalCoreAudioError(-6, origin, __LINE__, object, address.mSelector, address.mScope);
++  }
++  if (owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++}
++OSStatus AudioDeviceMacDuplex::ListenerProc(AudioObjectID object, UInt32 count,
++    const AudioObjectPropertyAddress addresses[], void* context) {
++  ExperimentalCoreAudioCallbackCell::Lease lease(static_cast<ExperimentalCoreAudioCallbackCell*>(context));
++  auto* owner = static_cast<AudioDeviceMacDuplex*>(lease.owner());
++  if (owner) for (UInt32 i = 0; i < std::min<UInt32>(count, 64); ++i) owner->RouteChanged(object, addresses[i]);
++  if (owner && count > 64) owner->Error(kAdmission);
++  return noErr;
++}
++bool AudioDeviceMacDuplex::StartRawInput(uint64_t intent, uint64_t deadline) {
++  auto& io = owner_.experimental_input_io_;
++  if (io.started) return true;
++  if (!io.created) {
++  io.cell = ExperimentalCoreAudioCallbackCells().Allocate(this);
++  if (!io.cell) { Error(-8, true); return false; }
++  io.device = selected_.input; ++io.serial;
++  const auto created = AudioDeviceCreateIOProcID(io.device, InputProc, io.cell, &io.proc);
++  if (created != noErr) { Error(created, true); return false; }
++  io.created = true; io.proof.store(AudioDeviceMac::kCreated, std::memory_order_release);
++  input_create_count_.fetch_add(1, std::memory_order_release);
++  if (!io.cell->Open()) { Error(-10, true); return false; }
++  owner_._inDeviceIOProcID = io.proc; owner_._recIsInitialized = true;
++  input_initialized_.store(true, std::memory_order_release);
++  }
++  if (!Current(intent, deadline)) return false;
++  const auto started = AudioDeviceStart(io.device, io.proc);
++  if (started != noErr) { Error(started, true); return false; }
++  io.started = true; io.proof.fetch_or(AudioDeviceMac::kStarted, std::memory_order_release);
++  input_start_count_.fetch_add(1, std::memory_order_release);
++  owner_._recording = true;
++  return true;
++}
++OSStatus AudioDeviceMacDuplex::InputProc(AudioDeviceID, const AudioTimeStamp*, const AudioBufferList* data,
++    const AudioTimeStamp* time, AudioBufferList*, const AudioTimeStamp*, void* context) {
++  ExperimentalCoreAudioCallbackCell::Lease lease(static_cast<ExperimentalCoreAudioCallbackCell*>(context));
++  auto* owner = static_cast<AudioDeviceMacDuplex*>(lease.owner());
++  return owner ? owner->Input(data, time) : noErr;
++}
++OSStatus AudioDeviceMacDuplex::Input(const AudioBufferList* data, const AudioTimeStamp* time) {
++  const uint64_t now = Now();
++  uint64_t unset = 0; first_input_.compare_exchange_strong(unset, now, std::memory_order_release);
++  last_input_.store(now, std::memory_order_release);
++  if (data) {
++    input_buffers_.store(data->mNumberBuffers, std::memory_order_relaxed);
++    if (data->mNumberBuffers == 1) {
++      input_channels_.store(data->mBuffers[0].mNumberChannels, std::memory_order_relaxed);
++      input_bytes_.store(data->mBuffers[0].mDataByteSize, std::memory_order_relaxed);
++    }
++  }
++  callbacks_.fetch_add(1, std::memory_order_release);
++  auto* target = capture_target_.load(std::memory_order_acquire);
++  if (!target) return noErr;
++  ExperimentalCoreAudioCallbackCell::Lease admission(target);
++  auto* generation = static_cast<CaptureGeneration*>(admission.owner());
++  if (!generation || !data || !time || !(time->mFlags & kAudioTimeStampHostTimeValid) ||
++      AudioConvertHostTimeToNanos(time->mHostTime) <= generation->cutoff_host) return noErr;
++  const uint64_t authority = authority_.Read();
++  if ((authority & Authority::kTerminal) || !recording_demand_.load(std::memory_order_acquire)) return noErr;
++  if (data->mNumberBuffers != 1) { Error(kAdmission, true); return noErr; }
++  const auto& b = data->mBuffers[0];
++  if (!b.mData || !ExperimentalCoreAudioDuplexBufferShape(1, b.mNumberChannels, b.mDataByteSize,
++      generation->source.mChannelsPerFrame, generation->source.mBytesPerFrame,
++      kCaptureSamples / generation->source.mChannelsPerFrame)) {
++    Error(kAdmission, true); return noErr;
++  }
++  const auto samples = std::span<const float>(static_cast<const float*>(b.mData), b.mDataByteSize / sizeof(float));
++  double energy = 0;
++  for (float sample : samples) {
++    if (!std::isfinite(sample) || sample < -8 || sample > 8) { Error(kAdmission, true); return noErr; }
++    energy += double(sample) * sample;
++  }
++  auto* buffer = owner_._ptrAudioBuffer;
++  const uint64_t input_nanos = AudioConvertHostTimeToNanos(time->mHostTime);
++  const uint64_t current_nanos = AudioConvertHostTimeToNanos(AudioGetCurrentHostTime());
++  const double queue_delay = double(generation->ring.AvailableToRead()) * 1e6 /
++      generation->source.mChannelsPerFrame / generation->source.mSampleRate;
++  const double callback_delay = double(current_nanos >= input_nanos ? current_nanos - input_nanos : 0) * 1e-3 + queue_delay;
++  if (!std::isfinite(callback_delay) || callback_delay > INT32_MAX) { Error(kAdmission); return noErr; }
++  generation->callback_delay_us.store(uint32_t(callback_delay), std::memory_order_release);
++  owner_._captureDelayUs.store(int32_t(callback_delay), std::memory_order_release);
++  buffer->RecordExperimentalCoreAudioInput(uint64_t(energy * 1073741824.0), samples.size(), true);
++  if (!generation->ring.Write(samples, buffer->ExperimentalCoreAudioCaptureState(), ApplicationCaptureState())) {
++    input_drops_.fetch_add(1, std::memory_order_release);
++    Error(kAdmission); return noErr;
++  }
++  const auto signal = semaphore_signal(owner_._captureSemaphore);
++  if (signal != KERN_SUCCESS) Error(signal, true);
++  return noErr;
++}
++bool AudioDeviceMacDuplex::StableRoute(Route* route, uint64_t* validated_word, uint64_t intent, uint64_t deadline) {
++  while (Current(intent, deadline)) {
++    const uint64_t word = authority_.Read(), count = callbacks_.load(std::memory_order_acquire);
++    Route before, after;
++    if (!ReadRoute(&before)) { Error(kAdmission); return false; }
++    while (Current(intent, deadline) && callbacks_.load(std::memory_order_acquire) < count + 2) Poll();
++    if (!Current(intent, deadline)) return false;
++    if (!ReadRoute(&after)) { Error(kAdmission); return false; }
++    if (authority_.Read() != word || !SameRoute(before, after)) continue;
++    if (after.input != selected_.input || after.output != selected_.output ||
++        after.input_uid != selected_.input_uid || after.output_uid != selected_.output_uid ||
++        last_input_.load(std::memory_order_acquire) <= first_input_.load(std::memory_order_acquire) ||
++        !ExperimentalCoreAudioDuplexBufferShape(input_buffers_.load(std::memory_order_acquire),
++            input_channels_.load(std::memory_order_acquire), input_bytes_.load(std::memory_order_acquire),
++            after.input_format.mChannelsPerFrame, after.input_format.mBytesPerFrame,
++            kCaptureSamples / after.input_format.mChannelsPerFrame)) { Error(kAdmission); return false; }
++    *validated_word = word; *route = std::move(after); return true;
++  }
++  return false;
++}
++bool AudioDeviceMacDuplex::BuildCapture(const Route& route, uint64_t cutoff) {
++  if (capture_) return true;
++  if (owner_._ptrAudioBuffer->RecordingChannels() != N_REC_CHANNELS ||
++      owner_._ptrAudioBuffer->RecordingSampleRate() != N_REC_SAMPLES_PER_SEC) { Error(kAdmission); return false; }
++  uint32_t latency = 0;
++  if (!Latency(route.input, kAudioDevicePropertyScopeInput, route.input_format.mSampleRate, &latency)) { Error(kAdmission); return false; }
++  capture_ = std::make_unique<CaptureGeneration>(*this, route.input_format, cutoff, latency);
++  auto& generation = *capture_;
++  AudioStreamBasicDescription desired{double(N_REC_SAMPLES_PER_SEC), kAudioFormatLinearPCM,
++      kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
++      sizeof(int16_t), 1, sizeof(int16_t), 1, 16, 0};
++  const auto status = AudioConverterNew(&generation.source, &desired, &generation.converter);
++  if (status != noErr) { Error(status, true); return false; }
++  generation.cell = ExperimentalCoreAudioCallbackCells().Allocate(&generation);
++  if (!generation.cell || !generation.cell->Open()) { Error(-8, true); return false; }
++  generation.running.store(true, std::memory_order_release); generation.exited.store(false, std::memory_order_release);
++  generation.worker = PlatformThread::SpawnJoinable([&generation] { generation.Run(); },
++      "R6Capture", ThreadAttributes().SetPriority(ThreadPriority::kRealtime));
++  capture_target_.store(generation.cell, std::memory_order_release);
++  return true;
++}
++bool AudioDeviceMacDuplex::StartOutput(const Route& route) {
++  if (owner_._ptrAudioBuffer->PlayoutChannels() != N_PLAY_CHANNELS ||
++      owner_._ptrAudioBuffer->PlayoutSampleRate() != N_PLAY_SAMPLES_PER_SEC) { Error(kAdmission); return false; }
++  if (owner_._playing && OutputAllowed() && !render_exited_.load(std::memory_order_acquire)) return true;
++  if (owner_._playing && !StopOutput(Now() + 2000000000)) return false;
++  if (!OutputRequested()) return true;
++  const uint64_t output_token = output_authority_.Read();
++  if (output_history_count_.load(std::memory_order_acquire) >= output_history_.size()) { Error(-8, true); return false; }
++  owner_._renderBuffer.Clear();
++  owner_._outStreamFormat = route.output_format;
++  owner_._outDesiredFormat = {double(N_PLAY_SAMPLES_PER_SEC), kAudioFormatLinearPCM,
++      kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
++      sizeof(int16_t) * N_PLAY_CHANNELS, 1, sizeof(int16_t) * N_PLAY_CHANNELS, N_PLAY_CHANNELS, 16, 0};
++  UInt32 native_frames = 0, latency = 0;
++  if (!Property(route.output, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal, &native_frames) || !native_frames ||
++      uint64_t{native_frames} * route.output_format.mChannelsPerFrame > kCaptureSamples ||
++      std::ceil(double(native_frames) * N_PLAY_SAMPLES_PER_SEC / route.output_format.mSampleRate) * N_PLAY_CHANNELS > std::size(owner_._renderConvertData) ||
++      !Latency(route.output, kAudioDevicePropertyScopeOutput, route.output_format.mSampleRate, &latency)) { Error(kAdmission); return false; }
++  render_latency_us_.store(latency, std::memory_order_release);
++  output_frames_capacity_.store(native_frames, std::memory_order_release);
++  owner_._renderDelayOffsetSamples = 0; owner_._renderDelayUs = 0;
++  const auto converted = AudioConverterNew(&owner_._outDesiredFormat, &owner_._outStreamFormat, &owner_._renderConverter);
++  if (converted != noErr) { Error(converted, true); return false; }
++  owner_.experimental_render_converter_owned_ = true;
++  output_start_callbacks_.store(output_callbacks_.load(std::memory_order_acquire), std::memory_order_release);
++  if (owner_.CreateDeviceIOProc(route.output, AudioDeviceMac::deviceIOProc, false, &owner_._deviceIOProcID) != noErr) return false;
++  output_create_count_.fetch_add(1, std::memory_order_release);
++  owner_._playIsInitialized = true; owner_._renderDeviceIsAlive = 1; owner_._doStop = false;
++  output_initialized_.store(true, std::memory_order_release);
++  render_exited_.store(false, std::memory_order_release);
++  owner_.render_worker_thread_ = PlatformThread::SpawnJoinable([this] {
++    while (owner_.RenderWorkerThread()) {}
++    render_exited_.store(true, std::memory_order_release);
++  }, "R6Render", ThreadAttributes().SetPriority(ThreadPriority::kRealtime));
++  if (!OutputRequested() || output_authority_.Read() != output_token) return StopOutput(Now() + 2000000000);
++  const auto started = AudioDeviceStart(route.output, owner_._deviceIOProcID);
++  if (started != noErr) { Error(started, true); return false; }
++  owner_.experimental_output_io_.started = true;
++  owner_.experimental_output_io_.proof.fetch_or(AudioDeviceMac::kStarted, std::memory_order_release);
++  output_start_count_.fetch_add(1, std::memory_order_release);
++  owner_._playing = true;
++  if (!OutputRequested() || !output_authority_.Authorize(output_token)) return StopOutput(Now() + 2000000000);
++  return true;
++}
++bool AudioDeviceMacDuplex::StopOutput(uint64_t deadline) {
++  if (!output_authority_.Revoke()) authority_.FailTerminal();
++  auto& io = owner_.experimental_output_io_;
++  uint64_t required = AudioDeviceMac::kWorkerJoined | AudioDeviceMac::kConverterDisposed | AudioDeviceMac::kListenersRemoved;
++  if (io.cell) required |= AudioDeviceMac::kCellClosed | AudioDeviceMac::kCellDrained;
++  if (io.created) required |= AudioDeviceMac::kDestroyed;
++  if (io.started) required |= AudioDeviceMac::kStopSucceeded;
++  io.required_proof.fetch_or(required, std::memory_order_release);
++  owner_._playing = false;
++  if (io.cell) {
++    io.cell->Close(); io.proof.fetch_or(AudioDeviceMac::kCellClosed, std::memory_order_release);
++    if (!Drain(io.cell, deadline)) return false;
++    io.proof.fetch_or(AudioDeviceMac::kCellDrained, std::memory_order_release);
++  }
++  if (io.started && !(io.proof.load(std::memory_order_acquire) & AudioDeviceMac::kStopSucceeded)) {
++    const auto status = AudioDeviceStop(io.device, io.proc); io.stop_status.store(status, std::memory_order_release);
++    if (status != noErr) { Error(status, true); return false; }
++    io.proof.fetch_or(AudioDeviceMac::kStopSucceeded, std::memory_order_release);
++  }
++  if (io.created && !(io.proof.load(std::memory_order_acquire) & AudioDeviceMac::kDestroyed)) {
++    const auto status = AudioDeviceDestroyIOProcID(io.device, io.proc); io.destroy_status.store(status, std::memory_order_release);
++    if (status != noErr) { Error(status, true); return false; }
++    io.proof.fetch_or(AudioDeviceMac::kDestroyed, std::memory_order_release);
++  }
++  owner_._renderDeviceIsAlive = 0;
++  if (!owner_.render_worker_thread_.empty()) {
++    const auto wake = semaphore_signal_all(owner_._renderSemaphore);
++    if (wake != KERN_SUCCESS) { Error(wake, true); return false; }
++    while (!render_exited_.load(std::memory_order_acquire) && Now() < deadline) Poll();
++    if (!render_exited_.load(std::memory_order_acquire)) { Error(-9, true); return false; }
++    owner_.render_worker_thread_.Finalize();
++  }
++  io.proof.fetch_or(AudioDeviceMac::kWorkerJoined | AudioDeviceMac::kListenersRemoved, std::memory_order_release);
++  if (owner_.experimental_render_converter_owned_) {
++    const auto status = AudioConverterDispose(owner_._renderConverter);
++    if (status != noErr) { Error(status, true); return false; }
++    owner_.experimental_render_converter_owned_ = false; owner_._renderConverter = nullptr;
++  }
++  io.proof.fetch_or(AudioDeviceMac::kConverterDisposed, std::memory_order_release);
++  if (!ExperimentalCoreAudioRetirementComplete(io.proof.load(std::memory_order_acquire),
++      io.required_proof.load(std::memory_order_acquire), owner_.experimental_unsafe_errors_.mask())) return false;
++  io.proof.fetch_or(AudioDeviceMac::kDirectionClean, std::memory_order_release);
++  if (io.created) {
++    const size_t index = output_history_count_.load(std::memory_order_acquire);
++    if (index >= output_history_.size()) { Error(-8, true); return false; }
++    output_history_[index] = {io.serial, io.proof.load(std::memory_order_acquire), io.required_proof.load(std::memory_order_acquire),
++        io.stop_status.load(std::memory_order_acquire), io.destroy_status.load(std::memory_order_acquire), owner_._outStreamFormat};
++    output_history_count_.store(index + 1, std::memory_order_release);
++  }
++  io.created = false; io.started = false; io.proc = nullptr;
++  owner_._deviceIOProcID = nullptr; owner_._playIsInitialized = false; owner_._renderBuffer.Clear();
++  output_initialized_.store(false, std::memory_order_release);
++  return true;
++}
++bool AudioDeviceMacDuplex::StopInput(uint64_t deadline) {
++  auto& io = owner_.experimental_input_io_;
++  uint64_t required = AudioDeviceMac::kWorkerJoined | AudioDeviceMac::kConverterDisposed | AudioDeviceMac::kListenersRemoved;
++  if (io.cell) required |= AudioDeviceMac::kCellClosed | AudioDeviceMac::kCellDrained;
++  if (io.created) required |= AudioDeviceMac::kDestroyed;
++  if (io.started) required |= AudioDeviceMac::kStopSucceeded;
++  if (capture_ && capture_->cell) required |= AudioDeviceMac::kDataCellClosed | AudioDeviceMac::kDataCellDrained;
++  io.required_proof.fetch_or(required, std::memory_order_release);
++  if (capture_ && capture_->cell) {
++    capture_->cell->Close(); capture_target_.store(nullptr, std::memory_order_release);
++    io.proof.fetch_or(AudioDeviceMac::kDataCellClosed, std::memory_order_release);
++    if (!Drain(capture_->cell, deadline)) return false;
++    io.proof.fetch_or(AudioDeviceMac::kDataCellDrained, std::memory_order_release);
++  }
++  if (io.cell) {
++    io.cell->Close(); io.proof.fetch_or(AudioDeviceMac::kCellClosed, std::memory_order_release);
++    if (!Drain(io.cell, deadline)) return false;
++    io.proof.fetch_or(AudioDeviceMac::kCellDrained, std::memory_order_release);
++  }
++  if (io.started && !(io.proof.load(std::memory_order_acquire) & AudioDeviceMac::kStopSucceeded)) {
++    const auto status = AudioDeviceStop(io.device, io.proc); io.stop_status.store(status, std::memory_order_release);
++    if (status != noErr) { Error(status, true); return false; }
++    io.proof.fetch_or(AudioDeviceMac::kStopSucceeded, std::memory_order_release);
++  }
++  if (io.created && !(io.proof.load(std::memory_order_acquire) & AudioDeviceMac::kDestroyed)) {
++    const auto status = AudioDeviceDestroyIOProcID(io.device, io.proc); io.destroy_status.store(status, std::memory_order_release);
++    if (status != noErr) { Error(status, true); return false; }
++    io.proof.fetch_or(AudioDeviceMac::kDestroyed, std::memory_order_release);
++  }
++  if (capture_) {
++    capture_->running.store(false, std::memory_order_release);
++    const auto wake = semaphore_signal_all(owner_._captureSemaphore);
++    if (wake != KERN_SUCCESS) { Error(wake, true); return false; }
++    while (!capture_->exited.load(std::memory_order_acquire) && Now() < deadline) Poll();
++    if (!capture_->exited.load(std::memory_order_acquire)) { Error(-9, true); return false; }
++    if (!capture_->worker.empty()) capture_->worker.Finalize();
++    if (capture_->converter) {
++      const auto status = AudioConverterDispose(capture_->converter);
++      if (status != noErr) { Error(status, true); return false; }
++      capture_->converter = nullptr;
++    }
++    capture_.reset();
++  }
++  io.proof.fetch_or(AudioDeviceMac::kWorkerJoined | AudioDeviceMac::kConverterDisposed | AudioDeviceMac::kListenersRemoved, std::memory_order_release);
++  if (!ExperimentalCoreAudioRetirementComplete(io.proof.load(std::memory_order_acquire),
++      io.required_proof.load(std::memory_order_acquire), owner_.experimental_unsafe_errors_.mask())) return false;
++  io.proof.fetch_or(AudioDeviceMac::kDirectionClean, std::memory_order_release);
++  io.created = false; io.started = false; io.proc = nullptr;
++  owner_._inDeviceIOProcID = nullptr; owner_._recIsInitialized = false; owner_._recording = false;
++  input_initialized_.store(false, std::memory_order_release);
++  return true;
++}
++bool AudioDeviceMacDuplex::TestHold(uint32_t phase, uint64_t intent, uint64_t deadline) {
++  if (phase != static_cast<uint32_t>(Phase::kReady) || hold_phase_.load(std::memory_order_acquire) != phase) return true;
++  uint64_t until = hold_deadline_.load(std::memory_order_acquire);
++  if (!until) {
++    const uint64_t candidate = std::min(deadline, Now() + uint64_t(std::min(hold_milliseconds_.load(), 1000u)) * 1000000);
++    hold_deadline_.compare_exchange_strong(until, candidate, std::memory_order_acq_rel);
++    if (!until) until = candidate;
++  }
++  hold_active_.store(Now() < until, std::memory_order_release);
++  // Explicit test-only delayed RETURN, never a privacy barrier: sideband
++  // authority revocation remains immediate and callbacks never wait here.
++  // A newer intent must not restart or shorten this one absolute hold window.
++  while (Now() < until) Poll();
++  hold_active_.store(false, std::memory_order_release);
++  return Current(intent, deadline);
++}
++void AudioDeviceMacDuplex::HoldForTesting(uint32_t phase, uint32_t milliseconds) {
++  hold_deadline_.store(0, std::memory_order_release);
++  hold_milliseconds_.store(std::min(milliseconds, 1000u), std::memory_order_release);
++  hold_phase_.store(phase == static_cast<uint32_t>(Phase::kReady) ? phase : 0, std::memory_order_release);
++}
++AudioDeviceModule::ExperimentalCoreAudioDuplexResult AudioDeviceMacDuplex::Prepare(
++    uint64_t expected_intent, double deadline_uptime) {
++  const uint64_t entry = authority_.Read();
++  uint64_t serial = 0;
++  auto finish = [&](int32_t status, uint64_t token) {
++    AudioDeviceModule::ExperimentalCoreAudioDuplexResult result;
++    result.status = status; result.sealed_token = token;
++    result.owner_generation = owner_generation_;
++    result.physical_generation = physical_generation_.load(std::memory_order_acquire);
++    result.prepare_serial = serial; result.expected_intent = expected_intent; result.entry_authority = entry;
++    // This is the actual return/cancellation observation, retained by value.
++    result.observed_authority = authority_.Read(); result.observation_nanos = Now();
++    if (status == 0) result.abort_reason = 0;
++    else if (status == kStale && Authority::Intent(result.observed_authority) != expected_intent)
++      result.abort_reason = result.observed_authority & Authority::kTerminal ? 2 : 1;
++    else if (status == kDeadline) result.abort_reason = 4;
++    else if ((result.observed_authority & Authority::kTerminal) && (result.observed_authority & Authority::kSealed)) result.abort_reason = 3;
++    else if (status == -23) result.abort_reason = 6;
++    else result.abort_reason = 5;
++    return result;
++  };
++  if (Authority::Intent(entry) != expected_intent || (entry & Authority::kTerminal)) return finish(kStale, 0);
++  if (!std::isfinite(deadline_uptime) || deadline_uptime <= double(Now()) * 1e-9) return finish(Error(kDeadline), 0);
++  if (!initialized_.load(std::memory_order_acquire) && Init() != 0) return finish(kAdmission, 0);
++  Control control(*this);
++  if (!control) return finish(-23, 0);
++  if (!std::isfinite(deadline_uptime) || deadline_uptime <= 0) return finish(kAdmission, 0);
++  const uint64_t previous_serial = prepare_serial_.load(std::memory_order_acquire);
++  if (previous_serial == UINT64_MAX) return finish(Error(kAdmission), 0);
++  serial = previous_serial + 1;
++  prepare_serial_.store(serial, std::memory_order_release);
++  uint64_t word = authority_.Read();
++  if (Authority::Intent(word) != expected_intent) return finish(kStale, 0);
++  if ((word & Authority::kTerminal) || IsRetired() || owner_.ExperimentalCoreAudioError()) return finish(kAdmission, 0);
++  const uint64_t deadline = uint64_t(std::min(deadline_uptime, double(Now()) * 1e-9 + 8.0) * 1e9);
++  if (deadline <= Now()) return finish(Error(kDeadline), 0);
++  if (!(word & Authority::kAuthorized) || !recording_demand_.load(std::memory_order_acquire)) {
++    if (owner_.experimental_input_io_.created) return finish(Error(kAdmission), 0);
++    Route route;
++    if (!ReadRoute(&route) || route.input_uid != selected_.input_uid || route.output_uid != selected_.output_uid) return finish(Error(kAdmission), 0);
++    const bool success = OutputRequested() ? StartOutput(route) : StopOutput(deadline);
++    return finish(success ? 0 : kAdmission, 0);
++  }
++  if (!Authority::AllowsPreparation(word)) return finish(kStale, 0);
++  if (!first_deadline_) first_deadline_ = deadline;
++  const uint64_t bounded_deadline = prepared_.load(std::memory_order_acquire) ? deadline : std::min(deadline, first_deadline_);
++  if (!prepared_.load(std::memory_order_acquire)) {
++    Route route;
++    if (!sealed_candidate_) {
++    EnterPhase(Phase::kQuiesceOutput);
++    if (!StopOutput(bounded_deadline)) return finish(kAdmission, 0);
++    if (!Current(expected_intent, bounded_deadline)) return finish(kStale, 0);
++    negotiating_.store(true, std::memory_order_release);
++    EnterPhase(Phase::kStartInput);
++    if (!Current(expected_intent, bounded_deadline) || !StartRawInput(expected_intent, bounded_deadline)) return finish(kStale, 0);
++    if (!Current(expected_intent, bounded_deadline)) return finish(kStale, 0);
++    EnterPhase(Phase::kNegotiate);
++    if (!TestHold(static_cast<uint32_t>(Phase::kNegotiate), expected_intent, bounded_deadline))
++      return finish(Authority::Intent(authority_.Read()) != expected_intent ? kStale : Error(kDeadline), 0);
++    uint64_t validated_word = 0;
++    if (!StableRoute(&route, &validated_word, expected_intent, bounded_deadline))
++      return finish(Authority::Intent(authority_.Read()) != expected_intent ? kStale : Error(kDeadline), 0);
++    EnterPhase(Phase::kSeal);
++    if (!authority_.Seal(validated_word, &word)) return finish(kStale, 0);
++    negotiating_.store(false, std::memory_order_release);
++    sealed_route_ = route;
++    sealed_candidate_ = true;
++    physical_generation_.store(1, std::memory_order_release);
++    } else {
++      route = sealed_route_;
++      word = authority_.Read();
++    }
++    if (!Current(expected_intent, bounded_deadline)) return finish(kStale, 0);
++    EnterPhase(Phase::kBuildCapture);
++    const uint64_t cutoff = AudioConvertHostTimeToNanos(AudioGetCurrentHostTime());
++    if (!BuildCapture(route, cutoff)) return finish(kAdmission, 0);
++    if (!Current(expected_intent, bounded_deadline)) return finish(kStale, 0);
++    EnterPhase(Phase::kBuildOutput);
++    if (OutputRequested() && !StartOutput(route)) return finish(kAdmission, 0);
++    if (OutputRequested() && !OutputAllowed()) return finish(kStale, 0);
++    EnterPhase(Phase::kVerify);
++    const uint64_t count = callbacks_.load(std::memory_order_acquire);
++    while (Current(expected_intent, bounded_deadline) &&
++        (callbacks_.load(std::memory_order_acquire) <= count || capture_->converted.load(std::memory_order_acquire) == 0 ||
++         (OutputAllowed() && output_callbacks_.load(std::memory_order_acquire) <= output_start_callbacks_.load(std::memory_order_acquire)))) Poll();
++    Route after;
++    if (!Current(expected_intent, bounded_deadline) || !ReadRoute(&after) || !SameRoute(route, after) || authority_.Read() != word)
++      return finish(Authority::Intent(authority_.Read()) != expected_intent ? kStale : Error(kAdmission), 0);
++    prepared_.store(true, std::memory_order_release);
++  } else {
++    Route route;
++    const uint64_t before = authority_.Read();
++    if (!ReadRoute(&route) || !SameRoute(route, sealed_route_) ||
++        !capture_ || !SameFormat(route.input_format, capture_->source)) return finish(Error(kAdmission), 0);
++    const uint64_t output_serial = owner_.experimental_output_io_.serial;
++    const bool success = OutputRequested() ? StartOutput(route) : StopOutput(bounded_deadline);
++    if (!success || authority_.Read() != before) return finish(kStale, 0);
++    if (OutputRequested() && !OutputAllowed()) return finish(kStale, 0);
++    if (OutputRequested() && owner_.experimental_output_io_.serial != output_serial) {
++      const uint64_t input_count = callbacks_.load(std::memory_order_acquire);
++      while (Current(expected_intent, bounded_deadline) &&
++          (output_callbacks_.load(std::memory_order_acquire) <= output_start_callbacks_.load(std::memory_order_acquire) ||
++           callbacks_.load(std::memory_order_acquire) <= input_count)) Poll();
++      Route after;
++      if (!Current(expected_intent, bounded_deadline)) return finish(kStale, 0);
++      if (!ReadRoute(&after) || !SameRoute(route, after) || authority_.Read() != before) return finish(Error(kAdmission), 0);
++    }
++  }
++  EnterPhase(Phase::kReady);
++  if (!TestHold(static_cast<uint32_t>(Phase::kReady), expected_intent, bounded_deadline))
++    return finish(Authority::Intent(authority_.Read()) != expected_intent ? kStale : Error(kDeadline), 0);
++  word = authority_.Read();
++  return finish(Current(expected_intent, bounded_deadline) ? 0 : kStale, word);
++}
++int32_t AudioDeviceMacDuplex::Retire() {
++  Control control(*this);
++  if (!control) return -1;
++  if (owner_.experimental_retirement_confirmed_.load(std::memory_order_acquire)) return 0;
++  owner_.experimental_retirement_requested_.store(true, std::memory_order_release);
++  authority_.FailTerminal();
++  if (owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++  EnterPhase(Phase::kRetire);
++  const uint64_t deadline = Now() + 2000000000;
++  const bool output = StopOutput(deadline), input = StopInput(deadline), listeners = RemoveListeners(deadline);
++  if (!input || !output || !listeners || owner_.experimental_unsafe_errors_.mask()) return -1;
++  if (owner_._mixerManager.Close() != 0) return Error(-10, true);
++  if (owner_.experimental_capture_semaphore_owned_) {
++    const auto status = semaphore_destroy(mach_task_self(), owner_._captureSemaphore);
++    if (status != KERN_SUCCESS) return Error(status, true);
++    owner_.experimental_capture_semaphore_owned_ = false;
++  }
++  if (owner_.experimental_render_semaphore_owned_) {
++    const auto status = semaphore_destroy(mach_task_self(), owner_._renderSemaphore);
++    if (status != KERN_SUCCESS) return Error(status, true);
++    owner_.experimental_render_semaphore_owned_ = false;
++  }
++  if (owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->AttachExperimentalCoreAudioDuplexAuthority(nullptr);
++  owner_._initialized = false; owner_._isShutDown = true;
++  owner_.duplex_module_initialized_.store(false, std::memory_order_release);
++  initialized_.store(false, std::memory_order_release);
++  owner_.experimental_retirement_confirmed_.store(true, std::memory_order_release);
++  EnterPhase(Phase::kStopped);
++  return 0;
++}
++AudioDeviceModule::ExperimentalCoreAudioDuplexState AudioDeviceMacDuplex::State() const {
++  AudioDeviceModule::ExperimentalCoreAudioDuplexState state;
++  state.supported = true; state.authority = authority_.Read(); state.prepared = prepared_.load(std::memory_order_acquire);
++  state.owner_generation = owner_generation_;
++  state.physical_generation = physical_generation_.load(std::memory_order_acquire);
++  state.active_prepare_serial = prepare_serial_.load(std::memory_order_acquire);
++  state.input_create_count = input_create_count_.load(std::memory_order_acquire);
++  state.input_start_count = input_start_count_.load(std::memory_order_acquire);
++  state.output_create_count = output_create_count_.load(std::memory_order_acquire);
++  state.output_start_count = output_start_count_.load(std::memory_order_acquire);
++  state.hold_active = hold_active_.load(std::memory_order_acquire);
++  state.output_running = owner_._playing.load(std::memory_order_acquire);
++  state.input_running = owner_._recording.load(std::memory_order_acquire);
++  state.capture_committed = (state.authority & Authority::kCommitted) != 0;
++  state.phase = timeline_.phase.load(std::memory_order_acquire);
++  for (size_t i = 0; i < ExperimentalCoreAudioDuplexTimeline::kPhases; ++i) state.phase_nanos[i] = timeline_.times[i].load(std::memory_order_acquire);
++  state.input_callbacks = callbacks_.load(std::memory_order_acquire); state.output_callbacks = output_callbacks_.load(std::memory_order_acquire);
++  state.first_input_nanos = first_input_.load(std::memory_order_acquire); state.last_input_nanos = last_input_.load(std::memory_order_acquire);
++  state.archived_output_generations = output_history_count_.load(std::memory_order_acquire);
++  state.output_history_size = std::min<size_t>(state.archived_output_generations, output_history_.size());
++  for (size_t i = 0; i < state.output_history_size; ++i) {
++    const auto& from = output_history_[i]; auto& to = state.output_history[i];
++    to.serial = from.serial; to.proof = from.proof; to.required = from.required;
++    to.stop_status = from.stop; to.destroy_status = from.destroy;
++    to.sample_rate = from.format.mSampleRate; to.format_id = from.format.mFormatID; to.flags = from.format.mFormatFlags;
++    to.bytes_per_packet = from.format.mBytesPerPacket; to.frames_per_packet = from.format.mFramesPerPacket;
++    to.bytes_per_frame = from.format.mBytesPerFrame; to.channels = from.format.mChannelsPerFrame;
++    to.bits_per_channel = from.format.mBitsPerChannel; to.reserved = from.format.mReserved;
++  }
++  state.observed_events = event_count_.load(std::memory_order_acquire);
++  state.event_size = std::min<size_t>(state.observed_events, events_.size());
++  for (size_t i = 0; i < state.event_size; ++i) {
++    const auto& from = events_[i]; auto& to = state.events[i];
++    if (!from.ready.load(std::memory_order_acquire)) continue;
++    to.ready = true; to.authority = from.word; to.nanos = from.nanos;
++    to.object = from.object; to.selector = from.selector; to.scope = from.scope;
++  }
++  state.input_drops = input_drops_.load(std::memory_order_acquire);
++  return state;
++}
++}  // namespace webrtc
+--- /dev/null
++++ b/modules/audio_device/mac/experimental_core_audio_duplex_transport_unittest.cc
+@@ -0,0 +1,198 @@
++/* Copyright 2026 The WebRTC project authors. BSD license in LICENSE. */
++#include "modules/audio_device/audio_device_buffer.h"
++
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <condition_variable>
++#include <cstring>
++#include <memory>
++#include <mutex>
++#include <thread>
++#include "api/make_ref_counted.h"
++#include "api/ref_count.h"
++#include "modules/audio_device/include/mock_audio_transport.h"
++#include "modules/audio_device/mac/experimental_core_audio_capture.h"
++#include "modules/audio_device/mac/experimental_core_audio_duplex.h"
++#include "test/create_test_environment.h"
++#include "test/gmock.h"
++#include "test/gtest.h"
++
++namespace webrtc {
++namespace {
++using ::testing::_;
++using ::testing::NiceMock;
++using namespace std::chrono_literals;
++
++class Gate {
++ public:
++  void Open() { std::lock_guard<std::mutex> lock(mutex_); open_ = true; cv_.notify_all(); }
++  bool Wait(std::chrono::milliseconds timeout = 5000ms) {
++    std::unique_lock<std::mutex> lock(mutex_);
++    return cv_.wait_for(lock, timeout, [&] { return open_; });
++  }
++ private:
++  std::mutex mutex_;
++  std::condition_variable cv_;
++  bool open_ = false;
++};
++struct OwnerStats {
++  std::atomic<bool> destroyed{false};
++  std::thread::id released_on;
++};
++class TransportOwner : public RefCountInterface {
++ public:
++  explicit TransportOwner(std::shared_ptr<OwnerStats> stats) : stats_(std::move(stats)) {}
++  ~TransportOwner() override {
++    stats_->released_on = std::this_thread::get_id();
++    stats_->destroyed.store(true, std::memory_order_release);
++  }
++  NiceMock<test::MockAudioTransport> transport;
++ private:
++  std::shared_ptr<OwnerStats> stats_;
++};
++struct Fixture {
++  ExperimentalCoreAudioDuplexAuthority authority;
++  AudioDeviceBuffer buffer{CreateTestEnvironment()};
++  std::shared_ptr<OwnerStats> stats = std::make_shared<OwnerStats>();
++  scoped_refptr<TransportOwner> owner = make_ref_counted<TransportOwner>(stats);
++  Fixture() {
++    buffer.AttachExperimentalCoreAudioDuplexAuthority(&authority);
++    EXPECT_EQ(buffer.RegisterExperimentalCoreAudioDuplexTransport(&owner->transport, owner), 0);
++    EXPECT_EQ(buffer.SetPlayoutSampleRate(48000), 0);
++    EXPECT_EQ(buffer.SetRecordingSampleRate(48000), 0);
++    EXPECT_EQ(buffer.SetPlayoutChannels(1), 0);
++    EXPECT_EQ(buffer.SetRecordingChannels(1), 0);
++  }
++};
++
++void ExerciseCleanStop(bool input) {
++  Fixture fixture;
++  auto& buffer = fixture.buffer;
++  Gate entered, release;
++  std::atomic<bool> callback_finished{false};
++  std::array<int16_t, 480> samples{};
++  auto* transport = &fixture.owner->transport;
++  if (input) {
++    EXPECT_CALL(*transport, RecordedDataIsAvailable(_, _, _, _, _, _, _, _, _, _, _))
++        .WillOnce([&](const void*, size_t, size_t, size_t, uint32_t, uint32_t,
++                      int32_t, uint32_t, bool, uint32_t&, std::optional<int64_t>) {
++          entered.Open(); EXPECT_TRUE(release.Wait());
++          callback_finished.store(true, std::memory_order_release); return 0;
++        });
++    buffer.StartRecording();
++  } else {
++    EXPECT_CALL(*transport, NeedMorePlayData(_, _, _, _, _, _, _, _))
++        .WillOnce([&](size_t frames, size_t bytes, size_t, uint32_t, void* data,
++                      size_t& produced, int64_t*, int64_t*) {
++          entered.Open(); EXPECT_TRUE(release.Wait());
++          std::memset(data, 0, frames * bytes); produced = frames;
++          callback_finished.store(true, std::memory_order_release); return 0;
++        });
++    buffer.StartPlayout();
++  }
++  auto* cell = buffer.ExperimentalCoreAudioDuplexDeliveryCell(input);
++  ASSERT_NE(cell, nullptr);
++  fixture.owner = nullptr;  // Only the actual ADB registration owns transport.
++  std::thread callback([&] {
++    ExperimentalCoreAudioCallbackCell::Lease lease(cell);
++    EXPECT_EQ(lease.owner(), &buffer);
++    if (!lease.owner()) { entered.Open(); return; }
++    if (input) {
++      buffer.SetRecordedBuffer(samples.data(), samples.size());
++      buffer.DeliverRecordedData();
++    } else { buffer.RequestPlayoutData(480); }
++  });
++  const bool admitted = entered.Wait();
++  EXPECT_TRUE(admitted);
++  std::atomic<bool> stop_returned{false}, close_observed{false}, waited_for_callback{false};
++  std::thread releaser([&] {
++    const auto deadline = std::chrono::steady_clock::now() + 1000ms;
++    while (std::chrono::steady_clock::now() < deadline) {
++      ExperimentalCoreAudioCallbackCell::Lease probe(cell);
++      if (!probe.owner()) { close_observed.store(true); break; }
++      std::this_thread::sleep_for(1ms);
++    }
++    // An incorrectly early Stop leaves a sticky return flag before release.
++    std::this_thread::sleep_for(20ms);
++    waited_for_callback.store(!stop_returned.load());
++    EXPECT_TRUE(buffer.ExperimentalCoreAudioDuplexTransportPinned());
++    EXPECT_FALSE(fixture.stats->destroyed.load(std::memory_order_acquire));
++    release.Open();
++  });
++  if (input) buffer.StopRecording(); else buffer.StopPlayout();
++  stop_returned.store(true);
++  EXPECT_TRUE(callback_finished.load(std::memory_order_acquire));
++  callback.join(); releaser.join();
++  EXPECT_TRUE(close_observed.load());
++  EXPECT_TRUE(waited_for_callback.load());
++  EXPECT_TRUE(cell->ClosedAndDrained());
++  EXPECT_FALSE(cell->Open());  // Never reopen a published tombstone.
++  EXPECT_FALSE(buffer.ExperimentalCoreAudioDuplexDeliveryUnsafe());
++  EXPECT_EQ(buffer.RegisterAudioCallback(nullptr), 0);
++  EXPECT_FALSE(buffer.ExperimentalCoreAudioDuplexTransportPinned());
++  EXPECT_TRUE(fixture.stats->destroyed.load(std::memory_order_acquire));
++  EXPECT_EQ(fixture.stats->released_on, std::this_thread::get_id());
++}
++
++TEST(ExperimentalCoreAudioDuplexTransport, StopRecordingDrainsAdmittedRawTransport) {
++  ExerciseCleanStop(true);
++}
++TEST(ExperimentalCoreAudioDuplexTransport, StopPlayoutDrainsAdmittedRawTransport) {
++  ExerciseCleanStop(false);
++}
++
++TEST(ExperimentalCoreAudioDuplexTransport, UnregisterSharesDeadlineAndQuarantinesOwner) {
++  // An unsafe ADB cannot be destroyed; production retains the complete ADM/ADB
++  // anchor. This fixture intentionally keeps that whole dependency graph alive.
++  auto fixture = std::make_unique<Fixture>();
++  auto& buffer = fixture->buffer;
++  auto stats = fixture->stats;
++  auto* transport = &fixture->owner->transport;
++  ::testing::Mock::AllowLeak(transport);
++  buffer.StartRecording(); buffer.StartPlayout();
++  auto* capture = buffer.ExperimentalCoreAudioDuplexDeliveryCell(true);
++  auto* render = buffer.ExperimentalCoreAudioDuplexDeliveryCell(false);
++  ASSERT_NE(capture, nullptr); ASSERT_NE(render, nullptr);
++  Gate capture_entered, render_entered, release;
++  std::atomic<bool> capture_admitted{false}, render_admitted{false};
++  auto held = [&](ExperimentalCoreAudioCallbackCell* cell, Gate& entered, std::atomic<bool>& admitted) {
++    ExperimentalCoreAudioCallbackCell::Lease lease(cell);
++    admitted.store(lease.owner() == &buffer); entered.Open();
++    EXPECT_TRUE(release.Wait());
++  };
++  fixture->owner = nullptr;
++  std::thread input([&] { held(capture, capture_entered, capture_admitted); });
++  std::thread output([&] { held(render, render_entered, render_admitted); });
++  EXPECT_TRUE(capture_entered.Wait()); EXPECT_TRUE(render_entered.Wait());
++  EXPECT_TRUE(capture_admitted.load()); EXPECT_TRUE(render_admitted.load());
++  const double began = AudioDeviceBuffer::ExperimentalCoreAudioUptime();
++  const int result = buffer.RegisterAudioCallback(nullptr);
++  const double elapsed = AudioDeviceBuffer::ExperimentalCoreAudioUptime() - began;
++  EXPECT_EQ(result, -1);
++  EXPECT_GE(elapsed, 1.9); EXPECT_LT(elapsed, 3.0);  // One budget, not 2s per direction.
++  EXPECT_TRUE(buffer.ExperimentalCoreAudioDuplexDeliveryUnsafe());
++  EXPECT_TRUE(buffer.ExperimentalCoreAudioDuplexTransportPinned());
++  EXPECT_FALSE(stats->destroyed.load(std::memory_order_acquire));
++  EXPECT_NE(fixture->authority.Read() & ExperimentalCoreAudioDuplexAuthority::kTerminal, 0u);
++  release.Open(); input.join(); output.join();
++  EXPECT_TRUE(capture->ClosedAndDrained()); EXPECT_TRUE(render->ClosedAndDrained());
++  EXPECT_FALSE(capture->Open()); EXPECT_FALSE(render->Open());
++  const double repeated = AudioDeviceBuffer::ExperimentalCoreAudioUptime();
++  EXPECT_EQ(buffer.RegisterAudioCallback(nullptr), -1);
++  EXPECT_FALSE(buffer.CloseExperimentalCoreAudioDuplexDelivery(true));
++  EXPECT_FALSE(buffer.CloseExperimentalCoreAudioDuplexDelivery(false));
++  EXPECT_LT(AudioDeviceBuffer::ExperimentalCoreAudioUptime() - repeated, 0.2);
++  auto other_stats = std::make_shared<OwnerStats>();
++  auto other = make_ref_counted<TransportOwner>(other_stats);
++  EXPECT_EQ(buffer.RegisterExperimentalCoreAudioDuplexTransport(&other->transport, other), -1);
++  other = nullptr;
++  EXPECT_TRUE(other_stats->destroyed.load(std::memory_order_acquire));
++  EXPECT_TRUE(buffer.ExperimentalCoreAudioDuplexTransportPinned());
++  EXPECT_FALSE(stats->destroyed.load(std::memory_order_acquire));
++  (void)fixture.release();
++}
++}  // namespace
++}  // namespace webrtc
++#endif
+--- /dev/null
++++ b/audio/audio_state_duplex_unittest.cc
+@@ -0,0 +1,141 @@
++/* Copyright 2026 The WebRTC project authors. BSD license in LICENSE. */
++#include "audio/audio_state.h"
++
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <thread>
++#include "api/audio/audio_frame.h"
++#include "api/make_ref_counted.h"
++#include "api/test/mock_audio_mixer.h"
++#include "api/units/time_delta.h"
++#include "call/audio_state.h"
++#include "call/test/mock_audio_receive_stream.h"
++#include "modules/audio_device/include/mock_audio_device.h"
++#include "rtc_base/event.h"
++#include "rtc_base/task_queue_for_test.h"
++#include "test/gmock.h"
++#include "test/gtest.h"
++
++namespace webrtc {
++namespace test {
++namespace {
++using ::testing::_;
++using ::testing::NiceMock;
++using ::testing::Return;
++using namespace std::chrono_literals;
++
++class DuplexPolicyDevice : public NiceMock<MockAudioDeviceModule> {
++ public:
++  bool HasExperimentalCoreAudioDuplexStartup() const override { return duplex.load(); }
++  bool ExperimentalCoreAudioDuplexTransportQuarantined() const override { return quarantined.load(); }
++  std::atomic<bool> duplex{true}, quarantined{false};
++};
++
++class PollerFixture {
++ public:
++  explicit PollerFixture(bool duplex = true) {
++    device->duplex.store(duplex);
++    ON_CALL(*mixer, AddSource(_)).WillByDefault(Return(true));
++    ON_CALL(*device, StopPlayout()).WillByDefault([this] {
++      return device->quarantined.load() ? -1 : 0;
++    });
++    ON_CALL(*mixer, Mix(_, _)).WillByDefault([this](size_t channels, AudioFrame* frame) {
++      calls.fetch_add(1);
++      if (block_next.exchange(false)) {
++        raw_entered.Set();
++        EXPECT_TRUE(raw_release.Wait(TimeDelta::Seconds(5)));
++      }
++      frame->UpdateFrame(0, nullptr, 480, 48000, AudioFrame::kNormalSpeech,
++                         AudioFrame::kVadUnknown, channels);
++      mixed.Set();
++    });
++    worker.SendTask([this] {
++      AudioState::Config config;
++      config.audio_mixer = mixer;
++      config.audio_device_module = device;
++      state = make_ref_counted<internal::AudioState>(config);
++      state->AddReceivingStream(&stream);
++      raw_transport = state->audio_transport();
++    });
++  }
++  ~PollerFixture() {
++    worker.SendTask([this] {
++      state->RemoveReceivingStream(&stream);
++      state = nullptr;
++    });
++  }
++  void DisablePlayout() { worker.SendTask([this] { state->SetPlayout(false); }); }
++  void StopDirectPoller() { worker.SendTask([this] { state->SetPlayout(true); }); }
++  int SettledCalls() {
++    int result = 0;
++    worker.SendTask([&] { result = calls.load(); });
++    return result;
++  }
++  scoped_refptr<DuplexPolicyDevice> device = make_ref_counted<DuplexPolicyDevice>();
++  scoped_refptr<NiceMock<MockAudioMixer>> mixer = make_ref_counted<NiceMock<MockAudioMixer>>();
++  TaskQueueForTest worker{"AudioStateDuplexTest"};
++  NiceMock<MockAudioReceiveStream> stream;
++  scoped_refptr<internal::AudioState> state;
++  AudioTransport* raw_transport = nullptr;
++  std::atomic<int> calls{0};
++  std::atomic<bool> block_next{false};
++  Event mixed, raw_entered, raw_release;
++};
++
++TEST(AudioStateDuplexTest, QuarantinePreventsNewDirectNullPoller) {
++  PollerFixture fixture;
++  fixture.device->quarantined.store(true);
++  fixture.DisablePlayout();
++  std::this_thread::sleep_for(50ms);
++  EXPECT_EQ(fixture.SettledCalls(), 0);
++}
++
++TEST(AudioStateDuplexTest, ExistingNullPollerStopsAfterSidebandQuarantine) {
++  PollerFixture fixture;
++  fixture.DisablePlayout();
++  EXPECT_TRUE(fixture.mixed.Wait(TimeDelta::Seconds(2)));
++  EXPECT_GT(fixture.calls.load(), 0);
++  // No additional SetPlayout/Update call: the existing tick must guard itself.
++  fixture.device->quarantined.store(true);
++  const int after_admitted_tick = fixture.SettledCalls();
++  std::this_thread::sleep_for(50ms);
++  EXPECT_EQ(fixture.SettledCalls(), after_admitted_tick);
++}
++
++TEST(AudioStateDuplexTest, HeldOldRenderCannotRaceNewNullPoller) {
++  PollerFixture fixture;
++  fixture.block_next.store(true);
++  std::thread old_render([&] {
++    std::array<int16_t, 480> output{};
++    size_t produced = 0;
++    int64_t elapsed = 0, ntp = 0;
++    fixture.raw_transport->NeedMorePlayData(480, sizeof(int16_t), 1, 48000,
++        output.data(), produced, &elapsed, &ntp);
++  });
++  EXPECT_TRUE(fixture.raw_entered.Wait(TimeDelta::Seconds(2)));
++  fixture.device->quarantined.store(true);
++  fixture.DisablePlayout();  // Stop failed with an admitted old render access.
++  std::this_thread::sleep_for(50ms);
++  EXPECT_EQ(fixture.SettledCalls(), 1);
++  // Even when a regression started the poller, stop it on its worker before
++  // releasing the old render. Failure detection must not create a cleanup race
++  // on AudioTransportImpl's shared frame/resampler state.
++  fixture.StopDirectPoller();
++  fixture.raw_release.Set();
++  old_render.join();
++  EXPECT_EQ(fixture.SettledCalls(), 1);
++}
++
++TEST(AudioStateDuplexTest, LegacyDeviceRetainsOriginalNullPollerBehavior) {
++  PollerFixture fixture(false);
++  fixture.device->quarantined.store(true);  // Ignored when capability is absent.
++  fixture.DisablePlayout();
++  EXPECT_TRUE(fixture.mixed.Wait(TimeDelta::Seconds(2)));
++  EXPECT_GT(fixture.SettledCalls(), 0);
++}
++}  // namespace
++}  // namespace test
++}  // namespace webrtc
++#endif

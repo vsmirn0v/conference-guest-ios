@@ -1,0 +1,37 @@
+{
+  "kind": "debug-app-diagnostic-followup",
+  "patchSHA256": "3294c31e2ab995edbc06e83a1d8c74552a6b2377b799b545365b69118ec78ac0",
+  "sourceReviewManifestSHA256": "217a61c014016b52cd2d9e90342cd9391ca8a922301d1a003aed19921c7df9b4",
+  "evidenceSHA256": "e7160c34da5f9cdaaa9eb96997e0d1f002ef2c2966caf8846a697d9817748864",
+  "baseAppFollowupPatchSHA256": "f81f3903c4c5769f879b148e692009e99fa7f1d533ed3591aaa09e5846bd4050",
+  "unchangedSDKBinarySHA256": "ef48fbe7f13a816d7ca6ad7e4a2db1d060c04cbfe9edeab9f0df22c30978bde7",
+  "sources": {
+    "Experiments/NativeGuest/GuestSystemAudio.swift": {
+      "beforeSHA256": "c690c5b896e2201e34aaa16cf78a60eac0317e7bb8f10dcb005705ab21481054",
+      "afterSHA256": "afd79aa6193ad9417fccc89982fa476bbbef8425fc2a15fbeed15e326dfdb58c",
+      "newFile": false
+    },
+    "Experiments/NativeGuest/GuestPostAPMTestRecording.swift": {
+      "beforeSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSHA256": "282c8c679b669ead8d3e9fff838d1fa85b616e469887e1218e91a8e56d3a2e87",
+      "newFile": true
+    },
+    "Experiments/NativeGuestTests/run-system-audio.sh": {
+      "beforeSHA256": "23f253ae7462da208fc68dee1dde19e309345ed4fc140031e92c2c4b5f825fa9",
+      "afterSHA256": "02fee8166fe605701cf5a90550393f7d29df88058318c6b594657fac413aa8bf",
+      "newFile": false
+    },
+    "Experiments/NativeGuestTests/PostAPMRecordingTests.swift": {
+      "beforeSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSHA256": "3d51dce1504b2447549b1710dd8e004fab815fb0e93106dd12936fe21a1022ef",
+      "newFile": true
+    },
+    "Experiments/NativeGuestTests/run-post-apm-recording.sh": {
+      "beforeSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSHA256": "8ee0657e95cb0de7fea351859fcffea220ee79365dd2816d5913748ba27a32b4",
+      "newFile": true
+    }
+  },
+  "artifactRoot": ".build/airpods-transition-startup/r6-post-apm-diagnostic",
+  "defaultPromoted": false
+}

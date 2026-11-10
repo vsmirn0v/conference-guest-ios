@@ -1,0 +1,81 @@
+{
+  "baseBuildEvidenceSHA256": "55eb0effd8e3e46f631694bb4df82ac2ef0ed82f844924a1bb2022411b58fabf",
+  "baseFrameworkBinarySHA256": "5d36cc478d993c5a11d7e1ae33ca6c4f6a2497fbd3c3ce8cc9275e0eca21af83",
+  "baseLock": "private-input-experiment-r1.lock.json",
+  "baseLockSHA256": "b179052407ce9345051792bcc372a12bf363b0eb9c35f81d085c2ab0691466e3",
+  "baseSourceManifestSHA256": "e51480472dfd1afd2e8ddb4873fb876945a5a25def4c520aaedb1e0652d9ce48",
+  "buildEvidenceSHA256": "2930d7bf29fdc2d4b365cf71abd4d468e5459184e98802f7459a150446f25298",
+  "candidateRoot": ".build/audio-startup-followup/private-input-r2",
+  "canonicalBaselineArchiveSHA256": "d1a4c29e6d737f1ebd6c01706f3e53983fcb4a070dad86acd434cd830eaf8bc2",
+  "canonicalSDKLockSHA256": "4e3c160d2af5e745bcf93fe2fdf6c64a883f07f1978b7f80fb39a85a5e5b9f32",
+  "capabilities": {
+    "cleanObsoleteWarmFallback": true,
+    "experimentalCoreAudio": true,
+    "experimentalPrivateInput": true,
+    "stoppedInputGraph": true
+  },
+  "compilerSHA256": "f3f0259de6f7bf1c026760855d505b07ee626b6e64ecd9600f252ed0faac95ff",
+  "formatVersion": 1,
+  "frameworkBinarySHA256": "d57128b90f29227db04ce2cbef1ca031565d1f3808cca7330e137a95628ea134",
+  "gnArgs": "target_os = \"mac\"\ntarget_cpu = \"arm64\"\nis_debug = false\nsymbol_level = 0\nenable_dsyms = false\nis_component_build = false\nrtc_include_tests = true\nrtc_build_examples = false\nrtc_enable_symbol_export = true\nrtc_enable_protobuf = false\nrtc_libvpx_build_vp9 = true\nrtc_use_h264 = false\nenable_libaom = true\nrtc_include_dav1d_in_internal_decoder_factory = true\nenable_stripping = true\ntreat_warnings_as_errors = true\nuse_rtti = true\nmac_deployment_target = \"13.0\"\nuse_remoteexec = false\n\nuse_lld = false\nenable_rust = true\nrtc_use_h265 = true\n",
+  "gnArgsSHA256": "a60e3c5807c949d14b2db2f293062066e107963a031eea17be48bce7a51ac6b8",
+  "limits": {
+    "builtInRouteOnly": true,
+    "defaultBackendSelectionChanged": false,
+    "existingOutputRunningRequired": true,
+    "iOSBehaviorChanged": false,
+    "noAutomaticOutputFallback": true,
+    "physicalContinuityValidated": false,
+    "privateOutputMode": "none (constructed graph; not global device state)",
+    "quietBeforeStartSupported": false,
+    "routeRecoverySupported": false,
+    "runtimeValidated": false,
+    "uncertainStopRequiresRetainedOwner": true
+  },
+  "patch": "private-input-experiment-r2.patch",
+  "patchSHA256": "5d33bd3e5ffa2c007988be5962a1b56663da6476a8eab5019c9b99b0d5869d5e",
+  "sourceFiles": [
+    {
+      "baselineSHA256": "ce22f228f7e049a01ade4e1698c229b0ecde01910aa481a6397b3205d2eb6c98",
+      "path": "modules/audio_device/audio_engine_device.mm",
+      "sha256": "361eb1ff2cb49871d49e5c97c451059685b66cfc574cc9c19d0c7cea792f7e1b",
+      "size": 204606
+    },
+    {
+      "baselineSHA256": "9179d3cc23eca13dc2c41737c064ecd5c2d8a9ca18018ba2f23aa0a843a31b79",
+      "path": "modules/audio_device/mac/private_input_meter_state.h",
+      "sha256": "a6403a81f2d50a04e8b0e07a785a80e985be12a9f90ed5a786bbd495410a565c",
+      "size": 12537
+    },
+    {
+      "baselineSHA256": "e81ab918144ff8aee56af479abf4ac0a61640dd119d29faaa137adce179b4960",
+      "path": "sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm",
+      "sha256": "5c7eb78ccf40aa47c5c76a018529e87a631dd64b1c1f22a39dd4fb8f341191e7",
+      "size": 52561
+    },
+    {
+      "baselineSHA256": "849eb8b6a8ea07bc514bccb5af3bdabb211037328caba3c9e83b2d928854d862",
+      "path": "modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc",
+      "sha256": "4866609b11ad61a9aadbdaea72a89fe1288e77758b0bc3aad4f21c710384c0f4",
+      "size": 16400
+    },
+    {
+      "baselineSHA256": "4a6fe8ba176e7a2916b607b22e210b95f33501fe43187edabddccd605f82b617",
+      "path": "modules/audio_device/audio_engine_device.h",
+      "sha256": "449e26ab274a16e4d294cd7f4a7fec87e9b18d2c05db271d7d78dc8f6e904ed0",
+      "size": 29588
+    }
+  ],
+  "sourceManifestSHA256": "ee80573affd81dd1a76ea58f487917420110a77012b5ab18afb2ada66f6063bf",
+  "sourceOverlaySHA256": "f6bd974b3bad2dfdbfb4d091a31e9fe6ec778d1b0df70cde79b3bebf95890ddc",
+  "sourceVerificationSHA256": "904c37bad347ae52d4b185c14a390e159f54b4396cd74929db503306f2014d02",
+  "status": "experimental diagnostic build; Mac hardware RCA pending",
+  "unitTests": {
+    "failed": 0,
+    "hardwareOpened": false,
+    "passed": 24,
+    "privateTests": 12,
+    "result": "provenance/private-input-r2-sdk-unit-tests.json",
+    "resultSHA256": "761c7410830d41a7277af2cac8172a5a5ab0878d4b55e7dffaedd43cf0cc96eb"
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "baseBuildEvidenceSHA256": "76c725475f77f5af9c9d0373e3026808b621857d323070257147832d97fb0d39",
+  "baseFrameworkBinarySHA256": "072fd15fac2944dc54784562066ded5cbfa68cdde748ff5bd9d1f35a1805c843",
+  "baseLock": "first-microphone-fallback.lock.json",
+  "baseLockSHA256": "09b1655883b825388f8baa80ece38c5c4a0bd091d790b25624553716c1f6af0d",
+  "baseSourceManifestSHA256": "12cf96cde0e53575acd4abe71c1860fad6ea27b2949fc00a65131eb92786420b",
+  "build": {
+    "command": "third_party/ninja/ninja -C out/m156-prefixed-mac -j2 sdk:mac_framework_objc modules/audio_device:audio_ring_buffer_mac_unittest_bin",
+    "environment": {
+      "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"
+    },
+    "packageCommand": "xcodebuild -create-xcframework -framework out/m156-prefixed-mac/LiveKitWebRTC.framework -output <new-candidate-root>/LiveKitWebRTC.xcframework",
+    "testCommand": "out/m156-prefixed-mac/modules_audio_device_audio_ring_buffer_mac_unittest_bin --gtest_filter=ExperimentalCoreAudioCaptureTest.*:AudioRingBufferMacTest.*",
+    "workingDirectory": "verified-r2-SDK-src-with-this-patch"
+  },
+  "candidateBuildEvidenceSHA256": "5f717a01d3db093555a94127427ef5bb0ebfbe4e536bfd8c257cbd89aec794ea",
+  "canonicalBaselineArchive": "../../Dependencies/native-macos/LiveKitWebRTC-m156-microphone-r2.tar.gz",
+  "canonicalBaselineArchiveSHA256": "d1a4c29e6d737f1ebd6c01706f3e53983fcb4a070dad86acd434cd830eaf8bc2",
+  "canonicalSDKLockSHA256": "4e3c160d2af5e745bcf93fe2fdf6c64a883f07f1978b7f80fb39a85a5e5b9f32",
+  "capabilities": {
+    "cleanObsoleteWarmFallback": true,
+    "experimentalCoreAudio": true,
+    "stoppedInputGraph": true
+  },
+  "clock": "CLOCK_UPTIME_RAW (ProcessInfo.systemUptime domain)",
+  "compilerSHA256": "f3f0259de6f7bf1c026760855d505b07ee626b6e64ecd9600f252ed0faac95ff",
+  "compilerVersion": "clang version 24.0.0git (https://chromium.googlesource.com/a/external/github.com/llvm/llvm-project 86922d51225db089fffb99475eefc4904f79e3c8)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix",
+  "exportedHeaderSHA256": {
+    "RTCAudioDeviceModule.h": "ee6025eeb519045748fa9bf4122ebc24c0747dd1d633a81def48c26a3e62e9b0",
+    "RTCDefaultAudioProcessingModule.h": "d980625b538298514ca1f8533a1543523dd4634230f19f0ec0abdf201e639e90"
+  },
+  "formatVersion": 1,
+  "frameworkBinarySHA256": "da919aceddecabfcd2754a94ef1b7c3c37cedf72d3f5bde75dfa4e11e1bf4673",
+  "gnArgs": "target_os = \"mac\"\ntarget_cpu = \"arm64\"\nis_debug = false\nsymbol_level = 0\nenable_dsyms = false\nis_component_build = false\nrtc_include_tests = true\nrtc_build_examples = false\nrtc_enable_symbol_export = true\nrtc_enable_protobuf = false\nrtc_libvpx_build_vp9 = true\nrtc_use_h264 = false\nenable_libaom = true\nrtc_include_dav1d_in_internal_decoder_factory = true\nenable_stripping = true\ntreat_warnings_as_errors = true\nuse_rtti = true\nmac_deployment_target = \"13.0\"\nuse_remoteexec = false\n\nuse_lld = false\nenable_rust = true\nrtc_use_h265 = true\n",
+  "gnArgsSHA256": "a60e3c5807c949d14b2db2f293062066e107963a031eea17be48bce7a51ac6b8",
+  "limits": {
+    "defaultBackendSelectionChanged": false,
+    "iOSBehaviorChanged": false,
+    "routeRecoverySupported": false,
+    "sharedDeviceTopologySupported": false,
+    "sourceLockDoesNotGrantRuntimeAcceptance": true,
+    "uncertainStopRequiresRetainedQuarantine": true
+  },
+  "localArtifacts": {
+    "candidateFrameworkRoot": ".build/media-backend-experiments/coreaudio-aec3-r1",
+    "sourceDeltaManifest": ".build/media-backend-experiments/coreaudio-experiment-source-manifest.json",
+    "sourceOverlay": ".build/media-backend-experiments/coreaudio-experiment-source-overlay.tar.gz"
+  },
+  "patch": "coreaudio-aec3-experiment-r1.patch",
+  "patchSHA256": "8fbfb3d3881123727429ac830846b16c359fd071e32b389e714cdb97f2604d63",
+  "reproductionScope": "Source and build inputs are pinned. The local candidate framework is not a new dependency pin; byte-identical rebuild is not claimed.",
+  "sourceDeltaManifestSHA256": "6ad44e6750fd7b4e974b1eaf551100690500c305815f1f7b032116c58c4c6b72",
+  "sourceFiles": [
+    {
+      "baselineSHA256": "1a2349be4c16ea62ccd2ea13bbe00a01b9badbb170105d78dffeae9a179ca028",
+      "path": "api/audio/audio_device.h",
+      "sha256": "869b314949195688a223c25b961071f9b0aab4e8d14bfceee72f3611655eb63e",
+      "size": 15866
+    },
+    {
+      "baselineSHA256": "59f8f3cfabd0e34abb274ea16d063c91fa6ef715ad5b9e80d51c6f18163c2951",
+      "path": "modules/audio_device/audio_device_impl.h",
+      "sha256": "0952cbe95d2dae087a944b77df1c7acde685b0ceaac44514bfc3d5e5385815b4",
+      "size": 8025
+    },
+    {
+      "baselineSHA256": "2cb6fccc44ce3b2c99e53afe6d90cff56179f69fcf9aab3f43f95d04639c71af",
+      "path": "modules/audio_device/audio_device_impl.cc",
+      "sha256": "fa94f02226c46e51346ea1fef3638c1207935a38ad19a6c908dfb6a7a842be32",
+      "size": 38141
+    },
+    {
+      "baselineSHA256": "3650cb4bf46922d0faf3212aac1505062c79b7cf519fad66bd47bfef24975b3f",
+      "path": "modules/audio_device/audio_device_buffer.h",
+      "sha256": "b25d3c4a7cf02c9e01dbfbcd82369f943e12827f846e47cd9b2d207e8c225dfc",
+      "size": 12006
+    },
+    {
+      "baselineSHA256": "d64718c2712ab32b91219d5d7311b39d2cb88d234854d0ce07d8c89cca29c128",
+      "path": "modules/audio_device/audio_device_buffer.cc",
+      "sha256": "1e4d3f25d3336ebf7f275cb98b6b40e75f96321875de8219049ec8ad830b7cca",
+      "size": 28748
+    },
+    {
+      "baselineSHA256": "600e455b679372e0b3ae8e9da8591827d034682833285a3804cc187ba8c25689",
+      "path": "modules/audio_device/mac/audio_device_mac.h",
+      "sha256": "7c61dfdb3824080328a36bf199fd428ce077e1c1f998fd622da053eea49cc1d4",
+      "size": 12996
+    },
+    {
+      "baselineSHA256": "625511a409769d46cafaf58ee2459ea6c24ab629dcd5c74b2934bd7e8adc98ab",
+      "path": "modules/audio_device/mac/audio_device_mac.cc",
+      "sha256": "3acb9ce600e85843f52b117b48e85be586d96f31180fd03bd7d14e7d9b0c7e24",
+      "size": 90466
+    },
+    {
+      "baselineSHA256": "00a42e09c873847e024e34fa0d49924a080217490c4986f3a3dfb7d6f524a39b",
+      "path": "sdk/objc/api/peerconnection/RTCAudioDeviceModule.h",
+      "sha256": "bcabe1b91800ce539f1a40a30732a0a6e849b1479152020ab889904d7c6a24a2",
+      "size": 15628
+    },
+    {
+      "baselineSHA256": "de024872669e4cdee1aa00bdb8844782f4302a1601e09980b494df71ff67e32b",
+      "path": "sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm",
+      "sha256": "3883af437da79ad4d3c76cec63510aa20ad2a8cd433373c44f4215fce62cc01b",
+      "size": 41560
+    },
+    {
+      "baselineSHA256": "0f10d12c791896326c805bc8bd8e8403f879fecec9c3c531ecdbd1112366b4a9",
+      "path": "sdk/objc/components/audio/RTCDefaultAudioProcessingModule.h",
+      "sha256": "7f29f190d70630d065c2b155ef21efb92b7089c75c2fd0fa780d759d37fb1619",
+      "size": 2114
+    },
+    {
+      "baselineSHA256": "4eb945ef459eff10197f1743ae0d374cbbbf01d459c83c14e6022d69777c626b",
+      "path": "sdk/objc/components/audio/RTCDefaultAudioProcessingModule.mm",
+      "sha256": "88fbe0d79dce0a3fd070e09cf84e9ce68569910522b572c087e50e54a52b692e",
+      "size": 5151
+    },
+    {
+      "baselineSHA256": "79537c712d65f9686e3c49a3888d26f9e9d7684f4b1ec5d4beff075573c953cc",
+      "path": "api/audio/audio_processing.h",
+      "sha256": "9a3151e97eefd0fc4aa36c5c276be7b33c62c9ac88e4b4cd1e58f34b167415d4",
+      "size": 36724
+    },
+    {
+      "baselineSHA256": "d79f2f52dec8812f5e963df987e9f8e54407d2925c40ec5b82d602f53364d1c6",
+      "path": "modules/audio_processing/audio_processing_impl.h",
+      "sha256": "897ef4093548f009f5dba6d71d3054c484c517395e931a33b8df6a224027c2c6",
+      "size": 24287
+    },
+    {
+      "baselineSHA256": "261d77661ec8afe965e87b0d094e50ec9898f20645d79e1ba8b56ebe08c895b3",
+      "path": "modules/audio_processing/audio_processing_impl.cc",
+      "sha256": "b85aa5d6a04d83f4e572405ae6481fb2e9e141cb8363d83e0c5c92462e255fda",
+      "size": 87473
+    },
+    {
+      "baselineSHA256": "c0ea281196fc18544cdde564c056c2b000f5ad3fa0bed31e42d9b818ee5f1cde",
+      "path": "modules/audio_device/audio_device_generic.h",
+      "sha256": "2b805c130429b42894843f4b5755ff3fab2200a89c37f9697a4e77cdf705f362",
+      "size": 5658
+    },
+    {
+      "baselineSHA256": "f3a709e4fa5884d416dbb14dd54623d748beedbe6b9704e710718e182d616da8",
+      "path": "modules/audio_device/BUILD.gn",
+      "sha256": "5a77facc54e2721f4f509f7a1578e81313bd2f83cc91dc0382741b89bbfee9b8",
+      "size": 17387
+    },
+    {
+      "baselineSHA256": "80b127246e34c1e3c3bf2fea048854cfb3eb878545db2f7aeaa32ee5500e420d",
+      "path": "modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc",
+      "sha256": "8ea7027be850b611b18a4d5aa09e332dd0b0b7e0b53307b9de85568982c26b81",
+      "size": 9493
+    },
+    {
+      "baselineSHA256": null,
+      "path": "modules/audio_device/mac/experimental_core_audio_capture.h",
+      "sha256": "9a7c740c78c63454de1b8654fdbe9ece3443182b0715b3cc9a99cb8e5d976df2",
+      "size": 2764
+    }
+  ],
+  "sourceManifestSHA256": "3e45c21d03c0180df8dbca5ea0a095ace768a11432a31aacdd9cbb38717e991a",
+  "sourceOverlaySHA256": "fcc5c5041cc52ccc4b34a91637a8febfd7de7ffd832cf030ae0238f5ba69fec2",
+  "status": "experimental-not-shipping-default",
+  "upstreamRevision": "19576e37870bfe5a0a910a32f98ff411f722f43a",
+  "verification": {
+    "baselineTouchedFilesMatchR2FullManifest": 18,
+    "buildLogSHA256": "758c2a704248a67ab522fe72f87fc43d09a7a8d742801565535b45e57f98f297",
+    "finalOverlayFilesVerified": 18,
+    "frameworkBinaryDigestSource": "frozen completed-build evidence; not rehashed while runtime benchmarks ran",
+    "patchAppliesWithoutFuzz": true,
+    "patchedBytesMatchOverlay": true,
+    "priorFullBaselineFilesCompared": 7709,
+    "priorFullBaselineUnexpectedDeltas": 0,
+    "unitTestHardwareOpened": false,
+    "unitTestResultSHA256": "1840eb45fd828ab8ec61c1ced81fde14e050a9dbb6a5e0be130acca9d327157e",
+    "unitTestsFailed": 0,
+    "unitTestsPassed": 12
+  }
+}

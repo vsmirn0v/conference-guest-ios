@@ -1,0 +1,856 @@
+--- a/modules/audio_device/audio_engine_device.h
++++ b/modules/audio_device/audio_engine_device.h
+@@ -34,6 +34,7 @@
+ 
+ #if TARGET_OS_OSX
+ #import <CoreAudio/CoreAudio.h>
++#include "modules/audio_device/mac/private_input_meter_state.h"
+ #endif
+ #import <AVFAudio/AVFAudio.h>
+ #import <AudioToolbox/AudioToolbox.h>
+@@ -387,6 +388,25 @@
+     int32_t result = 1;  // Skipped until a resource reservation succeeds; negative failures never fall through.
+     bool eligible = false, initialized_at_reservation = false;
+   };
++  struct PrivateInputMeterRequest {
++    StoppedInputPreparationRequest resource;
++    uint64_t token = 0;
++    uintptr_t audible_owner = 0;
++  };
++  bool BeginPrivateInputMeterToken(uint64_t token) { return private_meter_control_->Begin(token); }
++  void RevokePrivateInputMeter(uint64_t token) { private_meter_control_->Revoke(token); }
++  mac_adm::PrivateInputMeterControl::State PrivateInputMeterState() const { return private_meter_control_->Read(); }
++  bool PrivateInputMeterConfirmedStopped(uint64_t token) const { return private_meter_control_->CanConfirmStopped(token); }
++  bool PrivateInputMeterOutstanding() const { return private_meter_control_->Outstanding(); }
++  PrivateInputMeterRequest ReservePrivateInputMeter(uint64_t token);
++  bool ValidatePrivateInputMeter(const PrivateInputMeterRequest&);
++  int32_t SealPrivateInputGraph(const PrivateInputMeterRequest&, const std::shared_ptr<PreparedInputGraph>&);
++  static std::shared_ptr<PreparedInputGraph> BuildPrivateInputGraph(const PrivateInputMeterRequest&);
++  static int32_t StartPrivateInputGraph(const PrivateInputMeterRequest&, const std::shared_ptr<PreparedInputGraph>&);
++  bool CommitPrivateInputMeter(const PrivateInputMeterRequest&, const std::shared_ptr<PreparedInputGraph>&);
++  static bool InputGraphIsPrivate(const std::shared_ptr<PreparedInputGraph>&);
++  static bool StopPrivateInputGraph(const std::shared_ptr<PreparedInputGraph>&);
++  int32_t FinishPrivateInputMeter(uint64_t token, const std::shared_ptr<PreparedInputGraph>&, bool clean, int32_t result);
+   StoppedInputPreparationRequest BeginStoppedInputPreparation(uint64_t capture_state, int64_t deadline_ms);
+   static std::shared_ptr<PreparedInputGraph> BuildStoppedInputGraph(const StoppedInputPreparationRequest&);
+   int32_t StageStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&);
+@@ -451,6 +471,11 @@
+   bool IsStopOnMuteModeEnabled() const override;
+ 
+  private:
++#if TARGET_OS_OSX
++  std::shared_ptr<mac_adm::PrivateInputMeterControl> private_meter_control_ =
++      std::make_shared<mac_adm::PrivateInputMeterControl>();
++#endif
++
+   struct EngineStateUpdate {
+     EngineState prev;
+     EngineState next;
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -323,11 +323,17 @@
+   std::atomic<uint64_t> silent_renders{0}, discarded_inputs{0}, active_renders{0}, active_records{0};
+   static_assert(std::atomic<uint64_t>::is_always_lock_free);
+   uint64_t next_node_id = 1, source_id = 0, sink_id = 0;  // Control-thread node identities; snapshots are immutable in Target.
++  mac_adm::PrivateInputGraphSeal privacy;
++  mac_adm::PreparedGraphCallbackGate private_render_gate;
++  uint64_t private_token = 0;
++  std::shared_ptr<mac_adm::PrivateInputMeterControl> private_meter;
+   bool ever_opened = false;  // Control-thread state: running replacement is allowed only for the initial candidate publication.
+-  void Bind(Target value) {
+-    RTC_DCHECK(gate.IsClosed() && gate.Drained());
+-    owner = std::make_unique<Target>(value); target.store(owner.get(), std::memory_order_release);
+-    RTC_CHECK(gate.Open()); ever_opened = true;
++  bool Bind(Target value) {
++    return privacy.TryPublish([&] {
++      RTC_DCHECK(gate.IsClosed() && gate.Drained());
++      owner = std::make_unique<Target>(value); target.store(owner.get(), std::memory_order_release);
++      RTC_CHECK(gate.Open()); ever_opened = true;
++    });
+   }
+   void Speech(AudioDeviceModule::SpeechActivityEvent event) {
+     if (!gate.TryEnter()) return;
+@@ -336,6 +342,24 @@
+     gate.Leave();
+   }
+   OSStatus Render(uint64_t node_id, BOOL* silence, AVAudioFrameCount frames, AudioBufferList* buffers) {
++    if (privacy.IsPrivate()) {
++      const bool entered=private_render_gate.TryEnter();
++      *silence = YES;
++      if (buffers->mNumberBuffers != 1 || buffers->mBuffers[0].mDataByteSize > 65536) {
++        if (entered) {
++          if (private_meter) private_meter->Fail(private_token,kAudioEngineDeviceFormatError);
++          private_render_gate.Leave();
++        }
++        return kAudio_ParamError;
++      }
++      if (buffers->mBuffers[0].mData) std::memset(buffers->mBuffers[0].mData, 0, buffers->mBuffers[0].mDataByteSize);
++      if (entered) {
++        silent_renders.fetch_add(1, std::memory_order_relaxed);
++        if (private_meter) private_meter->SilentOutput();
++        private_render_gate.Leave();
++      }
++      return noErr;
++    }
+     if (buffers->mNumberBuffers != 1) return kAudio_ParamError;
+     if (!gate.TryEnter()) {
+       silent_renders.fetch_add(1, std::memory_order_relaxed);
+@@ -353,6 +377,7 @@
+     gate.Leave(); return noErr;
+   }
+   OSStatus Record(uint64_t node_id, const AudioTimeStamp* timestamp, AVAudioFrameCount frames, const AudioBufferList* buffers) {
++    if (privacy.IsPrivate()) { discarded_inputs.fetch_add(1, std::memory_order_relaxed); return noErr; }
+     if (!gate.TryEnter()) { discarded_inputs.fetch_add(1, std::memory_order_relaxed); return noErr; }
+     Target* current = target.load(std::memory_order_acquire); OSStatus result = noErr;
+     if (current && current->sink_id == node_id && current->fine && current->converter && current->record_buffer && buffers->mNumberBuffers == 1 && frames <= kMaximumFramesPerBuffer) {
+@@ -381,6 +406,12 @@
+   }];
+ }
+ }  // namespace
++
++struct PrivateMeterCallbackOwner {
++  mac_adm::PreparedGraphCallbackGate gate;
++  std::shared_ptr<mac_adm::PrivateInputMeterControl> control;
++  uint64_t token = 0;
++};
+ 
+ struct PreparedInputGraph {
+   InputRequest request;
+@@ -393,6 +424,10 @@
+   __strong AVAudioSourceNode* source = nil;
+   __strong AVAudioMixerNode* mixer = nil;
+   __strong AVAudioSinkNode* sink = nil;
++  __strong AVAudioSinkNode* private_meter_sink = nil;
++  std::shared_ptr<PrivateMeterCallbackOwner> private_callback;
++  uint64_t private_token = 0;
++  void* private_configuration_observer = nullptr;
+   __strong AVAudioFormat* input_format = nil;
+   __strong AVAudioFormat* output_format = nil;
+   __strong AVAudioFormat* input_bus_format = nil;
+@@ -409,6 +444,17 @@
+   AudioEngineDevice::EngineState recovery_state;
+   bool Stop() {
+     if (stop_confirmed || !engine) return cleanup_confirmed;
++    bridge->private_render_gate.Close();
++    if (!Drain(bridge->private_render_gate)) { cleanup_confirmed=false; return false; }
++    if (private_configuration_observer) {
++      @try { [[NSNotificationCenter defaultCenter] removeObserver:(__bridge_transfer id)private_configuration_observer];
++        private_configuration_observer=nullptr; }
++      @catch (NSException*) { cleanup_confirmed=false; return false; }
++    }
++    if (private_callback) {
++      private_callback->gate.Close();
++      if (!Drain(private_callback->gate)) { cleanup_confirmed = false; return false; }
++    }
+     bridge->gate.Close();
+     if (!Drain(bridge->gate)) { cleanup_confirmed = false; return false; }
+     stop_confirmed = StopGraphUnits(engine, input, output);
+@@ -430,12 +476,12 @@
+     if (!clean) {
+       auto* retained = new PreparedInputGraph;
+       retained->engine = engine; retained->input = input; retained->output = output;
+-      retained->source = source; retained->mixer = mixer; retained->sink = sink;
++      retained->source = source; retained->mixer = mixer; retained->sink = sink; retained->private_meter_sink = private_meter_sink; retained->private_callback = private_callback; retained->private_configuration_observer = private_configuration_observer; private_configuration_observer=nullptr;
+       retained->record_buffer = record_buffer; retained->converter = converter;
+       retained->bridge = bridge; retained->retired_fine = std::move(retired_fine); retained->old = std::move(old);
+       LOGE() << "Bridge cleanupUnconfirmed; graph resources retained until process exit";
+     } else if (converter) { AudioConverterDispose(converter); }
+-    converter = nullptr; engine = nil; input = nil; output = nil; source = nil; mixer = nil; sink = nil;
++    converter = nullptr; engine = nil; input = nil; output = nil; source = nil; mixer = nil; sink = nil; private_meter_sink = nil;
+     record_buffer = nil; input_format = nil; output_format = nil; retired_fine.reset(); old.reset();
+     cleanup_confirmed = clean; return clean;
+   }
+@@ -519,7 +565,7 @@
+       if (!cleanup_unconfirmed_ && generation.lock() == active_bridge_ && observer_) observer_->OnSpeechActivityEvent(rtc_event);
+     }));
+   };
+-  active_bridge_->Bind(std::move(target)); return true;
++  return active_bridge_->Bind(std::move(target));
+ }
+ AudioEngineDevice::InputPreparationRequest AudioEngineDevice::BeginInputPreparation(bool input, bool output, uint64_t capture_state) {
+   RTC_DCHECK_RUN_ON(thread_);
+@@ -529,7 +575,7 @@
+   request.owner = reinterpret_cast<uintptr_t>((__bridge void*)engine_device_); request.worker_identity = reinterpret_cast<uintptr_t>(thread_);
+   request.deadline_ms = TimeMillis() + 6000;
+   EngineStateUpdate state{request.previous, request.next};
+-  request.eligible = (prepared_input_graph_enabled_ || BridgeMode()) && initialized_ && !cleanup_unconfirmed_ && active_bridge_ && engine_device_ && engine_device_.running &&
++  request.eligible = !PrivateInputMeterOutstanding() && (prepared_input_graph_enabled_ || BridgeMode()) && initialized_ && !cleanup_unconfirmed_ && active_bridge_ && engine_device_ && engine_device_.running &&
+       !input_node_instantiated_ && state.DidEnableInput() && state.prev.IsOutputRunning() && state.next.IsOutputRunning() &&
+       !state.prev.is_interrupted && !state.next.is_interrupted && !state.IsEngineRecreateRequired() &&
+       state.next.mute_mode == MuteMode::InputMixer && state.next.input_muted &&
+@@ -630,7 +676,152 @@
+   auto graph = std::make_shared<PreparedInputGraph>(); graph->warm_request = request; graph->graph_id = request.graph_id;
+   return request.eligible ? BuildGraphResources(graph, request.state, request.worker_identity, request.deadline_ms) : graph;
+ }
++AudioEngineDevice::PrivateInputMeterRequest AudioEngineDevice::ReservePrivateInputMeter(uint64_t token) {
++  RTC_DCHECK_RUN_ON(thread_);
++  PrivateInputMeterRequest request; request.token = token;
++  auto& r = request.resource;
++  r.module_identity = reinterpret_cast<uintptr_t>(this); r.worker_identity = reinterpret_cast<uintptr_t>(thread_);
++  r.generation = state_generation_; r.configuration_generation = warm_configuration_generation_;
++  r.lifecycle_generation = warm_lifecycle_generation_; r.state = engine_state_;
++  r.initialized_at_reservation = initialized_; r.graph_id = ++graph_generation_;
++  r.deadline_ms = TimeMillis() + 6000; r.capture_state = ApplicationCaptureState(); r.route = CurrentDefaultRoute();
++  request.audible_owner = reinterpret_cast<uintptr_t>((__bridge void*)engine_device_);
++  r.eligible = private_meter_control_->Valid(token) && initialized_ && !cleanup_unconfirmed_ && engine_device_ &&
++      engine_device_.running && engine_state_.IsOutputRunning() && !engine_state_.input_available && !input_node_instantiated_ &&
++      engine_state_.input_muted && engine_state_.mute_mode == MuteMode::InputMixer && (r.capture_state & 1) && BuiltInRoute(r.route) && IsMicrophonePermissionAuthorized();
++  r.result = r.eligible ? 0 : kAudioEngineStateTransitionError;
++  return request;
++}
++bool AudioEngineDevice::ValidatePrivateInputMeter(const PrivateInputMeterRequest& request) {
++  RTC_DCHECK_RUN_ON(thread_);
++  const auto& r = request.resource;
++  return r.eligible && private_meter_control_->Valid(request.token) && initialized_ && !cleanup_unconfirmed_ &&
++      state_generation_ == r.generation && warm_configuration_generation_ == r.configuration_generation &&
++      warm_lifecycle_generation_ == r.lifecycle_generation && engine_state_ == r.state &&
++      request.audible_owner == reinterpret_cast<uintptr_t>((__bridge void*)engine_device_) &&
++      engine_device_ && engine_device_.running && !input_node_instantiated_ && !engine_state_.input_available &&
++      TimeMillis() < r.deadline_ms && IsMicrophonePermissionAuthorized() && (ApplicationCaptureState() & 1) &&
++      SameRoute(r.route, CurrentDefaultRoute());
++}
++namespace {
++bool PrivateInputFormatsMatch(const std::shared_ptr<PreparedInputGraph>& graph) {
++  @try { return graph->input_bus_format && [graph->input_bus_format isEqual:[graph->input outputFormatForBus:0]] &&
++      !graph->output && !graph->source && !graph->mixer && !graph->sink && !graph->input.voiceProcessingEnabled; }
++  @catch (NSException*) { return false; }
++}
++}  // namespace
++int32_t AudioEngineDevice::SealPrivateInputGraph(const PrivateInputMeterRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  // A private graph is independently built. Never consume or modify the public stopped cache.
++  if (!ValidatePrivateInputMeter(request) || !graph || !graph->bridge->privacy.IsPrivate() ||
++      graph->warm_prepared || graph->staged || !graph->built || graph->started || graph->adopted ||
++      !StoppedGraphIsQuiescent(graph) || !PrivateInputFormatsMatch(graph) || !SameRoute(graph->prepared_route, request.resource.route))
++    return kAudioEngineStateTransitionError;
++  graph->bridge->private_meter = private_meter_control_; graph->bridge->private_token=request.token; graph->private_token = request.token;
++  private_meter_control_->SetGraph(graph->graph_id, uint32_t(graph->input_format.sampleRate), 1);
++  return 0;
++}
++std::shared_ptr<PreparedInputGraph> AudioEngineDevice::BuildPrivateInputGraph(const PrivateInputMeterRequest& request) {
++  auto graph = std::make_shared<PreparedInputGraph>(); graph->graph_id = request.resource.graph_id;
++  graph->bridge->privacy.Seal();  // No publishing authority can ever be attached.
++  if (!request.resource.eligible || [NSThread isMainThread] ||
++      request.resource.worker_identity==reinterpret_cast<uintptr_t>(Thread::Current())) return graph;
++  @try {
++    graph->engine=[[AVAudioEngine alloc] init]; graph->input=graph->engine.inputNode;
++    // No outputNode access and no VPIO/AEC/AGC configuration. A private level
++    // check needs capture PCM, not another voice-processing/output owner.
++    AVAudioFormat* format=[graph->input outputFormatForBus:0];
++    if (!format.sampleRate || !format.channelCount || format.commonFormat!=AVAudioPCMFormatFloat32 ||
++        graph->input.voiceProcessingEnabled) return graph;
++    graph->input_format=[[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
++        sampleRate:format.sampleRate channels:1 interleaved:format.interleaved];
++    graph->input_bus_format=format; graph->prepared_route=CurrentDefaultRoute(); graph->built=true;
++  } @catch (NSException*) { graph->built=false; }
++  return graph;
++}
++int32_t AudioEngineDevice::StartPrivateInputGraph(const PrivateInputMeterRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
++  auto control = graph->bridge->private_meter;
++  if (!graph->bridge->privacy.IsPrivate() || !control || !control->Valid(request.token) ||
++      [NSThread isMainThread] || request.resource.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current()))
++    return kAudioEngineStateTransitionError;
++  @try {
++    auto callback = std::make_shared<PrivateMeterCallbackOwner>(); callback->control = control; callback->token = request.token;
++    graph->private_callback = callback;
++    graph->private_meter_sink = [[AVAudioSinkNode alloc] initWithReceiverBlock:^OSStatus(
++        const AudioTimeStamp*, AVAudioFrameCount frames, const AudioBufferList* data) {
++      if (!callback->gate.TryEnter()) return noErr;
++      OSStatus result = noErr;
++      if (callback->control->Valid(callback->token)) {
++        if (data->mNumberBuffers != 1 || !data->mBuffers[0].mData || frames > kMaximumFramesPerBuffer ||
++            data->mBuffers[0].mNumberChannels != 1 || data->mBuffers[0].mDataByteSize < size_t(frames)*sizeof(float)) {
++          callback->control->Fail(callback->token,kAudioEngineDeviceFormatError); result = kAudio_ParamError;
++        } else {
++          callback->control->Record(callback->token,
++              std::span<const float>(static_cast<const float*>(data->mBuffers[0].mData), frames));
++        }
++      }
++      callback->gate.Leave(); return result;
++    }];
++    [graph->engine attachNode:graph->private_meter_sink];
++    [graph->engine connect:graph->input to:graph->private_meter_sink format:graph->input_format];
++    [graph->engine prepare];
++    if (!control->Valid(request.token) || TimeMillis() >= request.resource.deadline_ms || !(ApplicationCaptureState() & 1) ||
++        !SameRoute(request.resource.route, CurrentDefaultRoute()) || !callback->gate.Open()) return kAudioEngineStateTransitionError;
++    NSError* error = nil;
++    if (![graph->engine startAndReturnError:&error]) {
++      control->NativeRunning(request.token,graph->engine.running); return kAudioEnginePlayoutStartError;
++    }
++    control->NativeRunning(request.token,true);
++    const int64_t deadline = std::min(request.resource.deadline_ms, TimeMillis()+500);
++    while (control->Valid(request.token) && TimeMillis()<deadline &&
++           control->RawCallbacks()==0) usleep(1000);
++    UInt32 running=0, size=sizeof(running);
++    const OSStatus status=AudioUnitGetProperty(graph->input.audioUnit, kAudioOutputUnitProperty_IsRunning,
++        kAudioUnitScope_Global, 0, &running, &size);
++    graph->started = control->Valid(request.token) && status==noErr && running && graph->engine.running &&
++        control->RawCallbacks()>0 && graph->bridge->silent_renders.load()==0 && !(graph->bridge->target.load()) &&
++        !graph->bridge->ever_opened && graph->bridge->gate.IsClosed() && (ApplicationCaptureState() & 1) &&
++        TimeMillis()<request.resource.deadline_ms && SameRoute(request.resource.route, CurrentDefaultRoute()) && PrivateInputFormatsMatch(graph);
++    if (graph->started) {
++      graph->private_configuration_observer=(__bridge_retained void*)[[NSNotificationCenter defaultCenter]
++          addObserverForName:AVAudioEngineConfigurationChangeNotification object:graph->engine queue:nil usingBlock:^(NSNotification*) {
++            callback->control->Fail(callback->token,kAudioEngineStateTransitionError);
++          }];
++      if (!graph->private_configuration_observer) return kAudioEngineStateTransitionError;
++    }
++    return graph->started ? 0 : kAudioEngineStateTransitionError;
++  } @catch (NSException*) { return kAudioEngineStateTransitionError; }
++}
++bool AudioEngineDevice::CommitPrivateInputMeter(const PrivateInputMeterRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  return graph->bridge->privacy.IsPrivate() && graph->started && graph->bridge->target.load()==nullptr &&
++      graph->bridge->gate.IsClosed() && !graph->bridge->ever_opened && PrivateInputFormatsMatch(graph) &&
++      ValidatePrivateInputMeter(request) && private_meter_control_->Started(request.token);
++}
++bool AudioEngineDevice::InputGraphIsPrivate(const std::shared_ptr<PreparedInputGraph>& graph) {
++  return graph && graph->bridge->privacy.IsPrivate();
++}
++bool AudioEngineDevice::StopPrivateInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) {
++  if (!graph || !graph->bridge->privacy.IsPrivate() || !graph->Stop()) return false;
++  @try {
++    for (AudioUnit unit : std::array<AudioUnit,2>{graph->input.audioUnit, graph->output.audioUnit}) {
++      if (!unit) continue;
++      UInt32 running=0, size=sizeof(running);
++      const OSStatus status=AudioUnitGetProperty(unit,kAudioOutputUnitProperty_IsRunning,kAudioUnitScope_Global,0,&running,&size);
++      if (status!=kAudioUnitErr_Uninitialized && (status!=noErr || running)) return false;
++    }
++    return !graph->engine.running && (!graph->private_callback || graph->private_callback->gate.Drained());
++  } @catch (NSException*) { return false; }
++}
++int32_t AudioEngineDevice::FinishPrivateInputMeter(uint64_t token, const std::shared_ptr<PreparedInputGraph>& graph, bool clean, int32_t result) {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!clean && !cleanup_unconfirmed_) { cleanup_unconfirmed_=true; this->AddRef(); }
++  private_meter_control_->Finish(token,clean,clean?result:kAudioEngineStateTransitionError);
++  return clean ? result : kAudioEngineStateTransitionError;
++}
++
+ AudioEngineDevice::StoppedInputPreparationRequest AudioEngineDevice::BeginStoppedInputPreparation(uint64_t capture_state, int64_t deadline_ms) {
++  if (PrivateInputMeterOutstanding()) return StoppedInputPreparationRequest{};
+   RTC_DCHECK_RUN_ON(thread_);
+   StoppedInputPreparationRequest request;
+   request.capture_state = capture_state; request.deadline_ms = deadline_ms;
+@@ -725,7 +916,7 @@
+ }
+ int32_t AudioEngineDevice::PrepareStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) {
+   const auto& request = graph->warm_request;
+-  if (!graph->built || !graph->staged || [NSThread isMainThread] || request.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current())) return kAudioEngineInvalidStateError;
++  if (!graph->bridge->privacy.MayPublish() || !graph->built || !graph->staged || [NSThread isMainThread] || request.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current())) return kAudioEngineInvalidStateError;
+   @try {
+     LOGI() << "Bridge stopped caller prepare begin graph=" << graph->graph_id;
+     [graph->engine prepare]; usleep(100000);  // Preserve the normal VPIO stabilization while no media exists.
+@@ -748,7 +939,7 @@
+ }
+ int32_t AudioEngineDevice::PublishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) {
+   RTC_DCHECK_RUN_ON(thread_);
+-  if (!graph->warm_prepared || !ValidateStoppedInputRequest(graph) || !StoppedGraphIsQuiescent(graph, true) ||
++  if (!graph->bridge->privacy.MayPublish() || !graph->warm_prepared || !ValidateStoppedInputRequest(graph) || !StoppedGraphIsQuiescent(graph, true) ||
+       !SameRoute(graph->prepared_route, CurrentDefaultRoute()) || !PreparedFormatsMatch(graph)) return kAudioEngineStateTransitionError;
+   prepared_input_graph_enabled_ = true;  // Only this explicitly opted-in module passed all stopped-cache checks.
+   LOGI() << "Bridge stopped cache ready graph=" << graph->graph_id << " warmConfiguration=" << warm_configuration_generation_
+@@ -762,7 +953,7 @@
+   const bool stopped = StoppedGraphIsQuiescent(graph, true), formats = PreparedFormatsMatch(graph);
+   LOGI() << "Bridge cache match graph=" << graph->graph_id << " profile=" << profile << " intent=" << intent
+          << " route=" << route << " stopped=" << stopped << " formats=" << formats;
+-  if (!graph->warm_prepared || !graph->staged || stopped_graph_id_ != graph->graph_id ||
++  if (!graph->bridge->privacy.MayPublish() || !graph->warm_prepared || !graph->staged || stopped_graph_id_ != graph->graph_id ||
+       graph->warm_request.module_identity != reinterpret_cast<uintptr_t>(this) || !profile || !intent || !route ||
+       !BuiltInRoute(CurrentDefaultRoute()) || !stopped || !formats) return 1;
+   graph->request = request;  // A fresh activation token consumes compatible resources; warm intent is never rebased.
+@@ -801,7 +992,7 @@
+ }
+ int32_t AudioEngineDevice::StageInputGraph(const InputPreparationRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
+   RTC_DCHECK_RUN_ON(thread_);
+-  if (!graph->built || !ValidateInputRequest(request, false, graph)) { LOGW() << "Bridge Stage rejected built=" << graph->built; return kAudioEngineStateTransitionError; }
++  if (!graph->bridge->privacy.MayPublish() || !graph->built || !ValidateInputRequest(request, false, graph)) { LOGW() << "Bridge Stage rejected built=" << graph->built; return kAudioEngineStateTransitionError; }
+   if (graph->from_cache) return graph->staged && StoppedGraphIsQuiescent(graph) && PreparedFormatsMatch(graph) ? 0 : kAudioEngineStateTransitionError;
+   LOGI() << "Bridge stage prepare id=" << request.generation;
+   @try {
+@@ -815,7 +1006,7 @@
+ }
+ int32_t AudioEngineDevice::StartInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) {
+   const auto& request = graph->request;
+-  if (!graph->built || !graph->staged || [NSThread isMainThread] || request.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current())) return kAudioEngineInvalidStateError;
++  if (!graph->bridge->privacy.MayPublish() || !graph->built || !graph->staged || [NSThread isMainThread] || request.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current())) return kAudioEngineInvalidStateError;
+   @try {
+     if (graph->from_cache) {
+       if (!StoppedGraphIsQuiescent(graph) || !PreparedFormatsMatch(graph) || !SameRoute(graph->prepared_route, CurrentDefaultRoute())) return kAudioEngineStateTransitionError;
+@@ -846,7 +1037,7 @@
+ }
+ int32_t AudioEngineDevice::CommitInputGraph(const InputPreparationRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
+   RTC_DCHECK_RUN_ON(thread_);
+-  if (!graph->started || !graph->staged || graph->bridge->ever_opened || graph->bridge->active_renders.load() ||
++  if (!graph->bridge->privacy.MayPublish() || !graph->started || !graph->staged || graph->bridge->ever_opened || graph->bridge->active_renders.load() ||
+       graph->bridge->active_records.load() || !ValidateInputRequest(request, true, graph)) { LOGW() << "Bridge Commit rejected before old close"; return kAudioEngineStateTransitionError; }
+   @try {
+     if (!graph->engine.running || ![graph->input_bus_format isEqual:[graph->input outputFormatForBus:0]] ||
+@@ -1211,6 +1402,13 @@
+ }
+ 
+ int32_t AudioEngineDevice::Terminate() {
++#if TARGET_OS_OSX
++  if (PrivateInputMeterOutstanding()) {
++    private_meter_control_->Terminate();
++    return kAudioEngineStateTransitionError;
++  }
++#endif
++
+   LOGI() << "Terminate";
+   RTC_DCHECK_RUN_ON(thread_);
+   ++state_generation_;
+@@ -2225,6 +2423,10 @@
+ }
+ 
+ int32_t AudioEngineDevice::SetEngineAvailability(bool input_available, bool output_available) {
++#if TARGET_OS_OSX
++  if (input_available && PrivateInputMeterOutstanding()) return kAudioEngineStateTransitionError;
++#endif
++
+   RTC_DCHECK_RUN_ON(thread_);
+   LOGI() << "SetEngineAvailability: " << input_available << " " << output_available;
+ 
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
+@@ -214,6 +214,13 @@
+ @interface RTC_OBJC_TYPE(RTCAudioDeviceModule) : NSObject
+ 
+ #if TARGET_OS_OSX
++// Experimental isolated private meter. Nonzero tokens strictly increase per ADM.
++// Start/stop run off-main and off the SDK worker; revoke/state never block it.
++- (NSInteger)startPrivateInputMeterWithToken:(uint64_t)token NS_SWIFT_NAME(startPrivateInputMeter(token:));
++- (void)revokePrivateInputMeterWithToken:(uint64_t)token NS_SWIFT_NAME(revokePrivateInputMeter(token:));
++- (NSInteger)stopPrivateInputMeterWithToken:(uint64_t)token NS_SWIFT_NAME(stopPrivateInputMeter(token:));
++@property(nonatomic, readonly) NSDictionary<NSString *, id> *privateInputMeterState;
++
+ // Opt-in per-ADM CoreAudio experiment. State is passive atomics, never hardware probes.
+ - (NSInteger)enableExperimentalCoreAudioControl NS_SWIFT_NAME(enableExperimentalCoreAudioControl());
+ - (NSInteger)setExperimentalCoreAudioInputAvailable:(BOOL)inputAvailable
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
+@@ -22,6 +22,7 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <atomic>
++#include <mutex>
+ #if TARGET_OS_OSX
+ #include "modules/audio_device/mac/application_input_mute_state.h"
+ #include "rtc_base/time_utils.h"
+@@ -229,6 +230,33 @@
+ }
+ #endif
+ 
++#if TARGET_OS_OSX
++struct RetainedPrivateInputFailure {
++  __strong id owner;
++  __strong id delegate;
++  webrtc::scoped_refptr<webrtc::AudioDeviceModule> native;
++  std::shared_ptr<webrtc::PreparedInputGraph> graph;
++};
++static bool DisposePrivateCandidate(webrtc::Thread* worker, webrtc::AudioEngineDevice* module,
++    RTC_OBJC_TYPE(RTCAudioDeviceModule)* owner, id delegate,
++    const std::shared_ptr<webrtc::PreparedInputGraph>& graph, uint64_t token, int32_t result) {
++  bool stopped = !graph || (webrtc::AudioEngineDevice::InputGraphIsPrivate(graph)
++      ? webrtc::AudioEngineDevice::StopPrivateInputGraph(graph) : webrtc::AudioEngineDevice::StopInputGraph(graph));
++  bool observers_clean = stopped && (!graph || worker->BlockingCall([owner,delegate,graph] {
++    @try {
++      if (webrtc::AudioEngineDevice::InputGraphNeedsStageRelease(graph)) {
++        if (!delegate || [delegate audioDeviceModule:owner willReleaseEngine:webrtc::AudioEngineDevice::InputGraphEngine(graph)] != 0) return false;
++        webrtc::AudioEngineDevice::InputGraphStageReleased(graph);
++      }
++      return true;
++    } @catch (NSException*) { return false; }
++  }));
++  const bool clean = observers_clean && (!graph || webrtc::AudioEngineDevice::DisposeInputGraph(graph));
++  worker->BlockingCall([module,token,graph,clean,result] { module->FinishPrivateInputMeter(token,graph,clean,result); });
++  return clean;
++}
++#endif
++
+ @implementation RTC_OBJC_TYPE (RTCAudioDeviceModule) {
+   webrtc::Thread *_workerThread;
+   webrtc::scoped_refptr<webrtc::AudioDeviceModule> _native;
+@@ -237,6 +265,10 @@
+ #if TARGET_OS_OSX
+   std::shared_ptr<webrtc::PreparedInputGraph> _stoppedInputGraph;  // Worker-confined; final resource owner always leaves on caller.
+   __weak id _stoppedInputDelegate;  // Supported owner explicitly discards before observer/factory release.
++  std::mutex _privateInputControlMutex;
++  std::shared_ptr<webrtc::PreparedInputGraph> _privateInputGraph;
++  __strong id _privateInputDelegate;
++  uint64_t _privateInputToken;
+   std::atomic<bool> _preparedInputGraphEnabled;  // Caller reads; only successful worker publication arms it.
+ #endif
+ }
+@@ -251,7 +283,7 @@
+     auto* module = AudioEngineDeviceOrNull(_native.get(), _audioDeviceModuleType);
+     if (module && _observer->delegate_ != observer) {
+       module->InvalidateStoppedInputPreparation();
+-      if (module->HasStoppedInputGraph()) {
++      if (module->HasStoppedInputGraph() || module->PrivateInputMeterOutstanding()) {
+         RTCLogError(@"Discard stopped input graph before replacing observer"); return;
+       }
+     }
+@@ -282,6 +314,12 @@
+ 
+ - (void)dealloc {
+ #if TARGET_OS_OSX
++  if (_privateInputGraph) {
++    if (auto* module=AudioEngineDeviceOrNull(_native.get(),_audioDeviceModuleType)) module->RevokePrivateInputMeter(_privateInputToken);
++    // Never dispose potentially active AV resources on an unknown dealloc thread.
++    [[maybe_unused]] auto* retained=new RetainedPrivateInputFailure{nil,_privateInputDelegate,_native,std::move(_privateInputGraph)};
++    RTCLogError(@"Private input graph retained: explicit stop was not completed");
++  }
+   if (_stoppedInputGraph) {
+     // Contract violation: never let cached AV resources dispose on this unknown thread.
+     [[maybe_unused]] auto* retained = new std::shared_ptr<webrtc::PreparedInputGraph>(std::move(_stoppedInputGraph));
+@@ -393,6 +431,81 @@
+ }
+ 
+ #if TARGET_OS_OSX
++- (void)revokePrivateInputMeterWithToken:(uint64_t)token {
++  if (auto* module = AudioEngineDeviceOrNull(_native.get(),_audioDeviceModuleType)) module->RevokePrivateInputMeter(token);
++}
++- (NSDictionary<NSString*,id>*)privateInputMeterState {
++  auto* module = AudioEngineDeviceOrNull(_native.get(),_audioDeviceModuleType);
++  if (!module) return @{ @"supported": @NO };
++  const auto s=module->PrivateInputMeterState(); const auto& m=s.meter;
++  return @{ @"supported": @YES, @"token": @(s.token), @"revokedThroughToken": @(s.revoked),
++    @"requested": @(s.requested), @"active": @(s.active), @"startInFlight": @(s.start_in_flight),
++    @"inputRunning": @(s.input_running), @"confirmedStopped": @(s.confirmed_stopped),
++    @"cleanupUnconfirmed": @(s.cleanup_unconfirmed), @"lastResult": @(s.result), @"graphID": @(s.graph_id),
++    @"sampleRate": @(s.sample_rate), @"channels": @(s.channels), @"silentOutputCallbacks": @(s.silent_output_callbacks),
++    @"publishingAllowed": @NO, @"silentOutputOnly": @YES, @"privateOutputInstantiated": @NO,
++    @"outputMode": @"none", @"processing": @"plain AVAudioEngine input; no requested VPIO/AEC/AGC",
++    @"meter": @{ @"samples": @(m.samples), @"energy": @(m.energy), @"recentRMS": @(m.recent_rms),
++      @"energyKnown": @(m.energy_known), @"callbacks": @(m.callbacks), @"nonSilentCallbacks": @(m.non_silent_callbacks),
++      @"firstCallbackUptime": @(m.first), @"lastCallbackUptime": @(m.last),
++      @"firstNonSilentUptime": @(m.first_non_silent), @"lastNonSilentUptime": @(m.last_non_silent) },
++    @"clock": @"CLOCK_UPTIME_RAW (ProcessInfo.systemUptime domain)",
++    @"meterProvenance": @"private float32 input-only sink; no requested VPIO/AEC/AGC; never ADB/NetEq; invalidated synchronously on revoke",
++    @"runningProvenance": @"private AudioUnit confirmed at start/stop; in-flight state is not stopped proof" };
++}
++- (NSInteger)startPrivateInputMeterWithToken:(uint64_t)token {
++  auto* module=AudioEngineDeviceOrNull(_native.get(),_audioDeviceModuleType);
++  if (!module || !token || [NSThread isMainThread] || _workerThread->IsCurrent()) return webrtc::kAudioEngineInvalidStateError;
++  std::unique_lock<std::mutex> lock(_privateInputControlMutex,std::try_to_lock);
++  if (!lock.owns_lock() || _privateInputGraph || !module->BeginPrivateInputMeterToken(token)) return webrtc::kAudioEngineStateTransitionError;
++  __attribute__((objc_precise_lifetime)) RTC_OBJC_TYPE(RTCAudioDeviceModule)* retainedSelf=self;
++  auto native=retainedSelf->_native;
++  const auto request=_workerThread->BlockingCall([module,token] { return module->ReservePrivateInputMeter(token); });
++  __attribute__((objc_precise_lifetime)) id delegate=nil;
++  int32_t result=request.resource.result;
++  if (result==0) {
++    result=_workerThread->BlockingCall([self,module,request,&delegate] {
++      delegate=_observer->delegate_;
++      if (!delegate || !module->ValidatePrivateInputMeter(request)) return int32_t(webrtc::kAudioEngineStateTransitionError);
++      // Private capture owns independent resources. The normal stopped first-mic
++      // graph and its delegate/taps remain exactly where they were.
++      return int32_t(0);
++    });
++    _privateInputDelegate=delegate; _privateInputToken=token;
++    if (result==0 && !_privateInputGraph) {
++      _privateInputGraph=webrtc::AudioEngineDevice::BuildPrivateInputGraph(request);
++      result=_workerThread->BlockingCall([self,module,request] { return module->SealPrivateInputGraph(request,_privateInputGraph); });
++    }
++    if (result==0) result=webrtc::AudioEngineDevice::StartPrivateInputGraph(request,_privateInputGraph);
++    if (result==0) result=_workerThread->BlockingCall([self,module,request,delegate] {
++      return _observer->delegate_==delegate && module->CommitPrivateInputMeter(request,_privateInputGraph)
++          ? int32_t(0) : int32_t(webrtc::kAudioEngineStateTransitionError);
++    });
++  }
++  if (result==0) return 0;
++  module->RevokePrivateInputMeter(token);
++  const bool clean=DisposePrivateCandidate(_workerThread,module,self,_privateInputDelegate,_privateInputGraph,token,result);
++  if (clean) { _privateInputGraph.reset(); _privateInputDelegate=nil; _privateInputToken=0; }
++  else { [[maybe_unused]] auto* retained=new RetainedPrivateInputFailure{self,_privateInputDelegate,native,_privateInputGraph}; }
++  return clean?result:webrtc::kAudioEngineStateTransitionError;
++}
++- (NSInteger)stopPrivateInputMeterWithToken:(uint64_t)token {
++  auto* module=AudioEngineDeviceOrNull(_native.get(),_audioDeviceModuleType);
++  if (!module || !token) return webrtc::kAudioEngineInvalidStateError;
++  module->RevokePrivateInputMeter(token);  // Always before queue waits or native teardown.
++  if ([NSThread isMainThread] || _workerThread->IsCurrent()) return webrtc::kAudioEngineInvalidStateError;
++  std::unique_lock<std::mutex> lock(_privateInputControlMutex,std::try_to_lock);
++  if (!lock.owns_lock()) return webrtc::kAudioEngineStateTransitionError;
++  if (!_privateInputGraph || _privateInputToken!=token)
++    return module->PrivateInputMeterConfirmedStopped(token) ? 0 : webrtc::kAudioEngineStateTransitionError;
++  __attribute__((objc_precise_lifetime)) RTC_OBJC_TYPE(RTCAudioDeviceModule)* retainedSelf=self;
++  auto native=retainedSelf->_native;
++  const bool clean=DisposePrivateCandidate(_workerThread,module,self,_privateInputDelegate,_privateInputGraph,token,0);
++  if (clean) { _privateInputGraph.reset(); _privateInputDelegate=nil; _privateInputToken=0; return 0; }
++  [[maybe_unused]] auto* retained=new RetainedPrivateInputFailure{self,_privateInputDelegate,native,_privateInputGraph};
++  return webrtc::kAudioEngineStateTransitionError;
++}
++
+ - (NSInteger)enableExperimentalCoreAudioControl {
+   return _workerThread->BlockingCall([self] { return _native->EnableExperimentalCoreAudioControl(); });
+ }
+--- a/modules/audio_device/BUILD.gn
++++ b/modules/audio_device/BUILD.gn
+@@ -384,6 +384,7 @@
+         sources += [
+           "mac/application_input_mute_state.h",
+           "mac/prepared_graph_callback_gate.h",
++          "mac/private_input_meter_state.h",
+           "mac/audio_device_mac.cc",
+           "mac/audio_device_mac.h",
+           "mac/audio_device_utils_mac.cc",
+--- a/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
++++ b/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
+@@ -10,6 +10,8 @@
+ 
+ #include "modules/audio_device/mac/audio_ring_buffer_mac.h"
+ #include "modules/audio_device/mac/experimental_core_audio_capture.h"
++#include "modules/audio_device/mac/private_input_meter_state.h"
++#include "modules/audio_device/mac/prepared_graph_callback_gate.h"
+ #include "modules/audio_device/audio_device_buffer.h"
+ #include "test/create_test_environment.h"
+ 
+@@ -23,6 +25,103 @@
+ 
+ namespace webrtc {
+ namespace {
++
++TEST(PrivateInputMeterTest, RevokeBeforeQueuedStartIsPermanent) {
++  mac_adm::PrivateInputMeterControl c;
++  c.Revoke(4);
++  EXPECT_FALSE(c.Begin(4)); EXPECT_FALSE(c.Begin(3));
++  ASSERT_TRUE(c.Begin(5)); EXPECT_TRUE(c.Valid(5));
++  c.Revoke(4); EXPECT_TRUE(c.Valid(5));
++  c.Finish(5,true,0); EXPECT_TRUE(c.Read().confirmed_stopped);
++}
++TEST(PrivateInputMeterTest, RevokedRunningCallbackNeverProducesUsableMeter) {
++  mac_adm::PrivateInputMeterControl c;
++  ASSERT_TRUE(c.Begin(1)); ASSERT_TRUE(c.Started(1));
++  const std::vector<float> samples={0.25f,-0.5f};
++  ASSERT_TRUE(c.Record(1,samples)); EXPECT_GT(c.Read().meter.energy,0);
++  c.Revoke(1);
++  EXPECT_FALSE(c.Record(1,samples));
++  EXPECT_FALSE(c.Read().active); EXPECT_EQ(c.Read().meter.callbacks,0u);
++  EXPECT_EQ(c.Read().meter.last,0); EXPECT_TRUE(c.Read().input_running);
++  EXPECT_FALSE(c.Read().confirmed_stopped);
++  c.Finish(1,true,0); EXPECT_FALSE(c.Read().input_running);
++}
++TEST(PrivateInputMeterTest, RevokeDuringStartCannotBeCommitted) {
++  mac_adm::PrivateInputMeterControl c;
++  ASSERT_TRUE(c.Begin(1)); c.Revoke(1);
++  EXPECT_FALSE(c.Started(1)); EXPECT_FALSE(c.Read().active);
++  c.Finish(1,true,-5001); EXPECT_TRUE(c.Read().confirmed_stopped);
++  EXPECT_FALSE(c.Begin(1));
++}
++TEST(PrivateInputMeterTest, StaleEndCannotAffectReplacement) {
++  mac_adm::PrivateInputMeterControl c;
++  ASSERT_TRUE(c.Begin(1)); ASSERT_TRUE(c.Started(1)); c.Revoke(1); c.Finish(1,true,0);
++  ASSERT_TRUE(c.Begin(2)); ASSERT_TRUE(c.Started(2));
++  c.Revoke(1); c.Finish(1,false,-5001);
++  EXPECT_TRUE(c.Valid(2)); EXPECT_TRUE(c.Read().active); EXPECT_FALSE(c.Read().cleanup_unconfirmed);
++  c.Revoke(2); c.Finish(2,true,0);
++}
++TEST(PrivateInputMeterTest, UnconfirmedStopQuarantinesOwnerAndBlocksReplacement) {
++  mac_adm::PrivateInputMeterControl c;
++  ASSERT_TRUE(c.Begin(1)); ASSERT_TRUE(c.Started(1)); c.Revoke(1); c.Finish(1,false,-5001);
++  EXPECT_TRUE(c.Read().cleanup_unconfirmed); EXPECT_FALSE(c.Read().confirmed_stopped);
++  EXPECT_TRUE(c.Read().input_running); EXPECT_FALSE(c.Begin(2));
++}
++TEST(PrivateInputMeterTest, PermanentSealRejectsEveryPublishingAttempt) {
++  mac_adm::PrivateInputGraphSeal seal; int bindings=0;
++  seal.Seal(); seal.Seal();
++  EXPECT_FALSE(seal.MayPublish());
++  for (int attempt=0;attempt<8;++attempt) EXPECT_FALSE(seal.TryPublish([&] { ++bindings; }));
++  EXPECT_EQ(bindings,0);
++}
++TEST(PrivateInputMeterTest, PlatformEpochStillInvalidatesNetworkOpenButDoesNotGrantPrivateAuthority) {
++  SetApplicationCaptureMuted(true); const auto network_epoch=ApplicationCaptureState();
++  mac_adm::PrivateInputMeterControl c;
++  ASSERT_TRUE(c.Begin(1));
++  SetApplicationCaptureMuted(true);
++  EXPECT_NE(ApplicationCaptureState(),network_epoch);
++  EXPECT_FALSE(UnmuteApplicationCaptureIfState(network_epoch));
++  ASSERT_TRUE(c.Started(1));
++  EXPECT_TRUE(c.Record(1,std::vector<float>{0.2f}));
++  EXPECT_EQ(ApplicationCaptureState() & 1,1u);
++  c.Revoke(1); EXPECT_EQ(c.Read().meter.callbacks,0u); c.Finish(1,true,0);
++}
++TEST(PrivateInputMeterTest, IdempotentStopAfterNeverStartedOrCleanStartFailure) {
++  mac_adm::PrivateInputMeterControl c;
++  c.Revoke(1); EXPECT_TRUE(c.CanConfirmStopped(1)); EXPECT_FALSE(c.Begin(1));
++  ASSERT_TRUE(c.Begin(2)); c.Finish(2,true,-5001);
++  EXPECT_TRUE(c.CanConfirmStopped(2));
++  ASSERT_TRUE(c.Begin(3)); ASSERT_TRUE(c.Started(3));
++  c.Revoke(2); EXPECT_TRUE(c.CanConfirmStopped(2)); EXPECT_TRUE(c.Valid(3));
++  EXPECT_FALSE(c.CanConfirmStopped(4));
++  c.Fail(2,-5001); EXPECT_TRUE(c.Valid(3)); EXPECT_EQ(c.Read().result,0);
++  c.Revoke(3); c.Finish(3,false,-5001); EXPECT_FALSE(c.CanConfirmStopped(3));
++}
++TEST(PrivateInputMeterTest, PausedCallbackCannotPublishAfterRevokeOrTransfer) {
++  mac_adm::PrivateInputMeterControl c;
++  mac_adm::PreparedGraphCallbackGate gate;
++  ASSERT_TRUE(c.Begin(1)); ASSERT_TRUE(c.Started(1)); ASSERT_TRUE(gate.Open());
++  std::atomic<int> phase{0}; std::atomic<bool> published{true};
++  std::thread callback([&] {
++    EXPECT_TRUE(gate.TryEnter()); phase.store(1,std::memory_order_release);
++    while (phase.load(std::memory_order_acquire)!=2) std::this_thread::yield();
++    published=c.Record(1,std::vector<float>{0.8f}); gate.Leave();
++  });
++  while (phase.load(std::memory_order_acquire)!=1) std::this_thread::yield();
++  c.Revoke(1); gate.Close();
++  EXPECT_FALSE(gate.Drained()); EXPECT_EQ(c.Read().meter.callbacks,0u);
++  phase.store(2,std::memory_order_release); callback.join();
++  EXPECT_FALSE(published.load()); EXPECT_TRUE(gate.Drained());
++  c.Finish(1,true,0); ASSERT_TRUE(c.Begin(2)); ASSERT_TRUE(c.Started(2));
++  EXPECT_FALSE(gate.TryEnter()); EXPECT_FALSE(c.Record(1,std::vector<float>{1.0f}));
++  EXPECT_EQ(c.Read().meter.callbacks,0u); EXPECT_TRUE(c.Valid(2)); c.Finish(2,true,0);
++}
++TEST(PrivateInputMeterTest, TerminationRevokesQueuedAndFutureWork) {
++  mac_adm::PrivateInputMeterControl c;
++  ASSERT_TRUE(c.Begin(1)); c.Terminate();
++  EXPECT_FALSE(c.Valid(1)); EXPECT_FALSE(c.Started(1)); c.Finish(1,true,0);
++  EXPECT_FALSE(c.Begin(2));
++}
+ 
+ TEST(ExperimentalCoreAudioCaptureTest, PausedConsumerRejectsMutedAndOldEpochs) {
+   ExperimentalCoreAudioCapture ring(16);
+--- /dev/null
++++ b/modules/audio_device/mac/private_input_meter_state.h
+@@ -0,0 +1,141 @@
++// Copyright 2026 Rock'n'Roll contributors. BSD license: see LICENSE.
++#ifndef MODULES_AUDIO_DEVICE_MAC_PRIVATE_INPUT_METER_STATE_H_
++#define MODULES_AUDIO_DEVICE_MAC_PRIVATE_INPUT_METER_STATE_H_
++#include <atomic>
++#include <cmath>
++#include <cstddef>
++#include <cstdint>
++#include <span>
++#include <time.h>
++
++namespace webrtc::mac_adm {
++class PrivateInputGraphSeal {
++ public:
++  void Seal() { private_.store(true, std::memory_order_release); }
++  bool IsPrivate() const { return private_.load(std::memory_order_acquire); }
++  bool MayPublish() const { return !IsPrivate(); }
++  template <typename Publish> bool TryPublish(Publish publish) const {
++    if (IsPrivate()) return false;
++    publish(); return true;
++  }
++ private:
++  std::atomic<bool> private_{false};
++};
++
++// Tokens strictly increase per ADM. A revoke tombstone precedes queued work;
++// start never resurrects a revoked token. Only control (not callbacks) resets
++// meter fields, after the previous graph is stopped and its readers drained.
++class PrivateInputMeterControl {
++ public:
++  static_assert(std::atomic<uint64_t>::is_always_lock_free);
++  struct Meter {
++    uint64_t samples=0, callbacks=0, non_silent_callbacks=0;
++    double energy=0, recent_rms=0, first=0, last=0, first_non_silent=0, last_non_silent=0;
++    bool energy_known=false;
++  };
++  struct State {
++    uint64_t token=0, revoked=0, graph_id=0, silent_output_callbacks=0;
++    uint32_t sample_rate=0, channels=0;
++    bool requested=false, active=false, start_in_flight=false, input_running=false;
++    bool confirmed_stopped=true, cleanup_unconfirmed=false;
++    int32_t result=0;
++    Meter meter;
++  };
++  static uint64_t Now() {
++    timespec t; clock_gettime(CLOCK_UPTIME_RAW, &t);
++    return uint64_t(t.tv_sec)*1000000000ULL+uint64_t(t.tv_nsec);
++  }
++  bool Begin(uint64_t token) {
++    if (!token || terminal_.load() || cleanup_.load() || !confirmed_stopped_.load()) return false;
++    uint64_t previous=newest_.load();
++    do { if (token<=previous) return false; }
++    while (!newest_.compare_exchange_weak(previous,token));
++    if (token<=revoked_.load() || terminal_.load()) return false;
++    samples_=0; energy_=0; callbacks_=0; non_silent_=0; recent_energy_=0; recent_samples_=0;
++    first_=0; last_=0; first_non_silent_=0; last_non_silent_=0; silent_output_=0; known_=true;
++    rate_=0; channels_=0; graph_id_=0; result_=0; active_=false; running_=false;
++    confirmed_stopped_=false; in_flight_=true; token_.store(token,std::memory_order_release); requested_=true;
++    if (!Valid(token)) { requested_=false; in_flight_=false; confirmed_stopped_=true; return false; }
++    return true;
++  }
++  bool Valid(uint64_t token) const {
++    return token && token_.load(std::memory_order_acquire)==token && token>revoked_.load(std::memory_order_acquire) &&
++        !terminal_.load(std::memory_order_acquire) && !cleanup_.load(std::memory_order_acquire);
++  }
++  void Revoke(uint64_t token) {
++    uint64_t previous=revoked_.load();
++    while (previous<token && !revoked_.compare_exchange_weak(previous,token)) {}
++    if (token_.load(std::memory_order_acquire)<=token) { requested_=false; active_=false; }
++  }
++  void RevokeCurrent() { Revoke(token_.load(std::memory_order_acquire)); }
++  void Terminate() { terminal_=true; RevokeCurrent(); }
++  uint64_t RawCallbacks() const { return callbacks_.load(std::memory_order_acquire); }
++  bool CanConfirmStopped(uint64_t token) const {
++    if (!token || cleanup_.load(std::memory_order_acquire)) return false;
++    return token<token_.load(std::memory_order_acquire) ||
++        (confirmed_stopped_.load(std::memory_order_acquire) && token<=revoked_.load(std::memory_order_acquire));
++  }
++  bool Outstanding() const { return !confirmed_stopped_.load(std::memory_order_acquire); }
++  void SetGraph(uint64_t id, uint32_t rate, uint32_t channels) { graph_id_=id; rate_=rate; channels_=channels; }
++  void NativeRunning(uint64_t token, bool running) { if (token_.load()==token) running_=running; }
++  bool Started(uint64_t token) {
++    if (!Valid(token)) return false;
++    running_=true; in_flight_=false;
++    active_.store(true,std::memory_order_release);
++    return Valid(token);
++  }
++  void Finish(uint64_t token, bool clean, int32_t result) {
++    if (token_.load(std::memory_order_acquire)!=token) return;
++    Revoke(token); result_=result; in_flight_=false;
++    if (clean) { running_=false; confirmed_stopped_=true; }
++    else { cleanup_=true; confirmed_stopped_=false; }
++  }
++  void Fail(uint64_t token, int32_t) {
++    uint64_t previous=failed_token_.load();
++    while (previous<token && !failed_token_.compare_exchange_weak(previous,token)) {}
++    Revoke(token);  // A late callback from an older graph cannot revoke a replacement.
++  }
++  void SilentOutput() { silent_output_.fetch_add(1,std::memory_order_relaxed); }
++  bool Record(uint64_t token, std::span<const float> samples) {
++    if (!Valid(token) || samples.empty() || samples.size()>65536) return false;
++    double sum=0;
++    for (float value:samples) {
++      if (!std::isfinite(value) || value < -8 || value > 8) { known_=false; Fail(token,-5001); return false; }
++      sum+=double(value)*value;
++    }
++    if (!Valid(token)) return false;
++    const uint64_t q=uint64_t(sum*1073741824.0), now=Now();
++    samples_.fetch_add(samples.size(),std::memory_order_relaxed); energy_.fetch_add(q,std::memory_order_relaxed);
++    recent_energy_=q; recent_samples_=samples.size();
++    uint64_t zero=0; first_.compare_exchange_strong(zero,now); last_=now;
++    if (q) { zero=0; first_non_silent_.compare_exchange_strong(zero,now); last_non_silent_=now; non_silent_.fetch_add(1); }
++    callbacks_.fetch_add(1,std::memory_order_release);
++    return Valid(token);
++  }
++  State Read() const {
++    State s; s.token=token_.load(); s.revoked=revoked_.load(); s.graph_id=graph_id_.load();
++    s.requested=requested_.load(); s.active=active_.load(); s.start_in_flight=in_flight_.load();
++    s.input_running=running_.load(); s.confirmed_stopped=confirmed_stopped_.load(); s.cleanup_unconfirmed=cleanup_.load();
++    s.result=result_.load(); if (s.token && failed_token_.load()==s.token) s.result=-5001; s.sample_rate=rate_.load(); s.channels=channels_.load(); s.silent_output_callbacks=silent_output_.load();
++    if (s.active && Valid(s.token)) {
++      s.meter.callbacks=callbacks_.load(std::memory_order_acquire); s.meter.samples=samples_.load();
++      s.meter.energy=double(energy_.load())/1073741824.0;
++      const auto count=recent_samples_.load(); s.meter.recent_rms=count?std::sqrt(double(recent_energy_.load())/1073741824.0/count):0;
++      s.meter.energy_known=known_.load() && s.meter.callbacks;
++      s.meter.non_silent_callbacks=non_silent_.load(); s.meter.first=first_.load()*1e-9; s.meter.last=last_.load()*1e-9;
++      s.meter.first_non_silent=first_non_silent_.load()*1e-9; s.meter.last_non_silent=last_non_silent_.load()*1e-9;
++    }
++    // Callback paused across revoke may finish atomic writes, but those values
++    // never become usable readback; a new token requires old callback drain.
++    if (!Valid(s.token)) { s.active=false; s.requested=false; s.meter={}; }
++    return s;
++  }
++ private:
++  std::atomic<uint64_t> token_{0},newest_{0},revoked_{0},failed_token_{0},graph_id_{0},silent_output_{0};
++  std::atomic<bool> terminal_{false},requested_{false},active_{false},in_flight_{false},running_{false},confirmed_stopped_{true},cleanup_{false},known_{true};
++  std::atomic<int32_t> result_{0};
++  std::atomic<uint32_t> rate_{0},channels_{0};
++  std::atomic<uint64_t> samples_{0},energy_{0},callbacks_{0},non_silent_{0},recent_energy_{0},recent_samples_{0},first_{0},last_{0},first_non_silent_{0},last_non_silent_{0};
++};
++}  // namespace webrtc::mac_adm
++#endif

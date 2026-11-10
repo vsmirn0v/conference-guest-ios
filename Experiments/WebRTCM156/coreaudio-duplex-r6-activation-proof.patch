@@ -1,0 +1,163 @@
+--- a/Experiments/NativeGuest/GuestEngine.swift
++++ b/Experiments/NativeGuest/GuestEngine.swift
+@@ -649,7 +649,18 @@
+         try checkActive()
+         // Registration starts muted; the video-unmute path alone starts the
+         // synthetic generator or physical camera after permission checks.
+-        if published["audio"] != nil { try await mute(localMuteIntent[false] ?? true, video: false) }
++        if published["audio"] != nil {
++            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            // The R6 media-graph stage keeps its registered muted sender and
++            // SDK gate closed. Session prepares input after track demand exists,
++            // then reconciles the preserved latest microphone intent.
++            if !(requiresMediaGraphBeforeDevicePreparation && audioMuted) {
++                try await mute(localMuteIntent[false] ?? true, video: false)
++            }
++            #else
++            try await mute(localMuteIntent[false] ?? true, video: false)
++            #endif
++        }
+         if published["video"] != nil { try await mute(localMuteIntent[true] ?? true, video: true) }
+         probeLog("publishing", ["client": label, "codecRequested": codec, "synthetic": !useCamera])
+     }
+--- a/Experiments/NativeGuest/GuestSystemAudio.swift
++++ b/Experiments/NativeGuest/GuestSystemAudio.swift
+@@ -253,6 +253,19 @@
+ struct GuestDuplexPublicationRequest: Equatable, Sendable {
+     let ownerGeneration: UInt64
+     let microphoneRevision: UInt64
++}
++
++// A status-zero output-only preparation has no input seal. Activation readiness
++// uses the immutable typed native receipt, never a passive diagnostic snapshot.
++enum GuestDuplexInputPreparationProof {
++    static func accepts(status: Int, owner: UInt64, expectedOwner: UInt64,
++                        physicalGeneration: UInt64, token: UInt64,
++                        observedAuthority: UInt64, expectedIntent: UInt64) -> Bool {
++        status == 0 && owner != 0 && owner == expectedOwner && physicalGeneration != 0 &&
++        observedAuthority == token &&
++        expectedIntent > 0 && expectedIntent <= 0x0fff_ffff && token >> 36 == expectedIntent &&
++        token & (1 | 32) == (1 | 32) && token & (8 | 16 | 128) == 0
++    }
+ }
+ 
+ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @unchecked Sendable {
+@@ -845,15 +858,18 @@
+         guard locked({ !privateInputLease.quarantined && !terminationRequested }) else { return false }
+         #endif
+         #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        let duplexActivationIntent: UInt64?
+         if backend == .coreAudioAEC3 {
+             guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+-            guard locked({
+-                guard !terminationRequested, !duplexTerminal else { return false }
++            guard let intent = locked({ () -> UInt64? in
++                guard !terminationRequested, !duplexTerminal else { return nil }
+                 duplexActivationPending = true
+                 duplexInputAuthorized = true
+-                return publishDuplexIntentLocked(source: "activation")
++                guard publishDuplexIntentLocked(source: "activation") else { return nil }
++                return UInt64(duplexSequence)
+             }) else { return false }
+-        }
++            duplexActivationIntent = intent
++        } else { duplexActivationIntent = nil }
+         defer { locked { duplexActivationPending = false } }
+         #endif
+         return await perform("microphone-activate", timeout: timeout ?? inputStartupBudget) {
+@@ -866,8 +882,36 @@
+             }
+             let wasActivated = self.inputActivation
+             self.inputActivation.activate(); self.microphoneOptIn = self.inputActivation.inputAvailable
+-            let success = self.applyAvailability(module)
+-            if !success { self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable; _ = self.applyAvailability(module) }
++            let success: Bool
++            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            if self.backend == .coreAudioAEC3 {
++                success = self.applyDuplexAvailability(module, requireInputReady: true)
++            } else { success = self.applyAvailability(module) }
++            #else
++            success = self.applyAvailability(module)
++            #endif
++            if !success {
++                #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++                if self.backend == .coreAudioAEC3, let intent = duplexActivationIntent {
++                    self.locked {
++                        // This failed operation cannot revoke a newer intent
++                        // or issue a second, less strict physical preparation.
++                        if UInt64(self.duplexSequence) == intent && module.revokeExperimentalCoreAudioDuplexIntent(expectedIntent: intent) {
++                            self.duplexTerminal = true; self.duplexServerUnmuted = false
++                            self.inputActivation = wasActivated
++                            self.microphoneOptIn = self.inputActivation.inputAvailable
++                            self.cached["duplexActivationFailureRevokedIntent"] = intent
++                        } else { self.cached["duplexActivationFailureSuperseded"] = true }
++                    }
++                } else {
++                    self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable
++                    _ = self.applyAvailability(module)
++                }
++                #else
++                self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable
++                _ = self.applyAvailability(module)
++                #endif
++            }
+             self.update(["microphoneOptIn": self.microphoneOptIn])
+             self.readSnapshot(module)
+             return success
+@@ -1166,7 +1210,7 @@
+         currentModule?.setExperimentalCoreAudioDuplexHoldPhase(phase, milliseconds: min(milliseconds, 1000))
+     }
+ 
+-    private func applyDuplexAvailability(_ module: LKRTCAudioDeviceModule) -> Bool {
++    private func applyDuplexAvailability(_ module: LKRTCAudioDeviceModule, requireInputReady: Bool = false) -> Bool {
+         let deadline = duplexOperationDeadline ?? ProcessInfo.processInfo.systemUptime + inputStartupBudget
+         for _ in 0..<4 {
+             let intent = locked { (duplexSequence, duplexTerminal || terminationRequested) }
+@@ -1195,6 +1239,14 @@
+             guard result.status == 0, !latest.1, latest.0 == intent.0 else { return false }
+             return locked {
+                 guard duplexSequence == intent.0, !duplexTerminal, !terminationRequested else { return false }
++                if requireInputReady && !GuestDuplexInputPreparationProof.accepts(status: result.status,
++                    owner: result.ownerGeneration, expectedOwner: duplexOwnerGeneration,
++                    physicalGeneration: result.physicalGeneration, token: result.sealedToken,
++                    observedAuthority: result.observedAuthority,
++                    expectedIntent: UInt64(intent.0)) {
++                    cached["lastRejectedOperation"] = "duplex-input-not-prepared"
++                    return false
++                }
+                 cached["duplexPreparationDeferredUntilOwnedTransport"] = false
+                 duplexSealedToken = result.sealedToken
+                 if duplexServerUnmuted && !duplexDesiredMuted {
+--- a/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
++++ b/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
+@@ -72,8 +72,30 @@
+         videoWindowEvidence()
+         ownerLeaseAndProfiles()
+         operationTraceEvidence()
++        duplexInputReadinessProof()
+         preparedMeterOwnership()
+         print("PASS: memory-only PCM meters, exclusive private/meeting owner leases, speech/music constraints, video windows and audio operation timing")
++    }
++
++    private static func duplexInputReadinessProof() {
++        let token: UInt64 = (9 << 36) | (3 << 8) | 1 | 2 | 32
++        func accepts(_ status: Int = 0, _ owner: UInt64 = 7, _ physical: UInt64 = 1,
++                     _ value: UInt64? = nil, _ intent: UInt64 = 9, _ observed: UInt64? = nil) -> Bool {
++            GuestDuplexInputPreparationProof.accepts(status: status, owner: owner, expectedOwner: 7,
++                physicalGeneration: physical, token: value ?? token,
++                observedAuthority: observed ?? value ?? token, expectedIntent: intent)
++        }
++        precondition(accepts())  // Prepared input can remain publication-muted.
++        precondition(accepts(0, 7, 1, token | 64))  // Already committed warm input.
++        precondition(!accepts(0, 7, 0, 0))  // Successful output-only result.
++        precondition(!accepts(-1) && !accepts(0, 0) && !accepts(0, 8))
++        precondition(!accepts(0, 7, 1, token & ~UInt64(32)))
++        precondition(!accepts(0, 7, 1, token & ~UInt64(1)))
++        for flag: UInt64 in [8, 16, 128] { precondition(!accepts(0, 7, 1, token | flag)) }
++        precondition(!accepts(0, 7, 1, token, 8) && !accepts(0, 7, 1, token, 0))
++        precondition(!accepts(0, 7, 1, token, 9, token | 8))
++        precondition(!accepts(0, 7, 1, token, 9, token | 128))
++        precondition(!accepts(0, 7, 1, token, 9, token + (2 << 8)))
+     }
+ 
+     #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6 && ROCK_COREAUDIO_DUPLEX_CONSTRUCTION_TESTS

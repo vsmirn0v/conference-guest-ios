@@ -1,0 +1,160 @@
+--- a/modules/audio_device/audio_engine_device.h
++++ b/modules/audio_device/audio_engine_device.h
+@@ -381,6 +381,7 @@
+     InputPreparationRequest::Route route;
+     uint64_t generation = 0, capture_state = 0, graph_id = 0;
+     uint64_t configuration_generation = 0;
++    uint64_t lifecycle_generation = 0;
+     uintptr_t module_identity = 0, worker_identity = 0;
+     int64_t deadline_ms = 0;
+     int32_t result = 1;  // Skipped until a resource reservation succeeds; negative failures never fall through.
+@@ -392,7 +393,8 @@
+   static int32_t PrepareStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&);
+   int32_t PublishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&);
+   int32_t AttachStoppedInputGraph(const InputPreparationRequest&, const std::shared_ptr<PreparedInputGraph>&);
+-  int32_t FinishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&, bool cleanup_confirmed, bool require_current = false);
++  int32_t FinishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&, bool cleanup_confirmed,
++                                 bool allow_fallback = false, bool original_delegate_valid = false);
+   bool HasStoppedInputGraph();
+   void InvalidateStoppedInputPreparation();
+   InputPreparationRequest BeginInputPreparation(bool input, bool output, uint64_t capture_state);
+@@ -533,6 +535,7 @@
+   uint64_t graph_generation_ RTC_GUARDED_BY(thread_) = 0;
+   uint64_t stopped_graph_id_ RTC_GUARDED_BY(thread_) = 0;
+   uint64_t warm_configuration_generation_ RTC_GUARDED_BY(thread_) = 0;
++  uint64_t warm_lifecycle_generation_ RTC_GUARDED_BY(thread_) = 0;
+   bool prepared_input_graph_enabled_ RTC_GUARDED_BY(thread_) = false;
+   bool ValidateStoppedInputRequest(const std::shared_ptr<PreparedInputGraph>&);
+   bool InstallBridgeConfigurationObserver();
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -672,6 +672,7 @@
+   }
+   request.generation = ++state_generation_; request.graph_id = ++graph_generation_;
+   request.configuration_generation = warm_configuration_generation_;
++  request.lifecycle_generation = warm_lifecycle_generation_;
+   request.initialized_at_reservation = initialized_; request.state = engine_state_;
+   request.module_identity = reinterpret_cast<uintptr_t>(this); request.worker_identity = reinterpret_cast<uintptr_t>(thread_);
+   request.route = initial_route; request.eligible = true; request.result = 0;
+@@ -681,7 +682,9 @@
+   return request;
+ }
+ bool AudioEngineDevice::HasStoppedInputGraph() { RTC_DCHECK_RUN_ON(thread_); return stopped_graph_id_ != 0; }
+-void AudioEngineDevice::InvalidateStoppedInputPreparation() { RTC_DCHECK_RUN_ON(thread_); ++warm_configuration_generation_; }
++void AudioEngineDevice::InvalidateStoppedInputPreparation() {
++  RTC_DCHECK_RUN_ON(thread_); ++warm_configuration_generation_; ++warm_lifecycle_generation_;
++}
+ bool AudioEngineDevice::ValidateStoppedInputRequest(const std::shared_ptr<PreparedInputGraph>& graph) {
+   RTC_DCHECK_RUN_ON(thread_);
+   const auto& request = graph->warm_request;
+@@ -767,16 +770,34 @@
+   LOGI() << "Bridge stopped cache consumed graph=" << graph->graph_id << " activation=" << request.generation;
+   return 0;
+ }
+-int32_t AudioEngineDevice::FinishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>& graph, bool clean, bool require_current) {
++int32_t AudioEngineDevice::FinishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>& graph, bool clean,
++                                                 bool allow_fallback, bool original_delegate_valid) {
+   RTC_DCHECK_RUN_ON(thread_);
+   if (!clean || !graph->cleanup_confirmed) {
+     graph->cleanup_confirmed = false; cleanup_unconfirmed_ = true; this->AddRef();
+     LOGE() << "Bridge stopped cleanupUnconfirmed; complete owner must remain retained";
+     return kAudioEngineStateTransitionError;
+   }
+-  const bool current = !require_current || ValidateStoppedInputRequest(graph);
+-  if (stopped_graph_id_ == graph->graph_id) stopped_graph_id_ = 0;
+-  return current ? 0 : kAudioEngineStateTransitionError;
++  const bool owned_resource = stopped_graph_id_ == graph->graph_id;
++  if (owned_resource) stopped_graph_id_ = 0;
++  if (!allow_fallback) return 0;
++  // A NEW admission after complete caller disposal. Never replay or validate the obsolete recipe.
++  const auto& request = graph->warm_request;
++  const bool owner = owned_resource && original_delegate_valid && request.module_identity == reinterpret_cast<uintptr_t>(this) &&
++      request.worker_identity == reinterpret_cast<uintptr_t>(thread_) && request.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current());
++  const bool lifecycle = warm_lifecycle_generation_ == request.lifecycle_generation;
++  const bool live = initialized_ && !cleanup_unconfirmed_ && stopped_graph_id_ == 0;
++  const bool capture_closed = (ApplicationCaptureState() & 1) != 0;
++  const bool availability = !engine_state_.input_available && !engine_state_.output_available;
++  const bool no_engine = !engine_device_ && !input_node_instantiated_;
++  const bool adb_stopped = !audio_device_buffer_->IsPlaying() && !audio_device_buffer_->IsRecording();
++  const bool authorized = IsMicrophonePermissionAuthorized(), deadline = TimeMillis() < request.deadline_ms;
++  const bool admitted = owner && lifecycle && live && capture_closed && availability && no_engine && adb_stopped && authorized && deadline;
++  LOGI() << "Bridge clean obsolete fallback admitted=" << admitted << " owner=" << owner << " lifecycle=" << lifecycle
++         << " live=" << live << " captureClosed=" << capture_closed << " availability=" << availability << " noEngine=" << no_engine
++         << " adbStopped=" << adb_stopped << " authorized=" << authorized << " deadlineValid=" << deadline
++         << " configurationChanged=" << (warm_configuration_generation_ != request.configuration_generation);
++  return admitted ? 0 : kAudioEngineStateTransitionError;
+ }
+ int32_t AudioEngineDevice::StageInputGraph(const InputPreparationRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
+   RTC_DCHECK_RUN_ON(thread_);
+@@ -1125,6 +1146,7 @@
+ 
+ #if TARGET_OS_OSX
+   ++warm_configuration_generation_;  // A real initialization is configuration; an idempotent peer Init above is not.
++  ++warm_lifecycle_generation_;
+ #endif
+ 
+ #if defined(WEBRTC_IOS)
+@@ -1194,6 +1216,7 @@
+   ++state_generation_;
+ #if TARGET_OS_OSX
+   ++warm_configuration_generation_;
++  ++warm_lifecycle_generation_;
+ #endif
+   if (cleanup_unconfirmed_) return kAudioEngineTerminateError;
+ #if TARGET_OS_OSX
+@@ -2095,6 +2118,7 @@
+   ++state_generation_;
+ #if TARGET_OS_OSX
+   ++warm_configuration_generation_;
++  if (observer_ != observer) ++warm_lifecycle_generation_;
+ #endif
+ 
+   observer_ = observer;
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
+@@ -208,7 +208,8 @@
+ 
+ #if TARGET_OS_OSX
+ static bool DisposeStoppedCandidate(webrtc::Thread* worker, webrtc::AudioEngineDevice* module,
+-    RTC_OBJC_TYPE(RTCAudioDeviceModule)* owner, id delegate, const std::shared_ptr<webrtc::PreparedInputGraph>& graph, bool require_current = false) {
++    RTC_OBJC_TYPE(RTCAudioDeviceModule)* owner, id delegate, const std::shared_ptr<webrtc::PreparedInputGraph>& graph,
++    bool allow_fallback = false, AudioDeviceObserver* original_observer = nullptr) {
+   bool stopped = webrtc::AudioEngineDevice::StopInputGraph(graph);  // Caller queue, never worker/Main.
+   bool observers_clean = stopped && worker->BlockingCall([owner, delegate, graph] {
+     @try {
+@@ -220,7 +221,11 @@
+     } @catch (NSException*) { return false; }
+   });
+   bool clean = observers_clean && webrtc::AudioEngineDevice::DisposeInputGraph(graph);
+-  return worker->BlockingCall([module, graph, clean, require_current] { return module->FinishStoppedInputGraph(graph, clean, require_current); }) == 0;
++  return worker->BlockingCall([module, graph, clean, allow_fallback, original_observer, delegate] {
++    // Identity, token clearance and fresh fallback admission share this worker transaction AFTER disposal.
++    const bool original_delegate_valid = !allow_fallback || (original_observer && original_observer->delegate_ == delegate);
++    return module->FinishStoppedInputGraph(graph, clean, allow_fallback, original_delegate_valid);
++  }) == 0;
+ }
+ #endif
+ 
+@@ -244,9 +249,11 @@
+   _workerThread->BlockingCall([self, observer] {
+ #if TARGET_OS_OSX
+     auto* module = AudioEngineDeviceOrNull(_native.get(), _audioDeviceModuleType);
+-    if (module && module->HasStoppedInputGraph() && _observer->delegate_ != observer) {
++    if (module && _observer->delegate_ != observer) {
+       module->InvalidateStoppedInputPreparation();
+-      RTCLogError(@"Discard stopped input graph before replacing observer"); return;
++      if (module->HasStoppedInputGraph()) {
++        RTCLogError(@"Discard stopped input graph before replacing observer"); return;
++      }
+     }
+ #endif
+     _observer->delegate_ = observer;
+@@ -547,7 +554,7 @@
+   });
+   if (result == 0) return 0;
+   // Ordinary preparation failure may fall back only after complete off-worker cleanup.
+-  return DisposeStoppedCandidate(_workerThread, module, self, delegate, graph, true) ? 1 : webrtc::kAudioEngineStateTransitionError;
++  return DisposeStoppedCandidate(_workerThread, module, self, delegate, graph, true, _observer) ? 1 : webrtc::kAudioEngineStateTransitionError;
+ }
+ - (NSInteger)discardStoppedInputGraph {
+   auto* module = AudioEngineDeviceOrNull(_native.get(), _audioDeviceModuleType);

@@ -1,0 +1,55 @@
+{
+  "formatVersion": 1,
+  "scope": "R6 app-only defer construction Prepare until owned transport; SDK immutable",
+  "candidateRoot": ".build/airpods-transition-startup/r6-create-admission-followup",
+  "baseSDKLock": "coreaudio-duplex-r6.lock.json",
+  "baseSDKLockSHA256": "38af44d86494f01d1dcabf7ef0fd5512f79ae48342d5375d8f89d8bd250cca6d",
+  "sdkBinarySHA256": "ef48fbe7f13a816d7ca6ad7e4a2db1d060c04cbfe9edeab9f0df22c30978bde7",
+  "sourcePatch": "coreaudio-duplex-r6-create-admission.patch",
+  "sourcePatchSHA256": "486f9f2b058a8d3c7110b6ebd1e9690f3c47ef6ee2db325e095b6fba8d3e71ca",
+  "evidenceSHA256": "d1cec652373f807fc0d4ed49fc9280a741281954eb0bfa4e71ee34a3bd0bfb17",
+  "sourceFiles": [
+    {
+      "path": "Experiments/NativeGuest/GuestSystemAudio.swift",
+      "baselineSHA256": "4d3b7c47130d22fcd8e31d4017160ff56944dfe1848de0d6a356705aafecfd4f",
+      "sha256": "c6ece0bd3379f5a33f43a96a1b84209c6a74d1b8baa8992794e762eb35093b5e"
+    },
+    {
+      "path": "Experiments/NativeGuestTests/GuestSystemAudioTests.swift",
+      "baselineSHA256": "491ada9cac4e3199cf5241d7431d82a68835aed313501dc27d778bc321114787",
+      "sha256": "b3445e8bb0551153a1f93737ff387f95e6854f1d6cbf9157c66fafbf8b53e036"
+    },
+    {
+      "path": "Experiments/NativeGuestTests/run-system-audio.sh",
+      "baselineSHA256": "4a8f1b1f9dc74663435daca5043e46e126d4eebc89cb2711d2baae66cb7693d9",
+      "sha256": "23f253ae7462da208fc68dee1dde19e309345ed4fc140031e92c2c4b5f825fa9"
+    }
+  ],
+  "tests": [
+    {
+      "log": "construction-test.log",
+      "sha256": "be2c4239adc67a9cba61e255f473279b1c0209fd1862a278b9bafd1c474c0654",
+      "passed": true,
+      "compilerWarnings": 0,
+      "factoryCreated": true,
+      "nativeIOCreated": false
+    },
+    {
+      "log": "default-test.log",
+      "sha256": "854887d8278283bab61b3e2471bee851e649fa49249fa20bfff46dd12a71006d",
+      "passed": true,
+      "compilerWarnings": 0,
+      "factoryCreated": false,
+      "nativeIOCreated": false
+    },
+    {
+      "log": "r6-test.log",
+      "sha256": "854887d8278283bab61b3e2471bee851e649fa49249fa20bfff46dd12a71006d",
+      "passed": true,
+      "compilerWarnings": 0,
+      "factoryCreated": false,
+      "nativeIOCreated": false
+    }
+  ],
+  "runtimeStartupValidated": false
+}

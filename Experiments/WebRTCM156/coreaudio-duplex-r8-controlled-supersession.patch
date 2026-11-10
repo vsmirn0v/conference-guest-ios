@@ -1,0 +1,340 @@
+--- a/NativeMacGuest/MicrophoneActivationExperiment.swift
++++ b/NativeMacGuest/MicrophoneActivationExperiment.swift
+@@ -18,6 +18,12 @@
+     private var monitor: Task<Void, Never>?
+     private let startupStagesEnabled = ProcessInfo.processInfo.environment["ROCK_MIC_STARTUP_STAGES"] == "1"
+     private let noDemandSeamWarmup = ProcessInfo.processInfo.environment["ROCK_MIC_NO_DEMAND_SEAMS"] == "1"
++    private let rawStartSupersessionEnabled = ProcessInfo.processInfo.environment["ROCK_MIC_RAW_START_TRACK_SUPERSESSION"] == "1"
++    #if ROCK_COREAUDIO_DUPLEX_R6
++    private var rawStartSupersessionTask: Task<Void, Never>?
++    private var rawStartSupersessionAttempt: StartupRawOutputSupersession.Attempt?
++    private var rawStartSupersessionReported = false
++    #endif
+     private var startupStageTask: Task<Void, Never>?
+     private var startupTimeline: StartupTimeline?
+     private var watchdog: Task<Void, Never>?
+@@ -80,6 +86,11 @@
+         if noDemandSeamWarmup {
+             value["coldStartupTimingQualified"] = false
+             value["startupTimingExclusionReason"] = "pre-network real factory seam validation"
++        }
++        if rawStartSupersessionEnabled {
++            value["coldStartupTimingQualified"] = false
++            value["startupTimingExclusionReason"] = noDemandSeamWarmup ?
++                "pre-network seam validation; controlled raw-start track invalidation" : "controlled raw-start track invalidation"
+         }
+         value["elapsed"] = now - began; value["resources"] = resources()
+         if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {
+@@ -533,6 +544,53 @@
+             }
+         }
+     }
++    #if ROCK_COREAUDIO_DUPLEX_R6
++    private func startRawStartSupersessionProbe() {
++        guard rawStartSupersessionEnabled else { return }
++        emit("controlledRawStartTrackSupersessionBegin", ["pollBudgetSeconds": 20, "pollIntervalMilliseconds": 2,
++            "mutation": "one existing track invalidation; no SDK hold or transport change"])
++        rawStartSupersessionTask = Task { @MainActor [weak self] in
++            guard let self else { return }
++            let deadline = self.now + 20
++            while !Task.isCancelled, self.now < deadline {
++                if let native = self.adapter?.currentNativeEngine, let audio = native.systemAudio,
++                   let first = StartupRawOutputSupersession.window(duplex: audio.duplexStartupEvidenceForTesting,
++                       operation: audio.snapshot["audioActiveOperation"] as? [String: Any] ?? [:], at: self.now),
++                   LKRTCApplicationCaptureMuted() == 1 {
++                    let current = StartupRawOutputSupersession.window(duplex: audio.duplexStartupEvidenceForTesting,
++                        operation: audio.snapshot["audioActiveOperation"] as? [String: Any] ?? [:], at: self.now)
++                    if let current, current.same(as: first), self.adapter?.currentNativeEngine === native,
++                       native.systemAudio === audio, LKRTCApplicationCaptureMuted() == 1 {
++                        // No await, stdout or native hardware query inside the
++                        // observed marker-to-return window before the one latch.
++                        let before = self.now
++                        audio.invalidateDuplexPublicationForTrackChange()
++                        let after = self.now
++                        self.rawStartSupersessionAttempt = StartupRawOutputSupersession.attempt(window: current,
++                            before: before, after: after, latches: audio.snapshot["duplexIntentLatches"] as? [[String: Any]] ?? [])
++                        return
++                    }
++                }
++                do { try await Task.sleep(for: .milliseconds(2)) } catch { return }
++            }
++        }
++    }
++    private func finishRawStartSupersessionProbe(_ native: NativeGuestEngine?) {
++        guard rawStartSupersessionEnabled, !rawStartSupersessionReported else { return }
++        rawStartSupersessionReported = true
++        let audio = native?.systemAudio
++        let result = StartupRawOutputSupersession.verify(rawStartSupersessionAttempt,
++            duplex: audio?.duplexStartupEvidenceForTesting ?? [:],
++            core: audio?.microphoneStartupEvidenceForTesting["coreAudio"] as? [String: Any] ?? [:], snapshot: audio?.snapshot ?? [:])
++        let gatesClosed = LKRTCApplicationCaptureMuted() == 1 && model?.snapshot.microphoneOn != true
++        let passed = result.exercised && gatesClosed
++        acceptance = acceptance && passed
++        emit("controlledRawStartTrackSupersession", ["attempted": rawStartSupersessionAttempt != nil,
++            "exercised": passed, "passed": passed, "reason": result.reason, "captureGatesClosed": gatesClosed,
++            "evidence": result.evidence, "clock": "ProcessInfo.systemUptime / native CLOCK_UPTIME_RAW nanoseconds",
++            "scope": "phase13 marker-to-return control window; not Apple HAL internal execution or cold-latency proof"])
++    }
++    #endif
+     private func meeting() async throws {
+         let peer = try NativeStartupReceiverProxy(); self.peer = peer; releasedPeer = peer
+         emit("networkBegin") // Launcher starts the separate synthetic receiver only after this flushed event.
+@@ -556,6 +614,9 @@
+             try await soundOffDuringWarmup(model, adapter: adapter)
+             return
+         }
++        #if ROCK_COREAUDIO_DUPLEX_R6
++        startRawStartSupersessionProbe()
++        #endif
+         try await model.connect()
+         guard let native = adapter.currentNativeEngine else { throw Failure("No physical meeting engine") }
+         releasedNative = native
+@@ -598,6 +659,12 @@
+         try await wait { (native.mediaSnapshot.render["advancingFrames"] as? Int ?? 0) >= 10 &&
+             (native.mediaSnapshot.render["lastFrameUptime"] as? Double).map { self.now - $0 < 0.2 } == true }
+         emit("incomingReady", ["physicalAudio": native.systemAudio?.snapshot ?? [:]])
++        #if ROCK_COREAUDIO_DUPLEX_R6
++        if rawStartSupersessionEnabled {
++            rawStartSupersessionTask?.cancel(); await rawStartSupersessionTask?.value; rawStartSupersessionTask = nil
++            finishRawStartSupersessionProbe(native)
++        }
++        #endif
+         if ProcessInfo.processInfo.environment["ROCK_MIC_FAULT_CASE"] == "leave-during-private-start" {
+             startMonitor(native)
+             try await leaveDuringPrivateStart(model, adapter: adapter, native: native, peer: peer)
+@@ -1743,6 +1810,12 @@
+     private func cleanup() async -> Bool {
+         if let cleanupTask { return await cleanupTask.value }
+         let task = Task { @MainActor in
++            #if ROCK_COREAUDIO_DUPLEX_R6
++            if self.rawStartSupersessionEnabled {
++                self.rawStartSupersessionTask?.cancel(); await self.rawStartSupersessionTask?.value; self.rawStartSupersessionTask = nil
++                self.finishRawStartSupersessionProbe(self.adapter?.currentNativeEngine)
++            }
++            #endif
+             self.startupStageTask?.cancel(); await self.startupStageTask?.value; self.startupStageTask = nil; self.startupTimeline = nil
+             self.monitor?.cancel(); await self.monitor?.value; self.monitor = nil; self.windows.removeAll()
+             let local = await self.model?.leave() ?? true, remote = await self.peer?.leave() ?? true
+--- /dev/null
++++ b/NativeMacGuest/StartupRawOutputSupersession.swift
+@@ -0,0 +1,125 @@
++#if DEBUG
++import Foundation
++import CoreFoundation
++
++// Pure evidence checks for the opt-in initial raw-start diagnostic. These
++// snapshots grant no authority and never start, stop or wait on native IO.
++enum StartupRawOutputSupersession {
++    struct Window {
++        let owner: UInt64, serial: UInt64, intent: UInt64, authority: UInt64, outputAuthority: UInt64
++        let operation: UInt64, call: UInt64
++        let nativeStarted: Double, rawStarted: Double, deadline: Double, observed: Double
++        func same(as other: Window) -> Bool {
++            owner == other.owner && serial == other.serial && authority == other.authority &&
++            outputAuthority == other.outputAuthority && operation == other.operation && call == other.call &&
++            nativeStarted == other.nativeStarted && rawStarted == other.rawStarted && deadline == other.deadline
++        }
++        var evidence: [String: Any] {
++            ["ownerGeneration": owner, "prepareSerial": serial, "oldIntent": intent, "oldAuthority": authority,
++             "outputAuthority": outputAuthority, "audioOperationID": operation, "nativeCallID": call,
++             "nativeStartedAt": nativeStarted, "rawStartMarkerUptime": rawStarted, "operationDeadlineUptime": deadline, "observedAt": observed]
++        }
++    }
++    struct Attempt {
++        let window: Window, before: Double, after: Double
++        let latch: [String: Any]
++        var evidence: [String: Any] { ["window": window.evidence, "actionBefore": before, "actionAfter": after, "latch": latch] }
++    }
++    struct Result {
++        let exercised: Bool, reason: String
++        let evidence: [String: Any]
++    }
++    static func unsigned(_ value: Any?) -> UInt64? {
++        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
++        return UInt64(number.stringValue)
++    }
++    static func time(_ value: Any?) -> Double? {
++        guard let number = value as? NSNumber else { return nil }
++        let value = number.doubleValue
++        return value.isFinite && value > 0 ? value : nil
++    }
++    static func window(duplex: [String: Any], operation: [String: Any], at observed: Double) -> Window? {
++        guard observed.isFinite, duplex["enabled"] as? Bool == true,
++              duplex["presealOutputPrimingSupported"] as? Bool == true,
++              duplex["transportPinned"] as? Bool == true, duplex["transportQuarantined"] as? Bool == false,
++              unsigned(duplex["phase"]) == 13, unsigned(duplex["physicalGeneration"]) == 0,
++              unsigned(duplex["outputCreateCount"]) == 1, unsigned(duplex["outputStartCount"]) == 0,
++              unsigned(duplex["outputBindCount"]) == 0, unsigned(duplex["outputStartReturnNanos"]) == 0,
++              unsigned(duplex["inputCreateCount"]) == 0, unsigned(duplex["observedRouteEvents"]) == 0,
++              duplex["outputDataReady"] as? Bool == false, duplex["captureCommitted"] as? Bool == false, duplex["prepared"] as? Bool == false,
++              let owner = unsigned(duplex["ownerGeneration"]), owner > 0,
++              let serial = unsigned(duplex["activePrepareSerial"]), serial > 0,
++              let word = unsigned(duplex["authority"]), word & 31 == 6, word >> 36 > 0,
++              let output = unsigned(duplex["outputAuthority"]), output & (1 << 63) == 0, output & 31 == 18, // Raw + Sound
++              let phases = duplex["phaseFirstNanos"] as? [Any], phases.count > 13,
++              let marker = unsigned(phases[13]), marker > 0,
++              operation["stage"] as? String == "native-call", operation["nativeCall"] as? String == "coreaudio-availability",
++              let id = unsigned(operation["id"]), id > 0, let call = unsigned(operation["nativeCallID"]), call > 0,
++              let started = time(operation["nativeStartedAt"]), started <= Double(marker) * 1e-9,
++              let deadline = time(operation["deadlineAt"]), observed < deadline,
++              Double(marker) * 1e-9 <= observed else { return nil }
++        return Window(owner: owner, serial: serial, intent: word >> 36, authority: word, outputAuthority: output,
++            operation: id, call: call, nativeStarted: started, rawStarted: Double(marker) * 1e-9, deadline: deadline, observed: observed)
++    }
++    static func attempt(window: Window, before: Double, after: Double, latches: [[String: Any]]) -> Attempt {
++        let latch = latches.last { unsigned($0["ownerGeneration"]) == window.owner && $0["source"] as? String == "track" &&
++            unsigned($0["sequence"]) == window.intent + 1 && $0["accepted"] as? Bool == true } ?? [:]
++        return Attempt(window: window, before: before, after: after, latch: latch)
++    }
++    static func verify(_ attempt: Attempt?, duplex: [String: Any], core: [String: Any], snapshot: [String: Any]) -> Result {
++        func reject(_ reason: String) -> Result { Result(exercised: false, reason: reason, evidence: attempt?.evidence ?? [:]) }
++        guard let attempt else { return reject("initialRawStartWindowNotObserved") }
++        let w = attempt.window, latch = attempt.latch
++        guard unsigned(latch["ownerGeneration"]) == w.owner, latch["source"] as? String == "track",
++              unsigned(latch["sequence"]) == w.intent + 1, latch["accepted"] as? Bool == true,
++              let latchBefore = time(latch["beforeUptime"]), let latchAfter = time(latch["afterUptime"]),
++              let latchWord = unsigned(latch["authority"]), latchWord >> 36 == w.intent + 1,
++              unsigned(latch["flags"]) == w.authority & 31, latchWord & ((1 << 36) - 1) == w.authority & ((1 << 36) - 1),
++              let returnedNanos = unsigned(duplex["outputStartReturnNanos"]), returnedNanos > 0 else { return reject("acceptedSameFlagsLatchNotProven") }
++        let returned = Double(returnedNanos) * 1e-9
++        guard w.nativeStarted <= w.rawStarted, w.rawStarted <= w.observed, w.observed <= attempt.before,
++              attempt.before <= latchBefore, latchBefore <= latchAfter, latchAfter <= attempt.after,
++              attempt.after < returned else { return reject("latchMissedRawStartMarkerToReturnWindow") }
++        let receipts = snapshot["duplexPreparationReceipts"] as? [[String: Any]] ?? []
++        guard let old = receipts.first(where: { unsigned($0["ownerGeneration"]) == w.owner && unsigned($0["nativeCallID"]) == w.call &&
++            unsigned($0["audioOperationID"]) == w.operation && unsigned($0["nativePrepareSerial"]) == w.serial }),
++              unsigned(old["expectedIntent"]) == w.intent, old["status"] as? Int == -21,
++              old["abortReason"] as? String == "intentSuperseded", old["consumptionDecision"] as? String == "retryLatest",
++              unsigned(old["consumedIntent"]) == w.intent + 1, unsigned(old["observedAuthority"]) == latchWord,
++              time(old["nativeStartedAt"]) == w.nativeStarted, let oldEnd = time(old["nativeFinishedAt"]),
++              returned <= oldEnd, let deadline = time(old["nativeDeadlineUptime"]), oldEnd < min(deadline, w.deadline),
++              let accepted = receipts.first(where: { unsigned($0["ownerGeneration"]) == w.owner && unsigned($0["audioOperationID"]) == w.operation &&
++                  unsigned($0["expectedIntent"]) == w.intent + 1 && $0["status"] as? Int == 0 && $0["consumptionDecision"] as? String == "accept" }),
++              let acceptedCall = unsigned(accepted["nativeCallID"]), acceptedCall > w.call,
++              let acceptedSerial = unsigned(accepted["nativePrepareSerial"]), acceptedSerial > w.serial,
++              unsigned(accepted["observedAuthority"]) == latchWord, unsigned(accepted["consumedIntent"]) == w.intent + 1,
++              let acceptedStart = time(accepted["nativeStartedAt"]), let acceptedEnd = time(accepted["nativeFinishedAt"]),
++              oldEnd <= acceptedStart, acceptedStart <= acceptedEnd, acceptedEnd < min(deadline, w.deadline),
++              time(accepted["nativeDeadlineUptime"]) == deadline else { return reject("correlatedStaleThenAcceptedReceiptsNotProven") }
++        let operations = snapshot["audioOperations"] as? [[String: Any]] ?? []
++        guard let operation = operations.first(where: { unsigned($0["id"]) == w.operation }), operation["succeeded"] as? Bool == true,
++              time(operation["deadlineAt"]) == w.deadline,
++              operation["callerTimedOut"] as? Bool == false,
++              let calls = operation["nativeCalls"] as? [[String: Any]],
++              calls.contains(where: { unsigned($0["nativeCallID"]) == w.call && time($0["startedAt"]) == w.nativeStarted }),
++              calls.contains(where: { unsigned($0["nativeCallID"]) == acceptedCall && time($0["startedAt"]) == acceptedStart }),
++              unsigned(duplex["ownerGeneration"]) == w.owner, unsigned(duplex["authority"]) == latchWord,
++              let output = unsigned(duplex["outputAuthority"]), output & 31 == 21, // Bound + Active + Sound
++              output & ~UInt64(31) == w.outputAuthority & ~UInt64(31),
++              unsigned(duplex["outputCreateCount"]) == 1, unsigned(duplex["outputStartCount"]) == 1,
++              unsigned(duplex["outputBindCount"]) == 1, (unsigned(duplex["outputCallbacks"]) ?? 0) > 0,
++              unsigned(duplex["observedRouteEvents"]) == 0, unsigned(duplex["inputCreateCount"]) == 0,
++              unsigned(duplex["inputStartCount"]) == 0, unsigned(duplex["physicalGeneration"]) == 0, duplex["outputDataReady"] as? Bool == true,
++              duplex["outputRunning"] as? Bool == true, duplex["captureCommitted"] as? Bool == false,
++              duplex["transportQuarantined"] as? Bool == false,
++              core["cleanupUnconfirmed"] as? Bool == false, core["captureMuted"] as? Bool == true, let diagnostic = core["nativeDiagnostics"] as? [String: Any],
++              diagnostic["firstError"] as? Int == 0, unsigned(diagnostic["unsafeFailureMask"]) == 0,
++              diagnostic["retirementRequested"] as? Bool == false,
++              unsigned(diagnostic["inputRetirementRequired"]) == 0, unsigned(diagnostic["outputRetirementRequired"]) == 0 else { return reject("sameOwnedOutputGenerationProgressNotProven") }
++        return Result(exercised: true, reason: "controlledInitialRawStartSupersession", evidence: attempt.evidence.merging(
++            ["rawStartReturnUptime": returned, "oldReceipt": old, "acceptedReceipt": accepted,
++             "outputCreateCount": 1, "outputStartCount": 1, "outputBindCount": 1,
++             "convertedOutputCallbacks": unsigned(duplex["outputCallbacks"]) ?? 0]) { _, new in new })
++    }
++}
++#endif
+--- /dev/null
++++ b/Experiments/NativeGuestTests/RawOutputSupersessionTests.swift
+@@ -0,0 +1,79 @@
++import Foundation
++
++@main struct RawOutputSupersessionTests {
++    static func main() {
++        typealias Probe = StartupRawOutputSupersession
++        let old: UInt64 = (9 << 36) | 134, new: UInt64 = (10 << 36) | 134
++        var phases = [UInt64](repeating: 0, count: 15); phases[13] = 10_020_000_000
++        let active: [String: Any] = ["id": 4, "stage": "native-call", "nativeCall": "coreaudio-availability", "nativeCallID": 12, "nativeStartedAt": 10.0, "deadlineAt": 11.0]
++        var duplex: [String: Any] = ["enabled": true, "presealOutputPrimingSupported": true,
++            "transportPinned": true, "transportQuarantined": false, "phase": 13, "physicalGeneration": 0,
++            "outputCreateCount": 1, "outputStartCount": 0, "outputBindCount": 0, "outputStartReturnNanos": 0,
++            "inputCreateCount": 0, "inputStartCount": 0, "observedRouteEvents": 0, "outputDataReady": false,
++            "captureCommitted": false, "prepared": false, "ownerGeneration": 7, "activePrepareSerial": 3,
++            "authority": old, "outputAuthority": 210, "phaseFirstNanos": phases]
++        guard let window = Probe.window(duplex: duplex, operation: active, at: 10.03) else { fatalError("valid window rejected") }
++        var missed = duplex; missed["outputStartReturnNanos"] = UInt64(10_040_000_000)
++        precondition(Probe.window(duplex: missed, operation: active, at: 10.05) == nil)
++        var changedOwner = duplex; changedOwner["ownerGeneration"] = 8
++        precondition(Probe.window(duplex: changedOwner, operation: active, at: 10.03)?.same(as: window) == false)
++        var bound = duplex; bound["outputAuthority"] = 213
++        precondition(Probe.window(duplex: bound, operation: active, at: 10.03) == nil)
++        let latch: [String: Any] = ["ownerGeneration": 7, "source": "track", "sequence": 10, "authority": new,
++            "flags": 6, "accepted": true, "beforeUptime": 10.041, "afterUptime": 10.042]
++        let attempt = Probe.attempt(window: window, before: 10.04, after: 10.043, latches: [latch])
++        let before: [String: Any] = ["ownerGeneration": 7, "physicalGeneration": 0, "nativeCallID": 12, "audioOperationID": 4,
++            "nativePrepareSerial": 3, "expectedIntent": 9, "status": -21, "abortReason": "intentSuperseded",
++            "consumptionDecision": "retryLatest", "consumedIntent": 10, "observedAuthority": new,
++            "nativeStartedAt": 10.0, "nativeFinishedAt": 10.07, "nativeDeadlineUptime": 11.0]
++        let after: [String: Any] = ["ownerGeneration": 7, "audioOperationID": 4, "expectedIntent": 10, "status": 0,
++            "consumptionDecision": "accept", "consumedIntent": 10, "observedAuthority": new, "nativeCallID": 13, "nativePrepareSerial": 4, "nativeStartedAt": 10.08,
++            "nativeFinishedAt": 10.1, "nativeDeadlineUptime": 11.0]
++        let operation: [String: Any] = ["id": 4, "succeeded": true, "callerTimedOut": false, "deadlineAt": 11.0,
++            "nativeCalls": [["nativeCallID": 12, "startedAt": 10.0], ["nativeCallID": 13, "startedAt": 10.08]]]
++        var snapshot: [String: Any] = ["duplexPreparationReceipts": [before, after], "audioOperations": [operation]]
++        duplex["authority"] = new; duplex["outputStartCount"] = 1; duplex["outputBindCount"] = 1
++        duplex["outputStartReturnNanos"] = UInt64(10_060_000_000); duplex["outputCallbacks"] = 2
++        duplex["outputDataReady"] = true; duplex["outputRunning"] = true
++        duplex["outputAuthority"] = 213
++        let core: [String: Any] = ["cleanupUnconfirmed": false, "captureMuted": true,
++            "nativeDiagnostics": ["firstError": 0, "unsafeFailureMask": 0, "retirementRequested": false,
++                "inputRetirementRequired": 0, "outputRetirementRequired": 0]]
++        precondition(Probe.verify(attempt, duplex: duplex, core: core, snapshot: snapshot).exercised)
++        precondition(!Probe.verify(nil, duplex: duplex, core: core, snapshot: snapshot).exercised)
++        missed = duplex; missed["outputStartReturnNanos"] = UInt64(10_040_000_000)
++        precondition(!Probe.verify(attempt, duplex: missed, core: core, snapshot: snapshot).exercised)
++        missed = duplex; missed["outputStartCount"] = 2
++        precondition(!Probe.verify(attempt, duplex: missed, core: core, snapshot: snapshot).exercised)
++        missed = duplex; missed["outputCallbacks"] = 0
++        precondition(!Probe.verify(attempt, duplex: missed, core: core, snapshot: snapshot).exercised)
++        var changed = after; changed["nativeDeadlineUptime"] = 12.0
++        snapshot["duplexPreparationReceipts"] = [before, changed]
++        precondition(!Probe.verify(attempt, duplex: duplex, core: core, snapshot: snapshot).exercised)
++        changed = before; changed["status"] = 0; snapshot["duplexPreparationReceipts"] = [changed, after]
++        precondition(!Probe.verify(attempt, duplex: duplex, core: core, snapshot: snapshot).exercised)
++        changed = before; changed["nativeCallID"] = 14; snapshot["duplexPreparationReceipts"] = [changed, after]
++        precondition(!Probe.verify(attempt, duplex: duplex, core: core, snapshot: snapshot).exercised)
++        changed = after; changed["observedAuthority"] = old; snapshot["duplexPreparationReceipts"] = [before, changed]
++        precondition(!Probe.verify(attempt, duplex: duplex, core: core, snapshot: snapshot).exercised)
++        changed = after; changed["nativePrepareSerial"] = 3; snapshot["duplexPreparationReceipts"] = [before, changed]
++        precondition(!Probe.verify(attempt, duplex: duplex, core: core, snapshot: snapshot).exercised)
++        snapshot["duplexPreparationReceipts"] = [before, after]
++        missed = duplex; missed["outputAuthority"] = 245
++        precondition(!Probe.verify(attempt, duplex: missed, core: core, snapshot: snapshot).exercised)
++        var earlyDeadline = active; earlyDeadline["deadlineAt"] = 10.09
++        var initial = duplex; initial["authority"] = old; initial["outputAuthority"] = 210
++        initial["phaseFirstNanos"] = phases; initial["outputStartReturnNanos"] = 0; initial["outputStartCount"] = 0
++        initial["outputBindCount"] = 0; initial["outputDataReady"] = false
++        let earlyWindow = Probe.window(duplex: initial, operation: earlyDeadline, at: 10.03)!
++        let earlyAttempt = Probe.attempt(window: earlyWindow, before: 10.04, after: 10.043, latches: [latch])
++        var earlyOperation = operation; earlyOperation["deadlineAt"] = 10.09; snapshot["audioOperations"] = [earlyOperation]
++        precondition(!Probe.verify(earlyAttempt, duplex: duplex, core: core, snapshot: snapshot).exercised)
++        snapshot["audioOperations"] = [operation]
++        var failed = core; failed["cleanupUnconfirmed"] = true
++        precondition(!Probe.verify(attempt, duplex: duplex, core: failed, snapshot: snapshot).exercised)
++        precondition(Probe.unsigned(NSNumber(value: UInt64.max)) == UInt64.max)
++        precondition(Probe.unsigned(true) == nil && Probe.unsigned(1.5) == nil)
++        print("PASS: controlled raw-start eligibility, exact latch/span/deadline/owner/registration proof; missed windows reject")
++    }
++}
+--- /dev/null
++++ b/Experiments/NativeGuestTests/run-raw-output-supersession.sh
+@@ -0,0 +1,10 @@
++#!/bin/bash
++set -euo pipefail
++root="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
++build="$(mktemp -d "${TMPDIR:-/tmp}/raw-output-supersession.XXXXXX")"
++trap 'rm -rf -- "$build"' EXIT
++export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
++xcrun --sdk macosx swiftc -swift-version 5 -D DEBUG -warnings-as-errors -parse-as-library \
++    "$root/NativeMacGuest/StartupRawOutputSupersession.swift" "$root/Experiments/NativeGuestTests/RawOutputSupersessionTests.swift" \
++    -o "$build/tests"
++"$build/tests"

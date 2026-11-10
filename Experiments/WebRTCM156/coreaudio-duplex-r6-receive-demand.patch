@@ -1,0 +1,523 @@
+--- a/Experiments/NativeGuest/GuestSystemAudio.swift
++++ b/Experiments/NativeGuest/GuestSystemAudio.swift
+@@ -255,6 +255,54 @@
+     let microphoneRevision: UInt64
+ }
+ 
++// BEGIN RECEIVE DEMAND HELPERS -- Foundation-only fixtures use this exact code.
++// A peer/receiver membership can revoke queued control work synchronously.
++// This lock is never used by an audio callback or the native worker.
++final class GuestAudioDemandPermit: @unchecked Sendable {
++    private let lock = NSLock()
++    private var active = true
++    var isActive: Bool { lock.lock(); defer { lock.unlock() }; return active }
++    func revoke() { lock.lock(); active = false; lock.unlock() }
++}
++
++// All methods are confined to the engine's MainActor. An event during an await
++// keeps exactly one pending pass; an empty next() ends the task without a gap
++// in which an event could be lost. A cancelled instance is never reused.
++@MainActor final class GuestAudioDemandReconciliation {
++    let permit = GuestAudioDemandPermit()
++    private var running = false
++    private var pending = false
++    func request() -> Bool {
++        guard permit.isActive else { return false }
++        pending = true
++        guard !running else { return false }
++        running = true
++        return true
++    }
++    func next() -> Bool {
++        guard permit.isActive, pending else { running = false; return false }
++        pending = false
++        return true
++    }
++    func cancel() { permit.revoke(); pending = false }
++}
++
++// Protected by GuestSystemAudio.lock. An older completion cannot clear a
++// newer activation's obligation, and no missing typed proof implies readiness.
++struct GuestAudioActivationObligation {
++    private var requests: Set<UUID> = []
++    private var latestRequest: UUID?
++    private var admitted = false
++    private(set) var prepared = false
++    var pending: Bool { !requests.isEmpty }
++    var unresolved: Bool { admitted && !pending && !prepared }
++    mutating func begin(_ request: UUID) { requests.insert(request); latestRequest = request; admitted = true }
++    mutating func end(_ request: UUID) { requests.remove(request) }
++    func isLatest(_ request: UUID) -> Bool { latestRequest == request }
++    mutating func acceptInputProof() { prepared = true }
++}
++// END RECEIVE DEMAND HELPERS
++
+ // A status-zero output-only preparation has no input seal. Activation readiness
+ // uses the immutable typed native receipt, never a passive diagnostic snapshot.
+ enum GuestDuplexInputPreparationProof {
+@@ -304,7 +352,7 @@
+     private var duplexSequence: UInt32 = 0
+     private var duplexDesiredMuted = true, duplexInputAuthorized = false, duplexTerminal = false
+     private var duplexServerUnmuted = false
+-    private var duplexActivationPending = false
++    private var duplexActivationObligation = GuestAudioActivationObligation()
+     private var duplexMicrophoneRevision: UInt64 = 0, duplexOwnerGeneration: UInt64 = 0
+     private var duplexSealedToken: UInt64 = 0, duplexWord: UInt64 = 0
+     private var duplexLastFlags: UInt32?
+@@ -783,7 +831,7 @@
+     /// Borrows this owner's input; never changes its sender or mute intent.
+     func beginPrivateInputCheck(timeout: TimeInterval? = nil) async -> Bool {
+         #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
+-        if backend == .coreAudioAEC3, locked({ duplexActivationPending || (!duplexDesiredMuted && !duplexServerUnmuted) }) {
++        if backend == .coreAudioAEC3, locked({ duplexActivationObligation.pending || (!duplexDesiredMuted && !duplexServerUnmuted) }) {
+             update(["privateInputUnsupportedReason": "networkActivationPending", "privateInputAdmissionRejectedBeforeHardware": true])
+             return false
+         }
+@@ -859,18 +907,19 @@
+         #endif
+         #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
+         let duplexActivationIntent: UInt64?
++        let duplexActivationRequest = UUID()
++        defer { locked { duplexActivationObligation.end(duplexActivationRequest) } }
+         if backend == .coreAudioAEC3 {
+             guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+             guard let intent = locked({ () -> UInt64? in
+                 guard !terminationRequested, !duplexTerminal else { return nil }
+-                duplexActivationPending = true
++                duplexActivationObligation.begin(duplexActivationRequest)
+                 duplexInputAuthorized = true
+                 guard publishDuplexIntentLocked(source: "activation") else { return nil }
+                 return UInt64(duplexSequence)
+             }) else { return false }
+             duplexActivationIntent = intent
+         } else { duplexActivationIntent = nil }
+-        defer { locked { duplexActivationPending = false } }
+         #endif
+         return await perform("microphone-activate", timeout: timeout ?? inputStartupBudget) {
+             #if DEBUG && ROCK_PRIVATE_INPUT_EXPERIMENT
+@@ -896,7 +945,8 @@
+                     self.locked {
+                         // This failed operation cannot revoke a newer intent
+                         // or issue a second, less strict physical preparation.
+-                        if UInt64(self.duplexSequence) == intent && module.revokeExperimentalCoreAudioDuplexIntent(expectedIntent: intent) {
++                        if self.duplexActivationObligation.isLatest(duplexActivationRequest),
++                           UInt64(self.duplexSequence) == intent && module.revokeExperimentalCoreAudioDuplexIntent(expectedIntent: intent) {
+                             self.duplexTerminal = true; self.duplexServerUnmuted = false
+                             self.inputActivation = wasActivated
+                             self.microphoneOptIn = self.inputActivation.inputAvailable
+@@ -1006,6 +1056,38 @@
+             return success
+         }
+     }
++
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++    // Semantic receive events only wake the serialized controller. They grant
++    // neither capture authorization nor physical/native readiness.
++    func reconcileDuplexReceiveDemand(_ permit: GuestAudioDemandPermit) async -> Bool {
++        guard backend == .coreAudioAEC3, permit.isActive else { return true }
++        // Include a preceding authorized input transaction's bounded queue time.
++        return await perform("receive-audio-demand", timeout: 10) {
++            guard permit.isActive else { return true }
++            guard !self.closed, !self.locked({ self.terminationRequested }),
++                  let module = self.currentModule else { return false }
++            let success = self.applyDuplexAvailability(module, receiveDemandPermit: permit)
++            self.readSnapshot(module)
++            return !permit.isActive || success
++        }
++    }
++
++    // A withdrawn activation error may be ignored by Session. Close the same
++    // unprepared owner explicitly, unless another activation still owns its
++    // obligation. This never issues another Prepare or changes user intent.
++    func closeUnpreparedDuplexActivationAfterFailure() -> Bool {
++        locked {
++            guard backend == .coreAudioAEC3, !terminationRequested,
++                  duplexOwnerGeneration != 0, ownedFactory != nil,
++                  duplexActivationObligation.unresolved else { return false }
++            duplexTerminal = true; duplexServerUnmuted = false
++            _ = publishDuplexIntentLocked(source: "unresolvedActivation")
++            cached["duplexUnresolvedActivationClosed"] = true
++            return true
++        }
++    }
++    #endif
+ 
+     /// Explicit acoustic comparison only. The native knob couples AEC, NS and AGC.
+     /// Ordinary duplex runs never call this; failures are followed by mute/Leave.
+@@ -1210,11 +1292,17 @@
+         currentModule?.setExperimentalCoreAudioDuplexHoldPhase(phase, milliseconds: min(milliseconds, 1000))
+     }
+ 
+-    private func applyDuplexAvailability(_ module: LKRTCAudioDeviceModule, requireInputReady: Bool = false) -> Bool {
++    private func applyDuplexAvailability(_ module: LKRTCAudioDeviceModule, requireInputReady: Bool = false,
++                                         receiveDemandPermit: GuestAudioDemandPermit? = nil) -> Bool {
+         let deadline = duplexOperationDeadline ?? ProcessInfo.processInfo.systemUptime + inputStartupBudget
+         for _ in 0..<4 {
+-            let intent = locked { (duplexSequence, duplexTerminal || terminationRequested) }
++            guard receiveDemandPermit?.isActive != false else { return true }
++            let intent = locked { (duplexSequence, duplexTerminal || terminationRequested,
++                receiveDemandPermit != nil && duplexInputAuthorized && !duplexActivationObligation.prepared) }
+             guard !intent.1 else { return false }
++            // A queued receive hint must never steal the first input transaction
++            // from the explicit activation operation and its original deadline.
++            if intent.2 { return true }
+             let started = ProcessInfo.processInfo.systemUptime
+             let nativeID = operationTrace.beginNativeCall("coreaudio-availability", at: started)
+             let result = module.prepareExperimentalCoreAudioDuplex(expectedIntent: UInt64(intent.0), deadlineUptime: deadline)
+@@ -1249,6 +1337,12 @@
+                 }
+                 cached["duplexPreparationDeferredUntilOwnedTransport"] = false
+                 duplexSealedToken = result.sealedToken
++                if GuestDuplexInputPreparationProof.accepts(status: result.status,
++                    owner: result.ownerGeneration, expectedOwner: duplexOwnerGeneration,
++                    physicalGeneration: result.physicalGeneration, token: result.sealedToken,
++                    observedAuthority: result.observedAuthority, expectedIntent: UInt64(intent.0)) {
++                    duplexActivationObligation.acceptInputProof()
++                }
+                 if duplexServerUnmuted && !duplexDesiredMuted {
+                     return module.commitExperimentalCoreAudioDuplexCapture(expectedToken: result.sealedToken)
+                 }
+--- a/Experiments/NativeGuest/GuestPeer.swift
++++ b/Experiments/NativeGuest/GuestPeer.swift
+@@ -7,6 +7,31 @@
+ 
+ enum GuestPeerError: Error { case malformed, closed, candidateOverflow, unsupportedCodec, iceFailed }
+ enum GuestPeerTarget: String { case publisher = "PUBLISHER", subscriber = "SUBSCRIBER" }
++
++#if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++// The native receiver has one observer slot. Keep one observing wrapper and
++// delegate for its entire peer lifetime, including remove/re-add notifications.
++private final class GuestAudioReceiverDemandObserver: NSObject, LKRTCRtpReceiverDelegate, @unchecked Sendable {
++    private let lock = NSLock()
++    private var membership: GuestAudioDemandPermit?
++    private let deliver: @Sendable (GuestAudioDemandPermit) -> Void
++    init(deliver: @escaping @Sendable (GuestAudioDemandPermit) -> Void) { self.deliver = deliver }
++    func activate() {
++        lock.lock(); defer { lock.unlock() }
++        if membership == nil { membership = GuestAudioDemandPermit() }
++    }
++    func deactivate() {
++        lock.lock(); let previous = membership; membership = nil; lock.unlock()
++        previous?.revoke()
++    }
++    func rtpReceiver(_ receiver: LKRTCRtpReceiver, didReceiveFirstPacketFor mediaType: LKRTCRtpMediaType) {
++        guard mediaType == .audio else { return }
++        lock.lock(); let permit = membership; lock.unlock()
++        guard let permit, permit.isActive else { return }
++        deliver(permit)
++    }
++}
++#endif
+ 
+ /// Stable for one receiver attachment; native renderers must detach when it disappears.
+ struct GuestRemoteVideo {
+@@ -31,6 +56,12 @@
+     private let physicalAudio: Bool
+     private let icePolicy: GuestICEPolicy
+     private var incomingAudio: [LKRTCAudioTrack] = []
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++    private var incomingAudioReceivers: [(receiver: LKRTCRtpReceiver, observer: GuestAudioReceiverDemandObserver)] = []
++    var onIncomingAudioDemand: ((String) -> Void)?
++    var incomingAudioDemandEventFinishedForTesting: (() -> Void)?
++    var retainedIncomingAudioReceiversForTesting: Int { incomingAudioReceivers.count }
++    #endif
+     private var iceTimeout: Task<Void, Never>?
+     private var lastICEState: LKRTCIceConnectionState = .new
+     private var activeIncomingMediaDemand = false
+@@ -123,6 +154,11 @@
+         try await setRemote(.init(type: .offer, sdp: sdp))
+         let answer = try await descriptionForOffer(false)
+         try await setLocal(answer)
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        // The control operation's worker bookend runs after EnableMedia_w.
++        // A first-packet event separately covers packet-delayed SSRC creation.
++        if target == .subscriber { onIncomingAudioDemand?("description-applied") }
++        #endif
+         probeLog("video-negotiation", ["target": target.rawValue, "remote": GuestSDPSummary.video(sdp), "local": GuestSDPSummary.video(answer.sdp)])
+         return ["type": "answer", "sdp": answer.sdp]
+     }
+@@ -435,6 +471,10 @@
+ 
+     func close() {
+         guard !closed else { return }; closed = true
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        onIncomingAudioDemand = nil
++        incomingAudioReceivers.forEach { $0.observer.deactivate(); $0.receiver.delegate = nil }
++        #endif
+         patternTask?.cancel(); patternTask = nil
+         iceTimeout?.cancel(); iceTimeout = nil
+         audioTrack?.isEnabled = false; videoTrack?.isEnabled = false; screenTrack?.isEnabled = false
+@@ -444,6 +484,9 @@
+         localICE.removeAll(); remoteICE.removeAll(); sendCandidate = nil
+         connection.stopRtcEventLog()
+         connection.close(); connection.delegate = nil
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        incomingAudioReceivers.removeAll()
++        #endif
+         audioTrack = nil; videoTrack = nil; videoSender = nil; source = nil
+         screenTrack = nil; screenSender = nil; screenSource = nil
+     }
+@@ -647,11 +690,16 @@
+ #endif
+                 }
+             }
+-            if let track = receiver.track as? LKRTCAudioTrack, !incomingAudio.contains(where: { $0.isEqual(track) }) {
+-                incomingAudio.append(track); track.add(pcmMeter)
+-#if DEBUG
+-                receiverAttachmentsForTesting += 1
+-#endif
++            if let track = receiver.track as? LKRTCAudioTrack {
++                #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++                observeIncomingAudioDemand(receiver)
++                #endif
++                if !incomingAudio.contains(where: { $0.isEqual(track) }) {
++                    incomingAudio.append(track); track.add(pcmMeter)
++#if DEBUG
++                    receiverAttachmentsForTesting += 1
++#endif
++                }
+             }
+             probeLog("remote-track", ["target": target.rawValue, "kind": receiver.track?.kind ?? "unknown"])
+         }
+@@ -662,6 +710,12 @@
+ #if DEBUG
+             defer { self.receiverEventFinishedForTesting?() }
+ #endif
++            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            if let entry = incomingAudioReceivers.first(where: { $0.receiver.isEqual(receiver) }) {
++                entry.observer.deactivate()
++                onIncomingAudioDemand?("receiver-removed")
++            }
++            #endif
+             guard let track = receiver.track else { return }
+             if let index = incomingVideo.firstIndex(where: { $0.video.track.isEqual(track) }) {
+                 let removed = incomingVideo.remove(at: index)
+@@ -679,6 +733,31 @@
+             }
+         }
+     }
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++    private func observeIncomingAudioDemand(_ receiver: LKRTCRtpReceiver) {
++        guard target == .subscriber, onIncomingAudioDemand != nil else { return }
++        if let entry = incomingAudioReceivers.first(where: { $0.receiver.isEqual(receiver) }) {
++            entry.observer.activate()
++        } else {
++            let observer = GuestAudioReceiverDemandObserver { [weak self] permit in
++                // Native notification is signaling-thread metadata, not decoded
++                // PCM. Only schedule an actor hint; never enter HAL here.
++                Task { @MainActor [weak self] in
++                    guard let self else { return }
++                    defer { self.incomingAudioDemandEventFinishedForTesting?() }
++                    guard permit.isActive, !self.closed else { return }
++                    self.onIncomingAudioDemand?("first-audio-packet")
++                }
++            }
++            // SetObserver may synchronously backfill an already received packet.
++            // Publish retention and live membership before assigning the delegate.
++            incomingAudioReceivers.append((receiver, observer))
++            observer.activate()
++            receiver.delegate = observer
++        }
++        onIncomingAudioDemand?("receiver-added")
++    }
++    #endif
+     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange stateChanged: LKRTCSignalingState) {}
+     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {}
+     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didRemove stream: LKRTCMediaStream) {}
+--- a/Experiments/NativeGuest/GuestEngine.swift
++++ b/Experiments/NativeGuest/GuestEngine.swift
+@@ -115,6 +115,10 @@
+     private var serverMute: [String: Bool] = [:]
+     private var lastMediaEvent = ProcessInfo.processInfo.systemUptime
+     private(set) var subscriber: GuestPeer?
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++    private var receiveAudioDemandState: GuestAudioDemandReconciliation?
++    private var receiveAudioDemandTask: Task<Void, Never>?
++    #endif
+     private var publisher: GuestPeer?
+     private var transport: GuestTransport?
+     private var reader: Task<Void, Never>?
+@@ -279,6 +283,16 @@
+         }
+         peer.onFailure = { [weak self] in self?.recordFailure($0) }
+         if target == .subscriber {
++            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            if systemAudio?.backend == .coreAudioAEC3 {
++                let state = GuestAudioDemandReconciliation()
++                receiveAudioDemandState = state
++                peer.onIncomingAudioDemand = { [weak self, weak peer] source in
++                    guard let self, let peer else { return }
++                    self.reconcileIncomingAudioDemand(peer, state: state, source: source)
++                }
++            }
++            #endif
+             peer.onIncomingVideoChange = { [weak self, weak peer] _ in
+                 guard let self, let peer, self.subscriber === peer, !self.closing, !self.outputSuppressed else { return }
+                 self.onIncomingVideoChange?(self.incomingVideo)
+@@ -286,6 +300,36 @@
+         }
+         return peer
+     }
++
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++    private func reconcileIncomingAudioDemand(_ peer: GuestPeer, state: GuestAudioDemandReconciliation, source: String) {
++        guard !closing, !outputSuppressed, failure == nil, subscriber === peer,
++              receiveAudioDemandState === state, state.permit.isActive else { return }
++        probeLog("receive-audio-demand", ["client": label, "peerID": peer.diagnosticID, "source": source])
++        guard state.request() else { return }
++        receiveAudioDemandTask = Task { [weak self, weak peer] in
++            while state.next() {
++                guard let self, let peer, !self.closing, !self.outputSuppressed, self.failure == nil,
++                      self.subscriber === peer, self.receiveAudioDemandState === state,
++                      let systemAudio = self.systemAudio else { state.cancel(); return }
++                let success = await systemAudio.reconcileDuplexReceiveDemand(state.permit)
++                guard state.permit.isActive, !self.closing, !self.outputSuppressed,
++                      self.subscriber === peer, self.receiveAudioDemandState === state else { return }
++                if !success {
++                    state.cancel()
++                    self.recordFailure(GuestSystemAudioError.setupFailedOrTimedOut)
++                    return
++                }
++            }
++        }
++    }
++
++    private func cancelIncomingAudioDemand() {
++        receiveAudioDemandState?.cancel()
++        receiveAudioDemandTask?.cancel()
++        subscriber?.onIncomingAudioDemand = nil
++    }
++    #endif
+ 
+     private func receive(_ event: [String: Any]) async throws {
+         guard let kind = event["event"] as? String else { throw GuestEngineError.malformed }
+@@ -668,6 +712,11 @@
+     func activateMicrophone() async throws {
+         try checkActive()
+         if let systemAudio, !(await systemAudio.activateMicrophone()) {
++            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            if !closing, !outputSuppressed, systemAudio.closeUnpreparedDuplexActivationAfterFailure() {
++                recordFailure(GuestSystemAudioError.setupFailedOrTimedOut)
++            }
++            #endif
+             throw GuestSystemAudioError.microphoneActivationFailure(authorization: AVCaptureDevice.authorizationStatus(for: .audio))
+         }
+         try checkActive()
+@@ -777,6 +826,9 @@
+     }
+ 
+     func suppressOutgoingMedia() {
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        cancelIncomingAudioDemand()
++        #endif
+         systemAudio?.invalidateStoppedInputPreparation()
+         outputSuppressed = true
+         setScreenShareIntent(false)
+@@ -930,6 +982,9 @@
+     }
+     private func recordFailure(_ error: Error) {
+         guard !closing, failure == nil else { return }
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        cancelIncomingAudioDemand()
++        #endif
+         systemAudio?.invalidateStoppedInputPreparation()
+         failure = error
+         setScreenShareIntent(false)
+@@ -999,6 +1054,11 @@
+     func interruptTransportForTesting() async { await transport?.close() }
+ 
+     private func cleanup(sendLeave: Bool) async -> Bool {
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        cancelIncomingAudioDemand()
++        await receiveAudioDemandTask?.value
++        receiveAudioDemandTask = nil; receiveAudioDemandState = nil
++        #endif
+         _ = await drainStoppedInputPreparation()
+         let subscriptionsWork = subscriptionReconciliation
+         subscriptionsWork?.cancel()
+--- a/Experiments/NativeGuestTests/EngineTests.swift
++++ b/Experiments/NativeGuestTests/EngineTests.swift
+@@ -22,6 +22,9 @@
+         try await idempotentLeave()
+         for action in UnmuteInterruption.allCases { try await gatedUnmute(action) }
+         try await receiverIdentityLifecycle()
++        #if ROCK_COREAUDIO_DUPLEX_R6
++        try await receiverAudioDemandLifecycle()
++        #endif
+         try await receiverPublicationReassociation()
+         try await mutedCameraPublicationAndDeniedKinds()
+         try await cameraPrivacyLifecycle()
+@@ -948,6 +951,49 @@
+         }
+     }
+ 
++    #if ROCK_COREAUDIO_DUPLEX_R6
++    private static func receiverAudioDemandLifecycle() async throws {
++        let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
++        let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
++            decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
++        let peer = try GuestPeer(target: .subscriber, factory: factory); defer { peer.close() }
++        guard let transceiver = peer.connection.addTransceiver(of: .audio) else { preconditionFailure("Missing audio receiver") }
++        let receiver = transceiver.receiver
++        var hints: [String] = []
++        peer.onIncomingAudioDemand = { hints.append($0) }
++        await receiverEvent(peer) { peer.peerConnection(peer.connection, didAdd: receiver, streams: []) }
++        guard let observer = receiver.delegate else { preconditionFailure("First-packet observer was not installed") }
++        let duplicate = peer.connection.receivers.first { $0.isEqual(receiver) }!
++        precondition(receiver !== duplicate && receiver.isEqual(duplicate))
++        await receiverEvent(peer) { peer.peerConnection(peer.connection, didAdd: duplicate, streams: []) }
++        precondition(peer.retainedIncomingAudioReceiversForTesting == 1 && duplicate.delegate == nil)
++        precondition(receiver.delegate === observer, "Duplicate wrappers cannot replace the native observer")
++        precondition(peer.pcmMeter.snapshot.samples == 0, "Demand must not depend on decoded PCM")
++        func firstPacket(_ beforeDelivery: () -> Void = {}) async {
++            await withCheckedContinuation { finished in
++                peer.incomingAudioDemandEventFinishedForTesting = {
++                    peer.incomingAudioDemandEventFinishedForTesting = nil; finished.resume()
++                }
++                observer.rtpReceiver(receiver, didReceiveFirstPacketFor: .audio)
++                beforeDelivery()
++            }
++        }
++        await firstPacket()
++        precondition(hints.filter { $0 == "first-audio-packet" }.count == 1)
++        await receiverEvent(peer) { peer.peerConnection(peer.connection, didRemove: duplicate) }
++        precondition(receiver.delegate === observer && peer.retainedIncomingAudioReceiversForTesting == 1,
++                     "Removal closes membership while retaining the one observing wrapper")
++        await receiverEvent(peer) { peer.peerConnection(peer.connection, didAdd: duplicate, streams: []) }
++        precondition(receiver.delegate === observer && duplicate.delegate == nil)
++        await firstPacket()
++        precondition(hints.filter { $0 == "first-audio-packet" }.count == 2)
++        let beforeClose = hints.count
++        await firstPacket { peer.close() }
++        precondition(hints.count == beforeClose && receiver.delegate == nil,
++                     "A queued old-peer packet cannot schedule control after close")
++    }
++    #endif
++
+     private static func receiverPublicationReassociation() async throws {
+         try await exercise("receiver-publication") { engine in
+             let peer = try engine.prepareSubscriberForTesting()
+--- a/Experiments/NativeGuestTests/run-engine.sh
++++ b/Experiments/NativeGuestTests/run-engine.sh
+@@ -3,6 +3,12 @@
+ tests_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+ repo_dir="$(cd -- "$tests_dir/../.." && pwd)"
+ framework_dir="${1:-$repo_dir/.build/native-webrtc-15003/release-r3/LiveKitWebRTC.xcframework/macos-arm64}"
++compiler_flags=(-D DEBUG)
++case "${2:-}" in
++    "") ;;
++    --duplex-audio-experiment) compiler_flags+=(-D ROCK_COREAUDIO_EXPERIMENT -D ROCK_PRIVATE_INPUT_EXPERIMENT -D ROCK_COREAUDIO_DIAGNOSTICS_R4 -D ROCK_COREAUDIO_RETIREMENT_R5 -D ROCK_STOPPED_INPUT_GRAPH -D ROCK_COREAUDIO_DUPLEX_R6) ;;
++    *) echo "Unknown engine test option" >&2; exit 2 ;;
++esac
+ build_dir="$(mktemp -d "${TMPDIR:-/tmp}/native-guest-engine-tests.XXXXXX")"
+ trap 'rm -rf -- "$build_dir"' EXIT
+ sources=()
+@@ -10,7 +16,7 @@
+     if [[ "$(basename -- "$source")" != Main.swift ]]; then sources+=("$source"); fi
+ done
+ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+-xcrun --sdk macosx swiftc -swift-version 5 -D DEBUG -parse-as-library -O -target arm64-apple-macos13.0 \
++xcrun --sdk macosx swiftc -swift-version 5 "${compiler_flags[@]}" -parse-as-library -O -target arm64-apple-macos13.0 \
+     -F "$framework_dir" -framework LiveKitWebRTC -Xlinker -rpath -Xlinker "$framework_dir" \
+     "$repo_dir/Shared/GuestAudioProfile.swift" "$repo_dir/Shared/GuestAudioOwnerLease.swift" "${sources[@]}" "$repo_dir/RockNRoll/NativeVideoPixelBuffer.swift" "$tests_dir/EngineTests.swift" -o "$build_dir/engine-tests"
+ if "$build_dir/engine-tests" >"$build_dir/results.log" 2>&1; then

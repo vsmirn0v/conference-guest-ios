@@ -1,0 +1,75 @@
+{
+  "formatVersion": 1,
+  "candidateRoot": ".build/airpods-transition-startup/r6-receive-demand-followup",
+  "baseAppLock": "coreaudio-duplex-r6-activation-proof.lock.json",
+  "baseAppLockSHA256": "d26e2bf0e80aabb7bf93cd6b8bf59e0c0bdbda191819368962fca99831cd7f4c",
+  "sdkBinarySHA256": "ef48fbe7f13a816d7ca6ad7e4a2db1d060c04cbfe9edeab9f0df22c30978bde7",
+  "patch": "coreaudio-duplex-r6-receive-demand.patch",
+  "patchSHA256": "134ea0b4da86acb9390c646d2c395b820e4f0ed0114f503c7a4afd63e627c252",
+  "evidenceSHA256": "2a3dc6676b513708b2a72bfca75a0e95819491ba54789508160d6b49404d4440",
+  "sourceFiles": [
+    {
+      "path": "Experiments/NativeGuest/GuestSystemAudio.swift",
+      "baselineSHA256": "861921ec4ab960434c3138717599f00bb4c00f0e2fd0bd69a5cda0e15e880891",
+      "sha256": "231cdb53301d78c3428f9f470d9ffc450bb2d3d1b2cba27fbe8575a9fecf2263"
+    },
+    {
+      "path": "Experiments/NativeGuest/GuestPeer.swift",
+      "baselineSHA256": "1c1659c841deb7649c17f288f610c67522585409e39f2406eedb634b0cf7e79c",
+      "sha256": "22f3a6c22842882b167a454c3889a89490e223add02f024f9e34e93d910d988b"
+    },
+    {
+      "path": "Experiments/NativeGuest/GuestEngine.swift",
+      "baselineSHA256": "3c748adb7633fc65bd3e8d2307c7f7d8db287e71804b0288436e28dbfcd64ad9",
+      "sha256": "baaa51b682c4ee676f481430a76e62c00a2b6ae2b7e022f40331c11b324a5816"
+    },
+    {
+      "path": "Experiments/NativeGuestTests/EngineTests.swift",
+      "baselineSHA256": "fda23a1419282fc69c1aba988b9f7e3bb14cb1a621c2e2750cfba103fa5c7fbd",
+      "sha256": "2560c2b38a3f0e60d6df583ab3a28caad248a519456c15bceffffdac0706dd71"
+    },
+    {
+      "path": "Experiments/NativeGuestTests/run-engine.sh",
+      "baselineSHA256": "35b278e776b29c9289abb6a81d1077f1bbc9a11952ed468d11a3089771484e8f",
+      "sha256": "8545797dbd46f1c35907dac9b0a665059b786031cd1d36bfbbc240c69693ecf9"
+    }
+  ],
+  "tests": [
+    {
+      "log": "construction-test.log",
+      "sha256": "2ddfd3dd761c6cb463cf556995e1b68d3be3aef6dc210b8b32bc7600203de07a",
+      "passed": true,
+      "compilerWarnings": 0,
+      "nativeIOCreated": false
+    },
+    {
+      "log": "system-audio-default-test.log",
+      "sha256": "854887d8278283bab61b3e2471bee851e649fa49249fa20bfff46dd12a71006d",
+      "passed": true,
+      "compilerWarnings": 0,
+      "nativeIOCreated": false
+    },
+    {
+      "log": "system-audio-r6-test.log",
+      "sha256": "854887d8278283bab61b3e2471bee851e649fa49249fa20bfff46dd12a71006d",
+      "passed": true,
+      "compilerWarnings": 0,
+      "nativeIOCreated": false
+    },
+    {
+      "log": "engine-default-test.log",
+      "sha256": "75fdcbc3cb2ada6a89951a789a87cff9b181f3cc1bdcadf0b7c74995f7e92909",
+      "passed": true,
+      "compilerWarnings": 2,
+      "nativeIOCreated": false
+    },
+    {
+      "log": "engine-r6-test.log",
+      "sha256": "75fdcbc3cb2ada6a89951a789a87cff9b181f3cc1bdcadf0b7c74995f7e92909",
+      "passed": true,
+      "compilerWarnings": 2,
+      "nativeIOCreated": false
+    }
+  ],
+  "runtimeLateDemandValidated": false
+}

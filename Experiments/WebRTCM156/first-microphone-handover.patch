@@ -1,0 +1,1504 @@
+--- a/modules/audio_device/audio_engine_device.h
++++ b/modules/audio_device/audio_engine_device.h
+@@ -104,6 +104,8 @@
+ };
+ 
+ class FineAudioBuffer;
++struct PreparedInputGraph;
++struct AudioGraphCallbackBridge;
+ 
+ extern NSString* const kAudioEngineInputMixerNodeKey;
+ 
+@@ -364,6 +366,50 @@
+   int32_t SetEngineState(EngineState enable);
+   int32_t GetEngineState(EngineState* enabled);
+ 
++#if TARGET_OS_OSX
++  struct InputPreparationRequest {
++    struct Route { AudioDeviceID input = 0, output = 0;
++      AudioStreamBasicDescription input_format{}, output_format{}; bool valid = false; } route;
++    EngineState previous, next;
++    uint64_t generation = 0, capture_state = 0, graph_id = 0;
++    uintptr_t owner = 0, worker_identity = 0;
++    int64_t deadline_ms = 0;
++    bool eligible = false;
++  };
++  struct StoppedInputPreparationRequest {
++    EngineState state;
++    InputPreparationRequest::Route route;
++    uint64_t generation = 0, capture_state = 0, graph_id = 0;
++    uint64_t configuration_generation = 0;
++    uintptr_t module_identity = 0, worker_identity = 0;
++    int64_t deadline_ms = 0;
++    int32_t result = 1;  // Skipped until a resource reservation succeeds; negative failures never fall through.
++    bool eligible = false, initialized_at_reservation = false;
++  };
++  StoppedInputPreparationRequest BeginStoppedInputPreparation(uint64_t capture_state, int64_t deadline_ms);
++  static std::shared_ptr<PreparedInputGraph> BuildStoppedInputGraph(const StoppedInputPreparationRequest&);
++  int32_t StageStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&);
++  static int32_t PrepareStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&);
++  int32_t PublishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&);
++  int32_t AttachStoppedInputGraph(const InputPreparationRequest&, const std::shared_ptr<PreparedInputGraph>&);
++  int32_t FinishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>&, bool cleanup_confirmed, bool require_current = false);
++  bool HasStoppedInputGraph();
++  void InvalidateStoppedInputPreparation();
++  InputPreparationRequest BeginInputPreparation(bool input, bool output, uint64_t capture_state);
++  bool InputPreparationIsCurrent(const InputPreparationRequest&);
++  static std::shared_ptr<PreparedInputGraph> BuildInputGraph(const InputPreparationRequest& request);
++  int32_t StageInputGraph(const InputPreparationRequest&, const std::shared_ptr<PreparedInputGraph>&);
++  static int32_t StartInputGraph(const std::shared_ptr<PreparedInputGraph>&);
++  int32_t CommitInputGraph(const InputPreparationRequest&, const std::shared_ptr<PreparedInputGraph>&);
++  static bool StopInputGraph(const std::shared_ptr<PreparedInputGraph>&);
++  static bool DisposeInputGraph(const std::shared_ptr<PreparedInputGraph>&);
++  static AVAudioEngine* InputGraphEngine(const std::shared_ptr<PreparedInputGraph>&);
++  static AVAudioEngine* InputGraphOldEngine(const std::shared_ptr<PreparedInputGraph>&);
++  static void InputGraphOldReleased(const std::shared_ptr<PreparedInputGraph>&);
++  static bool InputGraphNeedsStageRelease(const std::shared_ptr<PreparedInputGraph>&);
++  static void InputGraphStageReleased(const std::shared_ptr<PreparedInputGraph>&);
++  int32_t FinishInputGraph(const std::shared_ptr<PreparedInputGraph>&, bool cleanup_confirmed);
++#endif
+   int32_t SetEngineAvailability(bool input_available, bool output_available);
+   int32_t EngineAvailability(bool* input_available, bool* output_available);
+ 
+@@ -480,6 +526,25 @@
+   };
+ 
+   EngineState engine_state_ RTC_GUARDED_BY(thread_);
++  uint64_t state_generation_ RTC_GUARDED_BY(thread_) = 0;
++  bool cleanup_unconfirmed_ RTC_GUARDED_BY(thread_) = false;
++#if TARGET_OS_OSX
++  uint64_t configuration_epoch_ RTC_GUARDED_BY(thread_) = 0;
++  uint64_t graph_generation_ RTC_GUARDED_BY(thread_) = 0;
++  uint64_t stopped_graph_id_ RTC_GUARDED_BY(thread_) = 0;
++  uint64_t warm_configuration_generation_ RTC_GUARDED_BY(thread_) = 0;
++  bool prepared_input_graph_enabled_ RTC_GUARDED_BY(thread_) = false;
++  bool ValidateStoppedInputRequest(const std::shared_ptr<PreparedInputGraph>&);
++  bool InstallBridgeConfigurationObserver();
++  bool RemoveBridgeConfigurationObserver();
++  void ReconfigureBridgeEngine(std::weak_ptr<AudioGraphCallbackBridge>, uintptr_t engine_identity, uint64_t registration);
++  std::shared_ptr<AudioGraphCallbackBridge> active_bridge_ RTC_GUARDED_BY(thread_);
++  std::shared_ptr<PreparedInputGraph> active_prepared_graph_ RTC_GUARDED_BY(thread_);
++  bool ValidateInputRequest(const InputPreparationRequest&, bool prepared_route,
++                            const std::shared_ptr<PreparedInputGraph>&);
++  bool CloseActiveBridge();
++  bool BindActiveBridge(bool first_running_candidate = false);
++#endif
+ 
+   int32_t ModifyEngineState(std::function<EngineState(EngineState)> state_transform);
+ 
+@@ -508,7 +573,7 @@
+   // released. Required for VPIO, which creates an aggregate device and IO thread
+   // that -[AVAudioEngine stop] alone may not fully tear down, and harmless for
+   // standard I/O nodes. Must be called on `thread_` with engine_device_ set.
+-  void StopDeviceEngineAudioUnits();
++  bool StopDeviceEngineAudioUnits();
+ 
+ // Device related
+ #if TARGET_OS_OSX
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -21,6 +21,11 @@
+ 
+ #include <mach/mach_time.h>
+ #include <cmath>
++#include <algorithm>
++#include <array>
++#include <functional>
++#include <cstdlib>
++#include <cstring>
+ #include <ios>
+ #include <sstream>
+ #include <optional>
+@@ -29,6 +34,7 @@
+ #include "api/audio/audio_processing_options_resolver.h"
+ #include "api/task_queue/pending_task_safety_flag.h"
+ #include "modules/audio_device/fine_audio_buffer.h"
++#include "modules/audio_device/audio_device_buffer.h"
+ #include "rtc_base/checks.h"
+ #include "rtc_base/logging.h"
+ #include "rtc_base/thread.h"
+@@ -45,6 +51,7 @@
+ #if TARGET_OS_OSX
+ #import "./mac/audio_device_utils_mac.h"
+ #include "modules/audio_device/mac/application_input_mute_state.h"
++#include "modules/audio_device/mac/prepared_graph_callback_gate.h"
+ #endif
+ 
+ namespace webrtc {
+@@ -237,6 +244,706 @@
+ }
+ #endif
+ 
++#if TARGET_OS_OSX
++namespace {
++using InputRequest = AudioEngineDevice::InputPreparationRequest;
++bool BridgeMode() { const char* mode = std::getenv("ROCK_MAC_MIC_PREFLIGHT"); return mode && std::strcmp(mode, "bridge") == 0; }  // Explicit cold diagnostic only.
++bool SameFormat(const AudioStreamBasicDescription& a, const AudioStreamBasicDescription& b) {
++  return a.mSampleRate == b.mSampleRate && a.mFormatID == b.mFormatID && a.mFormatFlags == b.mFormatFlags &&
++      a.mBytesPerPacket == b.mBytesPerPacket && a.mFramesPerPacket == b.mFramesPerPacket &&
++      a.mBytesPerFrame == b.mBytesPerFrame && a.mChannelsPerFrame == b.mChannelsPerFrame && a.mBitsPerChannel == b.mBitsPerChannel;
++}
++InputRequest::Route CurrentDefaultRoute() {
++  InputRequest::Route route;
++  auto read = [](AudioObjectID object, AudioObjectPropertySelector selector, AudioObjectPropertyScope scope, void* value, UInt32 size) {
++    AudioObjectPropertyAddress address{selector, scope, kAudioObjectPropertyElementMain};
++    return AudioObjectGetPropertyData(object, &address, 0, nullptr, &size, value) == noErr;
++  };
++  route.valid = read(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, &route.input, sizeof(route.input)) &&
++      read(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, &route.output, sizeof(route.output)) &&
++      route.input && route.output && read(route.input, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeInput, &route.input_format, sizeof(route.input_format)) &&
++      read(route.output, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, &route.output_format, sizeof(route.output_format));
++  return route;
++}
++bool SameDevices(const InputRequest::Route& a, const InputRequest::Route& b) {
++  return a.valid && b.valid && a.input == b.input && a.output == b.output;
++}
++bool SameRoute(const InputRequest::Route& a, const InputRequest::Route& b) {
++  return SameDevices(a, b) && SameFormat(a.input_format, b.input_format) && SameFormat(a.output_format, b.output_format);
++}
++bool BuiltInRoute(const InputRequest::Route& route) {
++  if (!route.valid) return false;
++  for (AudioDeviceID device : {route.input, route.output}) {
++    AudioObjectPropertyAddress address{kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
++    UInt32 transport = 0, size = sizeof(transport);
++    if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &transport) != noErr || transport != kAudioDeviceTransportTypeBuiltIn) return false;
++  }
++  return true;
++}
++bool SameInputGraphProfile(const AudioEngineDevice::EngineState& a, const AudioEngineDevice::EngineState& b) {
++  return a.render_mode == b.render_mode && a.mute_mode == b.mute_mode &&
++      a.platform_voice_processing_allowed == b.platform_voice_processing_allowed && a.voice_processing_enabled == b.voice_processing_enabled &&
++      a.voice_processing_bypassed == b.voice_processing_bypassed && a.voice_processing_agc_enabled == b.voice_processing_agc_enabled &&
++      a.built_in_aec_enabled == b.built_in_aec_enabled && a.built_in_ns_enabled == b.built_in_ns_enabled &&
++      a.advanced_ducking == b.advanced_ducking && a.ducking_level == b.ducking_level &&
++      a.input_device_id == b.input_device_id && a.output_device_id == b.output_device_id &&
++      a.default_input_device_update_count == b.default_input_device_update_count && a.default_output_device_update_count == b.default_output_device_update_count;
++}
++AudioEngineDevice::EngineState WarmStateProjection(AudioEngineDevice::EngineState state) {
++  // Only peer intent may vary while the owner's two hardware availability gates stay closed.
++  state.input_enabled = false; state.input_running = false;
++  state.output_enabled = false; state.output_running = false;
++  return state;
++}
++bool Drain(mac_adm::PreparedGraphCallbackGate& gate) {
++  const int64_t deadline = TimeMillis() + 50;
++  while (!gate.Drained() && TimeMillis() < deadline) usleep(100);
++  return gate.Drained();
++}
++bool StopGraphUnits(AVAudioEngine* engine, AVAudioInputNode* input, AVAudioOutputNode* output) {
++  bool clean = true;
++  @try { [engine stop]; } @catch (NSException*) { clean = false; }
++  @try { if (input.audioUnit) { OSStatus status = AudioOutputUnitStop(input.audioUnit); LOGI() << "Bridge input stop=" << status;
++    clean = (status == noErr || status == kAudioUnitErr_Uninitialized) && clean; } } @catch (NSException*) { clean = false; }
++  @try { if (output.audioUnit) { OSStatus status = AudioOutputUnitStop(output.audioUnit); LOGI() << "Bridge output stop=" << status;
++    clean = (status == noErr || status == kAudioUnitErr_Uninitialized) && clean; } clean = !engine.running && clean; } @catch (NSException*) { clean = false; }
++  return clean;
++}
++}  // namespace
++
++struct AudioGraphCallbackBridge {
++  struct Target { FineAudioBuffer* fine = nullptr; AudioConverterRef converter = nullptr;
++    AudioBufferList* record_buffer = nullptr; double tick_ns = 0;
++    uint64_t source_id = 0, sink_id = 0;
++    std::function<void(AudioDeviceModule::SpeechActivityEvent)> speech; };
++  mac_adm::PreparedGraphCallbackGate gate;
++  mac_adm::PreparedGraphCallbackGate notification_gate;  // Posting lifetime is independent of render admission.
++  std::unique_ptr<Target> owner;
++  std::atomic<Target*> target{nullptr};
++  std::atomic<uint64_t> silent_renders{0}, discarded_inputs{0}, active_renders{0}, active_records{0};
++  static_assert(std::atomic<uint64_t>::is_always_lock_free);
++  uint64_t next_node_id = 1, source_id = 0, sink_id = 0;  // Control-thread node identities; snapshots are immutable in Target.
++  bool ever_opened = false;  // Control-thread state: running replacement is allowed only for the initial candidate publication.
++  void Bind(Target value) {
++    RTC_DCHECK(gate.IsClosed() && gate.Drained());
++    owner = std::make_unique<Target>(value); target.store(owner.get(), std::memory_order_release);
++    RTC_CHECK(gate.Open()); ever_opened = true;
++  }
++  void Speech(AudioDeviceModule::SpeechActivityEvent event) {
++    if (!gate.TryEnter()) return;
++    Target* current = target.load(std::memory_order_acquire);
++    if (current && current->speech) current->speech(event);
++    gate.Leave();
++  }
++  OSStatus Render(uint64_t node_id, BOOL* silence, AVAudioFrameCount frames, AudioBufferList* buffers) {
++    if (buffers->mNumberBuffers != 1) return kAudio_ParamError;
++    if (!gate.TryEnter()) {
++      silent_renders.fetch_add(1, std::memory_order_relaxed);
++      *silence = YES; if (buffers->mBuffers[0].mData) std::memset(buffers->mBuffers[0].mData, 0, buffers->mBuffers[0].mDataByteSize);
++      return noErr;
++    }
++    Target* current = target.load(std::memory_order_acquire);
++    if (current && current->source_id == node_id && current->fine && buffers->mBuffers[0].mData && frames <= buffers->mBuffers[0].mDataByteSize / sizeof(int16_t)) {
++      active_renders.fetch_add(1, std::memory_order_relaxed);
++      current->fine->GetPlayoutData(std::span<int16_t>(static_cast<int16_t*>(buffers->mBuffers[0].mData), frames), kFixedPlayoutDelayEstimate);
++      *silence = NO;
++    } else {
++      *silence = YES; if (buffers->mBuffers[0].mData) std::memset(buffers->mBuffers[0].mData, 0, buffers->mBuffers[0].mDataByteSize);
++    }
++    gate.Leave(); return noErr;
++  }
++  OSStatus Record(uint64_t node_id, const AudioTimeStamp* timestamp, AVAudioFrameCount frames, const AudioBufferList* buffers) {
++    if (!gate.TryEnter()) { discarded_inputs.fetch_add(1, std::memory_order_relaxed); return noErr; }
++    Target* current = target.load(std::memory_order_acquire); OSStatus result = noErr;
++    if (current && current->sink_id == node_id && current->fine && current->converter && current->record_buffer && buffers->mNumberBuffers == 1 && frames <= kMaximumFramesPerBuffer) {
++      current->record_buffer->mBuffers[0].mDataByteSize = buffers->mBuffers[0].mDataByteSize;
++      result = AudioConverterConvertComplexBuffer(current->converter, frames, buffers, current->record_buffer);
++      if (result == noErr) { active_records.fetch_add(1, std::memory_order_relaxed); current->fine->DeliverRecordedData(
++          std::span<const int16_t>(static_cast<int16_t*>(current->record_buffer->mBuffers[0].mData), frames),
++          kFixedRecordDelayEstimate, timestamp->mHostTime * current->tick_ns); }
++    }
++    gate.Leave(); return result;
++  }
++};
++namespace {
++AVAudioSourceNode* BridgeSource(AVAudioFormat* format, const std::shared_ptr<AudioGraphCallbackBridge>& bridge) {
++  const auto owner = bridge;  // Capture a value, never the caller's replaceable shared_ptr reference.
++  const uint64_t node_id = owner->next_node_id++; owner->source_id = node_id;
++  return [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:^OSStatus(BOOL* silence, const AudioTimeStamp*, AVAudioFrameCount frames, AudioBufferList* buffers) {
++    return owner->Render(node_id, silence, frames, buffers);
++  }];
++}
++AVAudioSinkNode* BridgeSink(const std::shared_ptr<AudioGraphCallbackBridge>& bridge) {
++  const auto owner = bridge;
++  const uint64_t node_id = owner->next_node_id++; owner->sink_id = node_id;
++  return [[AVAudioSinkNode alloc] initWithReceiverBlock:^OSStatus(const AudioTimeStamp* time, AVAudioFrameCount frames, const AudioBufferList* buffers) {
++    return owner->Record(node_id, time, frames, buffers);
++  }];
++}
++}  // namespace
++
++struct PreparedInputGraph {
++  InputRequest request;
++  AudioEngineDevice::StoppedInputPreparationRequest warm_request;
++  uint64_t graph_id = 0;
++  InputRequest::Route prepared_route;
++  __strong AVAudioEngine* engine = nil;
++  __strong AVAudioInputNode* input = nil;
++  __strong AVAudioOutputNode* output = nil;
++  __strong AVAudioSourceNode* source = nil;
++  __strong AVAudioMixerNode* mixer = nil;
++  __strong AVAudioSinkNode* sink = nil;
++  __strong AVAudioFormat* input_format = nil;
++  __strong AVAudioFormat* output_format = nil;
++  __strong AVAudioFormat* input_bus_format = nil;
++  __strong AVAudioFormat* output_bus_format = nil;
++  __strong AVAudioPCMBuffer* record_buffer = nil;
++  AudioConverterRef converter = nullptr;
++  std::unique_ptr<FineAudioBuffer> retired_fine;
++  std::shared_ptr<AudioGraphCallbackBridge> bridge = std::make_shared<AudioGraphCallbackBridge>();
++  std::shared_ptr<PreparedInputGraph> old;
++  bool built = false, staged = false, started = false, adopted = false, stop_confirmed = false;
++  bool cleanup_confirmed = true, swap_started = false, recovery_requested = false;
++  bool warm_prepared = false, from_cache = false;
++  uint64_t recovery_generation = 0, active_renders_at_close = 0;
++  AudioEngineDevice::EngineState recovery_state;
++  bool Stop() {
++    if (stop_confirmed || !engine) return cleanup_confirmed;
++    bridge->gate.Close();
++    if (!Drain(bridge->gate)) { cleanup_confirmed = false; return false; }
++    stop_confirmed = StopGraphUnits(engine, input, output);
++    cleanup_confirmed = cleanup_confirmed && stop_confirmed; return cleanup_confirmed;
++  }
++  bool Dispose() {
++    if (adopted) {
++      if (old) {
++        bool clean = old->Dispose();
++        const uint64_t after = old->bridge->active_renders.load(std::memory_order_relaxed);
++        LOGI() << "Bridge old graph retired renders=" << old->active_renders_at_close << "/" << after << " clean=" << clean;
++        clean = clean && after == old->active_renders_at_close;
++        if (clean) old.reset(); return clean;
++      }
++      return true;
++    }
++    bool clean = Stop();
++    if (old) clean = old->Dispose() && clean;
++    if (!clean) {
++      auto* retained = new PreparedInputGraph;
++      retained->engine = engine; retained->input = input; retained->output = output;
++      retained->source = source; retained->mixer = mixer; retained->sink = sink;
++      retained->record_buffer = record_buffer; retained->converter = converter;
++      retained->bridge = bridge; retained->retired_fine = std::move(retired_fine); retained->old = std::move(old);
++      LOGE() << "Bridge cleanupUnconfirmed; graph resources retained until process exit";
++    } else if (converter) { AudioConverterDispose(converter); }
++    converter = nullptr; engine = nil; input = nil; output = nil; source = nil; mixer = nil; sink = nil;
++    record_buffer = nil; input_format = nil; output_format = nil; retired_fine.reset(); old.reset();
++    cleanup_confirmed = clean; return clean;
++  }
++  ~PreparedInputGraph() { if (!adopted) Dispose(); }
++};
++
++bool AudioEngineDevice::RemoveBridgeConfigurationObserver() {
++  RTC_DCHECK_RUN_ON(thread_);
++  ++configuration_epoch_;  // Invalidate queued notifications before any owner teardown.
++  if (active_bridge_) {
++    active_bridge_->notification_gate.Close();
++    if (!Drain(active_bridge_->notification_gate)) {
++      cleanup_unconfirmed_ = true; this->AddRef(); return false;
++    }
++  }
++  @try {
++    if (configuration_observer_) {
++      [[NSNotificationCenter defaultCenter] removeObserver:(__bridge_transfer id)configuration_observer_ name:AVAudioEngineConfigurationChangeNotification object:nil];
++      configuration_observer_ = nullptr;
++    }
++  } @catch (NSException*) { cleanup_unconfirmed_ = true; this->AddRef(); return false; }
++  return true;
++}
++bool AudioEngineDevice::InstallBridgeConfigurationObserver() {
++  RTC_DCHECK_RUN_ON(thread_);
++  RTC_DCHECK(active_bridge_ && !configuration_observer_);
++  const std::weak_ptr<AudioGraphCallbackBridge> observed_bridge = active_bridge_;
++  const uintptr_t engine_identity = reinterpret_cast<uintptr_t>((__bridge void*)engine_device_);
++  const uint64_t registration = ++configuration_epoch_;
++  if (!active_bridge_->notification_gate.Open()) return false;
++  configuration_observer_ = (__bridge_retained void*)[[NSNotificationCenter defaultCenter]
++      addObserverForName:AVAudioEngineConfigurationChangeNotification object:engine_device_ queue:nil usingBlock:^(NSNotification*) {
++        // Separate from render admission: registration remains observable while rendering is closed.
++        auto bridge = observed_bridge.lock();
++        if (!bridge || !bridge->notification_gate.TryEnter()) return;
++        ReconfigureBridgeEngine(observed_bridge, engine_identity, registration);
++        bridge->notification_gate.Leave();
++      }];
++  return configuration_observer_ != nullptr;
++}
++void AudioEngineDevice::ReconfigureBridgeEngine(std::weak_ptr<AudioGraphCallbackBridge> expected_bridge,
++                                               uintptr_t engine_identity, uint64_t registration) {
++  // Called only while the notification-posting fence holds this owner's lifetime.
++  thread_->PostTask(SafeTask(safety_, [this, expected_bridge, engine_identity, registration] {
++    RTC_DCHECK_RUN_ON(thread_);
++    auto bridge = expected_bridge.lock();
++    if (!initialized_ || cleanup_unconfirmed_ || !bridge || active_bridge_ != bridge ||
++        configuration_epoch_ != registration || !engine_device_ ||
++        engine_identity != reinterpret_cast<uintptr_t>((__bridge void*)engine_device_) ||
++        engine_state_.render_mode != RenderMode::Device || !engine_state_.IsAnyRunning() || engine_device_.running) return;
++    // This is the qualified recovery task itself; never post an unqualified second task.
++    mac_adm::ScopedApplicationInputMuteReconfiguration preserve_application_mute;
++    EngineState current = engine_state_, shutdown = current;
++    shutdown.input_enabled = false; shutdown.input_running = false;
++    shutdown.output_enabled = false; shutdown.output_running = false;
++    int32_t result = ModifyEngineState([shutdown](EngineState) { return shutdown; });
++    if (result == 0) result = ModifyEngineState([current](EngineState) { return current; });
++    LOGW() << "Bridge qualified configuration recovery result=" << result;
++  }));
++}
++
++bool AudioEngineDevice::CloseActiveBridge() {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!active_bridge_) return true;
++  active_bridge_->gate.Close();
++  if (Drain(active_bridge_->gate)) return true;
++  active_bridge_->gate.ResumeUnchanged(); return false;
++}
++bool AudioEngineDevice::BindActiveBridge(bool first_running_candidate) {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!active_bridge_ || !active_bridge_->gate.IsClosed() || !active_bridge_->gate.Drained()) return false;
++  // Ordinary rebinds require a stopped AV graph. The sole exception is first publication
++  // into an already-running candidate whose gate has NEVER opened and target is still absent.
++  if (engine_device_.running && !(first_running_candidate && !active_bridge_->ever_opened)) return false;
++  AudioBufferList* buffer = converter_buffer_ ? const_cast<AudioBufferList*>(converter_buffer_.audioBufferList) : nullptr;
++  AudioGraphCallbackBridge::Target target{fine_audio_buffer_.get(), converter_ref_, buffer, machTickUnitsToNanoseconds_, active_bridge_->source_id, active_bridge_->sink_id, {}};
++  const std::weak_ptr<AudioGraphCallbackBridge> generation = active_bridge_;
++  target.speech = [this, generation](AudioDeviceModule::SpeechActivityEvent rtc_event) {
++    thread_->PostTask(SafeTask(safety_, [this, generation, rtc_event] {
++      RTC_DCHECK_RUN_ON(thread_);
++      if (!cleanup_unconfirmed_ && generation.lock() == active_bridge_ && observer_) observer_->OnSpeechActivityEvent(rtc_event);
++    }));
++  };
++  active_bridge_->Bind(std::move(target)); return true;
++}
++AudioEngineDevice::InputPreparationRequest AudioEngineDevice::BeginInputPreparation(bool input, bool output, uint64_t capture_state) {
++  RTC_DCHECK_RUN_ON(thread_);
++  InputPreparationRequest request; request.generation = ++state_generation_; request.capture_state = capture_state; request.graph_id = ++graph_generation_;
++  request.previous = engine_state_; request.next = engine_state_;
++  request.next.input_available = input; request.next.output_available = output;
++  request.owner = reinterpret_cast<uintptr_t>((__bridge void*)engine_device_); request.worker_identity = reinterpret_cast<uintptr_t>(thread_);
++  request.deadline_ms = TimeMillis() + 6000;
++  EngineStateUpdate state{request.previous, request.next};
++  request.eligible = (prepared_input_graph_enabled_ || BridgeMode()) && initialized_ && !cleanup_unconfirmed_ && active_bridge_ && engine_device_ && engine_device_.running &&
++      !input_node_instantiated_ && state.DidEnableInput() && state.prev.IsOutputRunning() && state.next.IsOutputRunning() &&
++      !state.prev.is_interrupted && !state.next.is_interrupted && !state.IsEngineRecreateRequired() &&
++      state.next.mute_mode == MuteMode::InputMixer && state.next.input_muted &&
++      state.next.platform_voice_processing_allowed && state.next.voice_processing_enabled && !state.next.voice_processing_bypassed &&
++      state.next.built_in_aec_enabled && state.next.built_in_ns_enabled && state.prev.IsInputDefaultDevice() && state.next.IsInputDefaultDevice() &&
++      state.prev.IsOutputDefaultDevice() && state.next.IsOutputDefaultDevice() && IsMicrophonePermissionAuthorized() && capture_state == ApplicationCaptureState();
++  if (request.eligible) { request.route = CurrentDefaultRoute(); request.eligible = request.route.valid; }
++  return request;
++}
++bool AudioEngineDevice::ValidateInputRequest(const InputPreparationRequest& request, bool ready, const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  return initialized_ && !cleanup_unconfirmed_ && state_generation_ == request.generation && engine_state_ == request.previous &&
++      engine_device_ && engine_device_.running && request.owner == reinterpret_cast<uintptr_t>((__bridge void*)engine_device_) &&
++      TimeMillis() < request.deadline_ms && request.capture_state == ApplicationCaptureState() && IsMicrophonePermissionAuthorized() &&
++      SameDevices(request.route, CurrentDefaultRoute()) && (!ready || SameRoute(graph->prepared_route, CurrentDefaultRoute()));
++}
++bool AudioEngineDevice::InputPreparationIsCurrent(const InputPreparationRequest& request) {
++  RTC_DCHECK_RUN_ON(thread_); return ValidateInputRequest(request, false, nullptr);
++}
++
++namespace {
++std::shared_ptr<PreparedInputGraph> BuildGraphResources(std::shared_ptr<PreparedInputGraph> graph,
++    const AudioEngineDevice::EngineState& profile, uintptr_t worker_identity, int64_t deadline_ms) {
++  if ([NSThread isMainThread] || worker_identity == reinterpret_cast<uintptr_t>(Thread::Current()) || TimeMillis() >= deadline_ms) return graph;
++  const int64_t build_begin_ms = TimeMillis();
++  LOGI() << "Bridge build begin id=" << graph->graph_id;
++  @try {
++    graph->engine = [[AVAudioEngine alloc] init];
++    LOGI() << "Bridge build engine allocated id=" << graph->graph_id << " elapsedMs=" << TimeMillis() - build_begin_ms;
++    graph->input = graph->engine.inputNode;
++    LOGI() << "Bridge build input obtained id=" << graph->graph_id << " elapsedMs=" << TimeMillis() - build_begin_ms;
++    NSError* error = nil;
++    if (![graph->input setVoiceProcessingEnabled:YES error:&error]) { LOGW() << "Bridge VPIO enable failed: " << error.localizedDescription.UTF8String; return graph; }
++    LOGI() << "Bridge build voice processing enabled id=" << graph->graph_id << " elapsedMs=" << TimeMillis() - build_begin_ms;
++    graph->output = graph->engine.outputNode; graph->input.voiceProcessingBypassed = NO;
++    graph->input.voiceProcessingAGCEnabled = profile.voice_processing_agc_enabled;
++    graph->input.voiceProcessingInputMuted = NO;  // Normal InputMixer mode; callback gate discards staged input.
++    if (@available(macOS 14.0, *)) {
++      auto bridge = graph->bridge;
++      [graph->input setMutedSpeechActivityEventListener:^(AVAudioVoiceProcessingSpeechActivityEvent event) { bridge->Speech(event == AVAudioVoiceProcessingSpeechActivityStarted ? AudioDeviceModule::SpeechActivityEvent::kStarted : AudioDeviceModule::SpeechActivityEvent::kEnded); }];
++    }
++    if (@available(macOS 14.0, *)) { AVAudioVoiceProcessingOtherAudioDuckingConfiguration duck;
++      duck.enableAdvancedDucking = profile.advanced_ducking; duck.duckingLevel = ToAVDuckingLevel(profile.ducking_level);
++      graph->input.voiceProcessingOtherAudioDuckingConfiguration = duck; }
++    AVAudioFormat* in = [graph->input outputFormatForBus:0]; AVAudioFormat* out = [graph->output outputFormatForBus:0];
++    if (!in.sampleRate || !out.sampleRate || !in.channelCount || !out.channelCount || in.commonFormat != AVAudioPCMFormatFloat32 || out.commonFormat != AVAudioPCMFormatFloat32) {
++      LOGW() << "Bridge unsupported node formats in=" << in.description.UTF8String << " out=" << out.description.UTF8String; return graph;
++    }
++    graph->input_format = [[AVAudioFormat alloc] initWithCommonFormat:in.commonFormat sampleRate:in.sampleRate channels:1 interleaved:in.interleaved];
++    graph->output_format = [[AVAudioFormat alloc] initWithCommonFormat:out.commonFormat sampleRate:out.sampleRate channels:1 interleaved:out.interleaved];
++    AVAudioFormat* rtc_out = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatInt16 sampleRate:out.sampleRate channels:1 interleaved:YES];
++    AVAudioFormat* rtc_in = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatInt16 sampleRate:in.sampleRate channels:1 interleaved:YES];
++    OSStatus converter_status = AudioConverterNew(graph->input_format.streamDescription, rtc_in.streamDescription, &graph->converter);
++    if (converter_status != noErr) { LOGW() << "Bridge converter creation failed=" << converter_status; return graph; }
++    graph->record_buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:rtc_in frameCapacity:kMaximumFramesPerBuffer];
++    graph->source = BridgeSource(rtc_out, graph->bridge); graph->mixer = [[AVAudioMixerNode alloc] init]; graph->sink = BridgeSink(graph->bridge);
++    [graph->engine attachNode:graph->source]; [graph->engine attachNode:graph->mixer]; [graph->engine attachNode:graph->sink];
++    [graph->engine connect:graph->source to:graph->engine.mainMixerNode format:graph->output_format];
++    [graph->engine connect:graph->engine.mainMixerNode to:graph->output format:graph->output_format];
++    [graph->engine connect:graph->input to:graph->mixer format:graph->input_format];
++    [graph->engine connect:graph->mixer to:graph->sink format:graph->input_format]; graph->mixer.outputVolume = 0;
++    graph->built = true; LOGI() << "Bridge build end id=" << graph->graph_id;
++  } @catch (NSException* exception) { LOGW() << "Bridge build exception: " << exception.reason.UTF8String; }
++  return graph;
++}
++bool StoppedGraphIsQuiescent(const std::shared_ptr<PreparedInputGraph>& graph, bool log_proof = false) {
++  @try {
++    const bool engine_running = graph->engine.running;
++    bool clean = graph->engine && !engine_running && graph->bridge->gate.IsClosed() && graph->bridge->gate.Drained() && !graph->bridge->ever_opened &&
++        !graph->bridge->target.load() && !graph->bridge->silent_renders.load() && !graph->bridge->discarded_inputs.load() &&
++        !graph->bridge->active_renders.load() && !graph->bridge->active_records.load();
++    std::array<AudioUnit, 2> units{graph->input.audioUnit, graph->output.audioUnit};
++    std::array<UInt32, 2> running{0, 0};
++    std::array<OSStatus, 2> status{kAudioUnitErr_Uninitialized, kAudioUnitErr_Uninitialized};
++    for (int i = 0; i != 2; ++i) {
++      UInt32 size = sizeof(running[i]);
++      if (units[i]) status[i] = AudioUnitGetProperty(units[i], kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global, 0, &running[i], &size);
++      clean = (status[i] == kAudioUnitErr_Uninitialized || (status[i] == noErr && running[i] == 0)) && clean;
++    }
++    if (log_proof || !clean) LOGI() << "Bridge stopped proof graph=" << graph->graph_id << " clean=" << clean << " engineRunning=" << engine_running
++        << " inputRunning=" << running[0] << " outputRunning=" << running[1] << " status=" << status[0] << "/" << status[1]
++        << " callbacks=" << graph->bridge->silent_renders.load() << "/" << graph->bridge->discarded_inputs.load()
++        << " active=" << graph->bridge->active_renders.load() << "/" << graph->bridge->active_records.load();
++    return clean;
++  } @catch (NSException*) { return false; }
++}
++bool PreparedFormatsMatch(const std::shared_ptr<PreparedInputGraph>& graph) {
++  @try { return [graph->input_bus_format isEqual:[graph->input outputFormatForBus:0]] &&
++      [graph->output_bus_format isEqual:[graph->output outputFormatForBus:0]]; }
++  @catch (NSException*) { return false; }
++}
++}  // namespace
++std::shared_ptr<PreparedInputGraph> AudioEngineDevice::BuildInputGraph(const InputPreparationRequest& request) {
++  auto graph = std::make_shared<PreparedInputGraph>(); graph->request = request; graph->graph_id = request.graph_id;
++  return request.eligible ? BuildGraphResources(graph, request.next, request.worker_identity, request.deadline_ms) : graph;
++}
++std::shared_ptr<PreparedInputGraph> AudioEngineDevice::BuildStoppedInputGraph(const StoppedInputPreparationRequest& request) {
++  auto graph = std::make_shared<PreparedInputGraph>(); graph->warm_request = request; graph->graph_id = request.graph_id;
++  return request.eligible ? BuildGraphResources(graph, request.state, request.worker_identity, request.deadline_ms) : graph;
++}
++AudioEngineDevice::StoppedInputPreparationRequest AudioEngineDevice::BeginStoppedInputPreparation(uint64_t capture_state, int64_t deadline_ms) {
++  RTC_DCHECK_RUN_ON(thread_);
++  StoppedInputPreparationRequest request;
++  request.capture_state = capture_state; request.deadline_ms = deadline_ms;
++  if (cleanup_unconfirmed_ || TimeMillis() >= deadline_ms || (ApplicationCaptureState() & 1) == 0) {
++    request.result = kAudioEngineStateTransitionError; return request;
++  }
++  auto prerequisites = [&] {
++    RTC_DCHECK_RUN_ON(thread_);
++    const auto& state = engine_state_;
++    return !cleanup_unconfirmed_ && !stopped_graph_id_ && !engine_device_ && !input_node_instantiated_ &&
++        !state.input_available && !state.output_available &&
++        !state.IsAnyEnabled() && !state.IsAnyRunning() && !state.input_enabled_persistent_mode && state.input_muted &&
++        !state.is_interrupted && state.render_mode == RenderMode::Device && state.mute_mode == MuteMode::InputMixer &&
++        state.platform_voice_processing_allowed && state.voice_processing_enabled && !state.voice_processing_bypassed &&
++        state.built_in_aec_enabled && state.built_in_ns_enabled && state.IsInputDefaultDevice() && state.IsOutputDefaultDevice() &&
++        !audio_device_buffer_->IsPlaying() && !audio_device_buffer_->IsRecording() && IsMicrophonePermissionAuthorized() && (capture_state & 1) != 0;
++  };
++  const auto initial_route = CurrentDefaultRoute();
++  if (!prerequisites() || !BuiltInRoute(initial_route)) return request;
++  const EngineState initial_state = engine_state_;
++  const uint64_t initial_generation = state_generation_;
++  const bool initialized_before = initialized_;
++  const int64_t init_begin_ms = TimeMillis();
++  int32_t init_result = kAudioEngineInitError;
++  @try { init_result = Init(); }  // HAL listeners/device IDs only; never an AV graph or I/O start.
++  @catch (NSException* exception) { LOGE() << "Bridge early Init exception: " << exception.reason.UTF8String; }
++  LOGI() << "Bridge early Init result=" << init_result << " durationMs=" << TimeMillis() - init_begin_ms
++         << " initializedBefore=" << initialized_before << " deadlineRemainingMs=" << deadline_ms - TimeMillis();
++  if (init_result != 0) {
++    // Init can fail after partially registering HAL listeners. Keep their complete owner alive.
++    cleanup_unconfirmed_ = true; this->AddRef();
++    request.result = init_result < 0 ? init_result : kAudioEngineInitError;
++    return request;
++  }
++  if (!initialized_ || TimeMillis() >= deadline_ms || (ApplicationCaptureState() & 1) == 0 ||
++      state_generation_ != initial_generation || engine_state_ != initial_state || !prerequisites() ||
++      !SameRoute(initial_route, CurrentDefaultRoute())) {
++    request.result = kAudioEngineStateTransitionError; return request;
++  }
++  request.generation = ++state_generation_; request.graph_id = ++graph_generation_;
++  request.configuration_generation = warm_configuration_generation_;
++  request.initialized_at_reservation = initialized_; request.state = engine_state_;
++  request.module_identity = reinterpret_cast<uintptr_t>(this); request.worker_identity = reinterpret_cast<uintptr_t>(thread_);
++  request.route = initial_route; request.eligible = true; request.result = 0;
++  stopped_graph_id_ = request.graph_id;  // Covers build, cache and caller cleanup, not activation authority.
++  LOGI() << "Bridge stopped warm reserve eligible=" << request.eligible << " graph=" << request.graph_id << " initialized=" << request.initialized_at_reservation
++         << " warmConfiguration=" << request.configuration_generation << " fullGeneration=" << request.generation;
++  return request;
++}
++bool AudioEngineDevice::HasStoppedInputGraph() { RTC_DCHECK_RUN_ON(thread_); return stopped_graph_id_ != 0; }
++void AudioEngineDevice::InvalidateStoppedInputPreparation() { RTC_DCHECK_RUN_ON(thread_); ++warm_configuration_generation_; }
++bool AudioEngineDevice::ValidateStoppedInputRequest(const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  const auto& request = graph->warm_request;
++  const uint64_t observed_capture = ApplicationCaptureState();
++  const auto observed_route = CurrentDefaultRoute();
++  const bool configuration = warm_configuration_generation_ == request.configuration_generation;
++  const bool owner = request.eligible && !cleanup_unconfirmed_ && stopped_graph_id_ == graph->graph_id &&
++      request.module_identity == reinterpret_cast<uintptr_t>(this) && initialized_ == request.initialized_at_reservation;
++  const bool projected_state = WarmStateProjection(engine_state_) == WarmStateProjection(request.state);
++  const bool initial_closed = (request.capture_state & 1) != 0, current_closed = (observed_capture & 1) != 0;
++  const bool capture_equal = request.capture_state == observed_capture;  // Diagnostic only: stopped preparation has no active target.
++  const bool availability = !engine_state_.input_available && !engine_state_.output_available;
++  const bool adb_stopped = !audio_device_buffer_->IsPlaying() && !audio_device_buffer_->IsRecording();
++  const bool no_engine = !engine_device_ && !input_node_instantiated_, deadline = TimeMillis() < request.deadline_ms;
++  const bool devices_equal = SameDevices(request.route, observed_route), builtin = BuiltInRoute(observed_route);
++  const bool authorized = IsMicrophonePermissionAuthorized();
++  const bool valid = configuration && owner && projected_state && initial_closed && current_closed && availability &&
++      adb_stopped && no_engine && deadline && devices_equal && builtin && authorized;
++  if (!valid) LOGW() << "Bridge stopped resource rejected graph=" << graph->graph_id << " configuration=" << configuration
++      << " owner=" << owner << " projectedState=" << projected_state << " captureEqual=" << capture_equal
++      << " initialCaptureClosed=" << initial_closed << " currentClosed=" << current_closed << " availability=" << availability
++      << " adbStopped=" << adb_stopped << " noEngine=" << no_engine << " deadlineValid=" << deadline
++      << " devicesEqual=" << devices_equal << " builtIn=" << builtin << " authorized=" << authorized;
++  return valid;
++}
++int32_t AudioEngineDevice::StageStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!graph->built || !ValidateStoppedInputRequest(graph) || !StoppedGraphIsQuiescent(graph)) return kAudioEngineStateTransitionError;
++  @try {
++    graph->staged = true;
++    NSDictionary* output_context = @{ @"RockAudioPreparedGraphID": @(graph->graph_id), @"RockAudioPreparedGraphPhase": @1 };
++    NSDictionary* input_context = @{ @"RockAudioPreparedGraphID": @(graph->graph_id), @"RockAudioPreparedGraphPhase": @1, kAudioEngineInputMixerNodeKey: graph->mixer };
++    if (!observer_ || observer_->OnEngineWillConnectOutput(graph->engine, graph->engine.mainMixerNode, graph->output, graph->output_format, output_context) ||
++        !ValidateStoppedInputRequest(graph) || observer_->OnEngineWillConnectInput(graph->engine, graph->input, graph->mixer, graph->input_format, input_context) ||
++        !ValidateStoppedInputRequest(graph)) return kAudioEngineStateTransitionError;
++  } @catch (NSException*) { return kAudioEngineDeviceFormatError; }
++  return 0;
++}
++int32_t AudioEngineDevice::PrepareStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) {
++  const auto& request = graph->warm_request;
++  if (!graph->built || !graph->staged || [NSThread isMainThread] || request.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current())) return kAudioEngineInvalidStateError;
++  @try {
++    LOGI() << "Bridge stopped caller prepare begin graph=" << graph->graph_id;
++    [graph->engine prepare]; usleep(100000);  // Preserve the normal VPIO stabilization while no media exists.
++    graph->input_bus_format = [graph->input outputFormatForBus:0]; graph->output_bus_format = [graph->output outputFormatForBus:0];
++    graph->prepared_route = CurrentDefaultRoute();
++    const bool quiescent = StoppedGraphIsQuiescent(graph), deadline = TimeMillis() < request.deadline_ms;
++    const uint64_t observed_capture = ApplicationCaptureState();
++    const bool capture_equal = request.capture_state == observed_capture, capture_closed = (observed_capture & 1) != 0;
++    const bool initial_closed = (request.capture_state & 1) != 0;
++    const bool devices_equal = SameDevices(request.route, graph->prepared_route), builtin = BuiltInRoute(graph->prepared_route);
++    graph->warm_prepared = quiescent && deadline && initial_closed && capture_closed && devices_equal && builtin;
++    LOGI() << "Bridge stopped resource readiness graph=" << graph->graph_id << " quiescent=" << quiescent << " deadlineValid=" << deadline
++           << " captureEqual=" << capture_equal << " captureClosed=" << capture_closed << " initialCaptureClosed=" << initial_closed
++           << " devicesEqual=" << devices_equal << " builtIn=" << builtin;
++    LOGI() << "Bridge stopped caller prepare end graph=" << graph->graph_id << " ready=" << graph->warm_prepared
++           << " silent=" << graph->bridge->silent_renders.load() << " discarded=" << graph->bridge->discarded_inputs.load()
++           << " active=" << graph->bridge->active_renders.load() << "/" << graph->bridge->active_records.load();
++  } @catch (NSException* exception) { LOGW() << "Bridge stopped prepare exception: " << exception.reason.UTF8String; }
++  return graph->warm_prepared ? 0 : kAudioEngineStateTransitionError;
++}
++int32_t AudioEngineDevice::PublishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!graph->warm_prepared || !ValidateStoppedInputRequest(graph) || !StoppedGraphIsQuiescent(graph, true) ||
++      !SameRoute(graph->prepared_route, CurrentDefaultRoute()) || !PreparedFormatsMatch(graph)) return kAudioEngineStateTransitionError;
++  prepared_input_graph_enabled_ = true;  // Only this explicitly opted-in module passed all stopped-cache checks.
++  LOGI() << "Bridge stopped cache ready graph=" << graph->graph_id << " warmConfiguration=" << warm_configuration_generation_
++         << " fullGeneration=" << state_generation_;
++  return 0;
++}
++int32_t AudioEngineDevice::AttachStoppedInputGraph(const InputPreparationRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  const bool profile = SameInputGraphProfile(graph->warm_request.state, request.next);
++  const bool intent = ValidateInputRequest(request, false, graph), route = SameRoute(graph->prepared_route, CurrentDefaultRoute());
++  const bool stopped = StoppedGraphIsQuiescent(graph, true), formats = PreparedFormatsMatch(graph);
++  LOGI() << "Bridge cache match graph=" << graph->graph_id << " profile=" << profile << " intent=" << intent
++         << " route=" << route << " stopped=" << stopped << " formats=" << formats;
++  if (!graph->warm_prepared || !graph->staged || stopped_graph_id_ != graph->graph_id ||
++      graph->warm_request.module_identity != reinterpret_cast<uintptr_t>(this) || !profile || !intent || !route ||
++      !BuiltInRoute(CurrentDefaultRoute()) || !stopped || !formats) return 1;
++  graph->request = request;  // A fresh activation token consumes compatible resources; warm intent is never rebased.
++  graph->from_cache = true;
++  LOGI() << "Bridge stopped cache consumed graph=" << graph->graph_id << " activation=" << request.generation;
++  return 0;
++}
++int32_t AudioEngineDevice::FinishStoppedInputGraph(const std::shared_ptr<PreparedInputGraph>& graph, bool clean, bool require_current) {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!clean || !graph->cleanup_confirmed) {
++    graph->cleanup_confirmed = false; cleanup_unconfirmed_ = true; this->AddRef();
++    LOGE() << "Bridge stopped cleanupUnconfirmed; complete owner must remain retained";
++    return kAudioEngineStateTransitionError;
++  }
++  const bool current = !require_current || ValidateStoppedInputRequest(graph);
++  if (stopped_graph_id_ == graph->graph_id) stopped_graph_id_ = 0;
++  return current ? 0 : kAudioEngineStateTransitionError;
++}
++int32_t AudioEngineDevice::StageInputGraph(const InputPreparationRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!graph->built || !ValidateInputRequest(request, false, graph)) { LOGW() << "Bridge Stage rejected built=" << graph->built; return kAudioEngineStateTransitionError; }
++  if (graph->from_cache) return graph->staged && StoppedGraphIsQuiescent(graph) && PreparedFormatsMatch(graph) ? 0 : kAudioEngineStateTransitionError;
++  LOGI() << "Bridge stage prepare id=" << request.generation;
++  @try {
++    graph->staged = true;  // Original retained delegate must retire even partial tap installation.
++    NSDictionary* output_context = @{ @"RockAudioPreparedGraphID": @(graph->graph_id), @"RockAudioPreparedGraphPhase": @1 };
++    NSDictionary* input_context = @{ @"RockAudioPreparedGraphID": @(graph->graph_id), @"RockAudioPreparedGraphPhase": @1, kAudioEngineInputMixerNodeKey: graph->mixer };
++    if (!observer_ || observer_->OnEngineWillConnectOutput(graph->engine, graph->engine.mainMixerNode, graph->output, graph->output_format, output_context) ||
++        !ValidateInputRequest(request, false, graph) || observer_->OnEngineWillConnectInput(graph->engine, graph->input, graph->mixer, graph->input_format, input_context) || !ValidateInputRequest(request, false, graph)) return kAudioEngineStateTransitionError;
++  } @catch (NSException*) { return kAudioEngineDeviceFormatError; }
++  return 0;
++}
++int32_t AudioEngineDevice::StartInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) {
++  const auto& request = graph->request;
++  if (!graph->built || !graph->staged || [NSThread isMainThread] || request.worker_identity == reinterpret_cast<uintptr_t>(Thread::Current())) return kAudioEngineInvalidStateError;
++  @try {
++    if (graph->from_cache) {
++      if (!StoppedGraphIsQuiescent(graph) || !PreparedFormatsMatch(graph) || !SameRoute(graph->prepared_route, CurrentDefaultRoute())) return kAudioEngineStateTransitionError;
++      LOGI() << "Bridge cached caller start; no prepare graph=" << graph->graph_id;
++    } else {
++      LOGI() << "Bridge caller prepare begin id=" << request.generation;
++      [graph->engine prepare]; usleep(100000);
++    }
++    LOGI() << "Bridge caller native start begin id=" << request.generation;
++    NSError* error = nil;
++    if (TimeMillis() >= request.deadline_ms || request.capture_state != ApplicationCaptureState() || ![graph->engine startAndReturnError:&error]) return kAudioEnginePlayoutStartError;
++    const int64_t callback_deadline = std::min(request.deadline_ms, TimeMillis() + 250);
++    while ((graph->bridge->silent_renders.load(std::memory_order_relaxed) < 2 || graph->bridge->discarded_inputs.load(std::memory_order_relaxed) == 0) && TimeMillis() < callback_deadline) usleep(1000);
++    LOGI() << "Bridge caller native start end id=" << request.generation << " silent=" << graph->bridge->silent_renders.load()
++           << " discarded=" << graph->bridge->discarded_inputs.load() << " active=" << graph->bridge->active_renders.load();
++    const auto started_route = CurrentDefaultRoute();
++    const bool cached_stable = !graph->from_cache || (SameRoute(graph->prepared_route, started_route) && PreparedFormatsMatch(graph));
++    if (!graph->from_cache) {
++      graph->input_bus_format = [graph->input outputFormatForBus:0]; graph->output_bus_format = [graph->output outputFormatForBus:0];
++      graph->prepared_route = started_route;
++    }
++    graph->started = cached_stable && graph->engine.running && graph->bridge->silent_renders.load() >= 2 && graph->bridge->discarded_inputs.load() > 0 && TimeMillis() < request.deadline_ms && request.capture_state == ApplicationCaptureState() && SameDevices(request.route, graph->prepared_route);
++    LOGI() << "Bridge started ready=" << graph->started << " input=" << graph->input_bus_format.description.UTF8String
++           << " output=" << graph->output_bus_format.description.UTF8String << " captureEqual=" << (request.capture_state == ApplicationCaptureState())
++           << " devicesEqual=" << SameDevices(request.route, graph->prepared_route) << " deadlineRemainingMs=" << request.deadline_ms - TimeMillis();
++  } @catch (NSException* exception) { LOGW() << "Bridge start exception: " << exception.reason.UTF8String; }
++  return graph->started ? 0 : kAudioEngineStateTransitionError;
++}
++int32_t AudioEngineDevice::CommitInputGraph(const InputPreparationRequest& request, const std::shared_ptr<PreparedInputGraph>& graph) {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!graph->started || !graph->staged || graph->bridge->ever_opened || graph->bridge->active_renders.load() ||
++      graph->bridge->active_records.load() || !ValidateInputRequest(request, true, graph)) { LOGW() << "Bridge Commit rejected before old close"; return kAudioEngineStateTransitionError; }
++  @try {
++    if (!graph->engine.running || ![graph->input_bus_format isEqual:[graph->input outputFormatForBus:0]] ||
++        ![graph->output_bus_format isEqual:[graph->output outputFormatForBus:0]]) return kAudioEngineDeviceFormatError;
++    ++state_generation_;  // This commit owns the reserved request. Later requests invalidate recovery.
++    LOGI() << "Bridge handoff close old id=" << request.generation << " candidate active pulls=" << graph->bridge->active_renders.load();
++    if (!CloseActiveBridge()) return kAudioEngineStateTransitionError;
++    graph->old = std::make_shared<PreparedInputGraph>();
++    auto& old = graph->old;
++    old->engine = engine_device_; old->output = engine_device_.outputNode;
++    old->source = source_node_; old->bridge = active_bridge_; old->staged = true;
++    old->active_renders_at_close = old->bridge->active_renders.load(std::memory_order_relaxed);
++    LOGI() << "Bridge old graph drained renders=" << old->active_renders_at_close;
++    graph->swap_started = true;
++    if (!RemoveBridgeConfigurationObserver()) {
++      graph->cleanup_confirmed = false;
++      @throw [NSException exceptionWithName:@"BridgeObserverDrain" reason:@"Notification posting drain unconfirmed" userInfo:nil];
++    }
++    old->stop_confirmed = StopGraphUnits(old->engine, nil, old->output);
++    if (!old->stop_confirmed) { graph->cleanup_confirmed = false; @throw [NSException exceptionWithName:@"BridgeStop" reason:@"Old output stop unconfirmed" userInfo:nil]; }
++    if (observer_) {
++      if (observer_->OnEngineDidStop(old->engine, true, false) || state_generation_ != request.generation + 1)
++        @throw [NSException exceptionWithName:@"BridgeObserver" reason:@"Old stop observer failed" userInfo:nil];
++      const int32_t release_result = observer_->OnEngineWillRelease(old->engine);
++      if (release_result == 0) old->staged = false;  // Release succeeded even if its callback changed intent.
++      if (release_result || state_generation_ != request.generation + 1)
++        @throw [NSException exceptionWithName:@"BridgeObserver" reason:@"Old release observer failed" userInfo:nil];
++    }
++    old->staged = false;
++    audio_device_buffer_->StopPlayout(); audio_device_buffer_->StopRecording();
++    old->retired_fine = std::move(fine_audio_buffer_); old->converter = converter_ref_; converter_ref_ = nullptr;
++    old->record_buffer = converter_buffer_;
++    engine_device_ = graph->engine; input_node_instantiated_ = true;
++    source_node_ = graph->source; input_mixer_node_ = graph->mixer; sink_node_ = graph->sink;
++    active_bridge_ = graph->bridge;
++    audio_device_buffer_->SetPlayoutSampleRate(graph->output_format.sampleRate); audio_device_buffer_->SetPlayoutChannels(1);
++    audio_device_buffer_->SetRecordingSampleRate(graph->input_format.sampleRate); audio_device_buffer_->SetRecordingChannels(1);
++    fine_audio_buffer_ = std::make_unique<FineAudioBuffer>(audio_device_buffer_.get());
++    converter_ref_ = graph->converter; graph->converter = nullptr; converter_buffer_ = graph->record_buffer;
++    audio_device_buffer_->StartPlayout(); audio_device_buffer_->StartRecording(); fine_audio_buffer_->ResetPlayout(); fine_audio_buffer_->ResetRecord();
++    if (!observer_ || observer_->OnEngineDidCreate(engine_device_) || state_generation_ != request.generation + 1 ||
++        observer_->OnEngineWillEnable(engine_device_, true, true, true) || state_generation_ != request.generation + 1 ||
++        observer_->OnEngineWillStart(engine_device_, true, true) || state_generation_ != request.generation + 1)
++      @throw [NSException exceptionWithName:@"BridgeObserver" reason:@"Candidate lifecycle commit failed" userInfo:nil];
++    NSDictionary* output_context = @{ @"RockAudioPreparedGraphID": @(graph->graph_id), @"RockAudioPreparedGraphPhase": @2 };
++    NSDictionary* input_context = @{ @"RockAudioPreparedGraphID": @(graph->graph_id), @"RockAudioPreparedGraphPhase": @2, kAudioEngineInputMixerNodeKey: graph->mixer };
++    if (observer_->OnEngineWillConnectOutput(engine_device_, engine_device_.mainMixerNode, graph->output, graph->output_format, output_context) ||
++        state_generation_ != request.generation + 1 || observer_->OnEngineWillConnectInput(engine_device_, graph->input, graph->mixer, graph->input_format, input_context) || state_generation_ != request.generation + 1)
++      @throw [NSException exceptionWithName:@"BridgeObserver" reason:@"Candidate meter commit failed" userInfo:nil];
++    if (request.capture_state != ApplicationCaptureState() || state_generation_ != request.generation + 1 || TimeMillis() >= request.deadline_ms ||
++        !SameRoute(graph->prepared_route, CurrentDefaultRoute()) || !graph->engine.running)
++      @throw [NSException exceptionWithName:@"BridgeStale" reason:@"Intent or route changed during commit" userInfo:nil];
++    if (!InstallBridgeConfigurationObserver()) @throw [NSException exceptionWithName:@"BridgeObserver" reason:@"Observer registration failed" userInfo:nil];
++    LOGI() << "Bridge native processing vp=" << graph->input.voiceProcessingEnabled
++           << " bypass=" << graph->input.voiceProcessingBypassed << " agc=" << graph->input.voiceProcessingAGCEnabled
++           << " vpMute=" << graph->input.voiceProcessingInputMuted << " mixerVolume=" << graph->mixer.outputVolume;
++    if (!graph->engine.running || request.capture_state != ApplicationCaptureState() || state_generation_ != request.generation + 1 ||
++        TimeMillis() >= request.deadline_ms || !SameRoute(graph->prepared_route, CurrentDefaultRoute()))
++      @throw [NSException exceptionWithName:@"BridgeStale" reason:@"Candidate stopped or intent changed before publication" userInfo:nil];
++    engine_state_ = request.next; graph->adopted = true;
++    active_prepared_graph_ = graph;
++    if (!BindActiveBridge(true)) @throw [NSException exceptionWithName:@"BridgeBind" reason:@"Initial target publication rejected" userInfo:nil];
++    graph->staged = false;  // Only the committed SDK lifecycle may now retire these taps.
++    if (stopped_graph_id_ == graph->graph_id) stopped_graph_id_ = 0;
++    LOGI() << "Bridge committed running graph id=" << request.generation << "; no worker prepare/start/rewire";
++    return 0;
++  } @catch (NSException* exception) {
++    LOGE() << "Bridge commit failed: " << exception.reason.UTF8String;
++    graph->adopted = false;
++    if (!graph->swap_started) { if (active_bridge_) active_bridge_->gate.ResumeUnchanged(); return kAudioEngineStateTransitionError; }
++    graph->bridge->gate.Close();
++    if (!Drain(graph->bridge->gate)) graph->cleanup_confirmed = false;
++    // Targets stay closed. Caller stops/releases failed VPIO before optional output-only recovery.
++    if (!RemoveBridgeConfigurationObserver()) graph->cleanup_confirmed = false;
++    if (graph->cleanup_confirmed) {
++      graph->retired_fine = std::move(fine_audio_buffer_);
++      if (engine_device_ == graph->engine) { graph->converter = converter_ref_; converter_ref_ = nullptr; }
++      audio_device_buffer_->StopRecording(); audio_device_buffer_->StopPlayout();
++      source_node_ = nil; sink_node_ = nil;
++      if (active_bridge_) { active_bridge_->source_id = 0; active_bridge_->sink_id = 0; }
++      input_mixer_node_ = nil; converter_buffer_ = nil; engine_device_ = nil;
++      input_node_instantiated_ = false; active_bridge_.reset(); active_prepared_graph_.reset();
++    }
++    engine_state_ = request.previous; engine_state_.input_enabled = false; engine_state_.input_running = false;
++    engine_state_.input_enabled_persistent_mode = false; engine_state_.input_available = false;
++    engine_state_.output_enabled = false; engine_state_.output_running = false; engine_state_.output_available = false;
++    graph->recovery_requested = graph->cleanup_confirmed; graph->recovery_generation = state_generation_; graph->recovery_state = engine_state_;
++    if (!graph->cleanup_confirmed) { cleanup_unconfirmed_ = true; this->AddRef(); }
++    return kAudioEngineStateTransitionError;
++  }
++}
++AVAudioEngine* AudioEngineDevice::InputGraphEngine(const std::shared_ptr<PreparedInputGraph>& graph) { return graph ? graph->engine : nil; }
++AVAudioEngine* AudioEngineDevice::InputGraphOldEngine(const std::shared_ptr<PreparedInputGraph>& graph) { return graph && graph->old && graph->old->staged ? graph->old->engine : nil; }
++void AudioEngineDevice::InputGraphOldReleased(const std::shared_ptr<PreparedInputGraph>& graph) { if (graph->old) graph->old->staged = false; }
++bool AudioEngineDevice::InputGraphNeedsStageRelease(const std::shared_ptr<PreparedInputGraph>& graph) { return graph && graph->staged; }
++void AudioEngineDevice::InputGraphStageReleased(const std::shared_ptr<PreparedInputGraph>& graph) { graph->staged = false; }
++bool AudioEngineDevice::StopInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) { return graph && graph->Stop(); }
++bool AudioEngineDevice::DisposeInputGraph(const std::shared_ptr<PreparedInputGraph>& graph) { return graph && graph->Dispose(); }
++int32_t AudioEngineDevice::FinishInputGraph(const std::shared_ptr<PreparedInputGraph>& graph, bool cleanup_confirmed) {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (!cleanup_confirmed || !graph->cleanup_confirmed) {
++    graph->cleanup_confirmed = false;  // Destructor must retain the graph when observer cleanup was not confirmed.
++    cleanup_unconfirmed_ = true; this->AddRef(); LOGE() << "Bridge cleanupUnconfirmed; native callback owner retained"; return kAudioEngineStateTransitionError;
++  }
++  if (stopped_graph_id_ == graph->graph_id) stopped_graph_id_ = 0;
++  if (!graph->recovery_requested) return 0;
++  graph->recovery_requested = false;
++  // Restoring output does not authorize input and must not depend on an obsolete input capture epoch.
++  if (!initialized_ || cleanup_unconfirmed_ || state_generation_ != graph->recovery_generation || engine_state_ != graph->recovery_state ||
++      TimeMillis() >= graph->request.deadline_ms || !SameDevices(graph->request.route, CurrentDefaultRoute())) return kAudioEngineStateTransitionError;
++  EngineState output = graph->request.previous;
++  output.input_enabled = false; output.input_running = false; output.input_enabled_persistent_mode = false; output.input_available = false;
++  int32_t result = ModifyEngineState([output](EngineState) { return output; });
++  LOGW() << "Bridge output-only recovery result=" << result;
++  return result;
++}
++#endif
++
+ AudioEngineDevice::AudioEngineDevice(const Environment& env, bool voice_processing_bypassed)
+     : initialized_(false) {
+   LOGI() << "voice_processing_bypassed " << voice_processing_bypassed;
+@@ -310,6 +1017,8 @@
+ void AudioEngineDevice::HandleDeviceListenerEvent(AudioObjectPropertySelector selector) {
+   thread_->PostTask(SafeTask(safety_, [this, selector] {
+     RTC_DCHECK_RUN_ON(thread_);
++    if (selector == kAudioHardwarePropertyDefaultOutputDevice || selector == kAudioHardwarePropertyDefaultInputDevice)
++      ++warm_configuration_generation_;  // Reject route events before the normal debounced state update.
+ 
+     if (selector == kAudioHardwarePropertyDevices) {
+       auto old_input_device_ids = input_device_ids_;
+@@ -414,6 +1123,10 @@
+     return 0;
+   }
+ 
++#if TARGET_OS_OSX
++  ++warm_configuration_generation_;  // A real initialization is configuration; an idempotent peer Init above is not.
++#endif
++
+ #if defined(WEBRTC_IOS)
+   RTC_OBJC_TYPE(RTCAudioSessionConfiguration)* config =
+       [RTC_OBJC_TYPE(RTCAudioSessionConfiguration) webRTCConfiguration];
+@@ -478,6 +1191,14 @@
+ int32_t AudioEngineDevice::Terminate() {
+   LOGI() << "Terminate";
+   RTC_DCHECK_RUN_ON(thread_);
++  ++state_generation_;
++#if TARGET_OS_OSX
++  ++warm_configuration_generation_;
++#endif
++  if (cleanup_unconfirmed_) return kAudioEngineTerminateError;
++#if TARGET_OS_OSX
++  if (stopped_graph_id_) { LOGE() << "Discard stopped input graph before Terminate"; return kAudioEngineTerminateError; }
++#endif
+   if (!initialized_) {
+     return 0;
+   }
+@@ -515,8 +1236,15 @@
+   }
+ #endif
+ 
++#if TARGET_OS_OSX
++  const bool bridge_owned = active_bridge_ != nullptr;
++  const int32_t playout_result = StopPlayout();
++  const int32_t recording_result = StopRecording();
++  if (bridge_owned && (playout_result || recording_result)) return kAudioEngineTerminateError;
++#else
+   StopPlayout();
+   StopRecording();
++#endif
+ 
+   initialized_ = false;
+   return 0;
+@@ -673,6 +1401,11 @@
+ void AudioEngineDevice::OnValidRouteChange() {
+   LOGI() << "OnValidRouteChange";
+   RTC_DCHECK(thread_);
++#if TARGET_OS_OSX
++  thread_->PostTask(SafeTask(safety_, [this] {
++    RTC_DCHECK_RUN_ON(thread_); ++warm_configuration_generation_;
++  }));
++#endif
+ }
+ 
+ void AudioEngineDevice::OnCanPlayOrRecordChange(bool can_play_or_record) {
+@@ -1359,6 +2092,10 @@
+ int32_t AudioEngineDevice::SetObserver(AudioDeviceObserver* observer) {
+   LOGI() << "SetObserver";
+   RTC_DCHECK_RUN_ON(thread_);
++  ++state_generation_;
++#if TARGET_OS_OSX
++  ++warm_configuration_generation_;
++#endif
+ 
+   observer_ = observer;
+ 
+@@ -1663,29 +2400,24 @@
+   return engine_device_.outputNode;
+ }
+ 
+-void AudioEngineDevice::StopDeviceEngineAudioUnits() {
++bool AudioEngineDevice::StopDeviceEngineAudioUnits() {
+   RTC_DCHECK_RUN_ON(thread_);
+   RTC_DCHECK(engine_device_ != nil);
+-
+-  // A playout-only engine (for example a subscribe-only viewer) never
+-  // instantiated its input node, so there is no input unit to stop and it must
+-  // not be instantiated here.
++  bool clean = true;
+   if (AVAudioInputNode* input_node = InputNodeOrNil()) {
+     if (input_node.audioUnit != nullptr) {
+       OSStatus err = AudioOutputUnitStop(input_node.audioUnit);
+-      if (err != noErr) {
+-        LOGW() << "AudioOutputUnitStop (input) returned: " << err;
+-      }
+-    }
+-  }
+-
++      clean = (err == noErr || err == kAudioUnitErr_Uninitialized) && clean;
++      if (err != noErr) LOGW() << "AudioOutputUnitStop (input) returned: " << err;
++    }
++  }
+   AVAudioOutputNode* output_node = engine_device_.outputNode;
+   if (output_node != nil && output_node.audioUnit != nullptr) {
+     OSStatus err = AudioOutputUnitStop(output_node.audioUnit);
+-    if (err != noErr) {
+-      LOGW() << "AudioOutputUnitStop (output) returned: " << err;
+-    }
+-  }
++    clean = (err == noErr || err == kAudioUnitErr_Uninitialized) && clean;
++    if (err != noErr) LOGW() << "AudioOutputUnitStop (output) returned: " << err;
++  }
++  return clean;
+ }
+ 
+ void AudioEngineDevice::ReconfigureEngine() {
+@@ -1744,10 +2476,19 @@
+ int32_t AudioEngineDevice::ModifyEngineState(
+     std::function<EngineState(EngineState)> state_transform) {
+   RTC_DCHECK_RUN_ON(thread_);
++  ++state_generation_;
++  if (cleanup_unconfirmed_) return kAudioEngineStateTransitionError;
+ 
+   EngineState old_state = engine_state_;
+   EngineState new_state = state_transform(old_state);
+   EngineStateUpdate state = {old_state, new_state};
++#if TARGET_OS_OSX
++  const bool held_logical_state =
++      !old_state.input_available && !old_state.output_available && !new_state.input_available && !new_state.output_available &&
++      !engine_device_ && !audio_device_buffer_->IsPlaying() && !audio_device_buffer_->IsRecording() &&
++      WarmStateProjection(old_state) == WarmStateProjection(new_state);
++  if (!held_logical_state) ++warm_configuration_generation_;  // Includes rejected configuration differences and ABA changes.
++#endif
+ 
+   // No changes, return immediately.
+   if (state.HasNoChanges()) {
+@@ -2239,6 +2980,12 @@
+   std::vector<std::function<void()>> rollback_actions;
+ 
+   auto rollback = [&](int32_t result) {
++    RTC_DCHECK_RUN_ON(thread_);
++#if TARGET_OS_OSX
++    if (active_bridge_ && (!CloseActiveBridge() || !RemoveBridgeConfigurationObserver() || (engine_device_ && !StopGraphUnits(engine_device_, InputNodeOrNil(), engine_device_.outputNode)))) {
++      cleanup_unconfirmed_ = true; this->AddRef(); return result;
++    }
++#endif
+     // Execute rollback actions in reverse order (LIFO)
+     for (auto it = rollback_actions.rbegin(); it != rollback_actions.rend(); ++it) {
+       (*it)();
+@@ -2247,6 +2994,12 @@
+     return result;
+   };
+ 
++#if TARGET_OS_OSX
++  // Gate every graph/buffer mutation, including an enabled but currently stopped graph.
++  if (active_bridge_ && (state.DidUpdateAudioGraph() || state.IsEngineRecreateRequired() ||
++      state.DidBeginInterruption() || !state.next.IsAnyRunning()) && !CloseActiveBridge())
++    return kAudioEngineStateTransitionError;  // Old target resumed unchanged; no destructive rollback is permitted.
++#endif
+   // --------------------------------------------------------------------------------------------
+   // Step: Stop AVAudioEngine
+   //
+@@ -2255,6 +3008,12 @@
+        state.DidBeginInterruption() || state.IsEngineRecreateRequired())) {
+     LOGI() << "Stopping AVAudioEngine...";
+ 
++#if TARGET_OS_OSX
++    if (active_bridge_) {
++      if (!RemoveBridgeConfigurationObserver()) return kAudioEngineStateTransitionError;
++    } else
++#endif
++    {
+     if (configuration_observer_ != nullptr) {
+       NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+       [center removeObserver:(__bridge_transfer id)configuration_observer_
+@@ -2262,8 +3021,12 @@
+                       object:nil];
+       configuration_observer_ = nil;
+     }
++    }
+ 
+     if (engine_device_ != nil) {
++#if TARGET_OS_OSX
++      if (!CloseActiveBridge()) return kAudioEngineStateTransitionError;
++#endif
+       [engine_device_ stop];
+ 
+       if (observer_ != nullptr) {
+@@ -2277,6 +3040,11 @@
+     }
+   }
+ 
++#if TARGET_OS_OSX
++  if (active_bridge_ && (state.DidUpdateAudioGraph() || state.IsEngineRecreateRequired()) && engine_device_ && engine_device_.running) {
++    cleanup_unconfirmed_ = true; this->AddRef(); return kAudioEngineStateTransitionError;
++  }
++#endif
+   // --------------------------------------------------------------------------------------------
+   // Step: Stop playout buffer
+   //
+@@ -2310,7 +3078,10 @@
+     LOGI() << "Recreate required, releasing AVAudioEngine...";
+ 
+     if (engine_device_ != nil) {
+-      StopDeviceEngineAudioUnits();
++      [[maybe_unused]] const bool units_stopped = StopDeviceEngineAudioUnits();
++#if TARGET_OS_OSX
++      if (active_bridge_ && !units_stopped) { cleanup_unconfirmed_ = true; this->AddRef(); return kAudioEngineStateTransitionError; }
++#endif
+     }
+ 
+     if (observer_ != nullptr && engine_device_ != nil) {
+@@ -2333,6 +3104,10 @@
+     RTC_DCHECK(engine_device_ == nil);
+ 
+     engine_device_ = [[AVAudioEngine alloc] init];
++#if TARGET_OS_OSX
++    active_bridge_ = (prepared_input_graph_enabled_ || BridgeMode()) ? std::make_shared<AudioGraphCallbackBridge>() : nullptr;
++    active_prepared_graph_.reset();
++#endif
+     // Per engine instance: a fresh engine has no input node yet. This is the
+     // only place the flag needs resetting, it is unobservable while
+     // engine_device_ is nil.
+@@ -2462,6 +3237,12 @@
+           }));
+         };
+ 
++#if TARGET_OS_OSX
++        if (active_bridge_) {
++          auto bridge = active_bridge_;
++          listener_block = ^(AVAudioVoiceProcessingSpeechActivityEvent event) { bridge->Speech(event == AVAudioVoiceProcessingSpeechActivityStarted ? AudioDeviceModule::SpeechActivityEvent::kStarted : AudioDeviceModule::SpeechActivityEvent::kEnded); };
++        }
++#endif
+         BOOL set_listener_result = [InputNode(state) setMutedSpeechActivityEventListener:listener_block];
+         if (set_listener_result) {
+           LOGI() << "setMutedSpeechActivityEventListener success";
+@@ -2536,6 +3317,10 @@
+           return noErr;
+         };
+ 
++#if TARGET_OS_OSX
++    if (active_bridge_) source_node_ = BridgeSource(rtc_output_format, active_bridge_);
++    else
++#endif
+     source_node_ = [[AVAudioSourceNode alloc] initWithFormat:rtc_output_format
+                                                  renderBlock:source_block];
+     [engine_device_ attachNode:source_node_];
+@@ -2551,6 +3336,9 @@
+         }
+       }
+       source_node_ = nil;
++#if TARGET_OS_OSX
++      if (active_bridge_) active_bridge_->source_id = 0;
++#endif
+     });
+ 
+     @try {
+@@ -2596,6 +3384,9 @@
+         }
+       }
+       source_node_ = nil;
++#if TARGET_OS_OSX
++      if (active_bridge_) active_bridge_->source_id = 0;
++#endif
+     }
+   }
+ 
+@@ -2773,6 +3564,10 @@
+       return rollback(kAudioEngineDeviceFormatError);
+     }
+ 
++#if TARGET_OS_OSX
++    if (active_bridge_) sink_node_ = BridgeSink(active_bridge_);
++    else
++#endif
+     sink_node_ = [[AVAudioSinkNode alloc] initWithReceiverBlock:sink_block];
+     [engine_device_ attachNode:sink_node_];
+ 
+@@ -2787,6 +3582,9 @@
+         }
+       }
+       sink_node_ = nil;
++#if TARGET_OS_OSX
++      if (active_bridge_) active_bridge_->sink_id = 0;
++#endif
+     });
+ 
+     @try {
+@@ -2833,6 +3631,9 @@
+           LOGW() << "Failed to detach node: " << exception.reason.UTF8String;
+         }
+         sink_node_ = nil;
++#if TARGET_OS_OSX
++      if (active_bridge_) active_bridge_->sink_id = 0;
++#endif
+       }
+     }
+ 
+@@ -3024,6 +3825,10 @@
+     });
+   }
+ 
++#if TARGET_OS_OSX
++  if (active_bridge_ && active_bridge_->gate.IsClosed() && state.next.IsAnyRunning() && !BindActiveBridge())
++    return rollback(kAudioEngineStateTransitionError);
++#endif
+   // --------------------------------------------------------------------------------------------
+   // Step: Start engine
+   //
+@@ -3094,6 +3899,12 @@
+ 
+         RTC_DCHECK(configuration_observer_ == nullptr);
+         // Add observer for configuration changes
++#if TARGET_OS_OSX
++        if (active_bridge_) {
++          if (!InstallBridgeConfigurationObserver()) return rollback(kAudioEngineStateTransitionError);
++        } else
++#endif
++        {
+         NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+         configuration_observer_ = (__bridge_retained void*)[center
+             addObserverForName:AVAudioEngineConfigurationChangeNotification
+@@ -3107,6 +3918,7 @@
+                         ReconfigureEngine();
+                       }
+                     }];
++        }
+ 
+         rollback_actions.push_back([this]() {
+           RTC_DCHECK_RUN_ON(thread_);
+@@ -3134,7 +3946,10 @@
+   if (state.prev.IsAnyEnabled() && !state.next.IsAnyEnabled()) {
+     RTC_DCHECK(engine_device_ != nullptr);
+ 
+-    StopDeviceEngineAudioUnits();
++    [[maybe_unused]] const bool units_stopped = StopDeviceEngineAudioUnits();
++#if TARGET_OS_OSX
++    if (active_bridge_ && !units_stopped) { cleanup_unconfirmed_ = true; this->AddRef(); return kAudioEngineStateTransitionError; }
++#endif
+ 
+     if (observer_ != nullptr) {
+       int32_t result = observer_->OnEngineWillRelease(engine_device_);
+@@ -3162,6 +3977,9 @@
+     LOGI() << " [Post] engine: nil";
+   }
+ 
++#if TARGET_OS_OSX
++  if (!engine_device_) { active_bridge_.reset(); active_prepared_graph_.reset(); }
++#endif
+   return 0;
+ }
+ 
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
+@@ -18,6 +18,17 @@
+ 
+ #import "RTCAudioDeviceModule+Private.h"
+ #import "RTCAudioDeviceModule.h"
++#import "RTCPeerConnectionFactory.h"
++#include <cstdlib>
++#include <cstring>
++#include <atomic>
++#if TARGET_OS_OSX
++#include "modules/audio_device/mac/application_input_mute_state.h"
++#include "rtc_base/time_utils.h"
++@protocol RockPreparedInputGraphCapability
++- (BOOL)audioDeviceModuleSupportsPreparedInputGraphs:(RTC_OBJC_TYPE(RTCAudioDeviceModule)*)module;
++@end
++#endif
+ #import "RTCAudioProcessingOptions+Private.h"
+ #import "RTCAudioProcessingState+Private.h"
+ #import "RTCIODevice+Private.h"
+@@ -195,11 +206,34 @@
+   }
+ };
+ 
++#if TARGET_OS_OSX
++static bool DisposeStoppedCandidate(webrtc::Thread* worker, webrtc::AudioEngineDevice* module,
++    RTC_OBJC_TYPE(RTCAudioDeviceModule)* owner, id delegate, const std::shared_ptr<webrtc::PreparedInputGraph>& graph, bool require_current = false) {
++  bool stopped = webrtc::AudioEngineDevice::StopInputGraph(graph);  // Caller queue, never worker/Main.
++  bool observers_clean = stopped && worker->BlockingCall([owner, delegate, graph] {
++    @try {
++      if (webrtc::AudioEngineDevice::InputGraphNeedsStageRelease(graph)) {
++        if (!delegate || [delegate audioDeviceModule:owner willReleaseEngine:webrtc::AudioEngineDevice::InputGraphEngine(graph)] != 0) return false;
++        webrtc::AudioEngineDevice::InputGraphStageReleased(graph);
++      }
++      return true;
++    } @catch (NSException*) { return false; }
++  });
++  bool clean = observers_clean && webrtc::AudioEngineDevice::DisposeInputGraph(graph);
++  return worker->BlockingCall([module, graph, clean, require_current] { return module->FinishStoppedInputGraph(graph, clean, require_current); }) == 0;
++}
++#endif
++
+ @implementation RTC_OBJC_TYPE (RTCAudioDeviceModule) {
+   webrtc::Thread *_workerThread;
+   webrtc::scoped_refptr<webrtc::AudioDeviceModule> _native;
+   RTC_OBJC_TYPE(RTCAudioDeviceModuleType) _audioDeviceModuleType;
+   AudioDeviceObserver *_observer;
++#if TARGET_OS_OSX
++  std::shared_ptr<webrtc::PreparedInputGraph> _stoppedInputGraph;  // Worker-confined; final resource owner always leaves on caller.
++  __weak id _stoppedInputDelegate;  // Supported owner explicitly discards before observer/factory release.
++  std::atomic<bool> _preparedInputGraphEnabled;  // Caller reads; only successful worker publication arms it.
++#endif
+ }
+ 
+ - (id<RTC_OBJC_TYPE(RTCAudioDeviceModuleDelegate)>)observer {
+@@ -208,6 +242,13 @@
+ 
+ - (void)setObserver:(id<RTC_OBJC_TYPE(RTCAudioDeviceModuleDelegate)>)observer {
+   _workerThread->BlockingCall([self, observer] {
++#if TARGET_OS_OSX
++    auto* module = AudioEngineDeviceOrNull(_native.get(), _audioDeviceModuleType);
++    if (module && module->HasStoppedInputGraph() && _observer->delegate_ != observer) {
++      module->InvalidateStoppedInputPreparation();
++      RTCLogError(@"Discard stopped input graph before replacing observer"); return;
++    }
++#endif
+     _observer->delegate_ = observer;
+     _native->SetObserver(observer != nil ? _observer : nullptr);
+   });
+@@ -223,10 +264,23 @@
+   _native = module;
+   _workerThread = workerThread;
+   _audioDeviceModuleType = audioDeviceModuleType;
++#if TARGET_OS_OSX
++  _preparedInputGraphEnabled.store(false, std::memory_order_relaxed);
++#endif
+ 
+   _observer = new AudioDeviceObserver(self);
+ 
+   return self;
++}
++
++- (void)dealloc {
++#if TARGET_OS_OSX
++  if (_stoppedInputGraph) {
++    // Contract violation: never let cached AV resources dispose on this unknown thread.
++    [[maybe_unused]] auto* retained = new std::shared_ptr<webrtc::PreparedInputGraph>(std::move(_stoppedInputGraph));
++    RTCLogError(@"Stopped input graph retained until process exit: discard was not completed");
++  }
++#endif
+ }
+ 
+ - (NSArray<RTC_OBJC_TYPE(RTCIODevice) *> *)outputDevices {
+@@ -457,11 +511,150 @@
+ 
+ #pragma mark - Unique to AudioEngineDevice
+ 
++#if TARGET_OS_OSX
++- (NSInteger)prewarmStoppedInputGraph {
++  const int64_t deadline_ms = webrtc::TimeMillis() + 6000;
++  const uint64_t capture_state = RTC_OBJC_TYPE(RTCApplicationCaptureState)();
++  auto* module = AudioEngineDeviceOrNull(_native.get(), _audioDeviceModuleType);
++  if (!module || _workerThread->IsCurrent() || [NSThread isMainThread]) return 1;
++  __attribute__((objc_precise_lifetime)) RTC_OBJC_TYPE(RTCAudioDeviceModule)* retainedSelf = self;
++  auto retainedNative = retainedSelf->_native;
++  if (retainedNative.get() != module) return webrtc::kAudioEngineStateTransitionError;
++  webrtc::mac_adm::ScopedApplicationInputMuteReconfiguration preserve_application_mute;
++  __attribute__((objc_precise_lifetime)) id delegate = _workerThread->BlockingCall([self]() -> id {
++    id current = _observer->delegate_;
++    if (![current respondsToSelector:@selector(audioDeviceModuleSupportsPreparedInputGraphs:)] ||
++        ![(id<RockPreparedInputGraphCapability>)current audioDeviceModuleSupportsPreparedInputGraphs:self]) return nil;
++    return current;
++  });
++  if (!delegate) return 1;
++  auto request = _workerThread->BlockingCall([module, capture_state, deadline_ms] { return module->BeginStoppedInputPreparation(capture_state, deadline_ms); });
++  if (!request.eligible) return request.result;
++  auto graph = webrtc::AudioEngineDevice::BuildStoppedInputGraph(request);
++  int32_t result = _workerThread->BlockingCall([self, module, delegate, graph] {
++    if (_observer->delegate_ != delegate) return int32_t(webrtc::kAudioEngineStateTransitionError);
++    return module->StageStoppedInputGraph(graph);
++  });
++  if (result == 0) result = webrtc::AudioEngineDevice::PrepareStoppedInputGraph(graph);
++  if (result == 0) result = _workerThread->BlockingCall([self, module, delegate, graph] {
++    if (_observer->delegate_ != delegate) return int32_t(webrtc::kAudioEngineStateTransitionError);
++    int32_t result = module->PublishStoppedInputGraph(graph);
++    if (result == 0) {
++      _stoppedInputGraph = graph; _stoppedInputDelegate = delegate;
++      _preparedInputGraphEnabled.store(true, std::memory_order_release);
++    }
++    return result;
++  });
++  if (result == 0) return 0;
++  // Ordinary preparation failure may fall back only after complete off-worker cleanup.
++  return DisposeStoppedCandidate(_workerThread, module, self, delegate, graph, true) ? 1 : webrtc::kAudioEngineStateTransitionError;
++}
++- (NSInteger)discardStoppedInputGraph {
++  auto* module = AudioEngineDeviceOrNull(_native.get(), _audioDeviceModuleType);
++  if (!module) return 1;
++  if (_workerThread->IsCurrent() || [NSThread isMainThread]) return webrtc::kAudioEngineStateTransitionError;
++  __attribute__((objc_precise_lifetime)) RTC_OBJC_TYPE(RTCAudioDeviceModule)* retainedSelf = self;
++  auto retainedNative = retainedSelf->_native;
++  if (retainedNative.get() != module) return webrtc::kAudioEngineStateTransitionError;
++  webrtc::mac_adm::ScopedApplicationInputMuteReconfiguration preserve_application_mute;
++  std::shared_ptr<webrtc::PreparedInputGraph> graph;
++  __attribute__((objc_precise_lifetime)) id delegate = nil;
++  bool outstanding = _workerThread->BlockingCall([&] {
++    // Transfer a strong resource owner to the blocked caller before resetting cache storage.
++    graph = _stoppedInputGraph; delegate = _stoppedInputDelegate;
++    _stoppedInputGraph.reset(); _stoppedInputDelegate = nil;
++    return module->HasStoppedInputGraph();
++  });
++  if (!graph) return outstanding ? webrtc::kAudioEngineStateTransitionError : 1;
++  return DisposeStoppedCandidate(_workerThread, module, self, delegate, graph) ? 0 : webrtc::kAudioEngineStateTransitionError;
++}
++#endif
++
+ - (NSInteger)setEngineAvailability:(RTC_OBJC_TYPE(RTCAudioEngineAvailability))availability {
+   webrtc::AudioEngineDevice *module =
+       AudioEngineDeviceOrNull(_native.get(), _audioDeviceModuleType);
+   if (module == nullptr) return -1;
+ 
++#if TARGET_OS_OSX
++  const char* mode = std::getenv("ROCK_MAC_MIC_PREFLIGHT");
++  const bool force_bridge = mode && std::strcmp(mode, "bridge") == 0;
++  if ((force_bridge || _preparedInputGraphEnabled.load(std::memory_order_acquire)) && !_workerThread->IsCurrent() && ![NSThread isMainThread]) {
++    __attribute__((objc_precise_lifetime)) RTC_OBJC_TYPE(RTCAudioDeviceModule)* retainedSelf = self;
++    auto retainedNative = retainedSelf->_native;
++    if (retainedNative.get() != module) return -1;
++    // This app's serial audio queue keeps the factory/borrowed worker alive through this call.
++    // On unconfirmed shutdown, GuestSystemAudio retains that complete owner, not just the ADM.
++    webrtc::mac_adm::ScopedApplicationInputMuteReconfiguration preserve_application_mute;
++    __attribute__((objc_precise_lifetime)) id delegate = _workerThread->BlockingCall([self]() -> id {
++      id current = _observer->delegate_;
++      if (![current respondsToSelector:@selector(audioDeviceModuleSupportsPreparedInputGraphs:)] ||
++          ![(id<RockPreparedInputGraphCapability>)current audioDeviceModuleSupportsPreparedInputGraphs:self]) return nil;
++      return current;
++    });
++    if (delegate) {
++      const uint64_t capture_state = RTC_OBJC_TYPE(RTCApplicationCaptureState)();
++      auto request = _workerThread->BlockingCall([module, availability, capture_state] {
++        return module->BeginInputPreparation(availability.isInputAvailable, availability.isOutputAvailable, capture_state);
++      });
++      if (request.eligible) {
++        std::shared_ptr<webrtc::PreparedInputGraph> graph;
++        std::shared_ptr<webrtc::PreparedInputGraph> cached;
++        __attribute__((objc_precise_lifetime)) id cached_delegate = nil;
++        _workerThread->BlockingCall([&] {
++          cached = _stoppedInputGraph; cached_delegate = _stoppedInputDelegate;
++          _stoppedInputGraph.reset(); _stoppedInputDelegate = nil;
++        });
++        if (cached) {
++          int32_t attached = _workerThread->BlockingCall([self, module, delegate, cached_delegate, request, cached] {
++            if (delegate != cached_delegate || _observer->delegate_ != delegate) return int32_t(1);
++            return module->AttachStoppedInputGraph(request, cached);
++          });
++          if (attached == 0) graph = cached;
++          else if (!DisposeStoppedCandidate(_workerThread, module, self, cached_delegate, cached)) return webrtc::kAudioEngineStateTransitionError;
++        }
++        if (!graph) {
++          if (!force_bridge) return _workerThread->BlockingCall([module, request, availability] {
++            if (!module->InputPreparationIsCurrent(request)) return int32_t(webrtc::kAudioEngineStateTransitionError);
++            return module->SetEngineAvailability(availability.isInputAvailable, availability.isOutputAvailable);
++          });  // No valid resource: use the original transition, never cold-build a production bridge.
++          if (!_workerThread->BlockingCall([module, request] { return module->InputPreparationIsCurrent(request); })) return webrtc::kAudioEngineStateTransitionError;
++          graph = webrtc::AudioEngineDevice::BuildInputGraph(request);
++        }
++        int32_t result = _workerThread->BlockingCall([self, module, delegate, request, graph] {
++          if (_observer->delegate_ != delegate) return int32_t(webrtc::kAudioEngineStateTransitionError);
++          return module->StageInputGraph(request, graph);
++        });
++        if (result == 0) result = webrtc::AudioEngineDevice::StartInputGraph(graph);
++        if (result == 0) result = _workerThread->BlockingCall([self, module, delegate, request, graph] {
++          if (_observer->delegate_ != delegate) return int32_t(webrtc::kAudioEngineStateTransitionError);
++          return module->CommitInputGraph(request, graph);
++        });
++        if (result == 0) {
++          bool clean = webrtc::AudioEngineDevice::DisposeInputGraph(graph);  // Retire old output only.
++          if (!clean) _workerThread->BlockingCall([module, graph] { return module->FinishInputGraph(graph, false); });
++          return clean ? 0 : webrtc::kAudioEngineStateTransitionError;
++        }
++        bool stopped = webrtc::AudioEngineDevice::StopInputGraph(graph);
++        bool observers_clean = stopped && _workerThread->BlockingCall([self, delegate, graph] {
++          @try {
++            if (webrtc::AudioEngineDevice::InputGraphNeedsStageRelease(graph)) {
++              if ([delegate audioDeviceModule:self willReleaseEngine:webrtc::AudioEngineDevice::InputGraphEngine(graph)] != 0) return false;
++              webrtc::AudioEngineDevice::InputGraphStageReleased(graph);
++            }
++            if (AVAudioEngine* old = webrtc::AudioEngineDevice::InputGraphOldEngine(graph)) {
++              if ([delegate audioDeviceModule:self willReleaseEngine:old] != 0) return false;
++              webrtc::AudioEngineDevice::InputGraphOldReleased(graph);
++            }
++            return true;
++          } @catch (NSException*) { return false; }
++        });
++        bool clean = observers_clean && webrtc::AudioEngineDevice::DisposeInputGraph(graph);
++        _workerThread->BlockingCall([module, graph, clean] { return module->FinishInputGraph(graph, clean); });
++        return result;  // No cold microphone retry after a failed eligible bridge request.
++      }
++    }
++  }
++#endif
+   return _workerThread->BlockingCall([module, availability] {
+     return module->SetEngineAvailability(availability.isInputAvailable,
+                                          availability.isOutputAvailable);
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.h
+@@ -241,6 +241,15 @@
+ 
+ - (NSInteger)setEngineAvailability:(RTC_OBJC_TYPE(RTCAudioEngineAvailability))availability;
+ 
++#if TARGET_OS_OSX
++// Explicit per-module, meeting-scoped opt-in. Call off Main/worker while BOTH
++// availability flags are held false; keep playback withheld until completion.
++// 0: ready/discarded, 1: skipped/no cache, negative: failure. Discard must finish
++// before replacing observer or releasing the factory, including an unused graph.
++- (NSInteger)prewarmStoppedInputGraph;
++- (NSInteger)discardStoppedInputGraph;
++#endif
++
+ // For testing purposes
+ @property(nonatomic, readonly) BOOL isPlayoutInitialized;
+ @property(nonatomic, readonly) BOOL isRecordingInitialized;
+--- /dev/null
++++ b/modules/audio_device/mac/prepared_graph_callback_gate.h
+@@ -0,0 +1,45 @@
++#ifndef MODULES_AUDIO_DEVICE_MAC_PREPARED_GRAPH_CALLBACK_GATE_H_
++#define MODULES_AUDIO_DEVICE_MAC_PREPARED_GRAPH_CALLBACK_GATE_H_
++#include <atomic>
++#include <cstdint>
++
++namespace webrtc::mac_adm {
++// Control owns the target. Readers enter before dereferencing it. Close prevents
++// new readers. A drained gate is necessary but not sufficient for target changes:
++// the graph owner must also prove the AV graph stopped, except initial publication
++// into a running candidate whose gate has never opened.
++class PreparedGraphCallbackGate {
++ public:
++  static_assert(std::atomic<uint32_t>::is_always_lock_free);
++  bool TryEnter() noexcept {
++    uint32_t value = state_.load(std::memory_order_acquire);
++    while (!(value & kClosed) && (value & kReaders) != kReaders) {
++      if (state_.compare_exchange_weak(value, value + 1,
++                                     std::memory_order_acquire,
++                                     std::memory_order_relaxed)) return true;
++    }
++    return false;
++  }
++  void Leave() noexcept { state_.fetch_sub(1, std::memory_order_release); }
++  void Close() noexcept { state_.fetch_or(kClosed, std::memory_order_acq_rel); }
++  bool Drained() const noexcept {
++    return (state_.load(std::memory_order_acquire) & kReaders) == 0;
++  }
++  bool IsClosed() const noexcept {
++    return (state_.load(std::memory_order_acquire) & kClosed) != 0;
++  }
++  bool Open() noexcept {
++    uint32_t expected = kClosed;
++    return state_.compare_exchange_strong(expected, 0, std::memory_order_release,
++                                          std::memory_order_relaxed);
++  }
++  // Only cancellation before ANY target/resource mutation may resume in-flight
++  // readers. The target must be exactly the one those readers already hold.
++  void ResumeUnchanged() noexcept { state_.fetch_and(kReaders, std::memory_order_release); }
++ private:
++  static constexpr uint32_t kClosed = uint32_t{1} << 31;
++  static constexpr uint32_t kReaders = kClosed - 1;
++  std::atomic<uint32_t> state_{kClosed};
++};
++}  // namespace webrtc::mac_adm
++#endif
+--- a/modules/audio_device/BUILD.gn
++++ b/modules/audio_device/BUILD.gn
+@@ -383,6 +383,7 @@
+       if (is_mac) {
+         sources += [
+           "mac/application_input_mute_state.h",
++          "mac/prepared_graph_callback_gate.h",
+           "mac/audio_device_mac.cc",
+           "mac/audio_device_mac.h",
+           "mac/audio_device_utils_mac.cc",

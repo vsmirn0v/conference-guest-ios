@@ -1,0 +1,1179 @@
+--- a/api/audio/audio_device.h
++++ b/api/audio/audio_device.h
+@@ -102,20 +102,27 @@
+   };
+   struct ExperimentalCoreAudioDuplexState {
+     bool supported = false, enabled = false, prepared = false;
++    bool resource_scoped_format_seal = false;
++    uint64_t output_authority = 0;
++    uint32_t output_lifecycle = 0;
++    bool preseal_output_priming = false, raw_output_started = false, output_data_ready = false;
+     bool transport_pinned = false, transport_quarantined = false;
+     bool hold_active = false, output_running = false, input_running = false, capture_committed = false;
+     uint64_t owner_generation = 0;
+     uint64_t physical_generation = 0, active_prepare_serial = 0;
+     uint64_t input_create_count = 0, input_start_count = 0, output_create_count = 0, output_start_count = 0;
++    uint64_t output_bind_count = 0;
+     uint64_t input_drops = 0;
+     uint64_t authority = 0, input_callbacks = 0, output_callbacks = 0;
+     uint64_t first_input_nanos = 0, last_input_nanos = 0;
+-    uint64_t phase_nanos[13] = {};
++    uint64_t raw_output_callbacks = 0, first_raw_output_nanos = 0, last_raw_output_nanos = 0, output_start_return_nanos = 0;
++    uint64_t phase_nanos[15] = {};
+     uint32_t phase = 0;
+     uint64_t archived_output_generations = 0;
+     struct OutputRetirement {
+       uint64_t serial = 0, proof = 0, required = 0;
+       int32_t stop_status = 0, destroy_status = 0;
++      bool format_bound = false;
+       double sample_rate = 0;
+       uint32_t format_id = 0, flags = 0, bytes_per_packet = 0, frames_per_packet = 0;
+       uint32_t bytes_per_frame = 0, channels = 0, bits_per_channel = 0, reserved = 0;
+@@ -123,6 +130,8 @@
+     struct RouteEvent {
+       uint64_t authority = 0, nanos = 0;
+       uint32_t object = 0, selector = 0, scope = 0;
++      bool output_only = false;
++      uint64_t output_authority = 0;
+       bool ready = false;
+     } events[64];
+     size_t output_history_size = 0, event_size = 0;
+--- a/modules/audio_device/BUILD.gn
++++ b/modules/audio_device/BUILD.gn
+@@ -571,6 +571,7 @@
+       sources = [
+         "mac/audio_ring_buffer_mac_unittest.cc",
+         "mac/experimental_core_audio_duplex_transport_unittest.cc",
++        "mac/experimental_core_audio_output_negotiation_unittest.cc",
+       ]
+       deps = [
+         ":audio_device_buffer",
+--- a/modules/audio_device/mac/audio_device_mac.cc
++++ b/modules/audio_device/mac/audio_device_mac.cc
+@@ -469,6 +469,10 @@
+     const AudioTimeStamp* output_time, void* context) {
+   ExperimentalCoreAudioCallbackCell::Lease lease(static_cast<ExperimentalCoreAudioCallbackCell*>(context));
+   if (auto* owner = static_cast<AudioDeviceMac*>(lease.owner())) {
++    // R7 raw output is deliberately format-agnostic. This branch must precede
++    // every read of the format/converter fields initialized by the later bind.
++    if (owner->duplex_ && !owner->duplex_->OutputDataReady())
++      return owner->duplex_->RawOutputCallback(output, output_time);
+     if (owner->duplex_) {
+       bool valid = output && output->mNumberBuffers == 1 && output_time &&
+           (output_time->mFlags & kAudioTimeStampHostTimeValid);
+--- a/modules/audio_device/mac/audio_device_mac.h
++++ b/modules/audio_device/mac/audio_device_mac.h
+@@ -276,6 +276,7 @@
+ 
+   const bool experimental_ownership_;
+   friend class AudioDeviceMacDuplex;
++  friend class AudioDeviceMacDuplexTestPeer;
+   std::unique_ptr<AudioDeviceMacDuplex> duplex_;
+   std::atomic<bool> duplex_module_initialized_{false};
+   AudioDeviceBuffer* _ptrAudioBuffer;
+--- a/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
++++ b/modules/audio_device/mac/audio_ring_buffer_mac_unittest.cc
+@@ -192,6 +192,8 @@
+ TEST(ExperimentalCoreAudioDuplexTest, WarmMicrophoneIntentLeavesValidOutputUninterrupted) {
+   DuplexAuthority capture;
+   ExperimentalCoreAudioOutputAuthority output;
++  ASSERT_TRUE(output.SetSound(true)); ASSERT_TRUE(output.BeginRaw());
++  ASSERT_TRUE(output.ClaimBound(output.Read(), nullptr));
+   const uint64_t output_token = output.Read();
+   ASSERT_TRUE(output.Authorize(output_token));
+   capture.SetCaptureDemand(true);
+@@ -206,6 +208,8 @@
+ }
+ TEST(ExperimentalCoreAudioDuplexTest, SoundOffOnRejectsNativeStartFromOldOutputEpoch) {
+   ExperimentalCoreAudioOutputAuthority output;
++  ASSERT_TRUE(output.SetSound(true)); ASSERT_TRUE(output.BeginRaw());
++  ASSERT_TRUE(output.ClaimBound(output.Read(), nullptr));
+   const uint64_t stale_start = output.Read();
+   ASSERT_TRUE(output.Revoke());
+   EXPECT_FALSE(output.Authorize(stale_start));
+--- a/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioDeviceModule.mm
+@@ -657,13 +657,13 @@
+ }
+ - (NSDictionary<NSString *, id> *)experimentalCoreAudioDuplexState {
+   const auto state = _native->GetExperimentalCoreAudioDuplexState();
+-  NSMutableArray *times = [NSMutableArray arrayWithCapacity:13];
++  NSMutableArray *times = [NSMutableArray arrayWithCapacity:15];
+   for (uint64_t time : state.phase_nanos) [times addObject:@(time)];
+   NSMutableArray *history = [NSMutableArray arrayWithCapacity:state.output_history_size];
+   for (size_t i = 0; i < state.output_history_size; ++i) {
+     const auto& item = state.output_history[i];
+     [history addObject:@{ @"serial": @(item.serial), @"proof": @(item.proof), @"required": @(item.required),
+-      @"stopStatus": @(item.stop_status), @"destroyStatus": @(item.destroy_status),
++      @"stopStatus": @(item.stop_status), @"destroyStatus": @(item.destroy_status), @"formatBound": @(item.format_bound),
+       @"format": @{ @"sampleRate": @(item.sample_rate), @"formatID": @(item.format_id), @"flags": @(item.flags),
+         @"bytesPerPacket": @(item.bytes_per_packet), @"framesPerPacket": @(item.frames_per_packet),
+         @"bytesPerFrame": @(item.bytes_per_frame), @"channels": @(item.channels),
+@@ -673,16 +673,23 @@
+   for (size_t i = 0; i < state.event_size; ++i) {
+     const auto& item = state.events[i];
+     [events addObject:item.ready ? (id)@{ @"authority": @(item.authority), @"nanos": @(item.nanos),
+-      @"objectID": @(item.object), @"selector": @(item.selector), @"scope": @(item.scope) } : [NSNull null]];
++      @"objectID": @(item.object), @"selector": @(item.selector), @"scope": @(item.scope),
++      @"outputOnly": @(item.output_only), @"outputAuthority": @(item.output_authority) } : [NSNull null]];
+   }
+   return @{ @"supported": @(state.supported), @"enabled": @(state.enabled), @"prepared": @(state.prepared), @"authority": @(state.authority),
+     @"phase": @(state.phase), @"phaseFirstNanos": times,
++    @"presealOutputPrimingSupported": @(state.preseal_output_priming),
++    @"resourceScopedFormatSealSupported": @(state.resource_scoped_format_seal),
++    @"outputAuthority": @(state.output_authority), @"outputLifecycle": @(state.output_lifecycle),
++    @"rawOutputStarted": @(state.raw_output_started), @"outputDataReady": @(state.output_data_ready),
++    @"rawOutputCallbacks": @(state.raw_output_callbacks), @"firstRawOutputNanos": @(state.first_raw_output_nanos),
++    @"lastRawOutputNanos": @(state.last_raw_output_nanos), @"outputStartReturnNanos": @(state.output_start_return_nanos),
+     @"holdActive": @(state.hold_active), @"outputRunning": @(state.output_running), @"inputRunning": @(state.input_running),
+     @"captureCommitted": @(state.capture_committed), @"ownerGeneration": @(state.owner_generation),
+     @"physicalGeneration": @(state.physical_generation), @"activePrepareSerial": @(state.active_prepare_serial),
+     @"inputCreateCount": @(state.input_create_count), @"inputStartCount": @(state.input_start_count),
+-    @"outputCreateCount": @(state.output_create_count), @"outputStartCount": @(state.output_start_count),
+-    @"phaseNames": @[@"idle", @"quiesceOutput", @"startInput", @"negotiate", @"seal", @"buildCapture", @"buildOutput", @"verify", @"ready", @"committed", @"retire", @"stopped", @"failed"],
++    @"outputCreateCount": @(state.output_create_count), @"outputStartCount": @(state.output_start_count), @"outputBindCount": @(state.output_bind_count),
++    @"phaseNames": @[@"idle", @"quiesceOutput", @"startInput", @"negotiate", @"seal", @"buildCapture", @"buildOutput", @"verify", @"ready", @"committed", @"retire", @"stopped", @"failed", @"startRawOutput", @"verifyRawDuplex"],
+     @"inputCallbacks": @(state.input_callbacks), @"outputCallbacks": @(state.output_callbacks),
+     @"firstInputNanos": @(state.first_input_nanos), @"lastInputNanos": @(state.last_input_nanos),
+     @"inputDrops": @(state.input_drops), @"archivedOutputGenerations": @(state.archived_output_generations),
+--- a/modules/audio_device/mac/experimental_core_audio_duplex.h
++++ b/modules/audio_device/mac/experimental_core_audio_duplex.h
+@@ -122,30 +122,91 @@
+ // a native Start already in progress; only that exact output token can open.
+ class ExperimentalCoreAudioOutputAuthority {
+  public:
+-  static constexpr uint64_t kActive = 1, kTerminal = uint64_t{1} << 63;
+-  static constexpr uint64_t kEpochMask = kTerminal - 2;
++  enum Lifecycle : uint64_t { kDormant = 0, kRawNegotiating = 2, kBound = 4, kClosing = 6, kPendingRaw = 8 };
++  static constexpr uint64_t kActive = 1, kSound = 16, kTerminal = uint64_t{1} << 63;
++  static constexpr uint64_t kLifecycleMask = 14, kFlags = 31, kEpochMask = kTerminal - 32;
+   uint64_t Read() const { return word_.load(std::memory_order_acquire); }
+-  bool Allows() const { const uint64_t word = Read(); return (word & kActive) && !(word & kTerminal); }
+-  bool Revoke() {
++  static Lifecycle State(uint64_t word) { return static_cast<Lifecycle>(word & kLifecycleMask); }
++  bool Allows() const {
++    const uint64_t word = Read();
++    return State(word) == kBound && (word & (kSound | kActive)) == (kSound | kActive) && !(word & kTerminal);
++  }
++  bool Revoke() { return Change(kFlags, 0); }
++  bool SetSound(bool sound) {
+     uint64_t old = Read();
+     do {
+       if (old & kTerminal) return false;
+-      const uint64_t epoch = old & kEpochMask;
+-      const uint64_t next = epoch == kEpochMask ? kTerminal : epoch + 2;
++      if (bool(old & kSound) == sound) return true;
++      Lifecycle lifecycle = State(old);
++      if (sound && lifecycle == kDormant) lifecycle = kPendingRaw;
++      if (!sound && lifecycle == kPendingRaw) lifecycle = kDormant;
++      const uint64_t next = Advance(old, lifecycle | (sound ? kSound : 0));
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return !(next & kTerminal);
++    } while (true);
++  }
++  bool BeginRaw() {
++    uint64_t old = Read();
++    do {
++      if ((old & (kTerminal | kActive)) || !(old & kSound)) return false;
++      if (State(old) == kRawNegotiating) return true;
++      if (State(old) != kPendingRaw) return false;
++      const uint64_t next = (old & ~kLifecycleMask) | kRawNegotiating;
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return true;
++    } while (true);
++  }
++  // This CAS is the output format seal. Notifications before it revoke the
++  // proof; every notification after it is fatal even before converter allocation.
++  bool ClaimBound(uint64_t expected, uint64_t* bound) {
++    if ((expected & (kTerminal | kActive)) || !(expected & kSound) || State(expected) != kRawNegotiating) return false;
++    const uint64_t next = (expected & ~kLifecycleMask) | kBound;
++    if (!word_.compare_exchange_strong(expected, next, std::memory_order_acq_rel)) return false;
++    if (bound) *bound = next;
++    return true;
++  }
++  bool FormatEvent() {
++    uint64_t old = Read();
++    do {
++      if (old & kTerminal) return false;
++      const bool eligible = State(old) == kPendingRaw || State(old) == kRawNegotiating ||
++          (State(old) == kDormant && !(old & (kSound | kActive)));
++      if (!eligible) return false;
++      const uint64_t next = Advance(old, old & (kLifecycleMask | kSound));
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return !(next & kTerminal);
++    } while (true);
++  }
++  bool Close() { return Change(kSound, kClosing); }
++  bool Retired() {
++    uint64_t old = Read();
++    do {
++      if ((old & (kTerminal | kActive)) || State(old) != kClosing) return false;
++      const uint64_t next = Advance(old, (old & kSound) ? (kSound | kPendingRaw) : kDormant);
+       if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return !(next & kTerminal);
+     } while (true);
+   }
+   bool Authorize(uint64_t expected) {
+-    if (expected & (kTerminal | kActive)) return false;
++    if (expected & (kTerminal | kActive) || !(expected & kSound) || State(expected) != kBound) return false;
+     return word_.compare_exchange_strong(expected, expected | kActive, std::memory_order_acq_rel);
+   }
+  private:
++  static uint64_t Advance(uint64_t old, uint64_t flags) {
++    const uint64_t epoch = old & kEpochMask;
++    return epoch == kEpochMask ? kTerminal : (epoch + 32) | flags;
++  }
++  bool Change(uint64_t preserve, uint64_t flags) {
++    uint64_t old = Read();
++    do {
++      if (old & kTerminal) return false;
++      const uint64_t next = Advance(old, (old & preserve & ~kActive) | flags);
++      if (word_.compare_exchange_weak(old, next, std::memory_order_acq_rel)) return !(next & kTerminal);
++    } while (true);
++  }
+   std::atomic<uint64_t> word_{0};
+ };
+ 
+ enum class ExperimentalCoreAudioDuplexPhase : uint32_t {
+   kIdle, kQuiesceOutput, kStartInput, kNegotiate, kSeal, kBuildCapture,
+-  kBuildOutput, kVerify, kReady, kCommitted, kRetire, kStopped, kFailed, kCount
++  kBuildOutput, kVerify, kReady, kCommitted, kRetire, kStopped, kFailed,
++  kStartRawOutput, kVerifyRawDuplex, kCount
+ };
+ 
+ // Each phase has a first raw monotonic timestamp. Reads are passive atomics.
+@@ -171,6 +232,59 @@
+       bytes / bytes_per_frame <= capacity_frames;
+ }
+ 
++// R7: a physical output registration begins with silence only. Format/converter
++// fields are published exactly once after a fresh, post-Start callback proof.
++// Reset is permitted only after the registration's outer cell and resources
++// have been retired; no admitted old callback can observe the next binding.
++class ExperimentalCoreAudioOutputPriming {
++ public:
++  bool Ready() const { return ready_.load(std::memory_order_acquire); }
++  bool Publish() {
++    bool expected = false;
++    return ready_.compare_exchange_strong(expected, true, std::memory_order_release);
++  }
++  bool ResetAfterRetirement(bool retired) {
++    if (!retired) return false;
++    ready_.store(false, std::memory_order_release);
++    start_return_nanos_.store(0, std::memory_order_release);
++    return true;
++  }
++  bool Observe(uint32_t buffers, uint32_t channels, uint32_t bytes, uint64_t now) {
++    if (buffers != 1 || !channels || channels > 64 || !bytes || bytes > 65536 * sizeof(float) ||
++        bytes % sizeof(float) || !now) return false;
++    buffers_.store(buffers, std::memory_order_relaxed);
++    channels_.store(channels, std::memory_order_relaxed);
++    bytes_.store(bytes, std::memory_order_relaxed);
++    uint64_t unset = 0;
++    first_nanos_.compare_exchange_strong(unset, now, std::memory_order_release);
++    last_nanos_.store(now, std::memory_order_release);
++    callbacks_.fetch_add(1, std::memory_order_release);
++    return true;
++  }
++  void StartReturned(uint64_t now) {
++    start_floor_.store(callbacks_.load(std::memory_order_acquire), std::memory_order_release);
++    start_return_nanos_.store(now, std::memory_order_release);
++  }
++  bool Fresh() const {
++    const auto returned = start_return_nanos_.load(std::memory_order_acquire);
++    const auto floor = start_floor_.load(std::memory_order_acquire);
++    return returned && floor <= UINT64_MAX - 2 && Callbacks() >= floor + 2 && LastNanos() > returned;
++  }
++  bool Shape(uint32_t channels, uint32_t bytes_per_frame, uint32_t capacity) const {
++    return ExperimentalCoreAudioDuplexBufferShape(buffers_.load(std::memory_order_acquire),
++        channels_.load(std::memory_order_acquire), bytes_.load(std::memory_order_acquire),
++        channels, bytes_per_frame, capacity);
++  }
++  uint64_t Callbacks() const { return callbacks_.load(std::memory_order_acquire); }
++  uint64_t FirstNanos() const { return first_nanos_.load(std::memory_order_acquire); }
++  uint64_t LastNanos() const { return last_nanos_.load(std::memory_order_acquire); }
++  uint64_t StartReturnNanos() const { return start_return_nanos_.load(std::memory_order_acquire); }
++ private:
++  std::atomic<bool> ready_{false};
++  std::atomic<uint64_t> callbacks_{0}, first_nanos_{0}, last_nanos_{0}, start_return_nanos_{0}, start_floor_{0};
++  std::atomic<uint32_t> buffers_{0}, channels_{0}, bytes_{0};
++};
++
+ inline uint16_t ExperimentalCoreAudioDuplexDelayMs(int32_t queue_us, uint32_t device_us) {
+   const uint64_t delay = uint64_t(queue_us > 0 ? queue_us : 0) + device_us;
+   const uint64_t milliseconds = (delay + 500) / 1000;
+--- a/modules/audio_device/mac/audio_device_mac_duplex.h
++++ b/modules/audio_device/mac/audio_device_mac_duplex.h
+@@ -32,6 +32,8 @@
+   AudioDeviceModule::ExperimentalCoreAudioDuplexState State() const;
+   bool OutputAllowed() const;
+   bool OutputRequested() const;
++  bool OutputDataReady() const;
++  OSStatus RawOutputCallback(AudioBufferList* data, const AudioTimeStamp* time);
+   void OutputCallback(const AudioBufferList* data);
+   uint32_t OutputFrameCapacity() const;
+   uint16_t PlayoutDelayMs() const;
+@@ -44,6 +46,7 @@
+   void HoldForTesting(uint32_t phase, uint32_t milliseconds);
+ 
+  private:
++  friend class AudioDeviceMacDuplexTestPeer;
+   struct CaptureGeneration;
+   struct Route {
+     AudioDeviceID input = 0, output = 0;
+@@ -60,11 +63,14 @@
+     uint64_t serial = 0, proof = 0, required = 0;
+     int32_t stop = 0, destroy = 0;
+     AudioStreamBasicDescription format{};
++    bool format_bound = false;
+   };
+   struct Event {
+     std::atomic<bool> ready{false};
+     uint64_t word = 0, nanos = 0;
+     uint32_t object = 0, selector = 0, scope = 0;
++    bool output_only = false;
++    uint64_t output_word = 0;
+   };
+   class Control;
+   static thread_local AudioDeviceMacDuplex* active_control_;
+@@ -72,14 +78,18 @@
+   void EnterPhase(ExperimentalCoreAudioDuplexPhase phase);
+   bool Current(uint64_t intent, uint64_t deadline) const;
+   int32_t Error(int32_t result, bool unsafe = false);
+-  bool ReadRoute(Route* result);
++  bool ReadRoute(Route* result, bool output_format = true);
++  bool SameCaptureRoute(const Route& a, const Route& b) const;
+   bool SameRoute(const Route& a, const Route& b) const;
+   bool InstallListeners();
+   bool RemoveListeners(uint64_t deadline);
+   bool Drain(ExperimentalCoreAudioCallbackCell* cell, uint64_t deadline);
+   bool StartRawInput(uint64_t intent, uint64_t deadline);
+   bool BuildCapture(const Route& route, uint64_t cutoff);
+-  bool StartOutput(const Route& route);
++  bool StartRawOutput(uint64_t intent, uint64_t deadline);
++  bool BindOutput(const Route& route, uint64_t deadline, uint64_t bound_token);
++  bool StartOutput(Route& route, uint64_t intent, uint64_t deadline);
++  bool OutputControlCurrent(uint64_t intent, uint64_t deadline) const;
+   bool StopOutput(uint64_t deadline);
+   bool StopInput(uint64_t deadline);
+   bool StableRoute(Route* route, uint64_t* validated_word, uint64_t intent, uint64_t deadline);
+@@ -102,9 +112,11 @@
+   std::atomic<uint32_t> output_frames_capacity_{0};
+   std::atomic<bool> recording_demand_{false}, playout_demand_{false};
+   std::atomic<bool> render_exited_{true};
++  ExperimentalCoreAudioOutputPriming output_priming_;
++  std::atomic<bool> raw_output_started_{false};
+   ExperimentalCoreAudioOutputAuthority output_authority_;
+   std::atomic<uint64_t> callbacks_{0}, first_input_{0}, last_input_{0}, output_callbacks_{0};
+-  std::atomic<uint64_t> output_start_callbacks_{0};
++  std::atomic<uint64_t> output_start_callbacks_{0}, output_bind_count_{0};
+   std::atomic<uint64_t> physical_generation_{0}, prepare_serial_{0};
+   std::atomic<uint64_t> input_create_count_{0}, input_start_count_{0}, output_create_count_{0}, output_start_count_{0};
+   std::atomic<uint32_t> input_channels_{0}, input_bytes_{0}, input_buffers_{0};
+--- a/modules/audio_device/mac/audio_device_mac_duplex.cc
++++ b/modules/audio_device/mac/audio_device_mac_duplex.cc
+@@ -209,8 +209,9 @@
+   const uint64_t previous = authority_.Read();
+   uint64_t token = 0;
+   if (!authority_.Latch(sequence, flags, &token)) return 0;
+-  if (bool(previous & Authority::kSound) != bool(flags & Authority::kSound) || (flags & Authority::kTerminal))
+-    if (!output_authority_.Revoke()) authority_.FailTerminal();
++  if (bool(previous & Authority::kSound) != bool(flags & Authority::kSound))
++    if (!output_authority_.SetSound(flags & Authority::kSound)) authority_.FailTerminal();
++  if ((flags & Authority::kTerminal) && !output_authority_.Revoke()) authority_.FailTerminal();
+   if (owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
+   return token;
+ }
+@@ -236,7 +237,26 @@
+   if (input && !run && owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
+ }
+ bool AudioDeviceMacDuplex::OutputAllowed() const {
+-  return output_authority_.Allows() && OutputRequested();
++  return output_priming_.Ready() && output_authority_.Allows() && OutputRequested();
++}
++bool AudioDeviceMacDuplex::OutputDataReady() const { return output_priming_.Ready(); }
++OSStatus AudioDeviceMacDuplex::RawOutputCallback(AudioBufferList* data, const AudioTimeStamp* time) {
++  constexpr uint32_t kMaximumBytes = 65536 * sizeof(float);
++  const bool valid = data && data->mNumberBuffers == 1 && time &&
++      (time->mFlags & kAudioTimeStampHostTimeValid) && data->mBuffers[0].mData &&
++      output_priming_.Observe(1, data->mBuffers[0].mNumberChannels,
++          data->mBuffers[0].mDataByteSize, Now());
++  // No PCM interpretation or converter access is permitted in this phase.
++  // Malformed HAL layouts get bounded best-effort silence and fail terminal.
++  uint32_t remaining = kMaximumBytes;
++  if (data) for (uint32_t i = 0; i < std::min<uint32_t>(data->mNumberBuffers, 64) && remaining; ++i) {
++    auto& buffer = data->mBuffers[i];
++    const uint32_t bytes = std::min(buffer.mDataByteSize, remaining);
++    if (buffer.mData) memset(buffer.mData, 0, bytes);
++    remaining -= bytes;
++  }
++  if (!valid) { Error(kAdmission, true); return 1; }
++  return noErr;
+ }
+ bool AudioDeviceMacDuplex::OutputRequested() const {
+   const uint64_t word = authority_.Read();
+@@ -259,29 +279,32 @@
+   output_callbacks_.fetch_add(1, std::memory_order_release);
+ }
+ 
+-bool AudioDeviceMacDuplex::ReadRoute(Route* result) {
++bool AudioDeviceMacDuplex::ReadRoute(Route* result, bool output_format) {
+   Route next;
+   if (!Property(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, &next.input) ||
+       !Property(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, &next.output) ||
+       !next.input || !next.output || next.input == next.output || !UID(next.input, &next.input_uid) || !UID(next.output, &next.output_uid) ||
+       !Property(next.input, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeInput, &next.input_format) ||
+-      !Property(next.output, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, &next.output_format) ||
+-      !Format(next.input_format) || !Format(next.output_format)) return false;
++      (output_format && !Property(next.output, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, &next.output_format)) ||
++      !Format(next.input_format) || (output_format && !Format(next.output_format))) return false;
+   UInt32 input_alive = 0, output_alive = 0;
+   if (!Property(next.input, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal, &input_alive) ||
+       !Property(next.output, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal, &output_alive) ||
+       !input_alive || !output_alive) return false;
+   *result = std::move(next); return true;
+ }
++bool AudioDeviceMacDuplex::SameCaptureRoute(const Route& a, const Route& b) const {
++  return a.input == b.input && a.output == b.output && a.input_uid == b.input_uid && a.output_uid == b.output_uid &&
++      SameFormat(a.input_format, b.input_format);
++}
+ bool AudioDeviceMacDuplex::SameRoute(const Route& a, const Route& b) const {
+-  return a.input == b.input && a.output == b.output && a.input_uid == b.input_uid && a.output_uid == b.output_uid &&
+-      SameFormat(a.input_format, b.input_format) && SameFormat(a.output_format, b.output_format);
++  return SameCaptureRoute(a, b) && SameFormat(a.output_format, b.output_format);
+ }
+ int32_t AudioDeviceMacDuplex::Init() {
+   Control control(*this);
+   if (!control || IsRetired() || owner_.ExperimentalCoreAudioError() || (authority_.Read() & Authority::kTerminal)) return -1;
+   if (initialized_.load(std::memory_order_acquire)) return 0;
+-  if (!ReadRoute(&selected_)) return Error(kAdmission);
++  if (!ReadRoute(&selected_, OutputRequested())) return Error(kAdmission);
+   owner_._inputDeviceID = selected_.input; owner_._outputDeviceID = selected_.output;
+   owner_.experimental_selected_input_id_.store(selected_.input, std::memory_order_release);
+   owner_.experimental_selected_output_id_.store(selected_.output, std::memory_order_release);
+@@ -350,25 +373,33 @@
+   return success;
+ }
+ void AudioDeviceMacDuplex::RouteChanged(AudioObjectID object, const AudioObjectPropertyAddress& address) {
+-  const bool negotiable = negotiating_.load(std::memory_order_acquire) &&
+-      address.mSelector == kAudioDevicePropertyStreamFormat &&
+-      ((object == selected_.input && address.mScope == kAudioDevicePropertyScopeInput) ||
+-       (object == selected_.output && address.mScope == kAudioDevicePropertyScopeOutput));
+-  const uint64_t word = authority_.RouteEvent();
++  const bool output_format = object == selected_.output && address.mScope == kAudioDevicePropertyScopeOutput &&
++      address.mSelector == kAudioDevicePropertyStreamFormat;
++  // Classification and revocation share the atomic output lifecycle/epoch.
++  // Dormant is published only after full retirement; Raw has no data lease.
++  const bool output_only = output_format && output_authority_.FormatEvent();
++  const bool negotiable_input = !output_format && negotiating_.load(std::memory_order_acquire) &&
++      object == selected_.input && address.mScope == kAudioDevicePropertyScopeInput &&
++      address.mSelector == kAudioDevicePropertyStreamFormat;
++  const uint64_t word = output_only ? authority_.Read() : authority_.RouteEvent();
+   owner_.experimental_observed_route_generation_.fetch_add(1, std::memory_order_acq_rel);
+   const size_t slot = event_count_.fetch_add(1, std::memory_order_acq_rel);
+   if (slot < events_.size()) {
+     auto& event = events_[slot]; event.word = word; event.nanos = Now();
+     event.object = object; event.selector = address.mSelector; event.scope = address.mScope;
++    event.output_only = output_only; event.output_word = output_authority_.Read();
+     event.ready.store(true, std::memory_order_release);
+-  } else authority_.FailTerminal();
+-  if (!negotiable || (word & Authority::kTerminal) || slot >= events_.size()) {
+-    authority_.FailTerminal();
++  }
++  const bool fatal = (!output_only && (!negotiable_input || (word & Authority::kTerminal))) || slot >= events_.size();
++  if (fatal) {
++    authority_.FailTerminal(); output_authority_.Revoke();
+     const auto origin = address.mSelector == kAudioDevicePropertyStreamFormat ? AudioDeviceMac::ErrorOrigin::kStreamFormat :
+         address.mSelector == kAudioDevicePropertyDataSource ? AudioDeviceMac::ErrorOrigin::kDataSource : AudioDeviceMac::ErrorOrigin::kDeviceList;
+     owner_.RecordExperimentalCoreAudioError(-6, origin, __LINE__, object, address.mSelector, address.mScope);
+   }
+-  if (owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
++  // An unused output-format notification must not silently mute an already
++  // committed microphone. Every input/identity/error event still closes it.
++  if ((!output_only || fatal) && owner_._ptrAudioBuffer) owner_._ptrAudioBuffer->SetExperimentalCoreAudioCaptureMuted(true);
+ }
+ OSStatus AudioDeviceMacDuplex::ListenerProc(AudioObjectID object, UInt32 count,
+     const AudioObjectPropertyAddress addresses[], void* context) {
+@@ -460,20 +491,35 @@
+ }
+ bool AudioDeviceMacDuplex::StableRoute(Route* route, uint64_t* validated_word, uint64_t intent, uint64_t deadline) {
+   while (Current(intent, deadline)) {
++    // Run every demanded endpoint before sealing. In particular, output Start
++    // itself can complete the duplex profile transition long after input began.
++    if (OutputRequested()) {
++      if (!StartRawOutput(intent, deadline)) return false;
++    } else if (owner_.experimental_output_io_.created && !StopOutput(deadline)) return false;
++    EnterPhase(Phase::kVerifyRawDuplex);
++    const bool output_requested = OutputRequested();
++    const uint64_t output_token = output_authority_.Read();
+     const uint64_t word = authority_.Read(), count = callbacks_.load(std::memory_order_acquire);
++    const uint64_t output_count = output_priming_.Callbacks();
++    if (count > UINT64_MAX - 2 || output_count > UINT64_MAX - 2) { Error(kAdmission); return false; }
+     Route before, after;
+-    if (!ReadRoute(&before)) { Error(kAdmission); return false; }
+-    while (Current(intent, deadline) && callbacks_.load(std::memory_order_acquire) < count + 2) Poll();
++    if (!ReadRoute(&before, output_requested)) { Error(kAdmission); return false; }
++    while (Current(intent, deadline) &&
++        (callbacks_.load(std::memory_order_acquire) < count + 2 ||
++         (output_requested && (output_priming_.Callbacks() < output_count + 2 || !output_priming_.Fresh())))) Poll();
+     if (!Current(intent, deadline)) return false;
+-    if (!ReadRoute(&after)) { Error(kAdmission); return false; }
+-    if (authority_.Read() != word || !SameRoute(before, after)) continue;
++    if (!ReadRoute(&after, output_requested)) { Error(kAdmission); return false; }
++    if (authority_.Read() != word || !SameRoute(before, after) || OutputRequested() != output_requested ||
++        output_authority_.Read() != output_token) continue;
+     if (after.input != selected_.input || after.output != selected_.output ||
+         after.input_uid != selected_.input_uid || after.output_uid != selected_.output_uid ||
+         last_input_.load(std::memory_order_acquire) <= first_input_.load(std::memory_order_acquire) ||
+         !ExperimentalCoreAudioDuplexBufferShape(input_buffers_.load(std::memory_order_acquire),
+             input_channels_.load(std::memory_order_acquire), input_bytes_.load(std::memory_order_acquire),
+             after.input_format.mChannelsPerFrame, after.input_format.mBytesPerFrame,
+-            kCaptureSamples / after.input_format.mChannelsPerFrame)) { Error(kAdmission); return false; }
++            kCaptureSamples / after.input_format.mChannelsPerFrame) ||
++        (output_requested && !output_priming_.Shape(after.output_format.mChannelsPerFrame,
++            after.output_format.mBytesPerFrame, kCaptureSamples / after.output_format.mChannelsPerFrame))) { Error(kAdmission); return false; }
+     *validated_word = word; *route = std::move(after); return true;
+   }
+   return false;
+@@ -499,14 +545,57 @@
+   capture_target_.store(generation.cell, std::memory_order_release);
+   return true;
+ }
+-bool AudioDeviceMacDuplex::StartOutput(const Route& route) {
++bool AudioDeviceMacDuplex::OutputControlCurrent(uint64_t intent, uint64_t deadline) const {
++  return Now() < deadline && Authority::Intent(authority_.Read()) == intent && !IsRetired() && OutputRequested();
++}
++bool AudioDeviceMacDuplex::StartRawOutput(uint64_t intent, uint64_t deadline) {
++  auto& io = owner_.experimental_output_io_;
++  if (io.started) return true;
++  if (!OutputControlCurrent(intent, deadline)) return false;
++  if (output_priming_.Ready()) { Error(kAdmission, true); return false; }
++  if (!output_authority_.BeginRaw()) return false;
++  if (!io.created) {
++    // Bound the ordinary HAL layout before registration. Negotiation callbacks
++    // still validate their supplied spans independently if the profile changes.
++    Route admission; UInt32 frames = 0;
++    if (!ReadRoute(&admission) || admission.input != selected_.input || admission.output != selected_.output ||
++        admission.input_uid != selected_.input_uid || admission.output_uid != selected_.output_uid ||
++        !Property(admission.output, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal, &frames) ||
++        !frames || uint64_t{frames} * admission.output_format.mChannelsPerFrame > kCaptureSamples) {
++      Error(kAdmission); return false;
++    }
++    if (output_history_count_.load(std::memory_order_acquire) >= output_history_.size()) { Error(-8, true); return false; }
++    if (owner_.CreateDeviceIOProc(selected_.output, AudioDeviceMac::deviceIOProc, false, &owner_._deviceIOProcID) != noErr) return false;
++    output_create_count_.fetch_add(1, std::memory_order_release);
++  }
++  if (!OutputControlCurrent(intent, deadline)) return false;
++  EnterPhase(Phase::kStartRawOutput);
++  const auto started = AudioDeviceStart(io.device, io.proc);
++  if (started != noErr) { Error(started, true); return false; }
++  io.started = true;
++  io.proof.fetch_or(AudioDeviceMac::kStarted, std::memory_order_release);
++  raw_output_started_.store(true, std::memory_order_release);
++  output_start_count_.fetch_add(1, std::memory_order_release);
++  output_priming_.StartReturned(Now());
++  // A cancelled Start is still an owned resource and must be retired, never
++  // mistaken for a successful output generation.
++  return OutputControlCurrent(intent, deadline);
++}
++bool AudioDeviceMacDuplex::BindOutput(const Route& route, uint64_t deadline, uint64_t output_token) {
+   if (owner_._ptrAudioBuffer->PlayoutChannels() != N_PLAY_CHANNELS ||
+       owner_._ptrAudioBuffer->PlayoutSampleRate() != N_PLAY_SAMPLES_PER_SEC) { Error(kAdmission); return false; }
+-  if (owner_._playing && OutputAllowed() && !render_exited_.load(std::memory_order_acquire)) return true;
+-  if (owner_._playing && !StopOutput(Now() + 2000000000)) return false;
+-  if (!OutputRequested()) return true;
+-  const uint64_t output_token = output_authority_.Read();
+-  if (output_history_count_.load(std::memory_order_acquire) >= output_history_.size()) { Error(-8, true); return false; }
++  if (output_priming_.Ready()) {
++    if (!SameFormat(route.output_format, owner_._outStreamFormat)) { Error(kAdmission); return false; }
++    return OutputAllowed() && !render_exited_.load(std::memory_order_acquire);
++  }
++  if (Now() >= deadline) { Error(kDeadline); return false; }
++  if (IsRetired() || owner_.ExperimentalCoreAudioError()) return false;
++  if (!owner_.experimental_output_io_.started || !output_priming_.Fresh() || !OutputRequested() ||
++      output_authority_.Read() != output_token ||
++      ExperimentalCoreAudioOutputAuthority::State(output_token) != ExperimentalCoreAudioOutputAuthority::kBound) {
++    if (!StopOutput(deadline)) Error(kAdmission, true);
++    return false;
++  }
+   owner_._renderBuffer.Clear();
+   owner_._outStreamFormat = route.output_format;
+   owner_._outDesiredFormat = {double(N_PLAY_SAMPLES_PER_SEC), kAudioFormatLinearPCM,
+@@ -524,27 +613,60 @@
+   if (converted != noErr) { Error(converted, true); return false; }
+   owner_.experimental_render_converter_owned_ = true;
+   output_start_callbacks_.store(output_callbacks_.load(std::memory_order_acquire), std::memory_order_release);
+-  if (owner_.CreateDeviceIOProc(route.output, AudioDeviceMac::deviceIOProc, false, &owner_._deviceIOProcID) != noErr) return false;
+-  output_create_count_.fetch_add(1, std::memory_order_release);
+-  owner_._playIsInitialized = true; owner_._renderDeviceIsAlive = 1; owner_._doStop = false;
+-  output_initialized_.store(true, std::memory_order_release);
++  owner_._renderDeviceIsAlive = 1; owner_._doStop = false;
+   render_exited_.store(false, std::memory_order_release);
+   owner_.render_worker_thread_ = PlatformThread::SpawnJoinable([this] {
+     while (owner_.RenderWorkerThread()) {}
+     render_exited_.store(true, std::memory_order_release);
+   }, "R6Render", ThreadAttributes().SetPriority(ThreadPriority::kRealtime));
+-  if (!OutputRequested() || output_authority_.Read() != output_token) return StopOutput(Now() + 2000000000);
+-  const auto started = AudioDeviceStart(route.output, owner_._deviceIOProcID);
+-  if (started != noErr) { Error(started, true); return false; }
+-  owner_.experimental_output_io_.started = true;
+-  owner_.experimental_output_io_.proof.fetch_or(AudioDeviceMac::kStarted, std::memory_order_release);
+-  output_start_count_.fetch_add(1, std::memory_order_release);
++  // Input-only intent changes must not withdraw still-current Sound authority.
++  // Any failed output admission still retires these unpublished resources.
++  if (Now() >= deadline || IsRetired() || !OutputRequested() || output_authority_.Read() != output_token ||
++      !output_authority_.Authorize(output_token)) {
++    if (!StopOutput(deadline)) Error(kAdmission, true);
++    return false;
++  }
++  owner_._playIsInitialized = true;
++  output_initialized_.store(true, std::memory_order_release);
+   owner_._playing = true;
+-  if (!OutputRequested() || !output_authority_.Authorize(output_token)) return StopOutput(Now() + 2000000000);
+-  return true;
++  if (!output_priming_.Publish()) { Error(kAdmission, true); return false; }
++  output_bind_count_.fetch_add(1, std::memory_order_release);
++  return Now() < deadline && !IsRetired() && OutputAllowed();
++}
++bool AudioDeviceMacDuplex::StartOutput(Route& route, uint64_t intent, uint64_t deadline) {
++  if (output_priming_.Ready()) {
++    if (owner_._playing && OutputAllowed() && !render_exited_.load(std::memory_order_acquire)) {
++      if (!SameFormat(route.output_format, owner_._outStreamFormat)) { Error(kAdmission); return false; }
++      return true;
++    }
++    if (!StopOutput(deadline)) return false;
++  }
++  if (!OutputRequested()) return true;
++  if (!StartRawOutput(intent, deadline)) return false;
++  EnterPhase(Phase::kVerifyRawDuplex);
++  while (OutputControlCurrent(intent, deadline)) {
++    const uint64_t word = authority_.Read(), output_token = output_authority_.Read();
++    const uint64_t raw_count = output_priming_.Callbacks(), input_count = callbacks_.load(std::memory_order_acquire);
++    if (raw_count > UINT64_MAX - 2 || input_count > UINT64_MAX - 2) { Error(kAdmission); return false; }
++    Route before, after;
++    if (!ReadRoute(&before) || (sealed_candidate_ && !SameCaptureRoute(before, sealed_route_))) { Error(kAdmission); return false; }
++    while (OutputControlCurrent(intent, deadline) &&
++        (!output_priming_.Fresh() || output_priming_.Callbacks() < raw_count + 2 ||
++         (owner_.experimental_input_io_.started && callbacks_.load(std::memory_order_acquire) < input_count + 2))) Poll();
++    if (!OutputControlCurrent(intent, deadline)) return false;
++    if (!ReadRoute(&after) || (sealed_candidate_ && !SameCaptureRoute(after, sealed_route_))) { Error(kAdmission); return false; }
++    if (authority_.Read() != word || !SameRoute(before, after) || output_authority_.Read() != output_token) continue;
++    if (!output_priming_.Shape(after.output_format.mChannelsPerFrame, after.output_format.mBytesPerFrame,
++        kCaptureSamples / after.output_format.mChannelsPerFrame)) { Error(kAdmission); return false; }
++    uint64_t bound = 0;
++    if (!output_authority_.ClaimBound(output_token, &bound)) continue;
++    route = std::move(after);
++    return BindOutput(route, deadline, bound);
++  }
++  return false;
+ }
+ bool AudioDeviceMacDuplex::StopOutput(uint64_t deadline) {
+-  if (!output_authority_.Revoke()) authority_.FailTerminal();
++  if (!output_authority_.Close()) authority_.FailTerminal();
+   auto& io = owner_.experimental_output_io_;
+   uint64_t required = AudioDeviceMac::kWorkerJoined | AudioDeviceMac::kConverterDisposed | AudioDeviceMac::kListenersRemoved;
+   if (io.cell) required |= AudioDeviceMac::kCellClosed | AudioDeviceMac::kCellDrained;
+@@ -588,13 +710,17 @@
+   if (io.created) {
+     const size_t index = output_history_count_.load(std::memory_order_acquire);
+     if (index >= output_history_.size()) { Error(-8, true); return false; }
++    const bool bound = output_priming_.Ready();
+     output_history_[index] = {io.serial, io.proof.load(std::memory_order_acquire), io.required_proof.load(std::memory_order_acquire),
+-        io.stop_status.load(std::memory_order_acquire), io.destroy_status.load(std::memory_order_acquire), owner_._outStreamFormat};
++        io.stop_status.load(std::memory_order_acquire), io.destroy_status.load(std::memory_order_acquire),
++        bound ? owner_._outStreamFormat : AudioStreamBasicDescription{}, bound};
+     output_history_count_.store(index + 1, std::memory_order_release);
+   }
+   io.created = false; io.started = false; io.proc = nullptr;
+   owner_._deviceIOProcID = nullptr; owner_._playIsInitialized = false; owner_._renderBuffer.Clear();
+   output_initialized_.store(false, std::memory_order_release);
++  raw_output_started_.store(false, std::memory_order_release);
++  if (!output_priming_.ResetAfterRetirement(true) || !output_authority_.Retired()) { Error(kAdmission, true); return false; }
+   return true;
+ }
+ bool AudioDeviceMacDuplex::StopInput(uint64_t deadline) {
+@@ -709,8 +835,9 @@
+   if (!(word & Authority::kAuthorized) || !recording_demand_.load(std::memory_order_acquire)) {
+     if (owner_.experimental_input_io_.created) return finish(Error(kAdmission), 0);
+     Route route;
+-    if (!ReadRoute(&route) || route.input_uid != selected_.input_uid || route.output_uid != selected_.output_uid) return finish(Error(kAdmission), 0);
+-    const bool success = OutputRequested() ? StartOutput(route) : StopOutput(deadline);
++    if (!ReadRoute(&route, OutputRequested()) || route.input != selected_.input || route.output != selected_.output ||
++        route.input_uid != selected_.input_uid || route.output_uid != selected_.output_uid) return finish(Error(kAdmission), 0);
++    const bool success = OutputRequested() ? StartOutput(route, expected_intent, deadline) : StopOutput(deadline);
+     return finish(success ? 0 : kAdmission, 0);
+   }
+   if (!Authority::AllowsPreparation(word)) return finish(kStale, 0);
+@@ -720,7 +847,9 @@
+     Route route;
+     if (!sealed_candidate_) {
+     EnterPhase(Phase::kQuiesceOutput);
+-    if (!StopOutput(bounded_deadline)) return finish(kAdmission, 0);
++    // A superseded preseal request may already own a silent, unbound output
++    // registration. Keep it started instead of retriggering its profile switch.
++    if ((output_priming_.Ready() || !OutputRequested()) && !StopOutput(bounded_deadline)) return finish(kAdmission, 0);
+     if (!Current(expected_intent, bounded_deadline)) return finish(kStale, 0);
+     negotiating_.store(true, std::memory_order_release);
+     EnterPhase(Phase::kStartInput);
+@@ -739,7 +868,9 @@
+     sealed_candidate_ = true;
+     physical_generation_.store(1, std::memory_order_release);
+     } else {
+-      route = sealed_route_;
++      // The capture seal deliberately excludes unused output format. Resume
++      // with a fresh observation; never substitute a historical output ASBD.
++      if (!ReadRoute(&route, OutputRequested()) || !SameCaptureRoute(route, sealed_route_)) return finish(Error(kAdmission), 0);
+       word = authority_.Read();
+     }
+     if (!Current(expected_intent, bounded_deadline)) return finish(kStale, 0);
+@@ -748,7 +879,13 @@
+     if (!BuildCapture(route, cutoff)) return finish(kAdmission, 0);
+     if (!Current(expected_intent, bounded_deadline)) return finish(kStale, 0);
+     EnterPhase(Phase::kBuildOutput);
+-    if (OutputRequested() && !StartOutput(route)) return finish(kAdmission, 0);
++    // StableRoute already started the silent output registration and observed
++    // callbacks after its native Start returned. Binding must never start it again.
++    if (OutputRequested() && !StartOutput(route, expected_intent, bounded_deadline)) {
++      if (owner_.ExperimentalCoreAudioError() || (authority_.Read() & Authority::kTerminal)) return finish(kAdmission, 0);
++      if (OutputRequested()) return finish(Authority::Intent(authority_.Read()) != expected_intent ? kStale : Error(kAdmission), 0);
++    }
++    if (!OutputRequested() && owner_.experimental_output_io_.created && !StopOutput(bounded_deadline)) return finish(kAdmission, 0);
+     if (OutputRequested() && !OutputAllowed()) return finish(kStale, 0);
+     EnterPhase(Phase::kVerify);
+     const uint64_t count = callbacks_.load(std::memory_order_acquire);
+@@ -756,19 +893,22 @@
+         (callbacks_.load(std::memory_order_acquire) <= count || capture_->converted.load(std::memory_order_acquire) == 0 ||
+          (OutputAllowed() && output_callbacks_.load(std::memory_order_acquire) <= output_start_callbacks_.load(std::memory_order_acquire)))) Poll();
+     Route after;
+-    if (!Current(expected_intent, bounded_deadline) || !ReadRoute(&after) || !SameRoute(route, after) || authority_.Read() != word)
++    if (!Current(expected_intent, bounded_deadline) || !ReadRoute(&after, OutputRequested()) || !SameCaptureRoute(route, after) ||
++        (OutputRequested() && !SameFormat(route.output_format, after.output_format)) || authority_.Read() != word)
+       return finish(Authority::Intent(authority_.Read()) != expected_intent ? kStale : Error(kAdmission), 0);
+     prepared_.store(true, std::memory_order_release);
+   } else {
+     Route route;
+     const uint64_t before = authority_.Read();
+-    if (!ReadRoute(&route) || !SameRoute(route, sealed_route_) ||
++    if (!ReadRoute(&route, OutputRequested()) || !SameCaptureRoute(route, sealed_route_) ||
+         !capture_ || !SameFormat(route.input_format, capture_->source)) return finish(Error(kAdmission), 0);
+     const uint64_t output_serial = owner_.experimental_output_io_.serial;
+-    const bool success = OutputRequested() ? StartOutput(route) : StopOutput(bounded_deadline);
++    const uint64_t output_bind_count = output_bind_count_.load(std::memory_order_acquire);
++    const bool success = OutputRequested() ? StartOutput(route, expected_intent, bounded_deadline) : StopOutput(bounded_deadline);
+     if (!success || authority_.Read() != before) return finish(kStale, 0);
+     if (OutputRequested() && !OutputAllowed()) return finish(kStale, 0);
+-    if (OutputRequested() && owner_.experimental_output_io_.serial != output_serial) {
++    if (OutputRequested() && (owner_.experimental_output_io_.serial != output_serial ||
++        output_bind_count_.load(std::memory_order_acquire) != output_bind_count)) {
+       const uint64_t input_count = callbacks_.load(std::memory_order_acquire);
+       while (Current(expected_intent, bounded_deadline) &&
+           (output_callbacks_.load(std::memory_order_acquire) <= output_start_callbacks_.load(std::memory_order_acquire) ||
+@@ -816,7 +956,9 @@
+ }
+ AudioDeviceModule::ExperimentalCoreAudioDuplexState AudioDeviceMacDuplex::State() const {
+   AudioDeviceModule::ExperimentalCoreAudioDuplexState state;
+-  state.supported = true; state.authority = authority_.Read(); state.prepared = prepared_.load(std::memory_order_acquire);
++  state.supported = true; state.preseal_output_priming = true; state.resource_scoped_format_seal = true;
++  state.output_authority = output_authority_.Read();
++  state.output_lifecycle = ExperimentalCoreAudioOutputAuthority::State(state.output_authority); state.authority = authority_.Read(); state.prepared = prepared_.load(std::memory_order_acquire);
+   state.owner_generation = owner_generation_;
+   state.physical_generation = physical_generation_.load(std::memory_order_acquire);
+   state.active_prepare_serial = prepare_serial_.load(std::memory_order_acquire);
+@@ -824,6 +966,13 @@
+   state.input_start_count = input_start_count_.load(std::memory_order_acquire);
+   state.output_create_count = output_create_count_.load(std::memory_order_acquire);
+   state.output_start_count = output_start_count_.load(std::memory_order_acquire);
++  state.output_bind_count = output_bind_count_.load(std::memory_order_acquire);
++  state.raw_output_started = raw_output_started_.load(std::memory_order_acquire);
++  state.output_data_ready = output_priming_.Ready();
++  state.raw_output_callbacks = output_priming_.Callbacks();
++  state.first_raw_output_nanos = output_priming_.FirstNanos();
++  state.last_raw_output_nanos = output_priming_.LastNanos();
++  state.output_start_return_nanos = output_priming_.StartReturnNanos();
+   state.hold_active = hold_active_.load(std::memory_order_acquire);
+   state.output_running = owner_._playing.load(std::memory_order_acquire);
+   state.input_running = owner_._recording.load(std::memory_order_acquire);
+@@ -837,7 +986,7 @@
+   for (size_t i = 0; i < state.output_history_size; ++i) {
+     const auto& from = output_history_[i]; auto& to = state.output_history[i];
+     to.serial = from.serial; to.proof = from.proof; to.required = from.required;
+-    to.stop_status = from.stop; to.destroy_status = from.destroy;
++    to.stop_status = from.stop; to.destroy_status = from.destroy; to.format_bound = from.format_bound;
+     to.sample_rate = from.format.mSampleRate; to.format_id = from.format.mFormatID; to.flags = from.format.mFormatFlags;
+     to.bytes_per_packet = from.format.mBytesPerPacket; to.frames_per_packet = from.format.mFramesPerPacket;
+     to.bytes_per_frame = from.format.mBytesPerFrame; to.channels = from.format.mChannelsPerFrame;
+@@ -850,6 +999,7 @@
+     if (!from.ready.load(std::memory_order_acquire)) continue;
+     to.ready = true; to.authority = from.word; to.nanos = from.nanos;
+     to.object = from.object; to.selector = from.selector; to.scope = from.scope;
++    to.output_only = from.output_only; to.output_authority = from.output_word;
+   }
+   state.input_drops = input_drops_.load(std::memory_order_acquire);
+   return state;
+--- /dev/null
++++ b/modules/audio_device/mac/experimental_core_audio_output_negotiation_unittest.cc
+@@ -0,0 +1,368 @@
++/* Copyright 2026 The WebRTC project authors. BSD license in LICENSE. */
++#include "modules/audio_device/mac/audio_device_mac.h"
++#include "modules/audio_device/mac/audio_device_mac_duplex.h"
++#include "modules/audio_device/mac/experimental_core_audio_duplex.h"
++#include "test/gtest.h"
++#include "modules/audio_device/audio_device_buffer.h"
++#include "test/create_test_environment.h"
++
++#include <array>
++#include <atomic>
++#include <thread>
++
++namespace webrtc {
++// Only invokes real callbacks/authority and retirement on an uninitialized
++// driver. No test here initializes a device, registers a HAL callback or starts IO.
++class AudioDeviceMacDuplexTestPeer {
++ public:
++  static AudioDeviceMacDuplex& Driver(AudioDeviceMac& owner) { return *owner.duplex_; }
++  static void Negotiate(AudioDeviceMac& owner) {
++    auto& driver = Driver(owner);
++    driver.selected_.input = 101; driver.selected_.output = 95;
++    driver.negotiating_.store(true, std::memory_order_release);
++    driver.Demand(true, true); driver.Demand(false, true);
++    driver.Latch(ExperimentalCoreAudioDuplexAuthority::kAuthorized |
++        ExperimentalCoreAudioDuplexAuthority::kMuted | ExperimentalCoreAudioDuplexAuthority::kSound, 1);
++    driver.output_authority_.BeginRaw();
++  }
++  static void Event(AudioDeviceMac& owner, bool input = false, bool format = true) {
++    auto& driver = Driver(owner);
++    AudioObjectPropertyAddress address{format ? static_cast<AudioObjectPropertySelector>(kAudioDevicePropertyStreamFormat) :
++        static_cast<AudioObjectPropertySelector>(kAudioDevicePropertyDataSource),
++        input ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput,
++        kAudioObjectPropertyElementMain};
++    driver.RouteChanged(input ? driver.selected_.input : driver.selected_.output, address);
++  }
++  static bool CommitCapture(AudioDeviceMac& owner) {
++    auto& authority = Driver(owner).authority_;
++    uint64_t word = authority.Read();
++    return authority.Seal(word, &word) && authority.Commit(word, nullptr);
++  }
++  static void ClaimBound(AudioDeviceMac& owner) {
++    auto& output = Driver(owner).output_authority_;
++    output.ClaimBound(output.Read(), nullptr);
++  }
++  static bool CompareInputSeal(AudioDeviceMac& owner, bool input_change, bool identity_change, bool numeric_change = false) {
++    AudioDeviceMacDuplex::Route a, b;
++    a.input = b.input = 101; a.output = b.output = 95;
++    a.input_uid = b.input_uid = "input"; a.output_uid = b.output_uid = "output";
++    a.input_format.mSampleRate = b.input_format.mSampleRate = 24000;
++    a.output_format.mSampleRate = 48000; b.output_format.mSampleRate = 24000;
++    if (input_change) b.input_format.mSampleRate = 48000;
++    if (identity_change) b.output_uid = "other";
++    if (numeric_change) ++b.output;
++    return Driver(owner).SameCaptureRoute(a, b);
++  }
++  static bool Seal(AudioDeviceMac& owner, uint64_t word) {
++    uint64_t sealed = 0;
++    return Driver(owner).authority_.Seal(word, &sealed);
++  }
++  static OSStatus Raw(AudioDeviceMac& owner, ExperimentalCoreAudioCallbackCell* cell, AudioBufferList* output) {
++    (void)owner;
++    AudioTimeStamp time{}; time.mFlags = kAudioTimeStampHostTimeValid; time.mHostTime = 1;
++    return AudioDeviceMac::guardedDeviceIOProc(0, nullptr, nullptr, nullptr, output, &time, cell);
++  }
++  static ExperimentalCoreAudioOutputPriming& Priming(AudioDeviceMac& owner) { return Driver(owner).output_priming_; }
++  static bool BoundFastPathAfterPropertyChange(AudioDeviceMac& owner, bool bind_reuse) {
++    auto& driver = Driver(owner);
++    Negotiate(owner);
++    uint64_t bound = 0;
++    if (!driver.output_authority_.ClaimBound(driver.output_authority_.Read(), &bound) ||
++        !driver.output_authority_.Authorize(bound) || !driver.output_priming_.Publish()) return true;
++    owner._outStreamFormat.mSampleRate = 48000;
++    owner._playing = true; driver.render_exited_.store(false, std::memory_order_release);
++    AudioDeviceMacDuplex::Route observed;
++    observed.output_format = owner._outStreamFormat; observed.output_format.mSampleRate = 24000;
++    const bool result = bind_reuse ? driver.BindOutput(observed, driver.Now() + 100000000, driver.output_authority_.Read()) :
++        driver.StartOutput(observed, 1, driver.Now() + 100000000);
++    // The observed property must never be overwritten to hide the mismatch.
++    EXPECT_EQ(observed.output_format.mSampleRate, 24000);
++    return result;
++  }
++  static uint64_t RawProofMask() {
++    return AudioDeviceMac::kCellClosed | AudioDeviceMac::kCellDrained | AudioDeviceMac::kStopSucceeded |
++        AudioDeviceMac::kDestroyed | AudioDeviceMac::kWorkerJoined | AudioDeviceMac::kConverterDisposed |
++        AudioDeviceMac::kListenersRemoved;
++  }
++  static bool StopUnbound(AudioDeviceMac& owner) { return Driver(owner).StopOutput(Driver(owner).Now() + 100000000); }
++};
++namespace {
++using Authority = ExperimentalCoreAudioDuplexAuthority;
++using Priming = ExperimentalCoreAudioOutputPriming;
++
++TEST(ExperimentalCoreAudioOutputNegotiationTest, CallbacksDuringBlockingStartAreNotPostReturnProof) {
++  Priming priming;
++  EXPECT_TRUE(priming.Observe(1, 2, 2048, 10));
++  EXPECT_TRUE(priming.Observe(1, 2, 2048, 20));
++  EXPECT_FALSE(priming.Fresh());
++  priming.StartReturned(30);
++  EXPECT_FALSE(priming.Fresh());
++  EXPECT_TRUE(priming.Observe(1, 2, 1024, 31));
++  EXPECT_FALSE(priming.Fresh());
++  EXPECT_TRUE(priming.Observe(1, 2, 1024, 32));
++  EXPECT_TRUE(priming.Fresh());
++  EXPECT_TRUE(priming.Shape(2, 8, 128));
++  EXPECT_FALSE(priming.Ready());
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, ChangedShapeBeforeListenerOnlyProducesSilence) {
++  AudioDeviceMac owner(true, true);
++  AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  auto* cell = ExperimentalCoreAudioCallbackCells().Allocate(&owner);
++  ASSERT_NE(cell, nullptr); ASSERT_TRUE(cell->Open());
++  std::array<float, 256> pcm; pcm.fill(0.75f);
++  AudioBufferList output{1, {{2, static_cast<UInt32>(sizeof(pcm)), pcm.data()}}};
++  // The real format remains zero/unbound. Reaching the legacy converter guard
++  // would reject this callback. Raw admission must not read that format at all.
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::Raw(owner, cell, &output), noErr);
++  for (float sample : pcm) EXPECT_EQ(sample, 0);
++  output.mBuffers[0].mDataByteSize /= 2; pcm.fill(0.5f);
++  EXPECT_EQ(AudioDeviceMacDuplexTestPeer::Raw(owner, cell, &output), noErr);
++  for (size_t i = 0; i < pcm.size() / 2; ++i) EXPECT_EQ(pcm[i], 0);
++  for (size_t i = pcm.size() / 2; i < pcm.size(); ++i) EXPECT_EQ(pcm[i], 0.5f);
++  auto state = owner.GetExperimentalCoreAudioDuplexState();
++  EXPECT_EQ(state.raw_output_callbacks, 2u); EXPECT_EQ(state.output_callbacks, 0u);
++  EXPECT_FALSE(state.output_data_ready); EXPECT_FALSE(state.output_running);
++  AudioDeviceMacDuplexTestPeer::Event(owner);
++  EXPECT_EQ(owner.ExperimentalCoreAudioError(), 0);
++  EXPECT_FALSE(owner.GetExperimentalCoreAudioDuplexState().authority & Authority::kTerminal);
++  cell->Close(); EXPECT_TRUE(cell->ClosedAndDrained());
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, ShapeAndWorkBoundsRejectUnsupportedLayouts) {
++  Priming p;
++  EXPECT_FALSE(p.Observe(0, 2, 16, 1)); EXPECT_FALSE(p.Observe(2, 2, 16, 1));
++  EXPECT_FALSE(p.Observe(1, 0, 16, 1)); EXPECT_FALSE(p.Observe(1, 65, 16, 1));
++  EXPECT_FALSE(p.Observe(1, 2, 0, 1)); EXPECT_FALSE(p.Observe(1, 2, 15, 1));
++  EXPECT_FALSE(p.Observe(1, 2, 65536 * sizeof(float) + 4, 1));
++  EXPECT_FALSE(p.Observe(1, 2, 16, 0)); EXPECT_EQ(p.Callbacks(), 0u);
++  EXPECT_TRUE(p.Observe(1, 2, 16, 1));
++  EXPECT_FALSE(p.Shape(1, 4, 4)); EXPECT_FALSE(p.Shape(2, 8, 1));
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, FormatEventsDuringStartAndBeforeSealInvalidateObservationsOnly) {
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  const auto before = owner.GetExperimentalCoreAudioDuplexState().authority;
++  AudioDeviceMacDuplexTestPeer::Event(owner); // While native Start is blocked.
++  auto& p = AudioDeviceMacDuplexTestPeer::Priming(owner);
++  p.StartReturned(100); ASSERT_TRUE(p.Observe(1, 2, 1024, 101)); ASSERT_TRUE(p.Observe(1, 2, 1024, 102));
++  EXPECT_TRUE(p.Fresh());
++  AudioDeviceMacDuplexTestPeer::Event(owner); // After Start return, before seal.
++  // Output-only events no longer invalidate an input-only seal; they revoke
++  // the separate output proof, which must be reacquired before binding.
++  EXPECT_TRUE(AudioDeviceMacDuplexTestPeer::Seal(owner, before));
++  const auto current = owner.GetExperimentalCoreAudioDuplexState().authority;
++  EXPECT_TRUE(current & Authority::kSealed);
++  EXPECT_FALSE(Authority::AllowsPublication(owner.GetExperimentalCoreAudioDuplexState().authority));
++  EXPECT_EQ(owner.ExperimentalCoreAudioError(), 0);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, SealRaceNeverAcceptsStaleFormatAndTruePostsealEventIsFatal) {
++  for (size_t i = 0; i < 100; ++i) {
++    Authority authority; authority.SetCaptureDemand(true); uint64_t token = 0;
++    ASSERT_TRUE(authority.Latch(1, Authority::kAuthorized | Authority::kMuted | Authority::kSound, &token));
++    std::atomic<bool> go{false}; bool sealed = false;
++    std::thread event([&] { while (!go.load(std::memory_order_acquire)) {} authority.RouteEvent(); });
++    go.store(true, std::memory_order_release); sealed = authority.Seal(token, nullptr); event.join();
++    if (sealed) EXPECT_TRUE(authority.Read() & Authority::kTerminal);
++    else EXPECT_NE(authority.Read(), token);
++    EXPECT_FALSE(Authority::AllowsPublication(authority.Read()));
++  }
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  ASSERT_TRUE(AudioDeviceMacDuplexTestPeer::Seal(owner, owner.GetExperimentalCoreAudioDuplexState().authority));
++  AudioDeviceMacDuplexTestPeer::ClaimBound(owner);
++  AudioDeviceMacDuplexTestPeer::Event(owner);
++  EXPECT_EQ(owner.ExperimentalCoreAudioError(), -6);
++  EXPECT_TRUE(owner.GetExperimentalCoreAudioDuplexState().authority & Authority::kTerminal);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, NonformatEventAndJournalExhaustionStayTerminal) {
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  AudioDeviceMacDuplexTestPeer::Event(owner, false, false);
++  EXPECT_EQ(owner.ExperimentalCoreAudioError(), -6);
++  EXPECT_TRUE(owner.GetExperimentalCoreAudioDuplexState().authority & Authority::kTerminal);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++  AudioDeviceMac exhausted(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(exhausted);
++  for (size_t i = 0; i < 65; ++i) AudioDeviceMacDuplexTestPeer::Event(exhausted);
++  const auto state = exhausted.GetExperimentalCoreAudioDuplexState();
++  EXPECT_EQ(state.event_size, 64u); EXPECT_EQ(state.observed_events, 65u);
++  EXPECT_TRUE(state.authority & Authority::kTerminal);
++  EXPECT_EQ(exhausted.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, DormantSoundOffFormatEventPreservesCommittedCaptureAndGate) {
++  AudioDeviceBuffer buffer(CreateTestEnvironment());
++  AudioDeviceMac owner(true, true); owner.AttachAudioBuffer(&buffer);
++  auto& driver = AudioDeviceMacDuplexTestPeer::Driver(owner);
++  // Establish identities without allocating or starting either endpoint.
++  AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  driver.Latch(Authority::kAuthorized, 2);
++  ASSERT_TRUE(AudioDeviceMacDuplexTestPeer::StopUnbound(owner));
++  ASSERT_TRUE(AudioDeviceMacDuplexTestPeer::CommitCapture(owner));
++  buffer.SetExperimentalCoreAudioCaptureMuted(false);
++  const auto gate = buffer.ExperimentalCoreAudioCaptureState();
++  const auto before = owner.GetExperimentalCoreAudioDuplexState();
++  AudioDeviceMacDuplexTestPeer::Event(owner);
++  const auto after = owner.GetExperimentalCoreAudioDuplexState();
++  EXPECT_EQ(after.authority, before.authority);
++  EXPECT_TRUE(Authority::AllowsPublication(after.authority));
++  EXPECT_EQ(buffer.ExperimentalCoreAudioCaptureState(), gate);
++  EXPECT_NE(after.output_authority, before.output_authority);
++  EXPECT_TRUE(after.events[0].output_only);
++  EXPECT_EQ(after.input_create_count, 0u); EXPECT_EQ(after.output_create_count, 0u);
++  EXPECT_EQ(owner.ExperimentalCoreAudioError(), 0);
++  AudioDeviceMacDuplexTestPeer::Event(owner, true);
++  EXPECT_TRUE(owner.GetExperimentalCoreAudioDuplexState().authority & Authority::kTerminal);
++  EXPECT_NE(buffer.ExperimentalCoreAudioCaptureState(), gate);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, CaptureSealIgnoresOnlyUnusedOutputFormatNotInputOrIdentity) {
++  AudioDeviceMac owner(true, true);
++  EXPECT_TRUE(AudioDeviceMacDuplexTestPeer::CompareInputSeal(owner, false, false));
++  EXPECT_FALSE(AudioDeviceMacDuplexTestPeer::CompareInputSeal(owner, true, false));
++  EXPECT_FALSE(AudioDeviceMacDuplexTestPeer::CompareInputSeal(owner, false, true));
++  EXPECT_FALSE(AudioDeviceMacDuplexTestPeer::CompareInputSeal(owner, false, false, true));
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, SoundAndLifecycleCASRejectOldProofAcrossTransitions) {
++  using Output = ExperimentalCoreAudioOutputAuthority;
++  Output output;
++  EXPECT_FALSE(output.BeginRaw()); // Main Sound-on may be visible first.
++  ASSERT_TRUE(output.SetSound(true)); ASSERT_TRUE(output.BeginRaw());
++  const auto stale = output.Read();
++  ASSERT_TRUE(output.FormatEvent()); EXPECT_FALSE(output.ClaimBound(stale, nullptr));
++  uint64_t bound = 0; ASSERT_TRUE(output.ClaimBound(output.Read(), &bound));
++  EXPECT_FALSE(output.FormatEvent()); // Bound is fatal even before converter allocation.
++  ASSERT_TRUE(output.SetSound(false)); EXPECT_FALSE(output.Authorize(bound));
++  ASSERT_TRUE(output.Close()); EXPECT_EQ(Output::State(output.Read()), Output::kClosing);
++  EXPECT_FALSE(output.FormatEvent()); EXPECT_FALSE(output.BeginRaw());
++  ASSERT_TRUE(output.Retired()); EXPECT_EQ(Output::State(output.Read()), Output::kDormant);
++  ASSERT_TRUE(output.FormatEvent()); EXPECT_FALSE(output.BeginRaw());
++  ASSERT_TRUE(output.SetSound(true)); ASSERT_TRUE(output.BeginRaw());
++  EXPECT_FALSE(output.ClaimBound(stale, nullptr));
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, SoundOnPendingStartFormatEventRevokesOnlyTheNewOutputProof) {
++  using Output = ExperimentalCoreAudioOutputAuthority;
++  Output output; ASSERT_TRUE(output.SetSound(true));
++  EXPECT_EQ(Output::State(output.Read()), Output::kPendingRaw);
++  const auto queued = output.Read();
++  ASSERT_TRUE(output.FormatEvent()); EXPECT_NE(output.Read(), queued);
++  EXPECT_FALSE(output.ClaimBound(queued, nullptr)); EXPECT_FALSE(output.Allows());
++  ASSERT_TRUE(output.SetSound(false)); EXPECT_EQ(Output::State(output.Read()), Output::kDormant);
++  EXPECT_FALSE(output.BeginRaw());
++  ASSERT_TRUE(output.SetSound(true)); ASSERT_TRUE(output.BeginRaw());
++  EXPECT_EQ(Output::State(output.Read()), Output::kRawNegotiating);
++  ASSERT_TRUE(output.Close()); ASSERT_TRUE(output.Retired());
++  EXPECT_EQ(Output::State(output.Read()), Output::kPendingRaw);
++  EXPECT_TRUE(output.FormatEvent()); // Proved no-resource output may await a later demand.
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OnlyExactBoundSoundOnWordCanAuthorizeData) {
++  using Output = ExperimentalCoreAudioOutputAuthority;
++  Output output;
++  EXPECT_FALSE(output.Authorize(output.Read())); EXPECT_FALSE(output.Allows());
++  ASSERT_TRUE(output.SetSound(true)); EXPECT_FALSE(output.Authorize(output.Read()));
++  ASSERT_TRUE(output.BeginRaw()); EXPECT_FALSE(output.Authorize(output.Read()));
++  uint64_t bound = 0; ASSERT_TRUE(output.ClaimBound(output.Read(), &bound));
++  ASSERT_TRUE(output.SetSound(false)); EXPECT_FALSE(output.Authorize(output.Read()));
++  EXPECT_FALSE(output.Authorize(bound)); EXPECT_FALSE(output.Allows());
++  ASSERT_TRUE(output.Close()); EXPECT_FALSE(output.Authorize(output.Read()));
++  ASSERT_TRUE(output.Retired()); ASSERT_TRUE(output.SetSound(true)); ASSERT_TRUE(output.BeginRaw());
++  ASSERT_TRUE(output.ClaimBound(output.Read(), &bound)); ASSERT_TRUE(output.Authorize(bound));
++  EXPECT_TRUE(output.Allows()); EXPECT_FALSE(output.Authorize(bound));
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, OutputFormatEventRacingBindingNeverAcceptsAnOldEpoch) {
++  using Output = ExperimentalCoreAudioOutputAuthority;
++  for (size_t i = 0; i < 100; ++i) {
++    Output output; ASSERT_TRUE(output.SetSound(true)); ASSERT_TRUE(output.BeginRaw());
++    const auto proof = output.Read(); std::atomic<bool> go{false}; bool accepted = false;
++    std::thread event([&] { while (!go.load(std::memory_order_acquire)) {} accepted = output.FormatEvent(); });
++    go.store(true, std::memory_order_release);
++    const bool bound = output.ClaimBound(proof, nullptr); event.join();
++    EXPECT_NE(bound, accepted);
++    EXPECT_FALSE(output.Allows()); // Neither outcome publishes any converter data.
++  }
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, PublicationIsOneWayAndOnlyResetAfterRetirement) {
++  Priming p; EXPECT_TRUE(p.Publish()); EXPECT_FALSE(p.Publish());
++  EXPECT_FALSE(p.ResetAfterRetirement(false)); EXPECT_TRUE(p.Ready());
++  EXPECT_TRUE(p.ResetAfterRetirement(true)); EXPECT_FALSE(p.Ready()); EXPECT_FALSE(p.Fresh());
++  EXPECT_TRUE(p.Publish());
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, InputIntentDoesNotReopenOrSilenceOutputAuthority) {
++  ExperimentalCoreAudioOutputAuthority output;
++  ASSERT_TRUE(output.SetSound(true)); ASSERT_TRUE(output.BeginRaw());
++  ASSERT_TRUE(output.ClaimBound(output.Read(), nullptr));
++  auto start = output.Read();
++  ASSERT_TRUE(output.Authorize(start));
++  Authority capture; capture.SetCaptureDemand(true); uint64_t token = 0;
++  ASSERT_TRUE(capture.Latch(1, Authority::kAuthorized | Authority::kSound, &token));
++  ASSERT_TRUE(capture.Latch(2, Authority::kAuthorized | Authority::kMuted | Authority::kSound, &token));
++  EXPECT_TRUE(output.Allows());
++  ASSERT_TRUE(output.Revoke()); EXPECT_FALSE(output.Allows()); EXPECT_FALSE(output.Authorize(start));
++  EXPECT_TRUE(output.Authorize(output.Read()));
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, LeaveMuteAndDeadlineCannotCommitPrimedSilence) {
++  for (uint32_t flags : {uint32_t{Authority::kAuthorized | Authority::kMuted | Authority::kSound},
++      uint32_t{Authority::kTerminal | Authority::kMuted}}) {
++    Authority authority; authority.SetCaptureDemand(true); uint64_t token = 0;
++    ASSERT_TRUE(authority.Latch(1, Authority::kAuthorized | Authority::kSound, &token));
++    ASSERT_TRUE(authority.Seal(token, &token));
++    ASSERT_TRUE(authority.Latch(2, flags, nullptr));
++    EXPECT_FALSE(authority.Commit(token, nullptr)); EXPECT_FALSE(Authority::AllowsPublication(authority.Read()));
++  }
++  Authority deadline; deadline.SetCaptureDemand(true); uint64_t token = 0;
++  ASSERT_TRUE(deadline.Latch(1, Authority::kAuthorized | Authority::kSound, &token));
++  ASSERT_TRUE(deadline.Seal(token, &token)); ASSERT_TRUE(deadline.Revoke(1));
++  EXPECT_FALSE(deadline.Commit(token, nullptr)); EXPECT_FALSE(deadline.Latch(2, Authority::kAuthorized, nullptr));
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, ClosedCellLateCallbackCannotReachRetiredBinding) {
++  int owner = 7; auto* cell = ExperimentalCoreAudioCallbackCells().Allocate(&owner);
++  ASSERT_NE(cell, nullptr); ASSERT_TRUE(cell->Open());
++  { ExperimentalCoreAudioCallbackCell::Lease lease(cell);
++    ASSERT_EQ(lease.owner(), &owner); cell->Close(); EXPECT_FALSE(cell->ClosedAndDrained());
++    ExperimentalCoreAudioCallbackCell::Lease late(cell); EXPECT_EQ(late.owner(), nullptr);
++  }
++  EXPECT_TRUE(cell->ClosedAndDrained()); EXPECT_FALSE(cell->Open());
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, BoundOutputPropertyChangeBeforeListenerFailsImmediately) {
++  for (bool bind_reuse : {false, true}) {
++    AudioDeviceBuffer buffer(CreateTestEnvironment());
++    AudioDeviceMac owner(true, true); owner.AttachAudioBuffer(&buffer);
++    EXPECT_FALSE(AudioDeviceMacDuplexTestPeer::BoundFastPathAfterPropertyChange(owner, bind_reuse));
++    const auto state = owner.GetExperimentalCoreAudioDuplexState();
++    EXPECT_TRUE(state.authority & Authority::kTerminal);
++    EXPECT_NE(owner.ExperimentalCoreAudioError(), 0);
++    EXPECT_EQ(state.observed_events, 0u); // No listener notification has arrived yet.
++    EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++  }
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, MissingRawRetirementProofKeepsLifecycleClosed) {
++  const uint64_t required = AudioDeviceMacDuplexTestPeer::RawProofMask();
++  for (uint64_t bit = 1; bit <= required; bit <<= 1) {
++    if (!(required & bit)) continue;
++    ExperimentalCoreAudioOutputAuthority output; ASSERT_TRUE(output.SetSound(true));
++    ASSERT_TRUE(output.BeginRaw()); ASSERT_TRUE(output.Close());
++    EXPECT_FALSE(ExperimentalCoreAudioRetirementComplete(required & ~bit, required, 0));
++    EXPECT_EQ(ExperimentalCoreAudioOutputAuthority::State(output.Read()), ExperimentalCoreAudioOutputAuthority::kClosing);
++    EXPECT_FALSE(output.FormatEvent());
++  }
++  EXPECT_FALSE(ExperimentalCoreAudioRetirementComplete(required, required, 1));
++  EXPECT_TRUE(ExperimentalCoreAudioRetirementComplete(required, required, 0));
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, ExpiredOriginalDeadlineNeverInitializesHardware) {
++  AudioDeviceMac owner(true, true); AudioDeviceMacDuplexTestPeer::Negotiate(owner);
++  const auto result = owner.PrepareExperimentalCoreAudioDuplex(1, 0);
++  EXPECT_NE(result.status, 0); EXPECT_EQ(result.abort_reason, 4u);
++  const auto state = owner.GetExperimentalCoreAudioDuplexState();
++  EXPECT_EQ(state.input_create_count, 0u); EXPECT_EQ(state.input_start_count, 0u);
++  EXPECT_EQ(state.output_create_count, 0u); EXPECT_EQ(state.output_start_count, 0u);
++  EXPECT_FALSE(state.prepared); EXPECT_TRUE(state.authority & Authority::kTerminal);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++TEST(ExperimentalCoreAudioOutputNegotiationTest, UnboundOutputRetirementDoesNotNeedConverterOrWorker) {
++  AudioDeviceMac owner(true, true);
++  EXPECT_TRUE(AudioDeviceMacDuplexTestPeer::StopUnbound(owner));
++  auto state = owner.GetExperimentalCoreAudioDuplexState();
++  EXPECT_FALSE(state.output_data_ready); EXPECT_FALSE(state.raw_output_started);
++  EXPECT_FALSE(state.output_running); EXPECT_EQ(state.output_create_count, 0u);
++  EXPECT_EQ(owner.RetireExperimentalCoreAudioOwner(), 0);
++}
++} // namespace
++} // namespace webrtc

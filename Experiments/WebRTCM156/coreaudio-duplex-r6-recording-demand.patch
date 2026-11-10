@@ -1,0 +1,496 @@
+--- a/Experiments/NativeGuest/GuestSystemAudio.swift
++++ b/Experiments/NativeGuest/GuestSystemAudio.swift
+@@ -129,11 +129,12 @@
+     private var nextNativeID = 0
+     private var entries: [Entry] = []
+     private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
+-    func enqueue(_ name: String, timeout: TimeInterval, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Int {
++    func enqueue(_ name: String, timeout: TimeInterval, deadlineUptime: TimeInterval? = nil,
++                 at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Int {
+         locked {
+             nextID += 1
+             entries.removeAll { $0.finishedAt != nil && $0.id < nextID - 16 }
+-            entries.append(Entry(id: nextID, name: name, queuedAt: now, deadlineAt: now + max(0.01, timeout)))
++            entries.append(Entry(id: nextID, name: name, queuedAt: now, deadlineAt: deadlineUptime ?? now + max(0.01, timeout)))
+             return nextID
+         }
+     }
+@@ -296,10 +297,74 @@
+     private(set) var prepared = false
+     var pending: Bool { !requests.isEmpty }
+     var unresolved: Bool { admitted && !pending && !prepared }
+-    mutating func begin(_ request: UUID) { requests.insert(request); latestRequest = request; admitted = true }
++    mutating func reserve(_ request: UUID) { requests.insert(request); latestRequest = request }
++    mutating func admit(_ request: UUID) -> Bool {
++        guard requests.contains(request), latestRequest == request else { return false }
++        admitted = true
++        return true
++    }
++    mutating func begin(_ request: UUID) { reserve(request); _ = admit(request) }
+     mutating func end(_ request: UUID) { requests.remove(request) }
+     func isLatest(_ request: UUID) -> Bool { latestRequest == request }
+     mutating func acceptInputProof() { prepared = true }
++}
++
++struct GuestRecordingDemandObservation: Sendable {
++    let ownerCurrent: Bool
++    let requestCurrent: Bool
++    let terminal: Bool
++    let recordingRequested: Bool?
++}
++
++enum GuestRecordingDemandWaitStatus: String, Sendable {
++    case ready, cancelled, superseded, ownerRetired, terminal, timedOut, unsupported, invalidDeadline
++}
++
++struct GuestRecordingDemandWaitReceipt: Sendable {
++    let status: GuestRecordingDemandWaitStatus
++    let startedUptime: TimeInterval
++    let finishedUptime: TimeInterval
++    let deadlineUptime: TimeInterval
++    let observations: Int
++}
++
++enum GuestRecordingDemandWait {
++    // A finite explicit-activation observation, never an idle monitor. Ready
++    // permits entering Prepare; its worker fence and typed proof still decide
++    // actual physical readiness. No native call, allocation or sleep is on RT.
++    static func wait(deadlineUptime: TimeInterval,
++                     now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
++                     cancelled: @escaping @Sendable () -> Bool = { Task.isCancelled },
++                     observe: @escaping @Sendable () -> GuestRecordingDemandObservation,
++                     sleep: @escaping @Sendable (TimeInterval) async throws -> Void = {
++                         try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
++                     }) async -> GuestRecordingDemandWaitReceipt {
++        let started = now()
++        var observations = 0
++        func finish(_ status: GuestRecordingDemandWaitStatus) -> GuestRecordingDemandWaitReceipt {
++            .init(status: status, startedUptime: started, finishedUptime: now(),
++                  deadlineUptime: deadlineUptime, observations: observations)
++        }
++        guard deadlineUptime.isFinite, started.isFinite else { return finish(.invalidDeadline) }
++        while true {
++            if cancelled() { return finish(.cancelled) }
++            let current = now()
++            guard current.isFinite, current >= started else { return finish(.invalidDeadline) }
++            if current >= deadlineUptime { return finish(.timedOut) }
++            let value = observe(); observations += 1
++            if !value.ownerCurrent { return finish(.ownerRetired) }
++            if value.terminal { return finish(.terminal) }
++            if !value.requestCurrent { return finish(.superseded) }
++            guard let requested = value.recordingRequested else { return finish(.unsupported) }
++            if cancelled() { return finish(.cancelled) }
++            let after = now()
++            guard after.isFinite, after >= current else { return finish(.invalidDeadline) }
++            if after >= deadlineUptime { return finish(.timedOut) }
++            if requested { return finish(.ready) }
++            do { try await sleep(min(0.01, deadlineUptime - after)) }
++            catch { return finish(.cancelled) }
++        }
++    }
+ }
+ // END RECEIVE DEMAND HELPERS
+ 
+@@ -353,11 +418,32 @@
+     private var duplexDesiredMuted = true, duplexInputAuthorized = false, duplexTerminal = false
+     private var duplexServerUnmuted = false
+     private var duplexActivationObligation = GuestAudioActivationObligation()
++    private var duplexPhysicalRequestRevision: UInt64 = 0
++    private var duplexWaitOwnerFailure = false
+     private var duplexMicrophoneRevision: UInt64 = 0, duplexOwnerGeneration: UInt64 = 0
+     private var duplexSealedToken: UInt64 = 0, duplexWord: UInt64 = 0
+     private var duplexLastFlags: UInt32?
+     private var duplexOperationDeadline: TimeInterval?
+     private var duplexOperationID = 0
++    // These references are read until wait/queued work finish, then cleared only
++    // on audioQueue. A late closed owner cannot make their final release UI/RT.
++    private final class DuplexActivationOwner: @unchecked Sendable {
++        private(set) var factory: LKRTCPeerConnectionFactory?
++        private(set) var module: LKRTCAudioDeviceModule?
++        let ownerGeneration: UInt64, microphoneRevision: UInt64, physicalRevision: UInt64
++        let request: UUID
++        let restoringPersistentInput: Bool
++        let cancellation = GuestAudioDemandPermit()
++        init(factory: LKRTCPeerConnectionFactory, ownerGeneration: UInt64,
++             microphoneRevision: UInt64, physicalRevision: UInt64,
++             request: UUID, restoringPersistentInput: Bool) {
++            self.factory = factory; module = factory.audioDeviceModule
++            self.ownerGeneration = ownerGeneration; self.microphoneRevision = microphoneRevision
++            self.physicalRevision = physicalRevision; self.request = request
++            self.restoringPersistentInput = restoringPersistentInput
++        }
++        func releaseReferences() { module = nil; factory = nil }
++    }
+     #endif
+     private var stoppedPreparationHeld = false
+     private var closed = false
+@@ -909,7 +995,10 @@
+         // That asynchronous work is separate from an already-running mute change.
+         snapshot["inputAvailable"] as? Bool == true ? 2 : 8
+     }
+-    func activateMicrophone(timeout: TimeInterval? = nil) async -> Bool {
++    func activateMicrophone(timeout: TimeInterval? = nil, restoringPersistentInput: Bool = false) async -> Bool {
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        let originalDeadline = ProcessInfo.processInfo.systemUptime + max(0.01, timeout ?? inputStartupBudget)
++        #endif
+         #if DEBUG && ROCK_PRIVATE_INPUT_EXPERIMENT
+         let activation = locked { () -> (Bool, UInt64?) in
+             guard !terminationRequested else { return (false, nil) }
+@@ -925,20 +1014,10 @@
+         guard locked({ !privateInputLease.quarantined && !terminationRequested }) else { return false }
+         #endif
+         #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
+-        let duplexActivationIntent: UInt64?
+-        let duplexActivationRequest = UUID()
+-        defer { locked { duplexActivationObligation.end(duplexActivationRequest) } }
+         if backend == .coreAudioAEC3 {
+-            guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+-            guard let intent = locked({ () -> UInt64? in
+-                guard !terminationRequested, !duplexTerminal else { return nil }
+-                duplexActivationObligation.begin(duplexActivationRequest)
+-                duplexInputAuthorized = true
+-                guard publishDuplexIntentLocked(source: "activation") else { return nil }
+-                return UInt64(duplexSequence)
+-            }) else { return false }
+-            duplexActivationIntent = intent
+-        } else { duplexActivationIntent = nil }
++            return await activateDuplexMicrophone(deadline: originalDeadline,
++                restoringPersistentInput: restoringPersistentInput)
++        }
+         #endif
+         return await perform("microphone-activate", timeout: timeout ?? inputStartupBudget) {
+             #if DEBUG && ROCK_PRIVATE_INPUT_EXPERIMENT
+@@ -950,43 +1029,16 @@
+             }
+             let wasActivated = self.inputActivation
+             self.inputActivation.activate(); self.microphoneOptIn = self.inputActivation.inputAvailable
+-            let success: Bool
+-            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
+-            if self.backend == .coreAudioAEC3 {
+-                success = self.applyDuplexAvailability(module, requireInputReady: true)
+-            } else { success = self.applyAvailability(module) }
+-            #else
+-            success = self.applyAvailability(module)
+-            #endif
++            let success = self.applyAvailability(module)
+             if !success {
+-                #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
+-                if self.backend == .coreAudioAEC3, let intent = duplexActivationIntent {
+-                    self.locked {
+-                        // This failed operation cannot revoke a newer intent
+-                        // or issue a second, less strict physical preparation.
+-                        if self.duplexActivationObligation.isLatest(duplexActivationRequest),
+-                           UInt64(self.duplexSequence) == intent && module.revokeExperimentalCoreAudioDuplexIntent(expectedIntent: intent) {
+-                            self.duplexTerminal = true; self.duplexServerUnmuted = false
+-                            self.inputActivation = wasActivated
+-                            self.microphoneOptIn = self.inputActivation.inputAvailable
+-                            self.cached["duplexActivationFailureRevokedIntent"] = intent
+-                        } else { self.cached["duplexActivationFailureSuperseded"] = true }
+-                    }
+-                } else {
+-                    self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable
+-                    _ = self.applyAvailability(module)
+-                }
+-                #else
+                 self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable
+                 _ = self.applyAvailability(module)
+-                #endif
+             }
+             self.update(["microphoneOptIn": self.microphoneOptIn])
+             self.readSnapshot(module)
+             return success
+         }
+     }
+-
+ 
+     /// Enqueue the privacy barrier immediately, before a later unmute can enqueue.
+     /// The sender track is suppressed synchronously by the engine as well.
+@@ -1096,10 +1148,14 @@
+     // unprepared owner explicitly, unless another activation still owns its
+     // obligation. This never issues another Prepare or changes user intent.
+     func closeUnpreparedDuplexActivationAfterFailure() -> Bool {
+-        locked {
++        guard let context = captureDuplexActivationOwner(request: UUID(), restoringPersistentInput: false, reserve: false) else { return false }
++        defer { audioQueue.async { context.releaseReferences() } }
++        // Cancellation must not hide a current native terminal/unsafe owner.
++        noteDuplexOwnerFailure(context)
++        return locked {
+             guard backend == .coreAudioAEC3, !terminationRequested,
+                   duplexOwnerGeneration != 0, ownedFactory != nil,
+-                  duplexActivationObligation.unresolved else { return false }
++                  duplexActivationObligation.unresolved || duplexWaitOwnerFailure else { return false }
+             duplexTerminal = true; duplexServerUnmuted = false
+             _ = publishDuplexIntentLocked(source: "unresolvedActivation")
+             cached["duplexUnresolvedActivationClosed"] = true
+@@ -1251,6 +1307,7 @@
+         #endif
+         if !force, duplexLastFlags == flags { return true }
+         if let previous = duplexLastFlags, (previous ^ flags) & (1 | 8 | 16) != 0 {
++            guard advanceDuplexPhysicalRequestLocked() else { return false }
+             guard duplexMicrophoneRevision < UInt64.max else { duplexTerminal = true; return false }
+             duplexMicrophoneRevision += 1
+             duplexServerUnmuted = false
+@@ -1280,7 +1337,9 @@
+     func setLocalMicrophoneIntentForDuplex(_ muted: Bool) {
+         locked {
+             guard backend == .coreAudioAEC3, !terminationRequested, !duplexTerminal else { return }
+-            if duplexDesiredMuted != muted {
++            // An explicit repeated mute can withdraw a still-pending first
++            // activation even when its desired value was already muted.
++            if duplexDesiredMuted != muted || muted {
+                 guard duplexMicrophoneRevision < UInt64.max else { duplexTerminal = true; _ = publishDuplexIntentLocked(source: "revisionOverflow"); return }
+                 duplexMicrophoneRevision += 1; duplexDesiredMuted = muted
+                 cached["microphoneMutedRequested"] = muted
+@@ -1297,6 +1356,7 @@
+     func invalidateDuplexPublicationForTrackChange() {
+         locked {
+             guard backend == .coreAudioAEC3, !terminationRequested, !duplexTerminal else { return }
++            guard advanceDuplexPhysicalRequestLocked() else { return }
+             guard duplexMicrophoneRevision < UInt64.max else { duplexTerminal = true; return }
+             duplexMicrophoneRevision += 1; duplexServerUnmuted = false
+             _ = publishDuplexIntentLocked(source: "track", force: true)
+@@ -1306,9 +1366,174 @@
+         guard backend == .coreAudioAEC3, let module = currentModule else { return ["supported": false, "enabled": false] }
+         return module.experimentalCoreAudioDuplexState
+     }
++    var duplexRecordingDemandWaitEvidenceForTesting: [String: Any] {
++        locked { cached["duplexRecordingDemandWaitActive"] as? [String: Any] ?? ["active": false] }
++    }
+     func setDuplexHoldForTesting(phase: UInt32, milliseconds: UInt32) {
+         guard backend == .coreAudioAEC3 else { return }
+         currentModule?.setExperimentalCoreAudioDuplexHoldPhase(phase, milliseconds: min(milliseconds, 1000))
++    }
++
++    private func advanceDuplexPhysicalRequestLocked() -> Bool {
++        guard duplexPhysicalRequestRevision < UInt64.max else {
++            duplexTerminal = true
++            _ = ownedFactory?.audioDeviceModule.revokeExperimentalCoreAudioDuplexIntent(expectedIntent: UInt64(duplexSequence))
++            return false
++        }
++        duplexPhysicalRequestRevision += 1
++        return true
++    }
++
++    private func captureDuplexActivationOwner(request: UUID, restoringPersistentInput: Bool,
++                                               reserve: Bool) -> DuplexActivationOwner? {
++        locked {
++            guard backend == .coreAudioAEC3, !terminationRequested,
++                  let factory = ownedFactory, duplexOwnerGeneration != 0 else { return nil }
++            if reserve {
++                guard !duplexTerminal else { return nil }
++                duplexActivationObligation.reserve(request)
++            }
++            return DuplexActivationOwner(factory: factory, ownerGeneration: duplexOwnerGeneration,
++                microphoneRevision: duplexMicrophoneRevision, physicalRevision: duplexPhysicalRequestRevision,
++                request: request, restoringPersistentInput: restoringPersistentInput)
++        }
++    }
++
++    private func duplexOwnerCurrentLocked(_ context: DuplexActivationOwner) -> Bool {
++        context.factory != nil && ownedFactory === context.factory && duplexOwnerGeneration == context.ownerGeneration
++    }
++
++    private func duplexRequestCurrentLocked(_ context: DuplexActivationOwner) -> Bool {
++        guard context.cancellation.isActive, duplexActivationObligation.isLatest(context.request),
++              duplexPhysicalRequestRevision == context.physicalRevision,
++              context.restoringPersistentInput || duplexMicrophoneRevision == context.microphoneRevision else { return false }
++        #if ROCK_PRIVATE_INPUT_EXPERIMENT
++        guard !privateInputLease.quarantined, privateInputLease.token == nil else { return false }
++        #endif
++        return true
++    }
++
++    private func nativeDuplexOwnerFailed(_ context: DuplexActivationOwner) -> Bool {
++        guard let module = context.module else { return false }
++        let duplex = module.experimentalCoreAudioDuplexState
++        let core = module.experimentalCoreAudioState
++        return ((duplex["authority"] as? UInt64 ?? 0) & 8) != 0 ||
++            duplex["transportQuarantined"] as? Bool == true || core["cleanupUnconfirmed"] as? Bool == true
++    }
++
++    private func noteDuplexOwnerFailure(_ context: DuplexActivationOwner) {
++        guard locked({ duplexOwnerCurrentLocked(context) && !terminationRequested }) else { return }
++        let failed = nativeDuplexOwnerFailed(context)
++        locked {
++            if duplexOwnerCurrentLocked(context), !terminationRequested, failed || duplexTerminal {
++                duplexWaitOwnerFailure = true
++            }
++        }
++    }
++
++    private func observeDuplexRecordingDemand(_ context: DuplexActivationOwner) -> GuestRecordingDemandObservation {
++        let gate = locked { (duplexOwnerCurrentLocked(context), duplexRequestCurrentLocked(context),
++                              terminationRequested || duplexTerminal) }
++        guard gate.0, gate.1, !gate.2, let module = context.module else {
++            return .init(ownerCurrent: gate.0, requestCurrent: gate.1, terminal: gate.2, recordingRequested: nil)
++        }
++        let authorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
++        // Direct acquire-load metadata only. No HAL or worker dispatch. The
++        // subsequent Prepare worker bookend orders behind StartRecording.
++        let state = module.experimentalCoreAudioState
++        return .init(ownerCurrent: gate.0, requestCurrent: gate.1 && authorized,
++            terminal: nativeDuplexOwnerFailed(context), recordingRequested: state["recordingRequested"] as? Bool)
++    }
++
++    private func activateDuplexMicrophone(deadline: TimeInterval, restoringPersistentInput: Bool) async -> Bool {
++        guard deadline.isFinite else { update(["lastRejectedOperation": "duplex-recording-demand-invalid-deadline"]); return false }
++        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
++        guard let context = captureDuplexActivationOwner(request: UUID(),
++            restoringPersistentInput: restoringPersistentInput, reserve: true) else { return false }
++        defer {
++            locked { duplexActivationObligation.end(context.request) }
++            // Clearing the reference fields on this serial queue, rather than
++            // merely scheduling an extra retain, guarantees final native release
++            // is off Main/RT even if factory shutdown raced this waiter.
++            audioQueue.async { context.releaseReferences() }
++        }
++        return await withTaskCancellationHandler(operation: {
++            await self.waitAndPrepareDuplexMicrophone(context, deadline: deadline)
++        }, onCancel: {
++            // Admission checks this permit under the same intent lock. Thus
++            // cancellation either wins before admission or follows it; a queued
++            // GCD body cannot lose Swift-task cancellation at the executor hop.
++            self.locked { context.cancellation.revoke() }
++        })
++    }
++
++    private func waitAndPrepareDuplexMicrophone(_ context: DuplexActivationOwner, deadline: TimeInterval) async -> Bool {
++        locked {
++            if duplexActivationObligation.isLatest(context.request) {
++                cached["duplexRecordingDemandWaitActive"] = ["active": true,
++                    "ownerGeneration": context.ownerGeneration, "requestID": context.request.uuidString,
++                    "restoringPersistentInput": context.restoringPersistentInput,
++                    "startedUptime": ProcessInfo.processInfo.systemUptime, "deadlineUptime": deadline,
++                    "microphoneRevision": context.microphoneRevision, "physicalRequestRevision": context.physicalRevision,
++                    "physicallyAdmitted": false]
++            }
++        }
++        let receipt = await GuestRecordingDemandWait.wait(deadlineUptime: deadline,
++            cancelled: { Task.isCancelled || !context.cancellation.isActive },
++            observe: { self.observeDuplexRecordingDemand(context) })
++        update(["duplexRecordingDemandWait": ["status": receipt.status.rawValue,
++            "ownerGeneration": context.ownerGeneration, "requestID": context.request.uuidString,
++            "restoringPersistentInput": context.restoringPersistentInput,
++            "startedUptime": receipt.startedUptime, "finishedUptime": receipt.finishedUptime,
++            "deadlineUptime": receipt.deadlineUptime, "observations": receipt.observations,
++            "seconds": receipt.finishedUptime - receipt.startedUptime,
++            "provenance": "native requested acquire-load; Prepare worker fence and typed physical proof still required"]])
++        locked {
++            if var live = cached["duplexRecordingDemandWaitActive"] as? [String: Any],
++               live["requestID"] as? String == context.request.uuidString {
++                live["active"] = false; live["status"] = receipt.status.rawValue
++                live["finishedUptime"] = receipt.finishedUptime; cached["duplexRecordingDemandWaitActive"] = live
++            }
++        }
++        noteDuplexOwnerFailure(context)
++        guard receipt.status == .ready, !Task.isCancelled, context.cancellation.isActive else { return false }
++        let remaining = deadline - ProcessInfo.processInfo.systemUptime
++        guard remaining.isFinite, remaining > 0 else { return false }
++        return await perform("microphone-activate", timeout: remaining, deadlineUptime: deadline) {
++            guard !self.closed, ProcessInfo.processInfo.systemUptime < deadline,
++                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
++            let observed = self.observeDuplexRecordingDemand(context)
++            guard observed.ownerCurrent, observed.requestCurrent, !observed.terminal,
++                  observed.recordingRequested == true, let module = context.module else {
++                self.noteDuplexOwnerFailure(context); return false
++            }
++            guard let intent = self.locked({ () -> UInt64? in
++                guard self.duplexOwnerCurrentLocked(context), self.duplexRequestCurrentLocked(context),
++                      !self.terminationRequested, !self.duplexTerminal,
++                      self.duplexActivationObligation.admit(context.request) else { return nil }
++                self.duplexInputAuthorized = true
++                guard self.publishDuplexIntentLocked(source: "activation") else { return nil }
++                return UInt64(self.duplexSequence)
++            }) else { return false }
++            // Admission changes microphone/physical revision itself. Only the
++            // exact post-latch native intent/proof governs the physical call.
++            let wasActivated = self.inputActivation
++            self.inputActivation.activate(); self.microphoneOptIn = self.inputActivation.inputAvailable
++            let success = self.applyDuplexAvailability(module, requireInputReady: true)
++            if !success {
++                self.locked {
++                    if self.duplexActivationObligation.isLatest(context.request),
++                       UInt64(self.duplexSequence) == intent,
++                       module.revokeExperimentalCoreAudioDuplexIntent(expectedIntent: intent) {
++                        self.duplexTerminal = true; self.duplexServerUnmuted = false
++                        self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable
++                        self.cached["duplexActivationFailureRevokedIntent"] = intent
++                    } else { self.cached["duplexActivationFailureSuperseded"] = true }
++                }
++            }
++            self.update(["microphoneOptIn": self.microphoneOptIn]); self.readSnapshot(module)
++            return success
++        }
+     }
+ 
+     private func applyDuplexAvailability(_ module: LKRTCAudioDeviceModule, requireInputReady: Bool = false,
+@@ -1524,14 +1749,16 @@
+         }
+     }
+ 
+-    private func perform(_ name: String, timeout: TimeInterval, _ body: @escaping @Sendable () -> Bool) async -> Bool {
+-        let operationID = operationTrace.enqueue(name, timeout: timeout)
++    private func perform(_ name: String, timeout: TimeInterval, deadlineUptime: TimeInterval? = nil,
++                         _ body: @escaping @Sendable () -> Bool) async -> Bool {
++        let operationID = operationTrace.enqueue(name, timeout: timeout, deadlineUptime: deadlineUptime)
++        let delay = deadlineUptime.map { max(0, $0 - ProcessInfo.processInfo.systemUptime) } ?? max(0.01, timeout)
+         #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
+-        let duplexDeadline = ProcessInfo.processInfo.systemUptime + max(0.01, timeout)
++        let duplexDeadline = deadlineUptime ?? ProcessInfo.processInfo.systemUptime + max(0.01, timeout)
+         #endif
+         return await withCheckedContinuation { continuation in
+             let completion = Completion(continuation)
+-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + max(0.01, timeout)) {
++            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay) {
+                 completion.finish(false) {
+                     #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
+                     if self.backend == .coreAudioAEC3 {
+--- a/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
++++ b/Experiments/NativeGuestTests/GuestSystemAudioTests.swift
+@@ -241,6 +241,12 @@
+     }
+ 
+     private static func operationTraceEvidence() {
++        let originalBudget = GuestAudioOperationTrace()
++        let remaining = originalBudget.enqueue("microphone-activate", timeout: 8, deadlineUptime: 11.5, at: 11)
++        originalBudget.start(remaining, at: 11)
++        let originalActive = originalBudget.snapshot(at: 11)["audioActiveOperation"] as! [String: Any]
++        precondition(originalActive["deadlineAt"] as? Double == 11.5,
++                     "Queue admission must retain the original deadline after demand waiting")
+         let trace = GuestAudioOperationTrace()
+         let activation = trace.enqueue("microphone-activate", timeout: 2, at: 10)
+         let mute = trace.enqueue("microphone-mute", timeout: 2, at: 10.1)
+--- a/Experiments/NativeGuest/GuestEngine.swift
++++ b/Experiments/NativeGuest/GuestEngine.swift
+@@ -710,17 +710,29 @@
+     }
+ 
+     func activateMicrophone() async throws {
++        #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++        try await activateMicrophone(restoringPersistentInput: false)
++        #else
+         try checkActive()
+         if let systemAudio, !(await systemAudio.activateMicrophone()) {
+-            #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++            throw GuestSystemAudioError.microphoneActivationFailure(authorization: AVCaptureDevice.authorizationStatus(for: .audio))
++        }
++        try checkActive()
++        #endif
++    }
++
++    #if DEBUG && ROCK_COREAUDIO_DUPLEX_R6
++    func activateMicrophone(restoringPersistentInput: Bool) async throws {
++        try checkActive()
++        if let systemAudio, !(await systemAudio.activateMicrophone(restoringPersistentInput: restoringPersistentInput)) {
+             if !closing, !outputSuppressed, systemAudio.closeUnpreparedDuplexActivationAfterFailure() {
+                 recordFailure(GuestSystemAudioError.setupFailedOrTimedOut)
+             }
+-            #endif
+             throw GuestSystemAudioError.microphoneActivationFailure(authorization: AVCaptureDevice.authorizationStatus(for: .audio))
+         }
+         try checkActive()
+     }
++    #endif
+ 
+     func setPlayoutEnabled(_ enabled: Bool) async throws {
+         try checkActive()
