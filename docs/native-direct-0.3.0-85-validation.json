@@ -1,0 +1,38 @@
+{
+  "version": "0.3.0",
+  "build": "85",
+  "channel": "beta",
+  "sourceCommit": "ac3729c",
+  "changes": [
+    "MCP server for AI-agent meeting integration: thirteen read-only and ask-first tools with published, handler-accurate inputSchemas (server 0.2.0) and pre-dispatch validation with structured field-level errors",
+    "Keep the assistant situation when a meeting is left: hangup no longer reads as the user silencing the meeting while the window is still on screen",
+    "Skip redundant native mute on audio rebuild and log lifecycle events",
+    "Full MCP test-suite repair: the memory-checker workaround and async XCTest hollowing were silently skipping test bodies; all green results are now genuine (451 tests)"
+  ],
+  "artifact": {
+    "file": "RockNRoll-0.3.0-85-arm64.dmg",
+    "sha256": "42f054be9f9b54eec0fdf40db8656bea8e996c4676160abce95904bde5db2c25",
+    "length": 27705092,
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-85-arm64.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-85-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "Fixes commits 9c4d4a9, e7c0b23, cef16d7, 4d7fd2d, b07952b, 346de9c, 73fe0e1, 4f1f9ac, and ac3729c are on main. The publisher verified the immutable DMG, beta alias, signed appcast and inventory over HTTPS byte-for-byte; independent HTTPS downloads of the immutable DMG and the beta alias both matched the packaged SHA-256.",
+  "measured": {
+    "fullTestSuite": "NativeDesktopTests on source ac3729c: 451 tests, 37 skipped (Live Text interactive-selection denial), 0 failures",
+    "distributionTooling": "NativeMacGuest/distribution unittest suite passed (27 tests); py_compile passed",
+    "archive": "direct Release archive 0.3.0 (85) succeeded; app-group IO and one-use ticket check passed",
+    "export": "Developer ID export with Xcode cloud-managed notarization; app stapled and Gatekeeper-accepted (Notarized Developer ID)",
+    "package": "DMG created and revalidated read-only from its mount; contained app accepted as Notarized Developer ID",
+    "publish": "read-only SSH preflight passed; atomic publication and HTTPS readback matched the immutable DMG, beta alias, signed appcast and inventory",
+    "appcastStateSHA256": "a668650aa053634766c23eeb154579a2d79325cdf34463a588af0aac65583940",
+    "inventoryStateSHA256": "3a599417815ff01baf75fba1e177ae0e5f819f7501afef2135dbae32ad0281f6"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 85",
+    "physical-microphone push-to-talk acceptance and live-meeting behavior",
+    "on-device ASR/TTS load timing and memory figures on Macs other than this build host",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ]
+}
