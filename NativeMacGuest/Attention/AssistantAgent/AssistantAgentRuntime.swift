@@ -265,12 +265,29 @@ struct AssistantAgentEnvironment: Sendable {
                 for raw in rawCalls {
                     try Task.checkCancellation()
                     guard generation == runGeneration else { throw CancellationError() }
-                    let call = try environment.registry.validate(raw)
+                    let call: AssistantAgentToolCall
+                    do {
+                        call = try environment.registry.validate(raw)
+                    } catch {
+                        // Validation failures are observable tool results. Stop this batch before
+                        // any later action, then let the model correct the call within the run budget.
+                        toolCalls += 1
+                        let result = AssistantAgentToolResult.error(raw, error.localizedDescription)
+                        appendTool(result); lastResult = result
+                        break
+                    }
                     toolCalls += 1
                     let tool = environment.registry.tool(named: call.name)
                     let requiresApproval = tool?.descriptor.requiresApproval == true
                     if requiresApproval, let actionTool = tool as? any AssistantAgentActionTool {
-                        let action = try actionTool.canonicalAction(for: call, arguments: call.arguments)
+                        let action: AssistantCanonicalAction
+                        do {
+                            action = try actionTool.canonicalAction(for: call, arguments: call.arguments)
+                        } catch {
+                            let result = AssistantAgentToolResult.error(call, error.localizedDescription)
+                            appendTool(result); lastResult = result
+                            break
+                        }
                         switch environment.approvalPolicy(call, action) {
                         case .deny(let reason):
                             let result = AssistantAgentToolResult(callID: call.id, toolName: call.name,
@@ -332,6 +349,11 @@ struct AssistantAgentEnvironment: Sendable {
     }
 
     private func appendSystem(_ text: String, isError: Bool) {
+        // submit/resume already record a failure before the controller observes the same Result.
+        // Keep a genuinely repeated failure after another message, but collapse this immediate echo.
+        if let last = store.items.last, last.kind == .system, last.text == text, last.isError == isError {
+            return
+        }
         store.append(.init(kind: .system, text: text, isError: isError)); syncItems()
     }
 

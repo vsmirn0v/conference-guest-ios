@@ -114,11 +114,38 @@ struct AssistantNativeSnapshot: Codable, Equatable, Sendable {
     var settings: [String: String]
 }
 
+/// Resolves only the explicitly selected active meeting. Other titles and ambiguous targets
+/// remain invalid; no title-based guessing is allowed for outward actions.
+private func assistantResolvedMeetingArguments(_ arguments: AssistantJSON,
+                                               snapshot: AssistantNativeSnapshot,
+                                               defaultWhenMissing: Bool) -> AssistantJSON {
+    guard case .object(var object) = arguments else { return arguments }
+    // Only an absent/empty string or the exact selected title is canonicalizable. A wrong
+    // JSON type must still reach the generic validator and produce a useful correction result.
+    if let supplied = object["meeting_id"], supplied.stringValue == nil { return arguments }
+    let raw = object["meeting_id"]?.stringValue?.trimmed
+    guard raw == nil || raw?.isEmpty == true || UUID(uuidString: raw ?? "") == nil,
+          let selectedID = snapshot.contextMeetingID,
+          let selected = snapshot.meetings.first(where: { $0.id == selectedID && $0.active }) else {
+        return arguments
+    }
+    let normalized = { (value: String) in
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).trimmed
+    }
+    if (defaultWhenMissing && (raw == nil || raw?.isEmpty == true)) ||
+        (raw.map { normalized($0) == normalized(selected.title) } == true) {
+        object["meeting_id"] = .string(selectedID.uuidString)
+        return .object(object)
+    }
+    return arguments
+}
+
 private struct AssistantClosureTool: AssistantAgentTool {
     let descriptor: AssistantAgentToolDescriptor
+    let validator: @Sendable (AssistantJSON) throws -> AssistantJSON
     let body: @Sendable (AssistantAgentToolCall, AssistantJSON) async throws -> AssistantAgentToolResult
 
-    func validate(_ arguments: AssistantJSON) throws -> AssistantJSON { arguments }
+    func validate(_ arguments: AssistantJSON) throws -> AssistantJSON { try validator(arguments) }
 
     func execute(_ call: AssistantAgentToolCall, arguments: AssistantJSON) async throws -> AssistantAgentToolResult {
         try await body(call, arguments)
@@ -130,7 +157,10 @@ private struct AssistantNativeActionTool: AssistantAgentActionTool {
     let snapshot: AssistantNativeSnapshot
     let executor: @Sendable (AssistantCanonicalAction) async throws -> String
 
-    func validate(_ arguments: AssistantJSON) throws -> AssistantJSON { arguments }
+    func validate(_ arguments: AssistantJSON) throws -> AssistantJSON {
+        guard descriptor.arguments.contains(where: { $0.name == "meeting_id" }) else { return arguments }
+        return assistantResolvedMeetingArguments(arguments, snapshot: snapshot, defaultWhenMissing: true)
+    }
 
     func execute(_ call: AssistantAgentToolCall, arguments: AssistantJSON) async throws -> AssistantAgentToolResult {
         let action = try canonicalAction(for: call, arguments: arguments)
@@ -158,14 +188,18 @@ private struct AssistantNativeActionTool: AssistantAgentActionTool {
             guard let target, target.active == true else { throw AssistantAgentError.unknownMeeting(targetID?.uuidString ?? "none") }
             return .init(kind: kind, meetingID: target.id)
         case .sendChat, .say:
-            guard let target, target.active == true,
-                  let text = arguments["text"]?.stringValue?.trimmed, !text.isEmpty else {
+            guard let target, target.active == true else {
+                throw AssistantAgentError.unknownMeeting(arguments["meeting_id"]?.stringValue ?? "missing")
+            }
+            guard let text = arguments["text"]?.stringValue?.trimmed, !text.isEmpty else {
                 throw AssistantAgentError.missingArgument(descriptor.name, "text")
             }
             return .init(kind: kind, meetingID: target.id, text: String(text.prefix(1000)))
         case .react:
-            guard let target, target.active == true,
-                  let reaction = MeetingReaction(rawValue: arguments["reaction"]?.stringValue ?? "") else {
+            guard let target, target.active == true else {
+                throw AssistantAgentError.unknownMeeting(arguments["meeting_id"]?.stringValue ?? "missing")
+            }
+            guard let reaction = MeetingReaction(rawValue: arguments["reaction"]?.stringValue ?? "") else {
                 throw AssistantAgentError.missingArgument(descriptor.name, "reaction")
             }
             return .init(kind: kind, meetingID: target.id, reaction: reaction)
@@ -542,7 +576,13 @@ enum AssistantNativeToolProvider {
                                 arguments: [AssistantArgumentSpec],
                                 body: @escaping @Sendable (AssistantAgentToolCall, AssistantJSON) async throws -> AssistantAgentToolResult)
         -> any AssistantAgentTool {
-        AssistantClosureTool(descriptor: .init(name: name, description: description, arguments: arguments), body: body)
+        let requiredMeetingID = arguments.contains { $0.name == "meeting_id" && $0.required }
+        return AssistantClosureTool(
+            descriptor: .init(name: name, description: description, arguments: arguments),
+            validator: { input in
+                assistantResolvedMeetingArguments(input, snapshot: snapshot, defaultWhenMissing: requiredMeetingID)
+            },
+            body: body)
     }
 }
 

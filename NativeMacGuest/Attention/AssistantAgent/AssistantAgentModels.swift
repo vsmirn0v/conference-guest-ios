@@ -12,8 +12,11 @@ struct AssistantAgentModelPrompt {
     hidden prompts, or provider credentials. Read-only questions must not call memory writes or \
     outward meeting actions. A summary, catch-up, historical question, or calendar question is not a \
     request to say or send anything. Drafts are text only. Sensitive native actions require exact \
-    typed IDs and must be left for the app's approval. If evidence is missing or partial, say so. \
-    If multiple meetings or calendar series match, ask one targeted question instead of guessing by title.
+    typed IDs and must be left for the app's approval. If selected_meeting contains a UUID and the \
+    user refers to the current or selected meeting, use that exact UUID for meeting_id. Include every \
+    required argument in every tool call; never use empty arguments for a tool with required arguments. \
+    If evidence is missing or partial, say so. If multiple meetings or calendar series match, ask one \
+    targeted question instead of guessing by title.
     """
 
     static func messages(_ request: AssistantAgentModelRequest) -> [[String: String]] {
