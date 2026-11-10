@@ -15,4 +15,4 @@ Plan and review: [IOS_LIVE_TRANSCRIBE_REACTIONS_IMPLEMENTATION_PLAN.md](../IOS_L
 ## App Store Connect
 
 - Upload completed 2026-11-10 ~18:16 MSK; Apple accepted the upload. Known nonblocking warnings: missing dSYMs for third-party frameworks only (JazzScreenShareImpl, LiveKitWebRTC, RustLiveKitUniFFI, SDSoup, Spench, WebRTC), same as build 115.
-- **Pending:** build 116 has not yet been added to Rock’n’Roll Internal and Rock’n’Roll Public Beta; What to Test and automatic tester notification are not yet set. Group assignment requires the Kimi WebBridge browser extension, which was not connected at publication time.
+- **Group assignment handed to the owner:** build 116 has not been added to Rock’n’Roll Internal and Rock’n’Roll Public Beta from here; What to Test and automatic tester notification are set manually by the owner together with build 117.
