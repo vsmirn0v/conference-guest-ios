@@ -6,11 +6,12 @@ import SwiftUI
 /// `AttentionStore.agentAssistantEnabled` is on; otherwise the existing
 /// single-command interpreter path runs unchanged.
 extension AssistantTalkController {
-    /// The bounded agent loop for one user turn.
-    func runAgent(_ input: String) async {
+    /// The bounded agent loop for one user turn. `external` callers (MCP) can
+    /// never inherit a meeting's send-without-asking privilege.
+    func runAgent(_ input: String, external: Bool = false) async {
         guard let attention else { return }
         do {
-            let environment = try makeAgentEnvironment()
+            let environment = try await makeAgentEnvironment(external: external)
             agentEnvironment = environment
             let result = await agentRuntime.submit(input, environment: environment)
             handleAgentOutcome(result)
@@ -72,7 +73,7 @@ extension AssistantTalkController {
 
     // MARK: Environment
 
-    private func makeAgentEnvironment() throws -> AssistantAgentEnvironment {
+    private func makeAgentEnvironment(external: Bool) async throws -> AssistantAgentEnvironment {
         guard let attention else { throw AssistantAgentError.unsupported }
         let snapshot = makeAgentSnapshot()
         let provider = attention.store.provider
@@ -82,14 +83,23 @@ extension AssistantTalkController {
                 return try await self.executeAgentAction(action)
             })
         let registry = AssistantNativeToolProvider.registry(snapshot: snapshot, hooks: hooks)
-        let bypass = sendWithoutAsking
+        // External MCP tools are read-only and gated by the persisted trust policy.
+        if attention.store.agentExternalToolsEnabled, let externalProvider = attention.externalToolProvider {
+            let trust = AssistantExternalToolTrust(disabled: false,
+                                                   enabledServers: [assistantMCPLoopbackServerID],
+                                                   readOnlyServers: [assistantMCPLoopbackServerID])
+            registry.register(externalTools: await AssistantExternalToolPolicy.exposedTools(
+                externalProvider, serverID: assistantMCPLoopbackServerID, trust: trust))
+        }
+        let bypass = external ? Set<UUID>() : sendWithoutAsking
         return AssistantAgentEnvironment(
             registry: registry,
             model: provider.agentModel(key: attention.store.apiKey(for: provider)),
             context: AssistantNativeToolProvider.context(snapshot: snapshot),
             approvalPolicy: { _, action in
                 // Local private memory writes need no card; everything outward asks,
-                // except the explicit per-meeting bypass for chat/voice/reactions.
+                // except the explicit per-meeting bypass for chat/voice/reactions,
+                // which never applies to external (MCP) callers.
                 if action.kind == .remember { return .allow }
                 if [.sendChat, .say, .react].contains(action.kind), let id = action.meetingID, bypass.contains(id) {
                     return .allow

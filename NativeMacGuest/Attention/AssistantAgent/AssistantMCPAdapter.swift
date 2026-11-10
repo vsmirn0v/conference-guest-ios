@@ -52,16 +52,16 @@ struct AssistantExternalTool: AssistantAgentTool {
 enum AssistantExternalToolPolicy {
     /// Decide which tools from a provider may be registered, applying the trust
     /// policy and the namespacing rules. Native names and approval-demanding
-    /// external tools are always rejected.
-    static func exposedTools(_ provider: any AssistantExternalToolProviding,
+    /// external tools are always rejected. Tool names must be namespaced with
+    /// the provider's server id prefix (`<serverID>__<tool>`).
+    static func exposedTools(_ provider: any AssistantExternalToolProviding, serverID: String,
                              trust: AssistantExternalToolTrust) async -> [any AssistantAgentTool] {
         guard !trust.disabled else { return [] }
+        guard trust.enabledServers.contains(serverID) else { return [] }
         guard let descriptors = try? await provider.tools() else { return [] }
         return descriptors.compactMap { descriptor in
-            let server = String(descriptor.name.split(separator: "__").first ?? "")
-            let serverID = String(server)
-            guard trust.enabledServers.contains(serverID) else { return nil }
-            guard !descriptor.name.hasPrefix("rocknroll_"), !descriptor.name.contains("..") else { return nil }
+            guard descriptor.name.hasPrefix(serverID + "__"), !descriptor.name.hasPrefix("rocknroll_"),
+                  !descriptor.name.contains("..") else { return nil }
             guard !descriptor.requiresApproval else { return nil }
             guard trust.readOnlyServers.contains(serverID) || descriptor.createsReview == false else { return nil }
             return AssistantExternalTool(descriptor: descriptor, provider: provider)

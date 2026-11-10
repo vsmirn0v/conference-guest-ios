@@ -270,6 +270,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// single-command interpreter remains the fallback while this is off.
     @Published var agentAssistantEnabled: Bool { didSet { defaults.set(agentAssistantEnabled, forKey: Self.agentAssistantKey) } }
     static let agentAssistantKey = "assistant.agent.enabled"
+    /// Expose read-only MCP tools (the app's own MCP backend today; external
+    /// servers as they are added) to the agent runtime. Off by default.
+    @Published var agentExternalToolsEnabled: Bool { didSet { defaults.set(agentExternalToolsEnabled, forKey: Self.agentExternalToolsKey) } }
+    static let agentExternalToolsKey = "assistant.agent.externalTools"
     /// Output-device UIDs the person marked with "This is a headphone".
     @Published private(set) var headphoneUIDs: Set<String>
     static let outcomesKey = "attention.outcomes.enabled", remoteOutcomesKey = "attention.outcomes.remote"
@@ -360,6 +364,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? true
         talkBack = defaults.bool(forKey: Self.talkBackKey)
         agentAssistantEnabled = defaults.bool(forKey: Self.agentAssistantKey)
+        agentExternalToolsEnabled = defaults.bool(forKey: Self.agentExternalToolsKey)
         headphoneUIDs = Set(defaults.stringArray(forKey: Self.headphoneUIDsKey) ?? [])
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!

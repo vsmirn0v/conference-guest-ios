@@ -6,6 +6,8 @@ import Foundation
     private let workspace: NativeDesktopWorkspace
     private let tokens = MCPTokenStore()
     private let backend: NativeDesktopMCPBackend
+    /// The tool authority behind the service, for the in-app assistant's loopback provider.
+    var toolBackend: any MCPBackend { backend }
     private let rpc: MCPJSONRPCServer
     private let transport: MCPHTTPTransport
     private(set) var endpointFile: URL

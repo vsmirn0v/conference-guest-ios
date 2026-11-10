@@ -780,6 +780,16 @@ struct NativeDesktopIntelligenceSettings: View {
             Section(L("Memory")) {
                 AssistantMemorySettings(attention: attention)
             }
+            Section(L("Agent")) {
+                Toggle(L("Answer with the bounded agent (typed tools, grounded sources)"), isOn: $store.agentAssistantEnabled)
+                    .accessibilityIdentifier("assistant.agent.enabled")
+                if store.agentAssistantEnabled {
+                    Toggle(L("Also offer read-only MCP tools"), isOn: $store.agentExternalToolsEnabled)
+                        .accessibilityIdentifier("assistant.agent.externalTools")
+                    Text(L("Off by default. Exposes the app's MCP server tools to the agent as read-only sources. Outward actions still ask natively."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Section(L("Voice")) {
                 Toggle(L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk)
                     .accessibilityIdentifier("assistant.pushToTalk")

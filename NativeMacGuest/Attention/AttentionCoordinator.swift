@@ -196,6 +196,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     let actionCoordinator = AssistantActionCoordinator()
     /// Future native calendar occurrences for the agent's read-only calendar tools.
     var calendarOccurrences: () -> [CalendarMeeting] = { [] }
+    /// External tool source (the app's MCP loopback today; external MCP servers later).
+    var externalToolProvider: (any AssistantExternalToolProviding)?
 
     private var loop: Task<Void, Never>?
     private var calls: [Date] = []

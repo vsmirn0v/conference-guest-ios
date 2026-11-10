@@ -103,7 +103,7 @@ import SwiftUI
                 append(.assistant, L("Confirm or cancel the pending action first.")); return
             }
             working = true; defer { working = false }
-            await runAgent(clean)
+            await runAgent(clean, external: externalMCPRequest)
             return
         }
         entries.append(.init(role: .user, text: clean)); trimEntries()
@@ -133,12 +133,24 @@ import SwiftUI
             cancelPending()
             return (nil, true)
         }
+        // The agent runtime pauses on its own approval or rule review; external callers
+        // can never confirm those natively bound decisions.
+        if agentPending != nil {
+            cancelAgentPending()
+            return (nil, true)
+        }
+        if ruleProposalReview != nil {
+            discardReviewedRule()
+            return (nil, true)
+        }
         // Execution is scheduled concurrently; wait for its assistant answer entry.
         for _ in 0..<200 where !(entries.count > previousCount && entries.last?.role == .assistant) {
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        guard entries.count > previousCount, let last = entries.last, last.role == .assistant else { return (nil, false) }
-        return (last.text, false)
+        if entries.count > previousCount, let last = entries.last, last.role == .assistant { return (last.text, false) }
+        // Agent-runtime answers live in its own conversation, not in `entries`.
+        if let last = agentRuntime.items.last, last.kind == .assistant { return (last.text, false) }
+        return (nil, false)
     }
 
     /// Button equivalents use the same validation and confirmation path without an LLM call.

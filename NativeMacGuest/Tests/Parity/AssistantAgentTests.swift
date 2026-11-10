@@ -418,11 +418,81 @@ final class AssistantAgentTests: XCTestCase {
                                                         requiresApproval: true)
         let trust = AssistantExternalToolTrust(disabled: false, enabledServers: ["notes"], readOnlyServers: ["notes"])
         let exposed = await AssistantExternalToolPolicy.exposedTools(Provider(exposed: [readOnly, nativeName, approvalTool]),
-                                                                     trust: trust)
+                                                                     serverID: "notes", trust: trust)
         XCTAssertEqual(exposed.map { $0.descriptor.name }, ["notes__search"])
         // Disabled trust exposes nothing.
         let none = await AssistantExternalToolPolicy.exposedTools(Provider(exposed: [readOnly]),
-                                                                  trust: .init(disabled: true))
+                                                                  serverID: "notes", trust: .init(disabled: true))
         XCTAssertTrue(none.isEmpty)
+    }
+
+    // MARK: MCP loopback
+
+    @MainActor private final class StubMCPBackend: MCPBackend {
+        var lastClient: MCPClientIdentity?
+        func status() async throws -> MCPJSON { ["backend": "stub"] }
+        func listMeetings(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
+            lastClient = client; return ["items": []]
+        }
+        func getMeeting(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func getTranscript(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func getOutcome(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func listTasks(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func search(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
+            lastClient = client; return ["items": [["title": "Kickoff"]]]
+        }
+        func getSettings(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func controlMeeting(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func setFavorite(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func updateTask(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func updateSettings(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func runAssistant(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+    }
+
+    /// Read-only tools only, `run_assistant` excluded, all namespaced `mcp__*`.
+    func testMCPLoopbackExposesOnlyReadOnlyTools() async throws {
+        let provider = await AssistantMCPLoopbackProvider(backend: StubMCPBackend())
+        let descriptors = try await provider.tools()
+        let readOnlyNames = Set(nativeMCPToolDefinitions().filter(\.readOnly).map(\.name))
+            .subtracting(["rocknroll_run_assistant"])
+        XCTAssertEqual(Set(descriptors.map { String($0.name.dropFirst("mcp__".count)) }), readOnlyNames)
+        XCTAssertFalse(descriptors.contains { $0.name.contains("run_assistant") })
+        XCTAssertTrue(descriptors.allSatisfy { $0.name.hasPrefix("mcp__") && !$0.requiresApproval && $0.allowsArbitraryArguments })
+        // Full policy round-trip: loopback passes its own server id and trust gates.
+        let exposed = await AssistantExternalToolPolicy.exposedTools(
+            provider, serverID: assistantMCPLoopbackServerID,
+            trust: .init(disabled: false, enabledServers: [assistantMCPLoopbackServerID],
+                         readOnlyServers: [assistantMCPLoopbackServerID]))
+        XCTAssertEqual(exposed.count, descriptors.count)
+        let disabled = await AssistantExternalToolPolicy.exposedTools(
+            provider, serverID: assistantMCPLoopbackServerID, trust: .init(disabled: true))
+        XCTAssertTrue(disabled.isEmpty)
+    }
+
+    /// Dispatch reaches the backend with the internal identity and converts values both ways.
+    func testMCPLoopbackDispatchUsesInternalIdentity() async throws {
+        let backend = StubMCPBackend()
+        let provider = await AssistantMCPLoopbackProvider(backend: backend)
+        let result = try await provider.call("mcp__rocknroll_search", arguments: .object(["query": .string("kickoff")]))
+        guard case .object(let object) = result else { return XCTFail("expected object") }
+        guard case .array(let items)? = object["items"] else { return XCTFail("expected items") }
+        guard case .object(let first)? = items.first, case .string(let title)? = first["title"] else {
+            return XCTFail("expected first item title")
+        }
+        XCTAssertEqual(title, "Kickoff")
+        let client = await backend.lastClient
+        XCTAssertEqual(client?.label, "Rock'N'Roll Assistant")
+        XCTAssertEqual(client?.tokenHash, mcpSHA256("rocknroll-internal-assistant"))
+        // The recursion guard and write tools are not callable even by name.
+        await XCTAssertThrowsErrorAsync({ try await provider.call("mcp__rocknroll_run_assistant", arguments: .object([:])) })
+        await XCTAssertThrowsErrorAsync({ try await provider.call("mcp__rocknroll_update_settings", arguments: .object([:])) })
+        await XCTAssertThrowsErrorAsync({ try await provider.call("rocknroll_status", arguments: .object([:])) })
+    }
+
+    private func XCTAssertThrowsErrorAsync(_ expression: () async throws -> AssistantJSON,
+                                           _ message: String = "",
+                                           file: StaticString = #filePath, line: UInt = #line) async {
+        do { _ = try await expression(); XCTFail("Expected error. \(message)", file: file, line: line) }
+        catch {}
     }
 }

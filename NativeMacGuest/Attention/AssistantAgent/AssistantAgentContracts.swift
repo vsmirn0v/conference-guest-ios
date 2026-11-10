@@ -123,6 +123,9 @@ struct AssistantAgentToolDescriptor: Codable, Equatable, Identifiable, Sendable 
     var requiresApproval = false
     /// True when the tool may create a reviewable proposal without itself executing it.
     var createsReview = false
+    /// External tools (MCP) accept arguments their schema-less listings cannot
+    /// enumerate; the provider validates them at dispatch.
+    var allowsArbitraryArguments = false
     var id: String { name }
 }
 
@@ -273,6 +276,7 @@ final class AssistantAgentToolRegistry: @unchecked Sendable {
         }
         for (key, value) in object {
             guard let argument = tool.descriptor.arguments.first(where: { $0.name == key }) else {
+                if tool.descriptor.allowsArbitraryArguments { continue }
                 throw AssistantAgentError.invalidArguments(call.name, "unknown argument \(key)")
             }
             let valid: Bool
