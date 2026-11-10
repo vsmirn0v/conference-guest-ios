@@ -1,0 +1,35 @@
+{
+  "version": "0.3.0",
+  "build": "89",
+  "channel": "beta",
+  "sourceCommit": "1332c40 (main, includes the beta-88 integration plus 0794698, fbb3ec0, 17432d9 and e4d8aa9)",
+  "changes": [
+    "Everything from beta 88: WebRTC M156 audio-route recovery r1 framework actually linked (LK namespace overlay, configuration-recovery race guard, default-route native handover), fixing the build-87 errata",
+    "Redesign Mini meeting as an explicit PiP with a streaming cap (0794698)",
+    "Bound voice preview during cache recovery (fbb3ec0)",
+    "Fix first assistant send, compact timeline, and direct-send policy (17432d9)",
+    "Never notify based on the user's own lines (e4d8aa9)"
+  ],
+  "artifact": {
+    "file": "RockNRoll-0.3.0-89-arm64.dmg",
+    "sha256": "6391c70d6d19207da6b1422a0ae03756e3435274ec3233e9d22fe398e9b3b3ab",
+    "length": 27996997,
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-89-arm64.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-89-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "The publisher verified local signatures and digests, passed read-only SSH preflight, atomically promoted beta 89, and verified HTTPS readback. Published inventory SHA-256 5b00c154, appcast SHA-256 dbc1d972, DMG SHA-256 6391c70d.",
+  "measured": {
+    "buildEvidence": "direct Release archive 0.3.0 (89) succeeded from detached worktree at 1332c40 with zero compile errors; check-container passed; framework binary SHA-256 9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977 matches the beta-88 audio-route r1 candidate; source manifest SHA-256 6d82900d4a71ee10b9b294bcbfffcbc064e5f9e36762044ea837acbcab6dc3ae",
+    "repoTests": "Native dependency unittest suite 14/14 passed and distribution unittest suite 27/27 passed on main before the worktree cut",
+    "export": "Developer ID export with notarization succeeded in a single pass; the app is stapled and Gatekeeper-accepted as Notarized Developer ID",
+    "package": "DMG checksum verified and the contained notarized app was revalidated read-only from its mount"
+  },
+  "notVerified": [
+    "physical AirPods-to-speakers and speakers-to-AirPods route switching on build 89; the audio-route fix is verified at build and native-test level only",
+    "Sparkle update of an installed app to 89",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ],
+  "publishedAt": "2026-11-11T01:36:00+03:00"
+}
