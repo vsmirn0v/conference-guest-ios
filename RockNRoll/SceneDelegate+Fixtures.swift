@@ -111,27 +111,53 @@ extension SceneDelegate {
                           text: "Here is the arrangement: https://rock.glowsoft.ru/community",
                           sentAt: Date().addingTimeInterval(-100), isOwn: false)
             ])
-            if fixture == "reactions" || fixture == "reactions-unavailable" {
+            let liveTranscriptReactions = fixture == "live-transcript-reactions"
+            let fixtureTime = Date()
+            if fixture == "reactions" || fixture == "reactions-unavailable" || liveTranscriptReactions {
                 chat.reactionHistoryAvailable = true
                 if fixture == "reactions-unavailable" { chat.canSend = false }
                 let history = chat.reactionHistory
                 history.beginMeeting(id: UUID())
-                for index in 0..<36 {
-                    history.receive(kind: index % 3 == 0 ? .heart : .like, participantID: "ani",
-                        displayName: "Ani", isOwn: false, receivedAt: Date().addingTimeInterval(Double(index - 36) * 12))
-                }
-                let time = Date()
-                for index in 0..<3 {
-                    history.receive(kind: .like, participantID: "ani", displayName: "Ani", isOwn: false,
-                        receivedAt: time.addingTimeInterval(Double(index) * 0.1))
+                if liveTranscriptReactions {
+                    history.receive(kind: .heart, participantID: "ani", displayName: "Ani", isOwn: false,
+                        providerTimestamp: fixtureTime.addingTimeInterval(-45),
+                        receivedAt: fixtureTime.addingTimeInterval(-45))
+                    history.receive(kind: .wave, participantID: "narek", displayName: "Narek", isOwn: false,
+                        providerTimestamp: fixtureTime.addingTimeInterval(-35),
+                        receivedAt: fixtureTime.addingTimeInterval(-35))
+                    history.recordLocalSubmission(kind: .like, participantID: "local", displayName: "Rock QA",
+                        submissionID: "fixture-local-reaction", at: fixtureTime.addingTimeInterval(-15))
+                    history.receive(kind: .applause, participantID: "ani", displayName: "Ani", isOwn: false,
+                        providerTimestamp: fixtureTime.addingTimeInterval(-5),
+                        receivedAt: fixtureTime.addingTimeInterval(-5))
+                } else {
+                    for index in 0..<36 {
+                        history.receive(kind: index % 3 == 0 ? .heart : .like, participantID: "ani",
+                            displayName: "Ani", isOwn: false, receivedAt: fixtureTime.addingTimeInterval(Double(index - 36) * 12))
+                    }
+                    for index in 0..<3 {
+                        history.receive(kind: .like, participantID: "ani", displayName: "Ani", isOwn: false,
+                            receivedAt: fixtureTime.addingTimeInterval(Double(index) * 0.1))
+                    }
                 }
             }
             let store = model.catchUpStore
             store.enter(roomKey: "https://rock.glowsoft.ru/jams/fixture-\(UUID().uuidString)")
             store.begin(.anotherCall)
-            store.observe(messages: [TranscriptSegment(id: "line", speaker: "Ani",
-                text: "We will meet Friday at six thirty.", spokenAt: Date())],
-                canView: fixture != "unavailable", enabled: fixture != "unavailable")
+            if liveTranscriptReactions {
+                store.observe(messages: [
+                    TranscriptSegment(id: "live-1", speaker: "Ani",
+                        text: "We will start with the slower arrangement.", spokenAt: fixtureTime.addingTimeInterval(-60)),
+                    TranscriptSegment(id: "live-2", speaker: "Narek",
+                        text: "I will bring the amplifier on Friday.", spokenAt: fixtureTime.addingTimeInterval(-20)),
+                    TranscriptSegment(id: "live-unknown", speaker: nil,
+                        text: "This line arrived without a timestamp.", spokenAt: nil)
+                ], canView: true, enabled: true)
+            } else {
+                store.observe(messages: [TranscriptSegment(id: "line", speaker: "Ani",
+                    text: "We will meet Friday at six thirty.", spokenAt: fixtureTime)],
+                    canView: fixture != "unavailable", enabled: fixture != "unavailable")
+            }
             store.end(.anotherCall)
             if fixture == "transcript" {
                 let lines = (0..<30).map { index in
@@ -153,6 +179,7 @@ extension SceneDelegate {
             controls.toggleCamera = { controls.cameraOn.toggle() }
             controls.toggleSpeaker = { controls.speakerOn.toggle() }
             window.rootViewController = ConversationPanelViewController(catchUp: store, chat: chat,
+                                                                         initialMode: liveTranscriptReactions ? .liveText : .chat,
                                                                          call: controls)
             return true
         }

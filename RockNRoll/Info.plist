@@ -32,11 +32,9 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>115</string>
+	<string>116</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-    <key>NSSupportsLiveActivities</key>
-    <true/>
 	<key>JoinLinkHost</key>
 	<string>$(JOIN_LINK_HOST)</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -60,6 +58,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Use your microphone to speak in jams and test your sound privately before unmuting.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>dev.vsmirn0v.conferenceguest.continue-jam</string>

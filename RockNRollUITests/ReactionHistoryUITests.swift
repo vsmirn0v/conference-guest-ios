@@ -68,6 +68,23 @@ final class ReactionHistoryUITests: XCTestCase {
         app.buttons["Close conversation"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@", "Chat")).firstMatch.waitForExistence(timeout: 5))
     }
+
+    func testLiveTextShowsReactionsBetweenTranscriptRows() {
+        let app = launch(language: "en", fixture: "live-transcript-reactions")
+        defer { app.terminate() }
+        let transcript = app.textViews["Jam transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 8))
+        let text = transcript.value as? String ?? ""
+        XCTAssertTrue(text.contains("We will start with the slower arrangement."))
+        XCTAssertTrue(text.contains("❤️  Ani"))
+        XCTAssertTrue(text.contains("👋  Narek"))
+        XCTAssertTrue(text.contains("This line arrived without a timestamp."))
+        XCTAssertTrue(text.contains("👍  You"))
+        XCTAssertTrue(text.contains("🎉  Ani"))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Live text reactions"; shot.lifetime = .keepAlways; add(shot)
+    }
+
     private func launch(language: String, fixture: String = "reactions") -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(\(language))"]
