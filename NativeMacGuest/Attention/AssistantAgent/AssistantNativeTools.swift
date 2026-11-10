@@ -48,6 +48,18 @@ struct AssistantOutcomeRecord: Codable, Equatable, Identifiable, Sendable {
     var openQuestions: [String]
 }
 
+/// Note metadata for one meeting. The full note is read only through the
+/// `rocknroll_get_notes` tool so long notes never bloat every turn.
+struct AssistantNoteRecord: Codable, Equatable, Identifiable, Sendable {
+    var id: UUID
+    var meetingID: UUID
+    var meetingTitle: String
+    var revision: Int
+    var updatedAt: Date
+    /// Bounded excerpt; the tool returns the complete raw Markdown.
+    var preview: String
+}
+
 struct AssistantMomentRecord: Codable, Equatable, Identifiable, Sendable {
     var id: UUID
     var meetingID: UUID?
@@ -94,6 +106,7 @@ struct AssistantNativeSnapshot: Codable, Equatable, Sendable {
     var profileNames: [String]
     var meetings: [AssistantMeetingRecord]
     var outcomes: [AssistantOutcomeRecord]
+    var notes: [AssistantNoteRecord]
     var moments: [AssistantMomentRecord]
     var memories: [AssistantMemoryRecord]
     var calendar: [AssistantCalendarOccurrence]
@@ -179,6 +192,8 @@ enum AssistantNativeToolProvider {
     struct Hooks: Sendable {
         var executeAction: @Sendable (AssistantCanonicalAction) async throws -> String
         var createRuleProposal: @Sendable (AssistantAutomationRuleProposal) -> AssistantAutomationRuleProposal = { $0 }
+        /// Reads the exact committed note revision for one session; nil when absent.
+        var readNote: @Sendable (UUID) async -> MeetingNoteRecord? = { _ in nil }
     }
 
     static func registry(snapshot: AssistantNativeSnapshot, hooks: Hooks) -> AssistantAgentToolRegistry {
@@ -268,6 +283,33 @@ enum AssistantNativeToolProvider {
                 return .success(call, outcome.summary, json: Self.outcomeJSON(outcome),
                                 evidence: [.init(id: "outcome-" + outcome.id.uuidString, kind: "outcome", title: outcome.title, at: outcome.endedAt)])
             },
+            closure(snapshot, name: "rocknroll_get_notes", description: "Read the complete raw Markdown note for one meeting by meeting_id. Personal notes are user-authored claims, not participant agreements; attribute them separately from outcomes and transcripts.", arguments: [
+                .init(name: "meeting_id", type: .string, required: true, description: "UUID from list_meetings or notes metadata."),
+            ]) { call, arguments in
+                guard let id = arguments["meeting_id"]?.stringValue.flatMap(UUID.init(uuidString:)) else {
+                    throw AssistantAgentError.missingArgument(call.name, "meeting_id")
+                }
+                guard let record = snapshot.notes.first(where: { $0.meetingID == id }) else {
+                    throw AssistantAgentError.unknownMeeting(arguments["meeting_id"]?.stringValue ?? "missing")
+                }
+                guard let note = await hooks.readNote(id) else {
+                    return .success(call, "The note is unavailable.", json: .object([
+                        "meeting_id": .string(id.uuidString), "available": .bool(false)]),
+                        evidence: [.init(id: "note-" + id.uuidString, kind: "note", title: record.meetingTitle, at: record.updatedAt)])
+                }
+                let fullCoverage = note.markdown.utf8.count <= 12_000
+                return .success(call, "Note for \(record.meetingTitle) (revision \(note.revision)).",
+                    json: .object([
+                        "meeting_id": .string(id.uuidString),
+                        "note_id": .string(note.id.uuidString),
+                        "revision": .int(note.revision),
+                        "updated_at": .date(note.updatedAt),
+                        "provenance": .string("personal_note_user_authored"),
+                        "coverage": .string(fullCoverage ? "complete" : "partial_first_12k"),
+                        "markdown": .string(fullCoverage ? note.markdown : String(decoding: note.markdown.utf8.prefix(12_000), as: UTF8.self)),
+                    ]),
+                    evidence: [.init(id: "note-" + id.uuidString, kind: "note", title: record.meetingTitle, at: note.updatedAt)])
+            },
             closure(snapshot, name: "rocknroll_list_tasks", description: "List saved outcome tasks, optionally for one outcome or owned by the current user.", arguments: [
                 .init(name: "outcome_id", type: .string, description: "Optional outcome UUID."),
                 .init(name: "owner", type: .string, description: "mine, an exact owner name, or empty for all."),
@@ -306,6 +348,13 @@ enum AssistantNativeToolProvider {
                 let limit = min(20, max(1, arguments["limit"]?.intValue ?? 8))
                 var matches: [AssistantJSON] = []
                 let scopeID = arguments["meeting_id"]?.stringValue.flatMap(UUID.init(uuidString:))
+                for note in snapshot.notes where scopeID == nil || note.meetingID == scopeID {
+                    if Self.matches(query, text: note.preview) {
+                        matches.append(.object(["kind": .string("note"), "id": .string("note-\(note.id.uuidString)"),
+                            "meeting": .string(note.meetingTitle), "at": .date(note.updatedAt),
+                            "text": .string(String(note.preview.prefix(700)))]))
+                    }
+                }
                 for outcome in snapshot.outcomes where scopeID == nil || outcome.meetingID == scopeID {
                     let fields = [outcome.summary] + outcome.decisions + outcome.openQuestions + outcome.tasks.map(\.text)
                     for (index, text) in fields.enumerated() where Self.matches(query, text: text) {

@@ -81,6 +81,10 @@ extension AssistantTalkController {
             executeAction: { [weak self] action in
                 guard let self else { throw AssistantAgentError.unsupported }
                 return try await self.executeAgentAction(action)
+            },
+            readNote: { [weak self] sessionID in
+                guard let self else { return nil }
+                return await self.attention?.store.meetingLibrary.note(sessionID: sessionID)
             })
         let registry = AssistantNativeToolProvider.registry(snapshot: snapshot, hooks: hooks)
         // External MCP tools are read-only and gated by the persisted trust policy.
@@ -165,7 +169,7 @@ extension AssistantTalkController {
     func makeAgentSnapshot() -> AssistantNativeSnapshot {
         guard let attention else {
             return .init(now: Date(), timeZoneIdentifier: TimeZone.current.identifier, language: "en",
-                         contextMeetingID: nil, profileNames: [], meetings: [], outcomes: [], moments: [],
+                         contextMeetingID: nil, profileNames: [], meetings: [], outcomes: [], notes: [], moments: [],
                          memories: [], calendar: [], actionTargets: [], settings: [:])
         }
         let now = attention.now()
@@ -202,6 +206,11 @@ extension AssistantTalkController {
                                    tasks: outcome.tasks.map { .init(text: $0.text, owner: $0.owner, dueAt: $0.dueAt, done: $0.done) },
                                    openQuestions: outcome.openQuestions)
         }
+        let notes = attention.store.meetingLibrary.cards.filter(\.hasNotes).map { card in
+            AssistantNoteRecord(id: card.noteID ?? card.sessionID, meetingID: card.sessionID,
+                                meetingTitle: card.title, revision: card.noteRevision,
+                                updatedAt: card.updatedAt, preview: card.notePreview ?? "")
+        }
         let moments = attention.store.momentHistory.moments.map {
             AssistantMomentRecord(id: $0.id, meetingID: $0.meetingID, title: $0.meetingTitle,
                                   reason: $0.verdict.reason, createdAt: $0.createdAt, state: $0.state.rawValue)
@@ -231,7 +240,7 @@ extension AssistantTalkController {
         return .init(now: now, timeZoneIdentifier: TimeZone.current.identifier,
                      language: Bundle.main.preferredLocalizations.first ?? "en",
                      contextMeetingID: targetMeetingID, profileNames: profileNames, meetings: meetings,
-                     outcomes: outcomes, moments: moments, memories: memories, calendar: calendar,
+                     outcomes: outcomes, notes: notes, moments: moments, memories: memories, calendar: calendar,
                      actionTargets: targets, settings: settings)
     }
 

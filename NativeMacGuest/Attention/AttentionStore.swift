@@ -327,6 +327,11 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     @Published private(set) var journalWarning: String?
     let root: URL
     let assistant: AssistantDataStore
+    /// Durable meeting library: sessions, notes and outcomes in SQLite. Shared root
+    /// with the assistant data keeps tests isolated through the same injection point.
+    let meetingLibrary: MeetingLibraryController
+    /// Per-session note drafts with debounced autosave.
+    let notes: MeetingNotesController
     private let defaults: UserDefaults
     private let keychain: AttentionKeychain
     private var loading = false
@@ -342,6 +347,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         let root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
             FileManager.default.temporaryDirectory).appendingPathComponent("Attention", isDirectory: true)
         self.root = root; assistant = AssistantDataStore(root: root)
+        meetingLibrary = MeetingLibraryController(root: root)
+        notes = MeetingNotesController(library: meetingLibrary)
         self.defaults = defaults; self.keychain = keychain
         enabled = defaults.bool(forKey: Self.enabledKey)
         pauseOnBattery = defaults.bool(forKey: Self.batteryKey)
@@ -377,6 +384,56 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         keyedKinds = Set(AttentionProvider.Kind.allCases.filter { keychain.kind($0).read()?.trimmed.isEmpty == false })
         load()
         momentLoadTask = Task { @MainActor [weak self] in await self?.loadMoments() }
+        installMeetingLibrary()
+    }
+
+    // MARK: Meeting library
+
+    /// Dual-writes outcomes into the repository, then runs the one-time legacy import.
+    /// A failed migration keeps assistant.json authoritative and surfaces an error
+    /// instead of silently dropping either copy.
+    private func installMeetingLibrary() {
+        assistant.onPersistOutcome = { [weak self] outcome in
+            guard let self else { return }
+            Task { await self.meetingLibrary.addOutcome(outcome, state: .ready) }
+        }
+        assistant.onRemoveOutcome = { [weak self] id in
+            guard let self else { return }
+            self.meetingLibrary.removeOutcome(id)
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.meetingLibrary.prepare()
+            await self.migrateLegacyOutcomesIfNeeded()
+        }
+    }
+
+    private func migrateLegacyOutcomesIfNeeded() async {
+        let store = meetingLibrary.store
+        do {
+            if try await store.legacyOutcomesMigrated {
+                assistant.markOutcomesExternal()
+                await meetingLibrary.refresh()
+                return
+            }
+            let legacy = assistant.legacyOutcomesForMigration()
+            if !legacy.isEmpty { backupAssistantFile(name: "assistant.pre-meeting-library-backup.json") }
+            try await store.importLegacyOutcomes(legacy)
+            assistant.markOutcomesExternal()
+            await meetingLibrary.refresh()
+        } catch {
+            // The legacy file stays authoritative; dual writes stay off and the user sees why.
+            assistant.setExternalMigrationFailed(error.localizedDescription)
+        }
+    }
+
+    /// Byte-exact copy kept before the first migrated write; never pruned as a log.
+    private func backupAssistantFile(name: String) {
+        let source = root.appendingPathComponent("assistant.json")
+        let target = root.appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: source.path),
+              !FileManager.default.fileExists(atPath: target.path) else { return }
+        try? FileManager.default.copyItem(at: source, to: target)
     }
 
     private var documentURL: URL { root.appendingPathComponent("presets.json") }

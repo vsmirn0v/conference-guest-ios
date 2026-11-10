@@ -243,6 +243,7 @@ struct NativeGuestApplication {
         #endif
         terminating = true
         Task { @MainActor in
+            await workspace?.attention.store.notes.flushAll()
             _ = await workspace?.leave()
             if let controller, !controller.finished { await controller.finish() }
             let clean = await NativeDesktopForegroundMedia.shared.shutdown()
@@ -254,6 +255,7 @@ struct NativeGuestApplication {
     func applicationWillTerminate(_ notification: Notification) {
         mcpService?.stop()
         workspace?.attention.store.assistant.flushOutcomeEditsSynchronously()
+        workspace?.obsidian.stopStatusLoop()
         #if NATIVE_DIRECT_UPDATES
         updates?.willTerminate()
         #endif

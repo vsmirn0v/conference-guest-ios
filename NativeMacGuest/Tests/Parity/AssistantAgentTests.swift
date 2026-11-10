@@ -83,7 +83,7 @@ final class AssistantAgentTests: XCTestCase {
         ]
         return AssistantNativeSnapshot(
             now: now, timeZoneIdentifier: "UTC", language: "en", contextMeetingID: activeID,
-            profileNames: ["You"], meetings: [meeting], outcomes: outcomes,
+            profileNames: ["You"], meetings: [meeting], outcomes: outcomes, notes: [],
             moments: [], memories: [], calendar: calendar,
             actionTargets: [.init(id: activeID, title: "Daily sync", invitation: nil, active: true, meetingID: activeID)],
             settings: ["voice_engine": "system", "talk_back": "off", "provider_host": "local",
@@ -437,6 +437,7 @@ final class AssistantAgentTests: XCTestCase {
         func getMeeting(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func getTranscript(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func getOutcome(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func getNotes(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func listTasks(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func search(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
             lastClient = client; return ["items": [["title": "Kickoff"]]]

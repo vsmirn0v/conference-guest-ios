@@ -35,8 +35,9 @@ class OfflineBackendTests(unittest.TestCase):
         self.assertTrue(status["categories"]["outcomes"])
         self.assertTrue(status["categories"]["calendar"])
         self.assertTrue(status["categories"]["transcript_fragments"])
+        self.assertTrue(status["categories"]["notes"])
         self.assertFalse(status["capabilities"]["assistant"])
-        self.assertEqual(status["capabilities"]["kinds"], ["calendar", "outcome", "transcript_fragment"])
+        self.assertEqual(status["capabilities"]["kinds"], ["calendar", "outcome", "note", "transcript_fragment"])
 
     def test_list_meetings_keeps_same_title_records_separate(self) -> None:
         result = self.backend.list_meetings({"kind": "outcome"})
@@ -81,6 +82,44 @@ class OfflineBackendTests(unittest.TestCase):
         transcript = self.backend.search({"query": "lunch", "types": ["transcript"]})
         self.assertGreaterEqual(len(transcript["items"]), 1)
         self.assertEqual(transcript["items"][0]["utterance"]["speaker"], "Max")
+
+    def test_list_meetings_includes_note_sessions(self) -> None:
+        result = self.backend.list_meetings({"kind": "note"})
+        self.assertEqual(len(result["items"]), 3)
+        self.assertTrue(all(item["kind"] == "note" for item in result["items"]))
+        self.assertTrue(all(item["has_notes"] for item in result["items"]))
+        self.assertTrue(all(item["id"].startswith("session:file:") for item in result["items"]))
+
+    def test_get_notes_returns_markdown_with_provenance(self) -> None:
+        result = self.backend.get_notes({"meeting_id": "session:file:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"})
+        self.assertTrue(result["has_notes"])
+        self.assertEqual(result["revision"], 2)
+        self.assertIn("beta checklist", result["markdown"])
+        self.assertEqual(result["provenance"]["type"], "personal_note")
+        self.assertEqual(result["coverage"], "complete")
+        self.assertEqual(result["meeting_title"], "Design Sync")
+        self.assertNotIn("invitation", json.dumps(result))
+
+    def test_get_notes_missing_session_is_not_found(self) -> None:
+        with self.assertRaises(rocknroll_local.MCPError) as caught:
+            self.backend.get_notes({"meeting_id": "session:file:99999999-9999-9999-9999-999999999999"})
+        self.assertEqual(caught.exception.code, "MEETING_NOT_FOUND")
+
+    def test_search_finds_notes_with_excerpt(self) -> None:
+        result = self.backend.search({"query": "parking lot", "types": ["note"]})
+        self.assertEqual(len(result["items"]), 1)
+        hit = result["items"][0]
+        self.assertEqual(hit["type"], "note")
+        self.assertEqual(hit["matched_field"], "note")
+        self.assertTrue(hit["meeting"]["id"].startswith("session:file:"))
+        self.assertIn("Parking lot", hit["note"]["excerpt"])
+        self.assertEqual(hit["note"]["revision"], 4)
+
+    def test_get_meeting_resolves_note_sessions(self) -> None:
+        item = self.backend.get_meeting({"meeting_id": "session:file:cccccccc-cccc-cccc-cccc-cccccccccccc"})
+        self.assertEqual(item["kind"], "note")
+        self.assertEqual(item["title"], "Sprint Planning")
+        self.assertEqual(item["coverage"], "complete")
 
     def test_pagination_is_snapshot_consistent(self) -> None:
         first = self.backend.list_meetings({"kind": "outcome", "limit": 1})
@@ -138,8 +177,8 @@ class ProtocolTests(unittest.TestCase):
         names = {tool["name"] for tool in tools["result"]["tools"]}
         self.assertEqual(names, {
             "rocknroll_status", "rocknroll_list_meetings", "rocknroll_get_meeting",
-            "rocknroll_get_transcript", "rocknroll_get_outcome", "rocknroll_list_tasks",
-            "rocknroll_search",
+            "rocknroll_get_transcript", "rocknroll_get_outcome", "rocknroll_get_notes",
+            "rocknroll_list_tasks", "rocknroll_search",
         })
         self.assertTrue(all(tool["annotations"]["readOnlyHint"] for tool in tools["result"]["tools"]))
 
@@ -190,7 +229,7 @@ class SchemaContractTests(unittest.TestCase):
 
     def test_catalog_publishes_described_closed_schemas(self) -> None:
         tools = self.tools_by_name()
-        self.assertEqual(len(tools), 7)
+        self.assertEqual(len(tools), 8)
         for name, tool in tools.items():
             schema = tool["inputSchema"]
             self.assertEqual(schema["type"], "object", name)
@@ -203,7 +242,7 @@ class SchemaContractTests(unittest.TestCase):
     def test_initialize_reports_bumped_version(self) -> None:
         initialized = self.server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                                           "params": {"protocolVersion": rocknroll_local.PROTOCOL_VERSION}})
-        self.assertEqual(initialized["result"]["serverInfo"]["version"], "0.2.0")
+        self.assertEqual(initialized["result"]["serverInfo"]["version"], "0.3.0")
 
     def test_unknown_fields_are_rejected_before_dispatch(self) -> None:
         self.assert_invalid(self.request("rocknroll_status", {"bogus": 1}), "bogus", "unknown_field")
@@ -213,9 +252,19 @@ class SchemaContractTests(unittest.TestCase):
     def test_required_and_min_length_fields(self) -> None:
         self.assert_invalid(self.request("rocknroll_get_meeting", {}), "meeting_id", "required")
         self.assert_invalid(self.request("rocknroll_get_outcome", {}), "outcome_id", "required")
+        self.assert_invalid(self.request("rocknroll_get_notes", {}), "meeting_id", "required")
         self.assert_invalid(self.request("rocknroll_search", {}), "query", "required")
         self.assert_invalid(self.request("rocknroll_search", {"query": "   "}), "query", "empty")
         self.assert_invalid(self.request("rocknroll_get_meeting", {"meeting_id": ""}), "meeting_id", "empty")
+
+    def test_get_notes_success_envelope(self) -> None:
+        response = self.request("rocknroll_get_notes", {"meeting_id": "session:file:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"})
+        self.assertFalse(response["result"]["isError"])
+        payload = json.loads(response["result"]["content"][0]["text"])
+        self.assertTrue(payload["has_notes"])
+        self.assertEqual(payload["provenance"]["type"], "personal_note")
+        self.assertIn("markdown", payload)
+        self.assertNotIn("invitation", json.dumps(payload))
 
     def test_types_are_strict_and_null_is_rejected(self) -> None:
         self.assert_invalid(self.request("rocknroll_list_tasks", {"done": "true"}), "done", "type")
@@ -234,6 +283,8 @@ class SchemaContractTests(unittest.TestCase):
         self.assert_invalid(self.request("rocknroll_list_meetings", {"kind": "bogus"}), "kind", "enum")
         self.assert_invalid(self.request("rocknroll_search", {"query": "x", "types": ["bogus"]}), "types[0]", "enum")
         self.assert_invalid(self.request("rocknroll_search", {"query": "x", "types": [7]}), "types[0]", "type")
+        notes = self.request("rocknroll_search", {"query": "beta", "types": ["note"]})
+        self.assertFalse(notes["result"]["isError"])
 
     def test_dates_require_offsets_and_ordering(self) -> None:
         self.assert_invalid(self.request("rocknroll_list_meetings", {"from": "2026-01-01T09:00:00"}), "from", "format")

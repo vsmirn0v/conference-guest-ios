@@ -20,15 +20,17 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 PROTOCOL_VERSION = "2025-03-26"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 BUNDLE_ID = "dev.vsmirn0v.conferenceguest.nativeguest"
 DEFAULT_RELATIVE_ROOT = pathlib.Path("Library/Containers") / BUNDLE_ID / "Data/Library/Application Support"
 MAX_LIMIT = 100
 DEFAULT_LIMIT = 20
 TRANSCRIPT_BYTES = 64 * 1024
+NOTES_BYTES = 12 * 1024
 ALLOWED_SOURCES = (
     pathlib.PurePosixPath("Attention/assistant.json"),
     pathlib.PurePosixPath("MeetingReminders/state.json"),
+    pathlib.PurePosixPath("MeetingLibrary/notes.json"),
 )
 
 
@@ -139,6 +141,7 @@ class Snapshot:
     outcomes: list[dict[str, Any]] = field(default_factory=list)
     occurrences: list[dict[str, Any]] = field(default_factory=list)
     fragments: list[Fragment] = field(default_factory=list)
+    notes: list[dict[str, Any]] = field(default_factory=list)
     sources: dict[str, SourceState] = field(default_factory=dict)
 
     def source_provenance(self) -> list[dict[str, Any]]:
@@ -271,11 +274,13 @@ class OfflineRocknrollBackend:
     def load_snapshot(self) -> Snapshot:
         assistant, assistant_state = self._read_json("Attention/assistant.json")
         reminders, reminder_state = self._read_json("MeetingReminders/state.json")
+        notes_data, notes_state = self._read_json("MeetingLibrary/notes.json")
         fragments, journal_state = self._read_journal_files()
         snapshot = Snapshot(
             id=uuid.uuid4().hex,
             created_at=utc_now(),
-            sources={"assistant": assistant_state, "calendar_cache": reminder_state, "decision_journal": journal_state},
+            sources={"assistant": assistant_state, "calendar_cache": reminder_state,
+                     "meeting_library": notes_state, "decision_journal": journal_state},
         )
         if assistant is not None:
             outcomes = assistant.get("outcomes", [])
@@ -285,6 +290,10 @@ class OfflineRocknrollBackend:
             occurrences = reminders.get("occurrences", [])
             if isinstance(occurrences, list):
                 snapshot.occurrences = [item for item in occurrences if isinstance(item, dict)]
+        if notes_data is not None:
+            records = notes_data.get("notes", [])
+            if isinstance(records, list):
+                snapshot.notes = [item for item in records if isinstance(item, dict)]
         snapshot.fragments = fragments
         self.snapshots[snapshot.id] = snapshot
         if len(self.snapshots) > 64:
@@ -292,12 +301,36 @@ class OfflineRocknrollBackend:
                 self.snapshots.pop(key, None)
         return snapshot
 
+    @staticmethod
+    def _session_file_id(session_id: Any) -> str | None:
+        if not isinstance(session_id, str) or not session_id.strip():
+            return None
+        return f"session:file:{session_id.strip()}"
+
+    @classmethod
+    def _note_record_id(cls, note: dict[str, Any]) -> str | None:
+        session_id = note.get("session_id")
+        note_id = note.get("note_id")
+        if not isinstance(note_id, str) or not note_id.strip():
+            return None
+        session_part = session_id.strip() if isinstance(session_id, str) else "unknown"
+        return f"note:file:{session_part}:{note_id.strip()}"
+
+    def _find_note(self, snapshot: Snapshot, meeting_id: str) -> dict[str, Any]:
+        """Resolve a session:<scope>:<uuid>-shaped id against the persisted notes."""
+        raw = meeting_id.split(":")[-1]
+        for note in snapshot.notes:
+            if note.get("session_id") == raw:
+                return note
+        raise MCPError("MEETING_NOT_FOUND", "The requested meeting is unavailable.")
+
     def source_status(self) -> dict[str, Any]:
         snapshot = self.load_snapshot()
         categories = {
             "outcomes": any(s.available for n, s in snapshot.sources.items() if n == "assistant"),
             "tasks": any(s.available for n, s in snapshot.sources.items() if n == "assistant"),
             "calendar": any(s.available for n, s in snapshot.sources.items() if n == "calendar_cache"),
+            "notes": any(s.available for n, s in snapshot.sources.items() if n == "meeting_library"),
             "transcript_fragments": any(s.available for n, s in snapshot.sources.items() if n == "decision_journal"),
         }
         return {
@@ -308,8 +341,8 @@ class OfflineRocknrollBackend:
             "sources": snapshot.source_provenance(),
             "categories": categories,
             "capabilities": {
-                "kinds": ["calendar", "outcome", "transcript_fragment"],
-                "search_types": ["meeting", "outcome", "task", "transcript"],
+                "kinds": ["calendar", "outcome", "note", "transcript_fragment"],
+                "search_types": ["meeting", "outcome", "task", "transcript", "note"],
                 "controls": [],
                 "mutations": [],
                 "assistant": False,
@@ -426,6 +459,22 @@ class OfflineRocknrollBackend:
             "warning": "Observed journal window; completeness is not guaranteed.",
         }
 
+    def _note_item(self, note: dict[str, Any]) -> dict[str, Any]:
+        session_id = note.get("session_id")
+        item_id = self._session_file_id(session_id) or stable_id("session", "file", note)
+        updated = self._record_time(note, "updated_at", "updatedAt")
+        return {
+            "id": item_id,
+            "kind": "note",
+            "title": note.get("meeting_title") or note.get("meetingTitle") or "Untitled meeting",
+            "updated_at": format_time(updated),
+            "has_notes": True,
+            "related": {},
+            "coverage": "complete",
+            "provenance": {"type": "meeting_library", "source": "MeetingLibrary/notes.json",
+                           "record_id": session_id if isinstance(session_id, str) else None},
+        }
+
     def list_meetings(self, args: dict[str, Any]) -> dict[str, Any]:
         start = parse_time(args.get("from"), "from")
         end = parse_time(args.get("to"), "to")
@@ -437,12 +486,12 @@ class OfflineRocknrollBackend:
             query = query.strip() or None
         kinds = args.get("kind")
         if kinds is None:
-            selected = {"calendar", "outcome", "transcript_fragment"}
+            selected = {"calendar", "outcome", "note", "transcript_fragment"}
         else:
             if not isinstance(kinds, str):
                 raise MCPError("INVALID_ARGUMENT", "kind must be a string.")
             selected = {kinds}
-            unsupported = selected - {"calendar", "outcome", "transcript_fragment"}
+            unsupported = selected - {"calendar", "outcome", "note", "transcript_fragment"}
             if unsupported:
                 raise MCPError("CAPABILITY_UNAVAILABLE", f"Offline profile does not support kind: {sorted(unsupported)[0]}")
         limit = clamp_limit(args.get("limit"))
@@ -467,6 +516,15 @@ class OfflineRocknrollBackend:
                 if query and query.casefold() not in (str(item["title"]) + " " + str(item["summary"])).casefold():
                     continue
                 items.append(item)
+        if "note" in selected:
+            for note in snapshot.notes:
+                item = self._note_item(note)
+                item_time = parse_time(item.get("updated_at"), "updated_at")
+                if not self._in_range(item_time, start, end):
+                    continue
+                if query and query.casefold() not in str(item["title"]).casefold():
+                    continue
+                items.append(item)
         if "transcript_fragment" in selected:
             for fragment in snapshot.fragments:
                 item = self._fragment_item(fragment)
@@ -476,7 +534,7 @@ class OfflineRocknrollBackend:
                 if query and query.casefold() not in str(item["title"]).casefold():
                     continue
                 items.append(item)
-        items.sort(key=lambda item: (str(item.get("ended_at") or item.get("start") or item.get("at") or ""), item["id"]))
+        items.sort(key=lambda item: (str(item.get("ended_at") or item.get("start") or item.get("at") or item.get("updated_at") or ""), item["id"]))
         return self._page(snapshot, "meetings", filters, offset, limit, items)
 
     def _find_outcome(self, snapshot: Snapshot, outcome_id: str) -> dict[str, Any]:
@@ -511,6 +569,11 @@ class OfflineRocknrollBackend:
                 "sources": snapshot.source_provenance(),
                 "warnings": [],
             }
+        if meeting_id.startswith("session:"):
+            note = self._find_note(snapshot, meeting_id)
+            item = self._note_item(note)
+            return {**item, "observed_at": snapshot.created_at,
+                    "sources": snapshot.source_provenance(), "warnings": []}
         raise MCPError("MEETING_NOT_FOUND", "The requested meeting is unavailable.")
 
     def get_transcript(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -597,6 +660,38 @@ class OfflineRocknrollBackend:
             "warnings": [],
         }
 
+    def get_notes(self, args: dict[str, Any]) -> dict[str, Any]:
+        meeting_id = args.get("meeting_id")
+        if not isinstance(meeting_id, str) or not meeting_id:
+            raise MCPError("INVALID_ARGUMENT", "meeting_id is required.")
+        snapshot = self.load_snapshot()
+        note = self._find_note(snapshot, meeting_id)
+        session_id = note.get("session_id")
+        item = self._note_item(note)
+        markdown = note.get("markdown") if isinstance(note.get("markdown"), str) else ""
+        if not markdown:
+            return {
+                "meeting_id": item["id"], "note": None, "has_notes": False,
+                "meeting_title": item["title"],
+                "coverage": "complete", "warnings": ["This meeting has no saved note."],
+                "observed_at": snapshot.created_at,
+            }
+        encoded = markdown.encode("utf-8")
+        truncated = len(encoded) > NOTES_BYTES
+        if truncated:
+            markdown = encoded[:NOTES_BYTES].decode("utf-8", errors="ignore")
+        return {
+            "meeting_id": item["id"], "note_id": self._note_record_id(note), "has_notes": True,
+            "revision": note.get("revision") if isinstance(note.get("revision"), int) else None,
+            "updated_at": item["updated_at"],
+            "provenance": {"type": "personal_note", "record_id": session_id if isinstance(session_id, str) else None},
+            "coverage": "partial" if truncated else "complete",
+            "warnings": ["Note exceeds the 12 KB inline cap; content is truncated."] if truncated else [],
+            "markdown": markdown,
+            "meeting_title": item["title"],
+            "observed_at": snapshot.created_at,
+        }
+
     def list_tasks(self, args: dict[str, Any]) -> dict[str, Any]:
         meeting_id = args.get("meeting_id")
         if meeting_id is not None and not isinstance(meeting_id, str):
@@ -644,11 +739,11 @@ class OfflineRocknrollBackend:
         end = parse_time(args.get("to"), "to")
         types = args.get("types")
         if types is None:
-            selected = {"meeting", "outcome", "task", "transcript"}
+            selected = {"meeting", "outcome", "task", "transcript", "note"}
         else:
             if not isinstance(types, list) or not all(isinstance(item, str) for item in types):
                 raise MCPError("INVALID_ARGUMENT", "types must be an array of strings.")
-            selected = set(types) & {"meeting", "outcome", "task", "transcript"}
+            selected = set(types) & {"meeting", "outcome", "task", "transcript", "note"}
         needle = query.casefold()
         limit = clamp_limit(args.get("limit"))
         filters = {"query": query, "from": format_time(start), "to": format_time(end), "types": sorted(selected)}
@@ -690,6 +785,21 @@ class OfflineRocknrollBackend:
                             "at": format_time(self._record_time(line, "at")),
                             "provenance": {"type": "transcript_fragment", **fragment.provenance},
                         }, "matched_field": "text"})
+        if "note" in selected:
+            for note in snapshot.notes:
+                markdown = note.get("markdown") if isinstance(note.get("markdown"), str) else ""
+                if needle not in markdown.casefold():
+                    continue
+                item = self._note_item(note)
+                if not self._in_range(parse_time(item.get("updated_at"), "updated_at"), start, end):
+                    continue
+                results.append({"type": "note",
+                                "meeting": {"id": item["id"], "title": item["title"], "has_notes": True,
+                                            "provenance": item["provenance"]},
+                                "note": {"id": self._note_record_id(note),
+                                         "revision": note.get("revision") if isinstance(note.get("revision"), int) else None,
+                                         "excerpt": markdown[:400]},
+                                "matched_field": "note"})
         results.sort(key=lambda item: (item["type"], str((item.get("meeting") or item.get("task") or {}).get("id") or "")))
         return self._page(snapshot, "search", filters, offset, limit, results)
 
@@ -702,6 +812,7 @@ class OfflineRocknrollBackend:
             "rocknroll_get_meeting": self.get_meeting,
             "rocknroll_get_transcript": self.get_transcript,
             "rocknroll_get_outcome": self.get_outcome,
+            "rocknroll_get_notes": self.get_notes,
             "rocknroll_list_tasks": self.list_tasks,
             "rocknroll_search": self.search,
         }
@@ -795,10 +906,10 @@ def offline_tools() -> list[dict[str, Any]]:
     meeting_id = {"meeting_id": {"type": "string", "minLength": 1, "description": "Opaque cached record identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title."}}
     return [
         tool_schema("rocknroll_status", "Report offline sources, capabilities and limitations.", {}),
-        tool_schema("rocknroll_list_meetings", "List cached calendar meetings, outcomes and transcript fragments.",
+        tool_schema("rocknroll_list_meetings", "List cached calendar meetings, outcomes, notes and transcript fragments.",
                     {**time_filter,
                      "query": {"type": "string", "description": "Optional case-insensitive substring filter over titles and summaries; the value is trimmed and a whitespace-only filter is ignored."},
-                     "kind": {"type": "string", "enum": ["calendar", "outcome", "transcript_fragment"], "description": "Restrict results to one cached kind; defaults to all three."},
+                     "kind": {"type": "string", "enum": ["calendar", "outcome", "note", "transcript_fragment"], "description": "Restrict results to one cached kind; defaults to all four."},
                      **pagination}),
         tool_schema("rocknroll_get_meeting", "Get one cached meeting-like record.", dict(meeting_id), ["meeting_id"]),
         tool_schema("rocknroll_get_transcript", "Get observed transcript fragments with explicit partial coverage.",
@@ -806,14 +917,17 @@ def offline_tools() -> list[dict[str, Any]]:
         tool_schema("rocknroll_get_outcome", "Get one stored meeting outcome by outcome ID.",
                     {"outcome_id": {"type": "string", "minLength": 1, "description": "Opaque outcome identifier: the id of a kind:outcome item from rocknroll_list_meetings or an outcome result from rocknroll_search. This is not a meeting_id."}},
                     ["outcome_id"]),
+        tool_schema("rocknroll_get_notes", "Get the raw Markdown note for one meeting by a persisted session ID. Notes are user-authored personal records; they are attributed separately from outcomes and transcripts. Never a write: this tool changes nothing.",
+                    {"meeting_id": {"type": "string", "minLength": 1, "description": "Opaque meeting identifier: an id returned by rocknroll_list_meetings or rocknroll_search. Must identify a persisted note session (id starts with session:)."}},
+                    ["meeting_id"]),
         tool_schema("rocknroll_list_tasks", "List stored tasks with optional meeting, owner and completion filters.",
                     {**meeting_id,
                      "done": {"type": "boolean", "description": "Filter by completion state."},
                      "owner": {"type": "string", "description": "Case-insensitive substring match on the task owner."},
                      **pagination}),
-        tool_schema("rocknroll_search", "Search meeting titles, outcomes, tasks and observed transcript fragments.",
+        tool_schema("rocknroll_search", "Search meeting titles, outcomes, tasks, note Markdown and observed transcript fragments.",
                     {"query": {"type": "string", "minLength": 1, "description": "Case-insensitive search text, trimmed; must be non-empty after trimming."},
-                     "types": {"type": "array", "items": {"type": "string", "enum": ["meeting", "outcome", "task", "transcript"]}, "description": "Result types to search; defaults to all four. Unknown values are rejected."},
+                     "types": {"type": "array", "items": {"type": "string", "enum": ["meeting", "outcome", "task", "transcript", "note"]}, "description": "Result types to search; defaults to all five. Unknown values are rejected."},
                      **time_filter, **pagination}, ["query"]),
     ]
 

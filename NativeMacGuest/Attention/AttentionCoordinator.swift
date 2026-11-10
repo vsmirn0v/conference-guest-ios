@@ -402,13 +402,18 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let meetingID = id, title = model.title, invitation = model.invitation, series = model.calendarSeriesID
         let provider = store.effectiveWriter, writer = makeOutcomeWriter(provider, store.apiKey(for: provider))
         outcomeStatus[id] = L("Preparing the meeting outcome…")
+        // Persist the pending state before the (possibly remote) writer runs, so an
+        // interruption is recoverable and never restarts a paid call automatically.
+        let draft = MeetingOutcome(meetingID: meetingID, meetingTitle: title, invitation: invitation,
+            seriesID: series, endedAt: now(), summary: "", decisions: [], tasks: [], openQuestions: [])
+        Task { [weak self] in await self?.store.meetingLibrary.addOutcome(draft, state: .pending) }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 let ended = now()
                 let content = try await writer.outcome(.init(meetingTitle: title, endedAt: ended, window: window, language: language))
                 try Task.checkCancellation()
-                store.assistant.addOutcome(.init(meetingID: meetingID, meetingTitle: title, invitation: invitation,
+                store.assistant.addOutcome(.init(id: draft.id, meetingID: meetingID, meetingTitle: title, invitation: invitation,
                     seriesID: series, endedAt: ended, summary: content.summary, decisions: content.decisions,
                     tasks: content.tasks, openQuestions: content.openQuestions))
                 outcomeStatus[id] = nil
@@ -419,6 +424,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             } catch {
                 outcomeStatus[id] = nil
                 outcomeError[id] = error.localizedDescription
+                store.meetingLibrary.setOutcomeState(draft.id, state: .failed, errorCode: "writer_failed")
                 probeLog("assistant-outcome-failed", ["error": String(describing: error)])
             }
         }

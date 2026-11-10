@@ -249,6 +249,21 @@ private struct AssistantDataDocument: Codable {
     static let suggestionLimit = 30
     static let retrievalLimit = 5
 
+    /// Set once the durable meeting library has imported legacy outcomes. Afterwards
+    /// assistant.json keeps memories/suggestions only: outcome pruning, the 200-item
+    /// cap and outcome encoding stop, and writes route to the meeting repository.
+    private(set) var outcomesExternal = false
+    /// Routes an outcome write to the durable repository; installed by AttentionStore.
+    var onPersistOutcome: ((MeetingOutcome) -> Void)?
+    var onRemoveOutcome: ((UUID) -> Void)?
+    /// Read by the one-time migration before `outcomesExternal` turns on.
+    func legacyOutcomesForMigration() -> [MeetingOutcome] { outcomes }
+    func markOutcomesExternal() { outcomesExternal = true }
+    /// Migration failed: outcomes keep their legacy persistence and the user sees why.
+    func setExternalMigrationFailed(_ detail: String) {
+        saveWarning = L("Meeting outcomes could not move to the durable library. The original file was kept. %@", detail)
+    }
+
     @Published private(set) var outcomes: [MeetingOutcome] = []
     @Published private(set) var memories: [AssistantMemoryItem] = []
     @Published private(set) var suggestions: [AssistantSuggestion] = []
@@ -369,7 +384,7 @@ private struct AssistantDataDocument: Codable {
         if loaded, pendingOutcomeSave != nil, !retainOriginalFile {
             pendingOutcomeSave?.cancel()
             pendingOutcomeSave = nil
-            document.outcomes = outcomes
+            document.outcomes = outcomesExternal ? [] : outcomes
             document.memories = memories
             document.suggestions = suggestions
             document.retentionDays = retentionDays
@@ -404,7 +419,7 @@ private struct AssistantDataDocument: Codable {
             saveWarning = L("Changes to Assistant memory are not being saved over the incomplete file. The original was kept.")
             return
         }
-        document.outcomes = outcomes
+        document.outcomes = outcomesExternal ? [] : outcomes
         document.memories = memories
         document.suggestions = suggestions
         document.retentionDays = retentionDays
@@ -424,11 +439,15 @@ private struct AssistantDataDocument: Codable {
 
     private func prune(now: Date = Date()) {
         let cutoff = now.addingTimeInterval(-TimeInterval(max(1, retentionDays)) * 86400)
-        outcomes = outcomes.filter { $0.endedAt >= cutoff }.sorted { $0.endedAt > $1.endedAt }
+        // After the durable-library migration, outcomes are permanent: neither the
+        // retention window nor the 200-item cap applies to them anymore.
+        if !outcomesExternal {
+            outcomes = outcomes.filter { $0.endedAt >= cutoff }.sorted { $0.endedAt > $1.endedAt }
+        }
         memories = memories.filter { $0.updatedAt >= cutoff }.sorted { $0.updatedAt > $1.updatedAt }
         suggestions = suggestions.filter { $0.createdAt >= cutoff }
         document.modeChanges = document.modeChanges.filter { $0.at >= now.addingTimeInterval(-30 * 86400) }.suffix(100)
-        if outcomes.count > Self.outcomeLimit { outcomes.removeLast(outcomes.count - Self.outcomeLimit) }
+        if !outcomesExternal, outcomes.count > Self.outcomeLimit { outcomes.removeLast(outcomes.count - Self.outcomeLimit) }
         if memories.count > Self.memoryLimit { memories.removeLast(memories.count - Self.memoryLimit) }
         if suggestions.count > Self.suggestionLimit { suggestions.removeLast(suggestions.count - Self.suggestionLimit) }
     }
@@ -437,19 +456,23 @@ private struct AssistantDataDocument: Codable {
         outcomes.removeAll { $0.id == outcome.id || ($0.meetingID != nil && $0.meetingID == outcome.meetingID) }
         outcomes.insert(outcome, at: 0)
         absorbOutcome(outcome)
+        onPersistOutcome?(outcome)
         prune(); persist()
     }
 
     func updateOutcome(_ outcome: MeetingOutcome) {
         guard let index = outcomes.firstIndex(where: { $0.id == outcome.id }) else { return }
         outcomes[index] = outcome
+        onPersistOutcome?(outcome)
         // A write during the initial load has to be recorded before that load merges disk state.
         if !loaded { persist() } else { scheduleOutcomePersist() }
     }
 
     func removeOutcome(_ id: UUID) {
         if !loaded { deletedOutcomeIDs.insert(id) }
-        outcomes.removeAll { $0.id == id }; persist()
+        outcomes.removeAll { $0.id == id }
+        onRemoveOutcome?(id)
+        persist()
     }
 
     func latestOutcome(invitation: URL? = nil, series: String? = nil, before: Date = .distantFuture) -> MeetingOutcome? {

@@ -1,6 +1,6 @@
 # Rock'N'Roll MCP — tool contracts
 
-Version 0.2.0 · Protocol `2025-03-26` · Companion to `ROCKNROLL_MCP_INPUT_SCHEMA_FIX_SPEC.md`.
+Version 0.3.0 · Protocol `2025-03-26` · Companion to `ROCKNROLL_MCP_INPUT_SCHEMA_FIX_SPEC.md`.
 
 This is the single source of truth for what each tool accepts. Published `inputSchema`
 values and server-side validation are generated from the declarations behind this table;
@@ -17,7 +17,7 @@ response's `next_cursor`; reusing it after changing the other filters fails with
 `CURSOR_EXPIRED`. Meeting/room/outcome/task IDs are opaque strings — clients must not
 assume UUID format (only `action_id` is a UUID).
 
-## Native profile (13 tools)
+## Native profile (14 tools)
 
 ### rocknroll_status — no arguments
 
@@ -55,6 +55,20 @@ transcription, de-duplicated, chronological). Coverage is reported per response
 |-|-|-|
 | `outcome_id` | string, minLength 1 | * | the `id` of a `kind:"outcome"` item from `rocknroll_list_meetings` / `rocknroll_search`, or the `meeting_id` field of task items. **Not** a `meeting_id`. |
 
+### rocknroll_get_notes
+Raw Markdown of the user's personal note for one meeting. Notes are user-authored
+records attributed separately from outcomes and transcripts; the tool never writes.
+
+| Field | Type | Req | Notes |
+|-|-|-|
+| `meeting_id` | string, minLength 1 | * | an id returned by `rocknroll_list_meetings` or `rocknroll_search`; must identify a persisted session (`session:` prefix) or an outcome-backed historical session |
+
+Response: `meeting_id`, `note_id`, `has_notes`, `revision`, `updated_at`,
+`provenance: {type: "personal_note", …}`, `coverage` (`complete`, or `partial` with a
+truncation warning when the Markdown exceeds the 12 KB inline cap), `markdown`,
+`meeting_title`, `observed_at`. A persisted session without a note returns
+`has_notes: false` with a warning, not an error.
+
 ### rocknroll_list_tasks
 Tasks collected from stored outcomes.
 
@@ -69,7 +83,7 @@ Tasks collected from stored outcomes.
 | Field | Type | Req | Default | Notes |
 |-|-|-|-|
 | `query` | string, minLength 1 | * | | trimmed before matching; must be non-empty after trimming; case-insensitive substring |
-| `types` | array of string enum `meeting\|outcome\|task\|transcript` | | all four | unknown values rejected |
+| `types` | array of string enum `meeting\|outcome\|task\|transcript\|note` | | all five | unknown values rejected |
 | `limit`, `cursor` | | | | pagination. No date filters on this tool. |
 
 ### rocknroll_get_settings
@@ -164,6 +178,16 @@ Structural problems fail before any handler or side effect with `INVALID_ARGUMEN
 `CURSOR_EXPIRED` (retryable), `REVISION_CONFLICT` (retryable), `CAPABILITY_UNAVAILABLE`,
 `APP_NOT_RUNNING`, `SCOPE_DENIED` / `ACCESS_DENIED` (checked before validation).
 `ACTION_ID_REUSED` guards idempotency-key reuse with a different payload.
+
+## Documented behavior changes introduced with 0.3.0
+
+- `rocknroll_get_notes(meeting_id)` joins the read-only catalog: raw personal-note
+  Markdown with revision, provenance `personal_note` and a 12 KB partial-coverage flag.
+- `rocknroll_search` `types` gains `note` (note Markdown matches; defaults to all five).
+- Offline profile: `MeetingLibrary/notes.json` is an allowlisted read-only source;
+  `rocknroll_list_meetings` gains kind `note` (`session:file:<uuid>` ids), and
+  `rocknroll_get_meeting` resolves note-session ids. Server version 0.2.0 → 0.3.0;
+  the MCP protocol version is unchanged.
 
 ## Documented behavior changes introduced with 0.2.0
 

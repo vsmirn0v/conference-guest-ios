@@ -45,6 +45,7 @@ let assistantMCPLoopbackServerID = "mcp"
         case "rocknroll_get_meeting": value = try await backend.getMeeting(args, client: client)
         case "rocknroll_get_transcript": value = try await backend.getTranscript(args, client: client)
         case "rocknroll_get_outcome": value = try await backend.getOutcome(args, client: client)
+        case "rocknroll_get_notes": value = try await backend.getNotes(args, client: client)
         case "rocknroll_list_tasks": value = try await backend.listTasks(args, client: client)
         case "rocknroll_search": value = try await backend.search(args, client: client)
         case "rocknroll_get_settings": value = try await backend.getSettings(args, client: client)

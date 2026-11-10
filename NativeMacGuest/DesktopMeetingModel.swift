@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 @MainActor final class NativeDesktopMeetingModel: ObservableObject {
     /// Layout only; what is received is `display`, shared with iOS.
     enum ViewMode: String, CaseIterable { case automatic = "Automatic", gallery = "Gallery", focused = "Focus" }
-    enum Panel: String, CaseIterable { case participants = "Participants", conversation = "Conversation", studio = "Camera & sound", presenter = "Presenter" }
+    enum Panel: String, CaseIterable { case participants = "Participants", conversation = "Conversation", studio = "Camera & sound", presenter = "Presenter", notes = "Notes" }
     let invitation: URL
     let kind: MeetingEngineKind
     let displayName: String
@@ -22,6 +22,9 @@ import UniformTypeIdentifiers
     @Published private(set) var localShare: LKRTCVideoTrack?
     @Published private(set) var guestFeatures = GuestMeetingSnapshot()
     @Published var panel: Panel?
+    /// Durable library and notes drafts, installed by the workspace when the model is created.
+    var meetingLibrary: MeetingLibraryController?
+    var notes: MeetingNotesController?
     @Published var viewMode: ViewMode = .automatic { didSet { updateDemand() } }
     @Published var display: ConferenceDisplayMode = .all {
         didSet {

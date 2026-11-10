@@ -4,12 +4,16 @@ import SwiftUI
 struct AssistantOutcomesView: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject private var data: AssistantDataStore
+    @ObservedObject private var library: MeetingLibraryController
     @State private var selectedID: UUID?
     @State private var pendingSend: (outcome: UUID, meeting: UUID)?
+    @State private var selectedNote: UUID?
+    @State private var noteText: String?
 
     init(attention: AttentionCoordinator) {
         self.attention = attention
         _data = ObservedObject(wrappedValue: attention.store.assistant)
+        _library = ObservedObject(wrappedValue: attention.store.meetingLibrary)
     }
 
     var body: some View {
@@ -17,48 +21,122 @@ struct AssistantOutcomesView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     LazyVStack(spacing: 3) {
+                        ForEach(library.cards) { card in
+                            Button { select(card) } label: {
+                                cardRow(card)
+                            }.buttonStyle(.plain).accessibilityIdentifier("assistant.meeting-card")
+                        }
+                        // Generations in flight that have no persisted card yet.
                         ForEach(Array(attention.outcomeStatus.keys.sorted { $0.uuidString < $1.uuidString }), id: \.self) { id in
-                            if !data.outcomes.contains(where: { $0.id == id || $0.meetingID == id }),
+                            if !library.cards.contains(where: { $0.sessionID == id }),
                                let status = attention.outcomeStatus[id] {
                                 Text(status).font(.caption).foregroundStyle(.secondary)
                                     .padding(8).frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
-                        ForEach(data.outcomes) { outcome in
-                            Button { selectedID = outcome.id } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(outcome.meetingTitle).fontWeight(.semibold).lineLimit(1)
-                                    Text(outcome.summary).font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                                    Text(outcome.endedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
-                                }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(selectedID == outcome.id ? Color.accentColor.opacity(0.13) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 7))
-                            }.buttonStyle(.plain).accessibilityIdentifier("assistant.outcome")
-                        }
                     }.padding(8)
                 }
-                if data.loaded && data.outcomes.isEmpty {
-                    Text(L("Outcomes appear after you leave a transcribed meeting.")).font(.callout)
+                if library.cards.isEmpty {
+                    Text(L("Meeting notes and outcomes appear here. Nothing leaves this Mac unless you export it.")).font(.callout)
                         .foregroundStyle(.secondary).padding()
                 }
             }.frame(width: 330).background(Color(nsColor: .controlBackgroundColor))
             Divider()
-            if let id = selectedID, let outcome = data.outcomes.first(where: { $0.id == id }) {
+            if let sessionID = selectedNote {
+                noteDetail(sessionID)
+            } else if let id = selectedID, let outcome = data.outcomes.first(where: { $0.id == id }) {
                 detail(outcome)
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "checkmark.bubble").font(.largeTitle).foregroundStyle(.secondary)
-                    Text(L("Choose a meeting outcome")).font(.title3)
-                    Text(L("Summaries, decisions, tasks and open questions stay editable on this Mac."))
+                    Text(L("Choose a meeting")).font(.title3)
+                    Text(L("Notes, summaries, decisions, tasks and open questions stay on this Mac."))
                         .foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
             }
         }
-        .onAppear { if selectedID == nil { selectedID = data.outcomes.first?.id } }
+        .onAppear { if selectedID == nil, selectedNote == nil { select(library.cards.first) } }
         .onDisappear { data.flushOutcomeEdits() }
-        .onChange(of: data.outcomes.map(\.id)) { ids in
-            if let selectedID, !ids.contains(selectedID) { self.selectedID = ids.first }
-            else if self.selectedID == nil { self.selectedID = ids.first }
+    }
+
+    private func select(_ card: MeetingLibraryCard?) {
+        selectedNote = nil
+        selectedID = nil
+        noteText = nil
+        guard let card else { return }
+        if let outcomeID = card.outcomeID {
+            selectedID = outcomeID
+        } else if card.hasNotes {
+            selectedNote = card.sessionID
+            Task { @MainActor in
+                noteText = await library.note(sessionID: card.sessionID)?.markdown
+            }
+        }
+    }
+
+    @ViewBuilder private func cardRow(_ card: MeetingLibraryCard) -> some View {
+        let isSelected = selectedNote == card.sessionID || selectedID == card.outcomeID
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text(card.title).fontWeight(.semibold).lineLimit(1)
+                if card.hasNotes {
+                    Image(systemName: "note.text").font(.caption).foregroundStyle(.secondary)
+                        .help(L("Has notes"))
+                }
+                Spacer()
+            }
+            HStack(spacing: 6) {
+                Text(card.startedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                switch card.outcomeState {
+                case .pending:
+                    Text("·").foregroundStyle(.secondary)
+                    Text(L("Preparing outcome…")).font(.caption).foregroundStyle(.secondary)
+                case .failed:
+                    Text("·").foregroundStyle(.secondary)
+                    Text(L("Outcome failed")).font(.caption).foregroundStyle(.red)
+                case .ready, .draft, .notStarted: EmptyView()
+                }
+                if let outcome = data.outcomes.first(where: { $0.id == card.outcomeID }) {
+                    Text("·").foregroundStyle(.secondary)
+                    Text(outcome.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                } else if let status = attention.outcomeStatus[card.sessionID] {
+                    Text("·").foregroundStyle(.secondary)
+                    Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? Color.accentColor.opacity(0.13) : .clear,
+                in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    @ViewBuilder private func noteDetail(_ sessionID: UUID) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let card = library.cards.first(where: { $0.sessionID == sessionID }) {
+                    Text(card.title).font(.title2.bold())
+                    Text(card.startedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                }
+                if let noteText, !noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(noteText).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text(L("No saved notes for this meeting.")).foregroundStyle(.secondary)
+                }
+                exportButtons(sessionID: sessionID)
+            }.padding(24).frame(maxWidth: 760, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder private func exportButtons(sessionID: UUID) -> some View {
+        let exporter = MeetingManualExportController(
+            library: library, notes: attention.store.notes)
+        HStack {
+            Button(L("Export Markdown…")) {
+                Task {
+                    let items = await exporter.makeItems(sessionIDs: [sessionID])
+                    if let item = items.first { await exporter.exportSingle(item: item) }
+                }
+            }
         }
     }
 
@@ -75,6 +153,16 @@ struct AssistantOutcomesView: View {
                     Spacer()
                     Button(L("Copy as text")) {
                         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(outcome.shareText, forType: .string)
+                    }
+                    Button(L("Export Markdown…")) {
+                        let exporter = MeetingManualExportController(
+                            library: library, notes: attention.store.notes)
+                        Task {
+                            if let meetingID = outcome.meetingID ?? library.cards.first(where: { $0.outcomeID == outcome.id })?.sessionID {
+                                let items = await exporter.makeItems(sessionIDs: [meetingID])
+                                if let item = items.first { await exporter.exportSingle(item: item) }
+                            }
+                        }
                     }
                     Button(L("Send to meeting chat")) {
                         if let target = attention.outcomeChatTarget(outcome) {

@@ -181,6 +181,11 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
               schema: .init(properties: [
                 "outcome_id": .string("Opaque outcome identifier: the id of a kind:outcome item from rocknroll_list_meetings or rocknroll_search, or the meeting_id field of task items. This is not a meeting_id.", minLength: 1),
               ], required: ["outcome_id"])),
+        .init(name: "rocknroll_get_notes", description: "Get the raw Markdown note for one meeting by a persisted or active session ID. Notes are user-authored personal records; they are attributed separately from outcomes and transcripts. Never a write: this tool changes nothing.",
+              readOnly: true, scope: "meetings:read",
+              schema: .init(properties: [
+                "meeting_id": .string("Opaque meeting identifier: an id returned by rocknroll_list_meetings or rocknroll_search. Must identify a persisted session (id starts with session:) or an outcome-backed historical session.", minLength: 1),
+              ], required: ["meeting_id"])),
         .init(name: "rocknroll_list_tasks", description: "List tasks from native meeting outcomes.",
               readOnly: true, scope: "meetings:read",
               schema: .init(properties: [
@@ -193,8 +198,8 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
               readOnly: true, scope: "meetings:read",
               schema: .init(properties: [
                 "query": .string("Case-insensitive search text, trimmed; must be non-empty after trimming.", minLength: 1),
-                "types": .array("Result types to search; defaults to all four. Unknown values are rejected.",
-                                items: .string("Result type.", enumValues: ["meeting", "outcome", "task", "transcript"])),
+                "types": .array("Result types to search; defaults to all five. Unknown values are rejected.",
+                                items: .string("Result type.", enumValues: ["meeting", "outcome", "task", "transcript", "note"])),
                 "limit": pagination["limit"]!, "cursor": pagination["cursor"]!,
               ], required: ["query"])),
         .init(name: "rocknroll_get_settings", description: "Read allowlisted native settings and resolved attention configuration.",

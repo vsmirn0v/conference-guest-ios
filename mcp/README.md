@@ -11,7 +11,7 @@ Two profiles ship in this directory:
 | Native (loopback) | `rocknroll_native.py` | The running Rock'N'Roll app over `127.0.0.1` HTTP | Yes, scoped + user-approved |
 | Offline (read-only) | `rocknroll_local.py` | Fixture files on disk | No, reads only |
 
-Both expose the same 13 tools and speak MCP (protocol version `2025-03-26`)
+Both expose the same 14 tools and speak MCP (protocol version `2025-03-26`)
 over stdio, so a client configured for one can be pointed at the other by
 changing a single command.
 
@@ -24,8 +24,9 @@ changing a single command.
 | `rocknroll_get_meeting` | `meetings:read` | yes | One meeting record with metadata |
 | `rocknroll_get_transcript` | `meetings:read` | yes | Authoritative transcript of a meeting |
 | `rocknroll_get_outcome` | `meetings:read` | yes | One stored outcome by ID |
+| `rocknroll_get_notes` | `meetings:read` | yes | Raw personal-note Markdown for one meeting |
 | `rocknroll_list_tasks` | `meetings:read` | yes | Tasks collected from outcomes |
-| `rocknroll_search` | `meetings:read` | yes | Search meetings, outcomes, tasks, transcripts |
+| `rocknroll_search` | `meetings:read` | yes | Search meetings, outcomes, tasks, transcripts, notes |
 | `rocknroll_get_settings` | `settings:read` | yes | Allowlisted settings + resolved attention configuration |
 | `rocknroll_control_meeting` | `meetings:control` | no | Bound controls (mute/leave/...) with approval |
 | `rocknroll_set_favorite` | `favorites:write` | no | Favorite/unfavorite a room |
@@ -36,7 +37,7 @@ changing a single command.
 Secrets never cross the wire: settings reads report `has_key` booleans, and API
 keys stay in the macOS keychain.
 
-## Schemas and validation (server 0.2.0)
+## Schemas and validation (server 0.3.0)
 
 Every tool publishes a real, self-contained `inputSchema` (no `$ref`, every
 property described, `additionalProperties: false`). Arguments are validated
@@ -155,7 +156,7 @@ python3 mcp/rocknroll_local.py --data-root mcp/fixtures
 ## Tests
 
 ```bash
-python3 -m unittest discover -s mcp/tests -v   # 22 offline protocol + schema-parity tests
+python3 -m unittest discover -s mcp/tests -v   # 28 offline protocol + schema-parity tests
 ```
 
 The native surface is covered in the `RockNativeGuest` Xcode target:
