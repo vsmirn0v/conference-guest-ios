@@ -469,9 +469,15 @@ import UniformTypeIdentifiers
     private var holdConfirmed = false
     private var holdTask: Task<Void, Error>?
     private var focusAffinity: (participant: String, source: NativeDesktopVideoSource)?
-    enum MediaPresentation { case meeting, floating, hidden }
+    enum MediaPresentation { case meeting, floating, infoCard, hidden }
     @Published private(set) var mediaPresentation: MediaPresentation = .meeting
     private var floatingParticipantID: String?
+    /// Floating video follows the active speaker only after the speaker holds
+    /// for this long, so a lively discussion does not flicker the PiP between
+    /// cameras. A screen share takes over immediately. Injectable for tests.
+    var floatingHold: TimeInterval = 2.5
+    var floatingSleep: (TimeInterval) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }
+    private var floatingSpeakerTask: Task<Void, Never>?
     private var demandKey: String?
     private var demandTask: Task<Void, Never>?
     private var heldState: (microphone: Bool, camera: Bool, playout: Bool)?
@@ -846,7 +852,7 @@ import UniformTypeIdentifiers
                 if pinnedID == affinity.participant { unpin(); if viewMode == .focused { viewMode = .automatic } }
             }
         }
-        updateDemand(); refreshSystemReactions()
+        updateFloatingAnchor(); updateDemand(); refreshSystemReactions()
         if galleryPage >= galleryPages { galleryPage = max(0, galleryPages - 1) }
         if value.phase == .failed && value.endedByOrganizer {
             guard !endedByOrganizer else { return }
@@ -1355,6 +1361,30 @@ import UniformTypeIdentifiers
         guard mediaPresentation != presentation else { return }
         mediaPresentation = presentation; updateDemand()
     }
+    /// Move the floating anchor toward whatever deserves the PiP: a live screen
+    /// share immediately, otherwise the active speaker after `floatingHold`.
+    /// The restore fallback in `updateDemand` re-anchors when the anchored
+    /// person vanishes; this governs only voluntary following.
+    private func updateFloatingAnchor() {
+        guard mediaPresentation == .floating || mediaPresentation == .infoCard else { return }
+        let remote = videoParticipants.filter { !$0.isLocal }
+        if let sharer = remote.first(where: { $0.sharing == true }) {
+            floatingSpeakerTask?.cancel(); floatingSpeakerTask = nil
+            if floatingParticipantID != sharer.id { floatingParticipantID = sharer.id }
+            return
+        }
+        guard let speaker = activeSpeaker, !speaker.isLocal else { return }
+        guard speaker.id != floatingParticipantID, floatingSpeakerTask == nil else { return }
+        let id = speaker.id
+        floatingSpeakerTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.floatingSleep(self.floatingHold)
+            self.floatingSpeakerTask = nil
+            guard !Task.isCancelled, !self.closed, self.activeSpeaker?.id == id,
+                  self.mediaPresentation == .floating || self.mediaPresentation == .infoCard else { return }
+            if self.floatingParticipantID != id { self.floatingParticipantID = id; self.updateDemand() }
+        }
+    }
     func updateDemand() {
         guard !closed else { return }
         if let pinnedID {
@@ -1375,7 +1405,7 @@ import UniformTypeIdentifiers
                 ?? participants.first(where: { !$0.isLocal })?.id
             focusAffinity = camera.map { ($0, .camera) }
         }
-        let receivesVideo = mediaPresentation != .hidden && display != .audioOnly
+        let receivesVideo = (mediaPresentation == .meeting || mediaPresentation == .floating) && display != .audioOnly
         let singleVideo = showsFocus || mediaPresentation == .floating
         if mediaPresentation == .floating && !showsFocus {
             // Track lists disappear while unsubscribed. Keep demand anchored to
@@ -1414,6 +1444,7 @@ import UniformTypeIdentifiers
     private func beginLeave() -> Task<Bool, Never> {
         if let leaveTask { return leaveTask }
         cancelJoinCameraPrime(); power.stop()
+        floatingSpeakerTask?.cancel(); floatingSpeakerTask = nil
         cameraMetadataTask?.cancel()
         closed = true; generation = UUID(); snapshot.phase = .leaving; headset.end()
         updateLocalTranscription()

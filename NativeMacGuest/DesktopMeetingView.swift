@@ -72,6 +72,9 @@ import SwiftUI
     var isEmbedded: Bool { workspace != nil && !detached }
     var isVisible: Bool { window.isVisible || mini?.isVisible == true }
     var isMiniVisible: Bool { mini?.isVisible == true }
+    /// A visible, non-occluded mini panel — the single predicate for "this Mini
+    /// meeting occupies a video streaming slot" (synchronization and the cap).
+    var isStreamingMini: Bool { mini.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false }
     /// Re-shown detached meetings join a visible meeting's tab group explicitly.
     func show(tabbedWith other: NativeDesktopMeetingWindow?) {
         if !isEmbedded, let other, other !== self, !other.isEmbedded, !window.isVisible, other.window.isVisible,
@@ -144,24 +147,29 @@ import SwiftUI
             mini?.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() }))
         }
     }
-    private func synchronizePresentation() {
+    func synchronizePresentation() {
         if isEmbedded { workspace?.synchronizeMeetingPresentation(); return }
         let mainVisible = window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
-        let miniVisible = mini.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
+        let miniVisible = isStreamingMini
         if miniVisible { mountMini() }
         // Keep editor/zoom state through occlusion. Only the media subtree is
         // unmounted; destroying the shell would close a private Presenter draft.
         if mainVisible { mountMeeting() }
-        model.setMediaPresentation(mainVisible ? .meeting : miniVisible ? .floating : .hidden)
+        // The workspace owns the streaming cap across meetings; without one
+        // (standalone meeting) a visible mini always streams.
+        let floating = miniVisible && (workspace?.allowsFloatingMini(model) ?? true)
+        model.setMediaPresentation(mainVisible ? .meeting : floating ? .floating : miniVisible ? .infoCard : .hidden)
     }
     /// The workspace decides an embedded meeting's presentation: the selected
-    /// meeting in a visible main window renders in full, the browsing preview
-    /// and Mini meeting render one floating video, every other meeting is audio only.
-    func synchronizeEmbedded(shown: Bool, preview: Bool) {
+    /// meeting in a visible main window renders in full, an explicit Mini meeting
+    /// renders one floating video when a streaming slot is free (else an audio
+    /// info card), every other meeting is audio only.
+    func synchronizeEmbedded(shown: Bool) {
         guard isEmbedded else { return }
-        let miniVisible = mini.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
+        let miniVisible = isStreamingMini
         if miniVisible { mountMini() }
-        model.setMediaPresentation(shown ? .meeting : miniVisible || preview ? .floating : .hidden)
+        let floating = miniVisible && (workspace?.allowsFloatingMini(model) ?? true)
+        model.setMediaPresentation(shown ? .meeting : floating ? .floating : miniVisible ? .infoCard : .hidden)
     }
     func showMini() {
         if mini == nil {
@@ -918,24 +926,89 @@ struct NativeDesktopConversationView: View {
     }
 }
 
+/// A meeting in a small floating window: one share or the active speaker fills
+/// it, the meeting and speaker names stay visible, and controls surface only
+/// while the pointer, a click or VoiceOver needs them — never persistently.
 struct NativeDesktopMiniMeeting: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     let onRestore: () -> Void
+    @State private var controlsVisible = false
+    @State private var hideTask: Task<Void, Never>?
+    /// VoiceOver users cannot hover; pin the controls for them instead.
+    private var pinned: Bool { NSWorkspace.shared.isVoiceOverEnabled }
+    private var speakerName: String? { model.activeSpeaker?.name }
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
                 Color.black
-                if model.mediaPresentation == .floating, model.display != .audioOnly, let video = model.floatingVideo { NativeDesktopVideoView(track: video.track, crop: video.crop) }
+                if model.mediaPresentation == .infoCard {
+                    // No streaming slot: name, speaker and a live meter instead of video.
+                    VStack(spacing: 6) {
+                        Image(systemName: "person.wave.2").font(.title2).foregroundStyle(.secondary)
+                        Text(model.title).font(.headline).foregroundStyle(.white)
+                        if let speakerName { Text(speakerName).font(.subheadline).foregroundStyle(.secondary) }
+                        NativeDesktopLevelMeter(level: model.snapshot.microphoneLevel ?? 0).foregroundStyle(.secondary)
+                    }.padding()
+                }
+                else if model.mediaPresentation == .floating, model.display != .audioOnly, let video = model.floatingVideo { NativeDesktopVideoView(track: video.track, crop: video.crop) }
                 else if model.mediaPresentation == .floating, model.display == .all, let camera = model.localCamera { NativeDesktopVideoView(track: camera, mirrored: true) }
                 else { Text(model.title).foregroundStyle(.white).padding() }
+                VStack {
+                    header.padding(8)
+                    Spacer()
+                }
             }
-            HStack {
-                Button { model.toggleMicrophone() } label: { Image(systemName: model.snapshot.microphoneOn ? "mic.fill" : "mic.slash") }.help(L("Mute or unmute"))
-                NativeDesktopLevelMeter(level: model.snapshot.microphoneLevel ?? 0)
-                NativeDesktopMeetingVolume(model: model, compact: true).frame(minWidth: 70, maxWidth: 150)
-                Spacer(minLength: 4); Button(L("Show meeting"), action: onRestore)
-                Button { Task { await model.onLeave?() } } label: { Image(systemName: "phone.down.fill").foregroundStyle(.red) }.help(L("Leave"))
-            }.padding(10).background(.ultraThinMaterial)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active: reveal()
+                case .ended: scheduleHide()
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { controlsVisible ? scheduleHide() : reveal() }
+            controls
+                .padding(10).background(.ultraThinMaterial)
+                .opacity(controlsVisible || pinned ? 1 : 0)
+                .allowsHitTesting(controlsVisible || pinned)
+        }
+        .onAppear { if pinned { controlsVisible = true } }
+    }
+    /// Always-visible strip: the meeting and, when someone speaks, the speaker.
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text(model.title).font(.caption.weight(.medium)).lineLimit(1)
+            if let speakerName {
+                Image(systemName: "waveform").font(.caption2)
+                Text(speakerName).font(.caption).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(.black.opacity(0.45), in: Capsule())
+        .foregroundStyle(.white)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(speakerName.map { L("%@, speaking: %@", model.title, $0) } ?? model.title)
+    }
+    private var controls: some View {
+        HStack {
+            Button { model.toggleMicrophone() } label: { Image(systemName: model.snapshot.microphoneOn ? "mic.fill" : "mic.slash") }.help(L("Mute or unmute"))
+            NativeDesktopLevelMeter(level: model.snapshot.microphoneLevel ?? 0)
+            NativeDesktopMeetingVolume(model: model, compact: true).frame(minWidth: 70, maxWidth: 150)
+            Spacer(minLength: 4); Button(L("Show meeting"), action: onRestore)
+            Button { Task { await model.onLeave?() } } label: { Image(systemName: "phone.down.fill").foregroundStyle(.red) }.help(L("Leave"))
+        }
+    }
+    private func reveal() {
+        hideTask?.cancel(); hideTask = nil
+        withAnimation(.easeOut(duration: 0.15)) { controlsVisible = true }
+    }
+    private func scheduleHide() {
+        guard !pinned else { return }
+        hideTask?.cancel()
+        hideTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { self.controlsVisible = false }
         }
     }
 }

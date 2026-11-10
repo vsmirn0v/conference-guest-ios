@@ -484,14 +484,9 @@ import UserNotifications
     var selectedMeeting: NativeDesktopMeetingModel? { meetings.first { $0.sessionID == selectedMeetingID } }
     var embeddedMeetings: [NativeDesktopMeetingModel] { meetings.filter { meetingWindows[$0.sessionID]?.isEmbedded == true } }
     func isDetached(_ model: NativeDesktopMeetingModel) -> Bool { meetingWindows[model.sessionID]?.detached == true }
-    /// While most library sections are shown, the talk meeting (else the latest)
-    /// stays in a small floating preview. Assistant keeps its composer unobstructed;
-    /// Mini meeting remains available through the explicit meeting action.
-    var previewMeeting: NativeDesktopMeetingModel? {
-        guard selection != .assistant, selectedMeeting == nil else { return nil }
-        let candidates = meetings.filter { meetingWindows[$0.sessionID].map { $0.isEmbedded && !$0.isMiniVisible } ?? false }
-        return candidates.first { $0.sessionID == talkID } ?? candidates.last
-    }
+    /// A meeting not shown in the main window is audio only: the sidebar rows are
+    /// the ambient status surface, and floating video is an explicit opt-in
+    /// ("Mini meeting"), never an automatic overlay over library sections.
     var sidebarSelection: NativeDesktopSidebarItem? {
         get { selectedMeetingID.map(NativeDesktopSidebarItem.meeting) ?? .section(selection) }
         set {
@@ -528,13 +523,39 @@ import UserNotifications
         guard let host = meetingWindows[model.sessionID] else { return }
         if host.detached { host.moveToMainWindow() } else { host.detach() }
     }
-    func showMini(_ model: NativeDesktopMeetingModel) { meetingWindows[model.sessionID]?.showMini() }
+    func showMini(_ model: NativeDesktopMeetingModel) {
+        meetingWindows[model.sessionID]?.showMini()
+        // A new floating panel may take the last streaming slot or free one.
+        synchronizeMeetingPresentation()
+    }
+    /// At most this many Mini meeting panels stream video at once; the rest
+    /// degrade to an audio info card until a slot frees.
+    let maxStreamingMinis = 2
+    /// Floating panels currently streaming, in promotion order: the talk meeting
+    /// first, then the meetings' own order. Deterministic, so a freed slot never
+    /// flaps between two candidates.
+    func allowsFloatingMini(_ model: NativeDesktopMeetingModel) -> Bool {
+        let candidates = meetings.filter { meetingWindows[$0.sessionID]?.isStreamingMini == true }
+        guard candidates.count > maxStreamingMinis else { return true }
+        let order = candidates.sorted { a, b in
+            if a.sessionID == talkID { return true }
+            if b.sessionID == talkID { return false }
+            let ai = meetings.firstIndex { $0 === a } ?? meetings.count
+            let bi = meetings.firstIndex { $0 === b } ?? meetings.count
+            return ai < bi
+        }
+        return order.prefix(maxStreamingMinis).contains { $0 === model }
+    }
     /// Only the selected meeting in a visible main window renders full video.
     func synchronizeMeetingPresentation() {
         let visible = window.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
-        let shown = visible ? selectedMeeting : nil, preview = visible ? previewMeeting : nil
+        let shown = visible ? selectedMeeting : nil
         for model in meetings {
-            meetingWindows[model.sessionID]?.synchronizeEmbedded(shown: model === shown, preview: model === preview)
+            meetingWindows[model.sessionID]?.synchronizeEmbedded(shown: model === shown)
+        }
+        // Detached hosts decide their own presentation, including the streaming cap.
+        for model in meetings where isDetached(model) {
+            meetingWindows[model.sessionID]?.synchronizePresentation()
         }
     }
     /// Dock click: an open main window comes forward as it is; otherwise the

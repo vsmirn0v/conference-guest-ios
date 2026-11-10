@@ -144,6 +144,20 @@ private final class DesktopActivitySpy: NSUserActivity {
         keychain: AttentionKeychain(service: "desktop-attention-tests-" + id)))
 }
 
+@MainActor private final class FloatingHoldGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func openGate() {
+        isOpen = true
+        let resumed = waiters; waiters = []
+        for waiter in resumed { waiter.resume() }
+    }
+}
+
 @MainActor final class DesktopParityTests: XCTestCase {
     private let url = URL(string: "https://example.test/calls/native-parity")!
     private func model(_ engine: DesktopTestEngine) throws -> NativeDesktopMeetingModel {
@@ -974,6 +988,49 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(model.display, .audioOnly); XCTAssertTrue(model.snapshot.playoutOn)
         _ = await model.leave()
     }
+    func testFloatingVideoFollowsSpeakerAfterHoldAndYieldsToShareImmediately() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        try await model.connect()
+        let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory())
+        func track(_ id: String) -> LKRTCVideoTrack { factory.videoTrack(with: factory.videoSource(), trackId: id) }
+        func camera(_ id: String) -> NativeDesktopExternalVideo { .init(id: id + "-camera", participantID: id, source: .camera, track: track(id + "-camera")) }
+        engine.snapshot.participants = [.init(id: "a", name: "A", cameraOn: true), .init(id: "b", name: "B", cameraOn: true)]
+        engine.onState?(engine.snapshot)
+        engine.onVideo?([camera("a"), camera("b")])
+        let gate = FloatingHoldGate()
+        model.floatingSleep = { _ in await gate.wait() }
+        model.setMediaPresentation(.floating)
+        try await spin { model.floatingVideo?.participantID == "a" }
+        // b starts speaking: the PiP holds on a until the hold expires.
+        engine.snapshot.participants = [.init(id: "a", name: "A", cameraOn: true), .init(id: "b", name: "B", cameraOn: true, speaking: true)]
+        engine.onState?(engine.snapshot)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(model.floatingVideo?.participantID, "a", "A new speaker does not take over the floating window before the hold expires")
+        gate.openGate()
+        try await spin { model.floatingVideo?.participantID == "b" }
+        // c starts sharing: the share takes over immediately, with no hold.
+        engine.snapshot.participants = [.init(id: "a", name: "A", cameraOn: true), .init(id: "b", name: "B", cameraOn: true, speaking: true),
+            .init(id: "c", name: "C", sharing: true)]
+        engine.onState?(engine.snapshot)
+        engine.onVideo?([camera("a"), camera("b"), .init(id: "c-screen", participantID: "c", source: .screen, track: track("c-screen"))])
+        XCTAssertEqual(model.floatingVideo?.participantID, "c", "A live share takes the floating window immediately")
+        _ = await model.leave()
+    }
+    func testInfoCardMiniRequestsNoVideoButKeepsAudio() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        try await model.connect()
+        let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory())
+        engine.snapshot.participants = [.init(id: "a", name: "A", cameraOn: true)]
+        engine.onState?(engine.snapshot)
+        engine.onVideo?([.init(id: "a-camera", participantID: "a", source: .camera,
+            track: factory.videoTrack(with: factory.videoSource(), trackId: "a-camera"))])
+        model.setMediaPresentation(.floating)
+        try await spin { engine.demands.last?.ids == Set(["a"]) }
+        model.setMediaPresentation(.infoCard)
+        try await spin { engine.demands.last?.ids == [] && engine.demands.last?.focused == nil }
+        XCTAssertTrue(model.snapshot.playoutOn, "The streaming cap degrades video only, never audio")
+        _ = await model.leave()
+    }
     func testScreenSharesModeReceivesScreensWithoutCameras() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)
         try await model.connect()
@@ -1254,13 +1311,14 @@ private final class DesktopActivitySpy: NSUserActivity {
         let a = workspace.meetings[0]
         XCTAssertEqual(workspace.sidebarSelection, .meeting(a.sessionID), "Joining selects the meeting in the main window")
         XCTAssertEqual(workspace.embeddedMeetings.map(\.sessionID), [a.sessionID])
-        XCTAssertNil(workspace.previewMeeting, "No preview while the meeting itself is shown")
+        try await spin { a.mediaPresentation == .meeting }
+        XCTAssertEqual(a.mediaPresentation, .meeting, "The selected meeting renders in full")
         workspace.sidebarSelection = .section(.favorites)
         XCTAssertNil(workspace.selectedMeetingID); XCTAssertEqual(workspace.selection, .favorites)
-        XCTAssertTrue(workspace.previewMeeting === a, "Browsing the library keeps the meeting in a floating preview")
+        XCTAssertEqual(a.mediaPresentation, .hidden, "Browsing the library never floats an automatic preview; the sidebar row is the ambient surface")
         workspace.sidebarSelection = .section(.assistant)
-        XCTAssertNil(workspace.previewMeeting, "Assistant keeps its composer clear of the automatic meeting preview")
-        XCTAssertTrue(workspace.embeddedMeetings.contains { $0 === a }, "Suppressing the preview does not leave or detach the meeting")
+        XCTAssertEqual(a.mediaPresentation, .hidden, "Assistant keeps its composer clear, like every other section")
+        XCTAssertTrue(workspace.embeddedMeetings.contains { $0 === a }, "Browsing does not leave or detach the meeting")
         try await join(workspace, 2)
         let b = workspace.meetings[1]
         XCTAssertEqual(workspace.selectedMeetingID, b.sessionID)
@@ -1274,7 +1332,38 @@ private final class DesktopActivitySpy: NSUserActivity {
         _ = await workspace.leave(a)
         XCTAssertEqual(workspace.selectedMeetingID, b.sessionID, "Leaving the shown meeting selects the next one")
         _ = await workspace.leave(b)
-        XCTAssertNil(workspace.selectedMeetingID); XCTAssertNil(workspace.previewMeeting)
+        XCTAssertNil(workspace.selectedMeetingID)
+        XCTAssertEqual(a.mediaPresentation, .hidden)
+    }
+    func testMiniMeetingIsExplicitAndFloatsOnlyOnDemand() async throws {
+        let workspace = multiWorkspace([DesktopTestEngine()])
+        try await join(workspace, 1)
+        let a = workspace.meetings[0]
+        workspace.sidebarSelection = .section(.home)
+        XCTAssertEqual(a.mediaPresentation, .hidden, "Browsing never floats an automatic preview; Mini meeting is the explicit opt-in")
+        workspace.showMini(a)
+        try await spin { a.mediaPresentation == .floating }
+        XCTAssertEqual(a.mediaPresentation, .floating, "An explicit Mini meeting streams one video")
+        workspace.showMeeting(a)
+        try await spin { a.mediaPresentation == .meeting }
+        XCTAssertEqual(a.mediaPresentation, .meeting, "Restoring the meeting reclaims the full window and closes the panel")
+        _ = await workspace.leave()
+    }
+    func testStreamingMiniCapDegradesExtraPanelsToInfoCard() async throws {
+        let workspace = multiWorkspace([DesktopTestEngine(), DesktopTestEngine(), DesktopTestEngine()])
+        try await join(workspace, 1); try await join(workspace, 2); try await join(workspace, 3)
+        let (a, b, c) = (workspace.meetings[0], workspace.meetings[1], workspace.meetings[2])
+        workspace.showMini(a)
+        try await spin { a.mediaPresentation == .floating }
+        workspace.showMini(b)
+        try await spin { b.mediaPresentation == .floating }
+        workspace.showMini(c)
+        try await spin { c.mediaPresentation == .infoCard }
+        XCTAssertEqual(c.mediaPresentation, .infoCard, "A third visible Mini meeting keeps audio but drops its video demand")
+        workspace.showMeeting(a)
+        try await spin { c.mediaPresentation == .floating }
+        XCTAssertEqual(c.mediaPresentation, .floating, "Freeing a streaming slot promotes the info card again")
+        _ = await workspace.leave()
     }
     func testOpenInNewWindowDetachesAndClosingReturnsToMainWindow() async throws {
         let workspace = multiWorkspace([DesktopTestEngine()])

@@ -132,14 +132,6 @@ struct NativeDesktopHomeView: View {
                 Color.clear.onAppear { detailWidth = proxy.size.width }
                     .onChange(of: proxy.size.width) { detailWidth = $0 }
             })
-            .overlay(alignment: .bottomTrailing) {
-                if let preview = workspace.previewMeeting {
-                    NativeDesktopMiniMeeting(model: preview, onRestore: { workspace.showMeeting(preview) })
-                        .frame(width: 400, height: 250).clipShape(RoundedRectangle(cornerRadius: 12))
-                        .shadow(color: .black.opacity(0.3), radius: 16, y: 6).padding(20)
-                        .accessibilityElement(children: .contain).accessibilityLabel(L("Meeting preview"))
-                }
-            }
         }
         .tint(.orange)
         .onAppear { refreshHome(); library.calendar.setScheduledUIBlocked(blocksScheduledJoining) }
