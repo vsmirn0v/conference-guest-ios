@@ -207,6 +207,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     private var outcomeCaptures: Set<UUID> = []
     private var overflowMeetingByMomentID: [UUID: UUID] = [:]
     private var remindingMoments: Set<UUID> = []
+    /// Situation at the moment leave started. Hangup turns sound off while the
+    /// meeting is still on screen; that teardown is not the user silencing it.
+    private var situationAtLeave: [UUID: AttentionSituation] = [:]
 
     init(store: AttentionStore = .shared) {
         self.store = store
@@ -289,7 +292,22 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     /// Sound off beats on screen: a meeting you look at with its sound off is one you
     /// rely on the assistant to follow, so it stays judged while visible.
+    /// A meeting that is already leaving keeps the situation recorded by `noteLeave`.
     func situation(_ model: NativeDesktopMeetingModel) -> AttentionSituation {
+        if model.isClosed, let kept = situationAtLeave[model.sessionID] { return kept }
+        return liveSituation(model)
+    }
+    /// Records the situation while sound is still the user's setting. Call this
+    /// before leave turns playout off. A second call keeps the first recording.
+    func noteLeave(_ model: NativeDesktopMeetingModel) {
+        guard !model.isClosed, situationAtLeave[model.sessionID] == nil else { return }
+        situationAtLeave[model.sessionID] = liveSituation(model)
+    }
+    /// Drops the recording once the meeting has left the screen.
+    func forgetLeave(_ meetingID: UUID) {
+        situationAtLeave[meetingID] = nil
+    }
+    private func liveSituation(_ model: NativeDesktopMeetingModel) -> AttentionSituation {
         if !model.snapshot.playoutOn { return .silenced }
         return isOnScreen(model) ? .onScreen : .background
     }
