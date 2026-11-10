@@ -526,6 +526,43 @@ import XCTest
         XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.background)))
     }
 
+    /// Hangup turns sound off while the meeting is still shown. The assistant keeps
+    /// the situation from when leave started, instead of treating teardown as silence.
+    func testLeaveKeepsTheSituationFromBeforeSoundStops() async throws {
+        let store = store()
+        let (visible, _) = try await meeting("visible")
+        let (behind, _) = try await meeting("behind")
+        let (muted, mutedEngine) = try await meeting("muted")
+        let (unnoted, _) = try await meeting("unnoted")
+        try await mutedEngine.setPlayout(false)
+        let shown: Set<UUID> = [visible.sessionID, unnoted.sessionID]
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.isOnScreen = { shown.contains($0.sessionID) }
+
+        XCTAssertEqual(coordinator.resolvedMode(visible), .init(mode: .off, source: .situation(.onScreen)))
+        XCTAssertEqual(coordinator.resolvedMode(behind), .init(mode: .mentions, source: .situation(.background)))
+        XCTAssertEqual(coordinator.resolvedMode(muted), .init(mode: .watch, source: .situation(.silenced)))
+
+        coordinator.noteLeave(visible)
+        coordinator.noteLeave(behind)
+        coordinator.noteLeave(muted)
+        _ = await visible.leave()
+        _ = await behind.leave()
+        _ = await muted.leave()
+        _ = await unnoted.leave()
+
+        XCTAssertTrue(visible.isClosed)
+        XCTAssertFalse(visible.snapshot.playoutOn)
+        XCTAssertEqual(coordinator.situation(visible), .onScreen)
+        XCTAssertEqual(coordinator.resolvedMode(visible), .init(mode: .off, source: .situation(.onScreen)))
+        XCTAssertEqual(coordinator.resolvedMode(behind), .init(mode: .mentions, source: .situation(.background)))
+        XCTAssertEqual(coordinator.resolvedMode(muted), .init(mode: .watch, source: .situation(.silenced)))
+        XCTAssertEqual(coordinator.situation(unnoted), .silenced)
+
+        coordinator.forgetLeave(visible.sessionID)
+        XCTAssertEqual(coordinator.situation(visible), .silenced)
+    }
+
     /// Mentions judges a window as soon as you are named, otherwise only every two minutes,
     /// and then shows a card only for an urgent "now"; Off removes the meeting's card.
     func testMentionsJudgesOnYourNameAndOtherwiseOnlyUrgentNow() async throws {

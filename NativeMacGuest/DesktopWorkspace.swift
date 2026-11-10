@@ -387,9 +387,13 @@ import UserNotifications
         if let task = meetingLeaves[id] { return await task.value }
         for (joinID, owner) in joinModels where owner == ObjectIdentifier(model) { joinTasks[joinID]?.cancel() }
         let task = Task { @MainActor () -> Bool in
+            attention.noteLeave(model)
             attention.captureOutcome(for: model)
             let clean = await model.leave()
-            guard self.meetings.contains(where: { $0 === model }) else { return clean }
+            guard self.meetings.contains(where: { $0 === model }) else {
+                self.attention.forgetLeave(id)
+                return clean
+            }
             if clean {
                 self.meetings.removeAll { $0 === model }
                 self.meetingWindows.removeValue(forKey: id)?.close()
@@ -401,6 +405,7 @@ import UserNotifications
                 if self.selectedMeetingID == id { self.selectedMeetingID = (self.talkMeeting ?? self.meetings.last)?.sessionID }
                 self.synchronizeMeetingPresentation()
                 self.updateContinuation()
+                self.attention.forgetLeave(id)
             } else {
                 self.shutdownBlocked = true; self.error = NativeDesktopError.cleanupFailed.localizedDescription
             }
