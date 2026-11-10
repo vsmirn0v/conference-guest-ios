@@ -327,6 +327,33 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     @Published private(set) var journalWarning: String?
     let root: URL
     let assistant: AssistantDataStore
+    /// Test-teardown entry point: cancels pending library preparation, closes any
+    /// open handle, and drains the in-flight prepare. XCTest teardown blocks run
+    /// LIFO, so a fixture that calls this right after store creation wins every
+    /// race — the queued prepare, mid-flight DDL inside a `close_v2` zombie, and
+    /// Swift's scheduled isolated deinits — against directory removal
+    /// ("vnode unlinked while in use").
+    func closeLibrarySyncForTeardown() async {
+        libraryTask?.cancel()
+        // Drain BEFORE closing: `sqlite3_close_v2` racing an in-flight `sqlite3_exec`
+        // corrupts the connection's internal lock (crash), so the handle must be
+        // idle. The cancelled task either never starts, or finishes its uncancellable
+        // in-flight section and stops at the next cancellation check.
+        await libraryTask?.value
+        // The assistant's dual-write callbacks also touch the store; drain them too.
+        // Both the callbacks and this teardown run on the main actor, so no new
+        // persist task can register between this drain and the close below.
+        for task in persistTasks.values { task.cancel() }
+        for task in persistTasks.values { await task.value }
+        persistTasks.removeAll()
+        meetingLibrary.store.closeSync()
+    }
+
+    /// Durable meeting library: sessions, notes and outcomes in SQLite. Shared root
+    /// with the assistant data keeps tests isolated through the same injection point.
+    let meetingLibrary: MeetingLibraryController
+    /// Per-session note drafts with debounced autosave.
+    let notes: MeetingNotesController
     private let defaults: UserDefaults
     private let keychain: AttentionKeychain
     private var loading = false
@@ -335,6 +362,16 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private var loadingMoments = false
     private var momentBuffer: [AttentionDecisionRecord] = []
     private var momentLoadTask: Task<Void, Never>?
+    /// Eager meeting-library preparation (open + legacy migration). Held so teardown
+    /// can cancel it: without this, the pending task's strong capture keeps the store
+    /// alive past a fixture's teardown block, and the library connection outlives the
+    /// directory that was just deleted ("vnode unlinked while in use").
+    private var libraryTask: Task<Void, Never>?
+    /// Dual-writes into the meeting library spawned by the assistant persist/remove
+    /// callbacks. Tracked so teardown can cancel and drain them before closing the
+    /// SQLite handle — a `closeSync` racing one of these in-flight writes corrupts
+    /// the connection exactly like a racing prepare did.
+    private var persistTasks: [UUID: Task<Void, Never>] = [:]
     /// Every journal append, from the main thread and from seen-marks, runs here in order.
     private let journalQueue = DispatchQueue(label: "attention.journal.append")
 
@@ -342,6 +379,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         let root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
             FileManager.default.temporaryDirectory).appendingPathComponent("Attention", isDirectory: true)
         self.root = root; assistant = AssistantDataStore(root: root)
+        meetingLibrary = MeetingLibraryController(root: root)
+        notes = MeetingNotesController(library: meetingLibrary)
         self.defaults = defaults; self.keychain = keychain
         enabled = defaults.bool(forKey: Self.enabledKey)
         pauseOnBattery = defaults.bool(forKey: Self.batteryKey)
@@ -377,6 +416,76 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         keyedKinds = Set(AttentionProvider.Kind.allCases.filter { keychain.kind($0).read()?.trimmed.isEmpty == false })
         load()
         momentLoadTask = Task { @MainActor [weak self] in await self?.loadMoments() }
+        installMeetingLibrary()
+    }
+
+    // MARK: Meeting library
+
+    /// Dual-writes outcomes into the repository, then runs the one-time legacy import.
+    /// A failed migration keeps assistant.json authoritative and surfaces an error
+    /// instead of silently dropping either copy.
+    private func installMeetingLibrary() {
+        assistant.onPersistOutcome = { [weak self] outcome in
+            guard let self else { return }
+            self.trackPersistTask { await self.meetingLibrary.addOutcome(outcome, state: .ready) }
+        }
+        assistant.onRemoveOutcome = { [weak self] id in
+            guard let self else { return }
+            self.trackPersistTask { await self.meetingLibrary.removeOutcome(id) }
+        }
+        libraryTask = Task { @MainActor [weak self] in
+            guard !Task.isCancelled else { return }
+            await self?.meetingLibrary.prepare()
+            guard !Task.isCancelled else { return }
+            await self?.migrateLegacyOutcomesIfNeeded()
+        }
+    }
+
+    /// Runs `operation` as a tracked task: teardown cancels and drains tracked tasks
+    /// before closing the library, so no write is ever in flight across a close.
+    /// Completed tasks unregister themselves; everything runs on the main actor.
+    private func trackPersistTask(_ operation: @escaping @MainActor () async -> Void) {
+        let key = UUID()
+        persistTasks[key] = Task { @MainActor [weak self] in
+            await operation()
+            self?.persistTasks[key] = nil
+        }
+    }
+
+    deinit {
+        // Cancelling prevents a still-pending prepare from converting its weak
+        // capture into a strong one after the store's owner has released it.
+        libraryTask?.cancel()
+        momentLoadTask?.cancel()
+        for task in persistTasks.values { task.cancel() }
+    }
+
+    private func migrateLegacyOutcomesIfNeeded() async {
+        let store = meetingLibrary.store
+        do {
+            if try await store.legacyOutcomesMigrated {
+                assistant.markOutcomesExternal()
+                await meetingLibrary.refresh()
+                return
+            }
+            let legacy = assistant.legacyOutcomesForMigration()
+            if !legacy.isEmpty { backupAssistantFile(name: "assistant.pre-meeting-library-backup.json") }
+            try await store.importLegacyOutcomes(legacy)
+            assistant.markOutcomesExternal()
+            await meetingLibrary.refresh()
+        } catch {
+            // The legacy file stays authoritative; dual writes stay off and the user sees why.
+            assistant.setExternalMigrationFailed(error.localizedDescription)
+        }
+    }
+
+    /// Byte-exact copy kept before the first migrated write; never pruned as a log.
+    private func backupAssistantFile(name: String) {
+        let source = root.appendingPathComponent("assistant.json")
+        let target = root.appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: source.path),
+              !FileManager.default.fileExists(atPath: target.path) else { return }
+        try? FileManager.default.copyItem(at: source, to: target)
     }
 
     private var documentURL: URL { root.appendingPathComponent("presets.json") }

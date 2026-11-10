@@ -71,6 +71,7 @@ import XCTest
         func getMeeting(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { record("getMeeting") }
         func getTranscript(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { record("getTranscript") }
         func getOutcome(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { record("getOutcome") }
+        func getNotes(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { record("getNotes") }
         func listTasks(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { record("listTasks") }
         func search(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { record("search") }
         func getSettings(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { record("getSettings") }
@@ -112,12 +113,12 @@ import XCTest
 
     // MARK: Catalog shape
 
-    func testCatalogPublishesSchemasForAllThirteenTools() {
+    func testCatalogPublishesSchemasForAllFourteenTools() {
         runAsyncTest { @MainActor in
             let server = MCPJSONRPCServer(backend: CountingBackend())
             let list = await server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"], client: self.client())
             let tools = try XCTUnwrap((list?["result"] as? MCPJSON)?["tools"] as? [MCPJSON])
-            XCTAssertEqual(tools.count, 13)
+            XCTAssertEqual(tools.count, 14)
             for tool in tools {
                 let label = (tool["name"] as? String) ?? "?"
                 let schema = try XCTUnwrap(tool["inputSchema"] as? MCPJSON, label)
@@ -141,7 +142,7 @@ import XCTest
             XCTAssertEqual(emptyOthers.map { $0["name"] as? String }, [], "empty schemas only where the handler reads nothing")
             let initialize = await server.handle(["jsonrpc": "2.0", "id": 2, "method": "initialize"], client: self.client())
             let info = (initialize?["result"] as? MCPJSON)?["serverInfo"] as? MCPJSON
-            XCTAssertEqual(info?["version"] as? String, "0.2.0")
+            XCTAssertEqual(info?["version"] as? String, "0.3.0")
             XCTAssertEqual(info?["name"] as? String, "rocknroll-native")
         }
     }
@@ -171,6 +172,7 @@ import XCTest
             "rocknroll_get_meeting": (["meeting_id"], ["meeting_id"]),
             "rocknroll_get_transcript": (["meeting_id", "from", "to", "limit", "cursor"], ["meeting_id"]),
             "rocknroll_get_outcome": (["outcome_id"], ["outcome_id"]),
+            "rocknroll_get_notes": (["meeting_id"], ["meeting_id"]),
             "rocknroll_list_tasks": (["meeting_id", "done", "owner", "limit", "cursor"], []),
             "rocknroll_search": (["query", "types", "limit", "cursor"], ["query"]),
             "rocknroll_get_settings": (["sections", "meeting_id"], []),
@@ -365,6 +367,7 @@ import XCTest
             let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.mcp.schema.\(UUID().uuidString)")
             self.addTeardownBlock { keychain.deleteAll(); try? FileManager.default.removeItem(at: folder) }
             let store = AttentionStore(root: folder, defaults: UserDefaults(suiteName: "mcp-schema-store-\(UUID().uuidString)")!, keychain: keychain)
+            self.closeLibraryAtTeardown(store)
             store.provider = .init(kind: .custom, baseURL: "https://judge.example/v1", model: "m")
             let coordinator = AttentionCoordinator(store: store)
             let backend = NativeDesktopMCPBackend(defaults: defaults,

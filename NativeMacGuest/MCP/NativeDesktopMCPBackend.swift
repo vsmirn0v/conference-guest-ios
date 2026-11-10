@@ -90,7 +90,7 @@ import Foundation
     func status() async throws -> MCPJSON {
         [
             "backend": "native",
-            "server": ["name": "rocknroll-native", "version": "0.2.0"],
+            "server": ["name": "rocknroll-native", "version": "0.3.0"],
             "app": [
                 "running": true,
                 "bundle_id": Bundle.main.bundleIdentifier ?? "dev.vsmirn0v.conferenceguest.nativeguest",
@@ -99,7 +99,7 @@ import Foundation
             ],
             "capabilities": [
                 "kinds": ["active", "favorite", "recent", "calendar", "outcome"],
-                "search_types": ["meeting", "outcome", "task", "transcript"],
+                "search_types": ["meeting", "outcome", "task", "transcript", "note"],
                 "controls": ["join", "leave", "microphone", "camera"],
                 "mutations": ["favorite", "task", "settings"],
                 "assistant": true, "settings": true,
@@ -312,6 +312,49 @@ import Foundation
         ]
     }
 
+    /// Resolves a persisted or active session to its (sessionUUID, title) pair.
+    private func noteSession(_ id: String) async throws -> (UUID, String) {
+        if id.hasPrefix("session:"), let model = app?.meetings.first(where: { mcpSessionID($0.sessionID) == id }) {
+            return (model.sessionID, model.title)
+        }
+        let raw = id.split(separator: ":").last.map(String.init) ?? id
+        guard let uuid = UUID(uuidString: raw) else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "meeting_id is not a recognized session identifier.")
+        }
+        // Historical sessions no longer require an open meeting; the persisted
+        // record's title answers when the meeting is not active.
+        guard let store = attention?.store.meetingLibrary.store,
+              let session = try await store.session(uuid) else {
+            throw MCPToolFailure("MEETING_NOT_FOUND", "The requested meeting is unavailable.")
+        }
+        return (uuid, session.title)
+    }
+
+    func getNotes(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
+        let id = try MCPValue.string(args["meeting_id"], key: "meeting_id")
+        let (sessionID, title) = try await noteSession(id)
+        guard let library = attention?.store.meetingLibrary else {
+            throw MCPToolFailure("APP_NOT_RUNNING", "The native workspace is unavailable.")
+        }
+        guard let note = await library.note(sessionID: sessionID) else {
+            return [
+                "meeting_id": mcpSessionID(sessionID), "note": NSNull(), "has_notes": false,
+                "meeting_title": title,
+                "coverage": "complete", "warnings": ["This meeting has no saved note."],
+                "observed_at": mcpNow(),
+            ]
+        }
+        return [
+            "meeting_id": mcpSessionID(sessionID), "note_id": mcpNoteID(sessionID, note.id),
+            "has_notes": true, "revision": note.revision, "updated_at": mcpDate(note.updatedAt) ?? "",
+            "provenance": ["type": "personal_note", "record_id": note.id.uuidString],
+            "coverage": "complete", "warnings": [],
+            "markdown": note.markdown,
+            "meeting_title": title,
+            "observed_at": mcpNow(),
+        ]
+    }
+
     func listTasks(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
         let meetingID = try MCPValue.optionalString(args["meeting_id"], key: "meeting_id")
         let done = try MCPValue.optionalBool(args["done"], key: "done")
@@ -339,7 +382,7 @@ import Foundation
             throw MCPToolFailure("INVALID_ARGUMENT", "query must not be empty.", details: ["field": "query", "reason": "empty"])
         }
         let needle = query.lowercased()
-        let types = args["types"] as? [String] ?? ["meeting", "outcome", "task", "transcript"]
+        let types = args["types"] as? [String] ?? ["meeting", "outcome", "task", "transcript", "note"]
         var results: [MCPJSON] = []
         if types.contains("meeting") {
             for item in allMeetingItems() {
@@ -359,6 +402,16 @@ import Foundation
                 for task in value.tasks where task.text.lowercased().contains(needle) {
                     results.append(["type": "task", "task": ["id": mcpTaskID(value.id, task), "text": task.text, "owner": task.owner, "done": task.done, "meeting_id": mcpOutcomeID(value.id)], "matched_field": "text"])
                 }
+            }
+        }
+        if types.contains("note"), let library = attention?.store.meetingLibrary {
+            for hit in await library.searchNotes(query: query, limit: 20) {
+                results.append(["type": "note",
+                    "meeting": ["id": mcpSessionID(hit.sessionID), "title": hit.meetingTitle,
+                                "has_notes": true, "provenance": ["type": "meeting_library", "record_id": hit.sessionID.uuidString]],
+                    "note": ["id": mcpNoteID(hit.sessionID, hit.chunk.noteID), "revision": hit.chunk.noteRevision,
+                             "excerpt": hit.chunk.text.prefix(400).description],
+                    "matched_field": "note"])
             }
         }
         if types.contains("transcript") {

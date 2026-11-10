@@ -202,6 +202,31 @@ final class GuestFocusPresentationTests: XCTestCase {
         XCTAssertNil(fixture.streams.pinnedTarget)
     }
 
+    func testRestrictedReceiveModesKeepParticipantGalleryVisible() async throws {
+        let audio = try makeFixture(displayMode: .audioOnly)
+        defer { withExtendedLifetime(audio) { audio.window.isHidden = true; audio.streams.reset() } }
+        await settle(audio.window)
+        let audioGallery = try XCTUnwrap(descendants(audio.window).compactMap { $0 as? GuestGalleryView }.first)
+        XCTAssertFalse(audioGallery.isHidden, "Audio only must not hide the participant gallery")
+        XCTAssertTrue(isVisible(audioGallery))
+        let audioTiles = descendants(audioGallery).compactMap { $0 as? GuestGalleryTile }
+        XCTAssertEqual(Set(audioTiles.compactMap(\.accessibilityIdentifier)),
+                       ["gallery.presenter.camera", "gallery.observer.camera"])
+        XCTAssertFalse(audio.controls.wantsStageFrames, "Gallery in Audio only must not demand stage video")
+        XCTAssertNil(audio.controls.makeStageFrameDelivery(mirrored: false))
+
+        let shares = try makeFixture(displayMode: .screenShares)
+        defer { withExtendedLifetime(shares) { shares.window.isHidden = true; shares.streams.reset() } }
+        await settle(shares.window)
+        shares.layout.onLayout?(.grid)
+        await settle(shares.window)
+        let sharesGallery = try XCTUnwrap(descendants(shares.window).compactMap { $0 as? GuestGalleryView }.first)
+        XCTAssertFalse(sharesGallery.isHidden, "Screen sharing only must allow an explicit participant gallery")
+        let shareTiles = descendants(sharesGallery).compactMap { $0 as? GuestGalleryTile }
+        XCTAssertEqual(Set(shareTiles.compactMap(\.accessibilityIdentifier)),
+                       ["gallery.presenter.camera", "gallery.observer.camera", "gallery.presenter.screen"])
+    }
+
     func testConfirmedShareEndRetiresReturnShortcutDuringCameraFocus() async throws {
         let fixture = try makeFixture()
         defer { withExtendedLifetime(fixture) { fixture.window.isHidden = true; fixture.streams.reset() } }
@@ -316,6 +341,7 @@ final class GuestFocusPresentationTests: XCTestCase {
 
     private func makeControls(in host: UIViewController, streams: GuestStreamViews,
                               displayMode: ConferenceDisplayMode) -> CallControls {
+        streams.displayMode = displayMode
         let controls = CallControls(localPreview: LocalSharePreview(), state: nil, coordinator: nil,
             router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: displayMode,
             invitationURL: nil, roomIdentifier: "focus-fixture", onDisplayMode: { _ in }, onFloat: {},

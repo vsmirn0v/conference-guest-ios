@@ -17,7 +17,9 @@ import XCTest
         let defaults = UserDefaults(suiteName: "attention-\(UUID())")!
         let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.attention.tests.\(UUID().uuidString)")
         addTeardownBlock { keychain.deleteAll() }
-        return AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
+        let store = AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
+        closeLibraryAtTeardown(store)
+        return store
     }
     private func message(_ id: String, _ who: String, _ text: String, _ at: Date, own: Bool = false) -> GuestMeetingMessage {
         GuestMeetingMessage(id: id, participantID: who, participantName: who, text: text, sentAt: at, isOwn: own, receivedAt: at)
@@ -98,6 +100,7 @@ import XCTest
         let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.attention.tests.\(UUID().uuidString)")
         addTeardownBlock { keychain.deleteAll() }
         let store = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        closeLibraryAtTeardown(store)
         store.provider = AttentionProvider.defaults[.apple]!
         func verdict(_ probability: Double) -> AttentionVerdict {
             .init(level: .soon, probability: probability, reason: "r", evidence: [], action: .none)
@@ -115,6 +118,7 @@ import XCTest
         store.escalationProvider = AttentionProvider.defaults[.apple]
         XCTAssertNil(store.escalation(for: verdict(0.5)), "Never ask the same judge again")
         let reloaded = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        closeLibraryAtTeardown(reloaded)
         XCTAssertEqual(reloaded.escalationProvider?.kind, .apple)
     }
 
@@ -126,9 +130,11 @@ import XCTest
         addTeardownBlock { keychain.deleteAll() }
         let openAI = AttentionProvider.defaults[.openAI]!, openRouter = AttentionProvider.defaults[.openRouter]!
         let first = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        closeLibraryAtTeardown(first)
         first.provider = openRouter
         keychain.write("sk-legacy")   // as a pre-beta-71 install left it
         let store = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        closeLibraryAtTeardown(store)
         XCTAssertNil(keychain.read(), "The single old key is moved, not kept")
         XCTAssertEqual(store.apiKey(for: openRouter), "sk-legacy", "It belonged to the judge's provider")
         XCTAssertNil(store.apiKey(for: openAI))
@@ -307,6 +313,7 @@ import XCTest
                        "Another occurrence of the series uses the same instructions")
         XCTAssertNil(store.preset(room: URL(string: "https://example.test/calls/other")!))
         let reloaded = AttentionStore(root: store.root, defaults: UserDefaults(suiteName: "attention-\(UUID())")!, keychain: .init(service: "unused-\(UUID())"))
+        closeLibraryAtTeardown(reloaded)
         XCTAssertEqual(reloaded.presets, [preset]); XCTAssertEqual(reloaded.profile.aliases, ["Витя"])
     }
 
@@ -874,6 +881,7 @@ import XCTest
         XCTAssertEqual(store.effectiveWriter.model, "writer-model")
         let reloaded = AttentionStore(root: store.root, defaults: UserDefaults(suiteName: "attention-\(UUID())")!,
                                       keychain: AttentionKeychain(service: "t.\(UUID())"))
+        closeLibraryAtTeardown(reloaded)
         XCTAssertNil(reloaded.writerProvider, "Other settings start with the judge as writer")
 
         let (infra, _) = try await meeting("infra")
@@ -1833,6 +1841,10 @@ import XCTest
         XCTAssertFalse(VoxCacheRecovery.isUnusableCacheError(NotTheCacheError()))
         enum CacheProbe: Error { case nilError }
         XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(CacheProbe.nilError))
+        // Core AI's generic model error (the beta-86 preview failure) is recoverable.
+        XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(NSError(domain: "CoreAIDelegates.AIModelError", code: 1)))
+        // An unrelated Cocoa error is not.
+        XCTAssertFalse(VoxCacheRecovery.isUnusableCacheError(NSError(domain: NSCocoaErrorDomain, code: 256)))
         let recovered = await VoxModelRecovery.recover { () async throws -> Int in throw NotTheCacheError() }
         XCTAssertNil(recovered)
 

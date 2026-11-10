@@ -536,20 +536,23 @@ final class GuestStreamViews {
         let items = roster.flatMap { participant -> [GalleryItem] in
             var result: [GalleryItem] = []
             for isShare in [false, true] {
-                guard displayMode != .audioOnly, displayMode == .all || isShare,
-                      !isShare || participant.sharing && !participant.isLocal else { continue }
+                // Incoming-video filters never remove people from the gallery.
+                // Restricted modes keep participant tiles with name/mic state
+                // instead of live video, so Gallery stays selectable.
+                guard !isShare || displayMode != .audioOnly && participant.sharing && !participant.isLocal else { continue }
+                let receivesVideo = isShare || displayMode == .all
                 let id = PinTarget(participant: participant.id, isShare: isShare)
                 let tile = source[id]
                 let watermark: String?
                 if case .visible(let text) = tile?.model.watermarkState { watermark = text } else { watermark = nil }
                 result.append(GalleryItem(id: id, name: participant.name, microphoneOn: participant.microphoneOn,
-                    active: isShare ? participant.sharing : participant.cameraOn,
+                    active: receivesVideo && (isShare ? participant.sharing : participant.cameraOn),
                     speaking: tile?.model.isDominantSpeaker == true, watermark: watermark,
-                    renderer: tile?.frameRenderer,
-                    receiverSource: !isShare && !participant.isLocal && participant.cameraOn &&
+                    renderer: receivesVideo ? tile?.frameRenderer : nil,
+                    receiverSource: receivesVideo && !isShare && !participant.isLocal && participant.cameraOn &&
                         presenterCameraSource?.participant == participant.id ? presenterCameraSource : nil,
                     mirrored: participant.isLocal && !isShare && localCameraMirrored(),
-                    isLocalCamera: participant.isLocal && !isShare))
+                    isLocalCamera: receivesVideo && participant.isLocal && !isShare))
             }
             return result
         }

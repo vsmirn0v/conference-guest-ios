@@ -40,9 +40,9 @@ struct NativeDesktopHomeView: View {
     }
     @ViewBuilder private var settingsView: some View {
         #if NATIVE_DIRECT_UPDATES
-        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention, updates: workspace.updates, mcpService: workspace.mcpService)
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention, updates: workspace.updates, mcpService: workspace.mcpService, obsidian: workspace.obsidian)
         #else
-        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention, mcpService: workspace.mcpService)
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention, mcpService: workspace.mcpService, obsidian: workspace.obsidian)
         #endif
     }
     var body: some View {
@@ -462,6 +462,8 @@ struct NativeDesktopSettingsView: View {
     #endif
     /// The local MCP server, surfaced on its own settings tab.
     var mcpService: NativeDesktopMCPService? = nil
+    /// Obsidian one-way export settings and status.
+    var obsidian: ObsidianExportCoordinator? = nil
     @FocusState private var editingName: Bool
     @AppStorage("nativeDesktop.multipleMeetings") private var multipleMeetings = true
     @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
@@ -548,6 +550,10 @@ struct NativeDesktopSettingsView: View {
             if let mcpService {
                 NativeDesktopMCPSettings(service: mcpService)
                     .tabItem { Label(L("MCP Server"), systemImage: "network") }.tag(7)
+            }
+            if let obsidian {
+                ObsidianSettingsView(coordinator: obsidian)
+                    .tabItem { Label(L("Integrations"), systemImage: "arrow.triangle.branch") }.tag(8)
             }
             #if NATIVE_DIRECT_UPDATES
             if let updates { NativeDesktopUpdatesView(updates: updates).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag(4) }

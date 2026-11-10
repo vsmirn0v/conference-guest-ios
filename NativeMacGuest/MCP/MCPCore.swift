@@ -117,6 +117,7 @@ func mcpRoomID(_ invitation: URL, engine: MeetingEngineKind?) -> String {
 func mcpSessionID(_ id: UUID) -> String { "session:native:\(id.uuidString)" }
 func mcpOccurrenceID(_ id: String) -> String { "occurrence:native:\(id)" }
 func mcpOutcomeID(_ id: UUID) -> String { "outcome:native:\(id.uuidString)" }
+func mcpNoteID(_ session: UUID, _ note: UUID) -> String { "note:native:\(session.uuidString):\(note.uuidString)" }
 func mcpTaskID(_ outcome: UUID, _ task: MeetingOutcomeTask) -> String { "task:native:\(outcome.uuidString):\(task.id.uuidString)" }
 
 // MARK: - Auth, actions and audit
@@ -243,6 +244,7 @@ struct MCPAuditEvent {
     func getMeeting(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON
     func getTranscript(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON
     func getOutcome(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON
+    func getNotes(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON
     func listTasks(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON
     func search(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON
     func getSettings(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON
@@ -274,7 +276,7 @@ struct MCPAuditEvent {
                 return rpcResult(id: request["id"], value: [
                     "protocolVersion": "2025-03-26",
                     "capabilities": ["tools": ["listChanged": false]],
-                    "serverInfo": ["name": "rocknroll-native", "version": "0.2.0"],
+                    "serverInfo": ["name": "rocknroll-native", "version": "0.3.0"],
                 ])
             case "ping": return rpcResult(id: request["id"], value: [:])
             case "tools/list":
@@ -306,6 +308,7 @@ struct MCPAuditEvent {
                 case "rocknroll_get_meeting": value = try await backend.getMeeting(args, client: client)
                 case "rocknroll_get_transcript": value = try await backend.getTranscript(args, client: client)
                 case "rocknroll_get_outcome": value = try await backend.getOutcome(args, client: client)
+                case "rocknroll_get_notes": value = try await backend.getNotes(args, client: client)
                 case "rocknroll_list_tasks": value = try await backend.listTasks(args, client: client)
                 case "rocknroll_search": value = try await backend.search(args, client: client)
                 case "rocknroll_get_settings": value = try await backend.getSettings(args, client: client)

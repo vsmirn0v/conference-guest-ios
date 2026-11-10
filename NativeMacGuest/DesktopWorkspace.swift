@@ -23,6 +23,8 @@ import UserNotifications
     #endif
     /// The local MCP server that lets AI clients work with meetings; set once it starts.
     var mcpService: NativeDesktopMCPService?
+    /// Obsidian one-way export coordinator, created with the meeting library.
+    lazy var obsidian = ObsidianExportCoordinator(library: attention.store.meetingLibrary)
     /// A library section is shown unless a meeting is selected in the sidebar.
     @Published var selection: Section = .home { didSet { if selectedMeetingID != nil { selectedMeetingID = nil } } }
     /// The meeting shown in the main window's detail column.
@@ -226,6 +228,7 @@ import UserNotifications
     func windowDidChangeOcclusionState(_ notification: Notification) { synchronizeMeetingPresentationSoon() }
     func windowWillClose(_ notification: Notification) {
         attention.store.assistant.flushOutcomeEdits()
+        Task { @MainActor [weak self] in await self?.attention.store.notes.flushAll() }
         synchronizeMeetingPresentationSoon()
     }
     /// Window callbacks can arrive inside a SwiftUI update; media state changes after it.
@@ -304,6 +307,22 @@ import UserNotifications
                 let model = makeMeeting(destination, name, title, quiet)
                 ownedModel = model; joinModels[joinID] = ObjectIdentifier(model)
                 model.calendarSeriesID = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id }?.seriesID }
+                model.meetingLibrary = attention.store.meetingLibrary
+                model.notes = attention.store.notes
+                model.synthesizeVoiceReply = { [weak attention] text in
+                    guard let attention else { throw CancellationError() }
+                    return try await attention.synthesize(text)
+                }
+                // The persisted session uses the model's own UUID: a reconnect in this
+                // model keeps the session; only an explicit Leave plus a new model starts a new one.
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.attention.store.meetingLibrary.createSession(
+                        id: model.sessionID, title: model.title, invitation: model.invitation,
+                        roomIdentity: MeetingRoomIdentity(model.invitation, engine: model.kind)?.displayDetails ?? "",
+                        calendarSeriesID: model.calendarSeriesID)
+                    await self.attention.store.meetingLibrary.markSessionConnected(model.sessionID)
+                }
                 let concurrent = !meetings.isEmpty, owns = talkMeeting == nil
                 if concurrent { model.configureForConcurrentJoin(ownsMicrophone: owns) }
                 meetings.append(model); if owns { talkID = model.sessionID }
@@ -337,7 +356,10 @@ import UserNotifications
             } catch {
                 if token == joinGeneration, !(error is CancellationError) { self.error = error.localizedDescription }
                 if token == joinGeneration, requestedSession == sessionID { library.continuation.targetDidFail() }
-                if let ownedModel, meetings.contains(where: { $0 === ownedModel }) { _ = await leave(ownedModel) }
+                if let ownedModel, meetings.contains(where: { $0 === ownedModel }) {
+                    _ = await leave(ownedModel)
+                    if !ownedModel.connected { attention.store.meetingLibrary.markSessionFailed(ownedModel.sessionID) }
+                }
             }
         }
     }
@@ -389,12 +411,16 @@ import UserNotifications
         let task = Task { @MainActor () -> Bool in
             attention.noteLeave(model)
             attention.captureOutcome(for: model)
+            // Local durable flushes are part of leaving; Obsidian export stays queued.
+            await attention.store.notes.flush(sessionID: id)
             let clean = await model.leave()
             guard self.meetings.contains(where: { $0 === model }) else {
+                self.attention.store.meetingLibrary.endSession(id)
                 self.attention.forgetLeave(id)
                 return clean
             }
             if clean {
+                self.attention.store.meetingLibrary.endSession(id)
                 self.meetings.removeAll { $0 === model }
                 self.meetingWindows.removeValue(forKey: id)?.close()
                 self.meetingSubscriptions[id] = nil; self.renderedMeetingStates[id] = nil; self.continuationSessions[id] = nil

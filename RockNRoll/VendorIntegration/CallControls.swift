@@ -1344,7 +1344,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         textCapture?.layoutChrome(status: geometry.header, tools: access.access)
         textCapture?.updateSource(id: stageIsShare && stageActive ? stageID : nil, name: stageName)
 
-        let layoutAvailable = displayMode != .audioOnly && !isWaitingForOthers && galleryCount > 1
+        let layoutAvailable = !isWaitingForOthers && galleryCount > 1
         let showsStrip = !gridVisible && layoutAvailable && !stageIsShare && stage.height >= 240
         participantStrip.isHidden = !showsStrip || focus.hidden
         if showsStrip {
@@ -1657,7 +1657,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     private var gridVisible: Bool {
-        layoutMode == .grid && galleryCount > 1 && displayMode != .audioOnly && !isWaitingForOthers &&
+        layoutMode == .grid && galleryCount > 1 && !isWaitingForOthers &&
             (!stageIsShare || explicitLayout)
     }
     func bindStreams(_ streams: GuestStreamViews) {
@@ -1700,8 +1700,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
     private func updateDisplayBackdrops() {
         let previousStageDemand = wantsStageFrames
-        audioOnlyBackdrop.isHidden = displayMode != .audioOnly
-        screenSharesBackdrop.isHidden = displayMode != .screenShares || hasScreenShare
+        audioOnlyBackdrop.isHidden = displayMode != .audioOnly || gridVisible
+        screenSharesBackdrop.isHidden = displayMode != .screenShares || hasScreenShare || gridVisible
         waitingBackdrop.isHidden = displayMode != .all || !isWaitingForOthers
         galleryView.isHidden = !gridVisible
         galleryView.setActive(gridVisible)

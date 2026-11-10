@@ -74,7 +74,9 @@ import XCTest
         let defaults = UserDefaults(suiteName: "mcp-attention-\(UUID().uuidString)")!
         let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.mcp.tests.\(UUID().uuidString)")
         addTeardownBlock { keychain.deleteAll() }
-        return AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
+        let store = AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
+        closeLibraryAtTeardown(store)
+        return store
     }
 
     private func spin(_ predicate: () -> Bool) async throws {
@@ -210,6 +212,7 @@ import XCTest
         func getMeeting(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func getTranscript(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func getOutcome(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func getNotes(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func listTasks(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func search(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func getSettings(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
@@ -241,7 +244,7 @@ import XCTest
             }
             let initResponse = await server.handle(["jsonrpc": "2.0", "id": 2, "method": "initialize"], client: self.client())
             let initialize = try XCTUnwrap(initResponse)
-            XCTAssertEqual((initialize["result"] as? MCPJSON)?["serverInfo"] as? NSDictionary, ["name": "rocknroll-native", "version": "0.2.0"] as NSDictionary)
+            XCTAssertEqual((initialize["result"] as? MCPJSON)?["serverInfo"] as? NSDictionary, ["name": "rocknroll-native", "version": "0.3.0"] as NSDictionary)
             let unknownResponse = await server.handle(["jsonrpc": "2.0", "id": 3, "method": "bogus/method"], client: self.client())
             let unknown = try XCTUnwrap(unknownResponse)
             XCTAssertEqual((unknown["error"] as? MCPJSON)?["code"] as? Int, -32601)

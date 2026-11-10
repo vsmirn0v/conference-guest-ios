@@ -1,0 +1,29 @@
+{
+  "schema": "meeting-library/notes/v1",
+  "notes": [
+    {
+      "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "meeting_title": "Design Sync",
+      "note_id": "55555555-5555-5555-5555-555555555555",
+      "revision": 2,
+      "updated_at": "2026-11-09T10:05:00+03:00",
+      "markdown": "# Design Sync\n\n- Follow up on the beta checklist\n- Draft the announcement outline\n"
+    },
+    {
+      "session_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "meeting_title": "Design Sync",
+      "note_id": "66666666-6666-6666-6666-666666666666",
+      "revision": 1,
+      "updated_at": "2026-11-08T10:02:00+03:00",
+      "markdown": "# Design Sync\n\nCompared flow A and flow B; prefer flow B for the first pass.\n"
+    },
+    {
+      "session_id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "meeting_title": "Sprint Planning",
+      "note_id": "77777777-7777-7777-7777-777777777777",
+      "revision": 4,
+      "updated_at": "2026-11-07T14:20:00+03:00",
+      "markdown": "# Sprint Planning\n\nParking lot:\n- Investigate flaky sync tests\n- Schedule the vendor demo\n"
+    }
+  ]
+}

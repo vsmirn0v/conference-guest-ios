@@ -1,537 +1,542 @@
 {
-  "tools" : [
+  "tools": [
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : true
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
       },
-      "description" : "Report native backend, capabilities and app state.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-
-        },
-        "required" : [
-
-        ],
-        "type" : "object"
+      "description": "Report native backend, capabilities and app state.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
       },
-      "name" : "rocknroll_status"
+      "name": "rocknroll_status"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : true
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
       },
-      "description" : "List active, favorite, recent, calendar and outcome meetings.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "cursor" : {
-            "description" : "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
-            "type" : "string"
+      "description": "List active, favorite, recent, calendar and outcome meetings.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
+            "type": "string"
           },
-          "from" : {
-            "description" : "RFC 3339 lower time bound; a time-zone offset or Z is required. When both bounds are given, from must be earlier than to.",
-            "format" : "date-time",
-            "type" : "string"
+          "from": {
+            "description": "RFC 3339 lower time bound; a time-zone offset or Z is required. When both bounds are given, from must be earlier than to.",
+            "format": "date-time",
+            "type": "string"
           },
-          "kind" : {
-            "description" : "Restrict results to one meeting kind.",
-            "enum" : [
+          "kind": {
+            "description": "Restrict results to one meeting kind.",
+            "enum": [
               "active",
               "favorite",
               "recent",
               "calendar",
               "outcome"
             ],
-            "type" : "string"
+            "type": "string"
           },
-          "limit" : {
-            "default" : 20,
-            "description" : "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
-            "maximum" : 100,
-            "minimum" : 1,
-            "type" : "integer"
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
           },
-          "query" : {
-            "description" : "Optional case-insensitive substring filter over titles and summaries; the value is trimmed and a whitespace-only filter is ignored.",
-            "type" : "string"
+          "query": {
+            "description": "Optional case-insensitive substring filter over titles and summaries; the value is trimmed and a whitespace-only filter is ignored.",
+            "type": "string"
           },
-          "to" : {
-            "description" : "RFC 3339 exclusive upper time bound; a time-zone offset or Z is required.",
-            "format" : "date-time",
-            "type" : "string"
+          "to": {
+            "description": "RFC 3339 exclusive upper time bound; a time-zone offset or Z is required.",
+            "format": "date-time",
+            "type": "string"
           }
         },
-        "required" : [
-
-        ],
-        "type" : "object"
+        "required": [],
+        "type": "object"
       },
-      "name" : "rocknroll_list_meetings"
+      "name": "rocknroll_list_meetings"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : true
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
       },
-      "description" : "Get one native meeting record.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "meeting_id" : {
-            "description" : "Opaque meeting identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title.",
-            "minLength" : 1,
-            "type" : "string"
+      "description": "Get one native meeting record.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "meeting_id": {
+            "description": "Opaque meeting identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title.",
+            "minLength": 1,
+            "type": "string"
           }
         },
-        "required" : [
+        "required": [
           "meeting_id"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_get_meeting"
+      "name": "rocknroll_get_meeting"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : true
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
       },
-      "description" : "Get the authoritative transcript available to the native meeting.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "cursor" : {
-            "description" : "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
-            "type" : "string"
+      "description": "Get the authoritative transcript available to the native meeting.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
+            "type": "string"
           },
-          "from" : {
-            "description" : "RFC 3339 lower time bound; a time-zone offset or Z is required. When both bounds are given, from must be earlier than to.",
-            "format" : "date-time",
-            "type" : "string"
+          "from": {
+            "description": "RFC 3339 lower time bound; a time-zone offset or Z is required. When both bounds are given, from must be earlier than to.",
+            "format": "date-time",
+            "type": "string"
           },
-          "limit" : {
-            "default" : 20,
-            "description" : "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
-            "maximum" : 100,
-            "minimum" : 1,
-            "type" : "integer"
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
           },
-          "meeting_id" : {
-            "description" : "Opaque meeting identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title. Must identify an active session (id starts with session:).",
-            "minLength" : 1,
-            "type" : "string"
+          "meeting_id": {
+            "description": "Opaque meeting identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title. Must identify an active session (id starts with session:).",
+            "minLength": 1,
+            "type": "string"
           },
-          "to" : {
-            "description" : "RFC 3339 exclusive upper time bound; a time-zone offset or Z is required.",
-            "format" : "date-time",
-            "type" : "string"
+          "to": {
+            "description": "RFC 3339 exclusive upper time bound; a time-zone offset or Z is required.",
+            "format": "date-time",
+            "type": "string"
           }
         },
-        "required" : [
+        "required": [
           "meeting_id"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_get_transcript"
+      "name": "rocknroll_get_transcript"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : true
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
       },
-      "description" : "Get one stored outcome by outcome ID.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "outcome_id" : {
-            "description" : "Opaque outcome identifier: the id of a kind:outcome item from rocknroll_list_meetings or rocknroll_search, or the meeting_id field of task items. This is not a meeting_id.",
-            "minLength" : 1,
-            "type" : "string"
+      "description": "Get one stored outcome by outcome ID.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome_id": {
+            "description": "Opaque outcome identifier: the id of a kind:outcome item from rocknroll_list_meetings or rocknroll_search, or the meeting_id field of task items. This is not a meeting_id.",
+            "minLength": 1,
+            "type": "string"
           }
         },
-        "required" : [
+        "required": [
           "outcome_id"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_get_outcome"
+      "name": "rocknroll_get_outcome"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : true
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
       },
-      "description" : "List tasks from native meeting outcomes.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "cursor" : {
-            "description" : "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
-            "type" : "string"
-          },
-          "done" : {
-            "description" : "Filter by completion state.",
-            "type" : "boolean"
-          },
-          "limit" : {
-            "default" : 20,
-            "description" : "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
-            "maximum" : 100,
-            "minimum" : 1,
-            "type" : "integer"
-          },
-          "meeting_id" : {
-            "description" : "Filter by outcome id (outcome:…), matching the meeting_id field of task items.",
-            "type" : "string"
-          },
-          "owner" : {
-            "description" : "Case-insensitive substring match on the task owner.",
-            "type" : "string"
+      "description": "Get the raw Markdown note for one meeting by a persisted or active session ID. Notes are user-authored personal records; they are attributed separately from outcomes and transcripts. Never a write: this tool changes nothing.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "meeting_id": {
+            "description": "Opaque meeting identifier: an id returned by rocknroll_list_meetings or rocknroll_search. Must identify a persisted session (id starts with session:) or an outcome-backed historical session.",
+            "minLength": 1,
+            "type": "string"
           }
         },
-        "required" : [
-
+        "required": [
+          "meeting_id"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_list_tasks"
+      "name": "rocknroll_get_notes"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : true
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
       },
-      "description" : "Search native meetings, outcomes, tasks and transcripts.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "cursor" : {
-            "description" : "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
-            "type" : "string"
+      "description": "List tasks from native meeting outcomes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
+            "type": "string"
           },
-          "limit" : {
-            "default" : 20,
-            "description" : "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
-            "maximum" : 100,
-            "minimum" : 1,
-            "type" : "integer"
+          "done": {
+            "description": "Filter by completion state.",
+            "type": "boolean"
           },
-          "query" : {
-            "description" : "Case-insensitive search text, trimmed; must be non-empty after trimming.",
-            "minLength" : 1,
-            "type" : "string"
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
           },
-          "types" : {
-            "description" : "Result types to search; defaults to all four. Unknown values are rejected.",
-            "items" : {
-              "description" : "Result type.",
-              "enum" : [
+          "meeting_id": {
+            "description": "Filter by outcome id (outcome:…), matching the meeting_id field of task items.",
+            "type": "string"
+          },
+          "owner": {
+            "description": "Case-insensitive substring match on the task owner.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "rocknroll_list_tasks"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Search native meetings, outcomes, tasks and transcripts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Case-insensitive search text, trimmed; must be non-empty after trimming.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "types": {
+            "description": "Result types to search; defaults to all five. Unknown values are rejected.",
+            "items": {
+              "description": "Result type.",
+              "enum": [
                 "meeting",
                 "outcome",
                 "task",
-                "transcript"
+                "transcript",
+                "note"
               ],
-              "type" : "string"
+              "type": "string"
             },
-            "type" : "array"
+            "type": "array"
           }
         },
-        "required" : [
+        "required": [
           "query"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_search"
+      "name": "rocknroll_search"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : true
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
       },
-      "description" : "Read allowlisted native settings and resolved attention configuration.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "meeting_id" : {
-            "description" : "Active session id; only consulted when sections includes meeting.",
-            "type" : "string"
+      "description": "Read allowlisted native settings and resolved attention configuration.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "meeting_id": {
+            "description": "Active session id; only consulted when sections includes meeting.",
+            "type": "string"
           },
-          "sections" : {
-            "description" : "Settings sections to include. Defaults to all three.",
-            "items" : {
-              "description" : "Section name.",
-              "enum" : [
+          "sections": {
+            "description": "Settings sections to include. Defaults to all three.",
+            "items": {
+              "description": "Section name.",
+              "enum": [
                 "app",
                 "attention",
                 "meeting"
               ],
-              "type" : "string"
+              "type": "string"
             },
-            "type" : "array"
+            "type": "array"
           }
         },
-        "required" : [
-
-        ],
-        "type" : "object"
+        "required": [],
+        "type": "object"
       },
-      "name" : "rocknroll_get_settings"
+      "name": "rocknroll_get_settings"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : false
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
       },
-      "description" : "Request a bound native meeting control. Every call requires native approval; a session target applies device state or leaves, a room or calendar target joins it.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "action_id" : {
-            "description" : "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
-            "type" : "string"
+      "description": "Request a bound native meeting control. Every call requires native approval; a session target applies device state or leaves, a room or calendar target joins it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "description": "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
+            "type": "string"
           },
-          "desired_state" : {
-            "additionalProperties" : false,
-            "description" : "Requested device state; an empty object is allowed. Joining (room:\/occurrence: targets) uses microphone=false to join muted; leave and camera apply to active sessions only.",
-            "properties" : {
-              "camera" : {
-                "description" : "Desired camera state for a session.",
-                "type" : "boolean"
+          "desired_state": {
+            "additionalProperties": false,
+            "description": "Requested device state; an empty object is allowed. Joining (room:/occurrence: targets) uses microphone=false to join muted; leave and camera apply to active sessions only.",
+            "properties": {
+              "camera": {
+                "description": "Desired camera state for a session.",
+                "type": "boolean"
               },
-              "leave" : {
-                "description" : "Leave the active session.",
-                "type" : "boolean"
+              "leave": {
+                "description": "Leave the active session.",
+                "type": "boolean"
               },
-              "microphone" : {
-                "description" : "Desired microphone state for a session; for a join target, false joins muted.",
-                "type" : "boolean"
+              "microphone": {
+                "description": "Desired microphone state for a session; for a join target, false joins muted.",
+                "type": "boolean"
               }
             },
-            "required" : [
-
-            ],
-            "type" : "object"
+            "required": [],
+            "type": "object"
           },
-          "meeting_id" : {
-            "description" : "Opaque meeting identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title.",
-            "minLength" : 1,
-            "type" : "string"
+          "meeting_id": {
+            "description": "Opaque meeting identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title.",
+            "minLength": 1,
+            "type": "string"
           }
         },
-        "required" : [
+        "required": [
           "action_id",
           "meeting_id"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_control_meeting"
+      "name": "rocknroll_control_meeting"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : false
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
       },
-      "description" : "Set a favorite room through the native library. expected_revision is required unless action_id replays a recorded call; the current value is published as sections.app.favorite_revision by rocknroll_get_settings.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "action_id" : {
-            "description" : "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
-            "type" : "string"
+      "description": "Set a favorite room through the native library. expected_revision is required unless action_id replays a recorded call; the current value is published as sections.app.favorite_revision by rocknroll_get_settings.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "description": "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
+            "type": "string"
           },
-          "expected_revision" : {
-            "description" : "Opaque revision of the target observed before the call. Required unless this action_id replays an already-recorded call; see the tool description for where the current value is published.",
-            "type" : "string"
+          "expected_revision": {
+            "description": "Opaque revision of the target observed before the call. Required unless this action_id replays an already-recorded call; see the tool description for where the current value is published.",
+            "type": "string"
           },
-          "favorite" : {
-            "description" : "true stars the room, false unstars it.",
-            "type" : "boolean"
+          "favorite": {
+            "description": "true stars the room, false unstars it.",
+            "type": "boolean"
           },
-          "room_id" : {
-            "description" : "Opaque room identifier: the id of a favorite or recent item from rocknroll_list_meetings.",
-            "minLength" : 1,
-            "type" : "string"
+          "room_id": {
+            "description": "Opaque room identifier: the id of a favorite or recent item from rocknroll_list_meetings.",
+            "minLength": 1,
+            "type": "string"
           }
         },
-        "required" : [
+        "required": [
           "action_id",
           "room_id",
           "favorite"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_set_favorite"
+      "name": "rocknroll_set_favorite"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : false
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
       },
-      "description" : "Update an allowlisted task field. expected_revision is the outcome UUID (the middle component of task_id) and is required unless action_id replays a recorded call. An empty patch applies no changes.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "action_id" : {
-            "description" : "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
-            "type" : "string"
+      "description": "Update an allowlisted task field. expected_revision is the outcome UUID (the middle component of task_id) and is required unless action_id replays a recorded call. An empty patch applies no changes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "description": "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
+            "type": "string"
           },
-          "done" : {
-            "description" : "New completion state; omit to leave unchanged.",
-            "type" : "boolean"
+          "done": {
+            "description": "New completion state; omit to leave unchanged.",
+            "type": "boolean"
           },
-          "expected_revision" : {
-            "description" : "Opaque revision of the target observed before the call. Required unless this action_id replays an already-recorded call; see the tool description for where the current value is published.",
-            "type" : "string"
+          "expected_revision": {
+            "description": "Opaque revision of the target observed before the call. Required unless this action_id replays an already-recorded call; see the tool description for where the current value is published.",
+            "type": "string"
           },
-          "owner" : {
-            "description" : "New owner; omit to leave unchanged.",
-            "type" : "string"
+          "owner": {
+            "description": "New owner; omit to leave unchanged.",
+            "type": "string"
           },
-          "task_id" : {
-            "description" : "Opaque task identifier: the id of a task item from rocknroll_list_tasks, rocknroll_search or rocknroll_get_outcome.",
-            "minLength" : 1,
-            "type" : "string"
+          "task_id": {
+            "description": "Opaque task identifier: the id of a task item from rocknroll_list_tasks, rocknroll_search or rocknroll_get_outcome.",
+            "minLength": 1,
+            "type": "string"
           },
-          "text" : {
-            "description" : "New task text; omit to leave unchanged.",
-            "type" : "string"
+          "text": {
+            "description": "New task text; omit to leave unchanged.",
+            "type": "string"
           }
         },
-        "required" : [
+        "required": [
           "action_id",
           "task_id"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_update_task"
+      "name": "rocknroll_update_task"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : false
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
       },
-      "description" : "Update an allowlisted native setting. expected_revision is the revision field from rocknroll_get_settings and is required unless action_id replays a recorded call.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "action_id" : {
-            "description" : "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
-            "type" : "string"
+      "description": "Update an allowlisted native setting. expected_revision is the revision field from rocknroll_get_settings and is required unless action_id replays a recorded call.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "description": "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
+            "type": "string"
           },
-          "expected_revision" : {
-            "description" : "Opaque revision of the target observed before the call. Required unless this action_id replays an already-recorded call; see the tool description for where the current value is published.",
-            "type" : "string"
+          "expected_revision": {
+            "description": "Opaque revision of the target observed before the call. Required unless this action_id replays an already-recorded call; see the tool description for where the current value is published.",
+            "type": "string"
           },
-          "sections" : {
-            "additionalProperties" : false,
-            "description" : "Settings patch; omitting it applies no changes. Unknown section or field names are rejected.",
-            "properties" : {
-              "app" : {
-                "additionalProperties" : false,
-                "description" : "App settings.",
-                "properties" : {
-                  "multiple_meetings" : {
-                    "description" : "Allow joining more than one meeting at once.",
-                    "type" : "boolean"
+          "sections": {
+            "additionalProperties": false,
+            "description": "Settings patch; omitting it applies no changes. Unknown section or field names are rejected.",
+            "properties": {
+              "app": {
+                "additionalProperties": false,
+                "description": "App settings.",
+                "properties": {
+                  "multiple_meetings": {
+                    "description": "Allow joining more than one meeting at once.",
+                    "type": "boolean"
                   }
                 },
-                "required" : [
-
-                ],
-                "type" : "object"
+                "required": [],
+                "type": "object"
               },
-              "attention" : {
-                "additionalProperties" : false,
-                "description" : "Attention settings; every field is a boolean.",
-                "properties" : {
-                  "draft_replies" : {
-                    "description" : "Draft replies to messages directed at you.",
-                    "type" : "boolean"
+              "attention": {
+                "additionalProperties": false,
+                "description": "Attention settings; every field is a boolean.",
+                "properties": {
+                  "draft_replies": {
+                    "description": "Draft replies to messages directed at you.",
+                    "type": "boolean"
                   },
-                  "generate_outcomes" : {
-                    "description" : "Summarize meetings into outcomes with tasks.",
-                    "type" : "boolean"
+                  "generate_outcomes": {
+                    "description": "Summarize meetings into outcomes with tasks.",
+                    "type": "boolean"
                   },
-                  "judge_enabled" : {
-                    "description" : "Enable the meeting judge.",
-                    "type" : "boolean"
+                  "judge_enabled": {
+                    "description": "Enable the meeting judge.",
+                    "type": "boolean"
                   },
-                  "local_drafts" : {
-                    "description" : "Prefer on-device drafting.",
-                    "type" : "boolean"
+                  "local_drafts": {
+                    "description": "Prefer on-device drafting.",
+                    "type": "boolean"
                   },
-                  "pause_on_battery" : {
-                    "description" : "Pause attention work while on battery power.",
-                    "type" : "boolean"
+                  "pause_on_battery": {
+                    "description": "Pause attention work while on battery power.",
+                    "type": "boolean"
                   },
-                  "push_to_talk" : {
-                    "description" : "Hold a key to talk back to a meeting.",
-                    "type" : "boolean"
+                  "push_to_talk": {
+                    "description": "Hold a key to talk back to a meeting.",
+                    "type": "boolean"
                   },
-                  "remote_outcomes" : {
-                    "description" : "Request outcomes from the remote meeting service.",
-                    "type" : "boolean"
+                  "remote_outcomes": {
+                    "description": "Request outcomes from the remote meeting service.",
+                    "type": "boolean"
                   },
-                  "talk_back" : {
-                    "description" : "Allow spoken assistant replies.",
-                    "type" : "boolean"
+                  "talk_back": {
+                    "description": "Allow spoken assistant replies.",
+                    "type": "boolean"
                   }
                 },
-                "required" : [
-
-                ],
-                "type" : "object"
+                "required": [],
+                "type": "object"
               }
             },
-            "required" : [
-
-            ],
-            "type" : "object"
+            "required": [],
+            "type": "object"
           }
         },
-        "required" : [
+        "required": [
           "action_id"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_update_settings"
+      "name": "rocknroll_update_settings"
     },
     {
-      "annotations" : {
-        "destructiveHint" : false,
-        "readOnlyHint" : false
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
       },
-      "description" : "Run a safe in-app assistant prompt. Actions that need native confirmation are returned as approval-required and are never executed through MCP.",
-      "inputSchema" : {
-        "additionalProperties" : false,
-        "properties" : {
-          "action_id" : {
-            "description" : "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
-            "type" : "string"
+      "description": "Run a safe in-app assistant prompt. Actions that need native confirmation are returned as approval-required and are never executed through MCP.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "description": "Client-generated UUID used as an idempotency key. Retrying with the same action_id and identical arguments replays the recorded result; reusing it with different arguments fails with ACTION_ID_REUSED.",
+            "type": "string"
           },
-          "conversation_id" : {
-            "description" : "Recognized for compatibility but always rejected with CAPABILITY_UNAVAILABLE: this assistant exposes no external conversation IDs.",
-            "type" : "string"
+          "conversation_id": {
+            "description": "Recognized for compatibility but always rejected with CAPABILITY_UNAVAILABLE: this assistant exposes no external conversation IDs.",
+            "type": "string"
           },
-          "meeting_id" : {
-            "description" : "Optional active session id (starts with session:) scoping the assistant to one meeting.",
-            "type" : "string"
+          "meeting_id": {
+            "description": "Optional active session id (starts with session:) scoping the assistant to one meeting.",
+            "type": "string"
           },
-          "prompt" : {
-            "description" : "Assistant instruction, trimmed; must be non-empty after trimming.",
-            "minLength" : 1,
-            "type" : "string"
+          "prompt": {
+            "description": "Assistant instruction, trimmed; must be non-empty after trimming.",
+            "minLength": 1,
+            "type": "string"
           }
         },
-        "required" : [
+        "required": [
           "action_id",
           "prompt"
         ],
-        "type" : "object"
+        "type": "object"
       },
-      "name" : "rocknroll_run_assistant"
+      "name": "rocknroll_run_assistant"
     }
   ]
 }

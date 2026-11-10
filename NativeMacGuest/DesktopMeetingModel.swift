@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 @MainActor final class NativeDesktopMeetingModel: ObservableObject {
     /// Layout only; what is received is `display`, shared with iOS.
     enum ViewMode: String, CaseIterable { case automatic = "Automatic", gallery = "Gallery", focused = "Focus" }
-    enum Panel: String, CaseIterable { case participants = "Participants", conversation = "Conversation", studio = "Camera & sound", presenter = "Presenter" }
+    enum Panel: String, CaseIterable { case participants = "Participants", conversation = "Conversation", studio = "Camera & sound", presenter = "Presenter", notes = "Notes" }
     let invitation: URL
     let kind: MeetingEngineKind
     let displayName: String
@@ -22,6 +22,9 @@ import UniformTypeIdentifiers
     @Published private(set) var localShare: LKRTCVideoTrack?
     @Published private(set) var guestFeatures = GuestMeetingSnapshot()
     @Published var panel: Panel?
+    /// Durable library and notes drafts, installed by the workspace when the model is created.
+    var meetingLibrary: MeetingLibraryController?
+    var notes: MeetingNotesController?
     @Published var viewMode: ViewMode = .automatic { didSet { updateDemand() } }
     @Published var display: ConferenceDisplayMode = .all {
         didSet {
@@ -416,14 +419,15 @@ import UniformTypeIdentifiers
         }
         _ = await engine.setMicrophoneGate(open: true)
     }
-    /// Speaks a short sentence in the macOS system voice into this meeting.
+    /// The workspace installs the same configured synthesizer used by Assistant replies.
+    /// Standalone meeting fixtures retain the system voice as their default.
+    var synthesizeVoiceReply: (String) async throws -> AVAudioPCMBuffer = { try await VoiceSynthesis.system($0) }
+    /// Speaks a short sentence with the selected voice into this meeting.
     func playTestVoiceReply() {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                guard let buffer = await VoiceReplySample.make(text: L("This is a test voice reply from Rock'N'Roll for Mac.")) else {
-                    throw VoiceReplyError.sample
-                }
+                let buffer = try await synthesizeVoiceReply(L("This is a test voice reply from Rock'N'Roll for Mac."))
                 try await speak(buffer)
             } catch { self.error = error.localizedDescription }
         }

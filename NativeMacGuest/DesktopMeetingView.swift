@@ -332,6 +332,7 @@ struct NativeDesktopMeetingView: View {
                 if let workspace { NativeDesktopMeetingsButton(workspace: workspace, current: model) }
                 iconButton("person.2", L("Participants")) { togglePanel(.participants) }
                 iconButton("bubble.left", L("Conversation")) { togglePanel(.conversation) }
+                iconButton("note.text", L("Notes")) { togglePanel(.notes) }
                 iconButton("pip.enter", L("Mini meeting"), action: onMini)
                 if let onWindowToggle {
                     iconButton(embedded ? "macwindow.on.rectangle" : "sidebar.left",
@@ -474,6 +475,7 @@ struct NativeDesktopMeetingView: View {
                     Button(L("Mini meeting"), action: onMini)
                     Button(L("Camera & sound")) { togglePanel(.studio) }
                     Button(L("Presenter studio")) { togglePanel(.presenter) }
+                    Button(L("Notes")) { togglePanel(.notes) }
                     Button(L("Reconnect")) { model.reconnect() }
                     Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
                     Button(L("Hide controls")) { model.controlsHidden = true }
@@ -651,6 +653,7 @@ struct NativeDesktopMeetingView: View {
                 stopLiveAudioCheck: { try await model.engine.stopPrivateAudioCheck() },
                 liveAudioLevel: { model.engine.privateAudioLevel })
             case .presenter: NativeDesktopPresenterView(model: model)
+            case .notes: MeetingNotesView(model: model)
             }
         }
     }

@@ -14,7 +14,9 @@ import XCTest
         let defaults = UserDefaults(suiteName: "moments-\(UUID())")!
         let keys = AttentionKeychain(service: "moments-tests-\(UUID())")
         addTeardownBlock { keys.deleteAll() }
-        return AttentionStore(root: root ?? folder(), defaults: defaults, keychain: keys)
+        let store = AttentionStore(root: root ?? folder(), defaults: defaults, keychain: keys)
+        closeLibraryAtTeardown(store)
+        return store
     }
     private func record(_ outcome: AttentionDecisionRecord.Outcome, id: UUID = UUID(), decision: UUID? = nil,
                         meeting: UUID? = UUID(), title: String = "Infra") -> AttentionDecisionRecord {

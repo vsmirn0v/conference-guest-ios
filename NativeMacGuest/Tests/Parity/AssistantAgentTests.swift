@@ -83,7 +83,7 @@ final class AssistantAgentTests: XCTestCase {
         ]
         return AssistantNativeSnapshot(
             now: now, timeZoneIdentifier: "UTC", language: "en", contextMeetingID: activeID,
-            profileNames: ["You"], meetings: [meeting], outcomes: outcomes,
+            profileNames: ["You"], meetings: [meeting], outcomes: outcomes, notes: [],
             moments: [], memories: [], calendar: calendar,
             actionTargets: [.init(id: activeID, title: "Daily sync", invitation: nil, active: true, meetingID: activeID)],
             settings: ["voice_engine": "system", "talk_back": "off", "provider_host": "local",
@@ -97,8 +97,8 @@ final class AssistantAgentTests: XCTestCase {
         XCTAssertThrowsError(try registry.validate(call("rocknroll_nope"))) {
             XCTAssertEqual($0 as? AssistantAgentError, .unknownTool("rocknroll_nope"))
         }
-        XCTAssertThrowsError(try registry.validate(call("rocknroll_get_meeting"))) {
-            XCTAssertEqual($0 as? AssistantAgentError, .missingArgument("rocknroll_get_meeting", "meeting_id"))
+        XCTAssertThrowsError(try registry.validate(call("rocknroll_get_outcome"))) {
+            XCTAssertEqual($0 as? AssistantAgentError, .missingArgument("rocknroll_get_outcome", "outcome_id"))
         }
         XCTAssertThrowsError(try registry.validate(call("rocknroll_get_meeting",
             .object(["meeting_id": .int(5), "extra": .string("x")])))) { error in
@@ -181,6 +181,102 @@ final class AssistantAgentTests: XCTestCase {
         }
         XCTAssertEqual(looping.requests.count, 8, "Model steps are bounded at 8")
         XCTAssertTrue(actions.isEmpty)
+    }
+
+    func testSelectedMeetingIDIsResolvedForReadCalls() async throws {
+        let snapshot = fixture()
+        let model = ScriptedModel(steps: [
+            .toolCalls([call("rocknroll_get_meeting", id: "missing-id")]),
+            .toolCalls([call("rocknroll_get_meeting", .object(["meeting_id": .string("Daily sync")]), id: "title-id")]),
+            .response("Done", []),
+        ])
+        let runtime = AssistantRuntime()
+        let result = await runtime.submit("inspect this meeting",
+                                          environment: environment(snapshot: snapshot, model: model))
+
+        guard case .success(.completed) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(model.requests.count, 3)
+        XCTAssertEqual(runtime.conversation.filter {
+            $0.kind == .tool && $0.toolName == "rocknroll_get_meeting" && !$0.isError
+        }.count, 2)
+        XCTAssertFalse(runtime.conversation.contains { $0.isError })
+    }
+
+    func testInvalidReadCallIsReturnedForBoundedRecovery() async throws {
+        let snapshot = fixture()
+        let say = call("rocknroll_say", .object(["meeting_id": .string("Daily sync"),
+                                                  "text": .string("Hello colleagues")]), id: "say-after-repair")
+        let model = ScriptedModel(steps: [
+            .toolCalls([call("rocknroll_get_meeting", .object(["meeting_id": .int(5)]), id: "wrong-type")]),
+            .toolCalls([say]),
+            .response("Said it", []),
+        ])
+        let runtime = AssistantRuntime()
+        let result = await runtime.submit("say hello colleagues in the meeting",
+                                          environment: environment(snapshot: snapshot, model: model))
+
+        guard case .success(.approvalRequired(let approval)) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(approval.action.text, "Hello colleagues")
+        XCTAssertEqual(model.requests.count, 2)
+        XCTAssertTrue(model.requests[1].messages.contains {
+            $0["content"]?.contains("meeting_id must be string") == true
+        }, "The validation error must be visible to the next model step")
+        XCTAssertEqual(runtime.conversation.filter(\.isError).count, 1)
+        XCTAssertFalse(runtime.conversation.contains { $0.kind == .system && $0.isError })
+        XCTAssertTrue(actions.isEmpty, "Recovery of a read call must not execute the later action")
+
+        let finished = await runtime.resumePendingApproval(approved: true)
+        guard case .success(.completed) = finished else { return XCTFail("got \(finished)") }
+        XCTAssertEqual(actions.map(\.text), ["Hello colleagues"])
+    }
+
+    func testInvalidActionCallIsReturnedForCorrectionWithoutSideEffects() async throws {
+        let snapshot = fixture()
+        let missingText = call("rocknroll_say", .object(["meeting_id": .string("Daily sync")]), id: "missing-text")
+        let corrected = call("rocknroll_say", .object(["text": .string("Hello colleagues")]), id: "corrected")
+        let model = ScriptedModel(steps: [.toolCalls([missingText]), .toolCalls([corrected]), .response("Said it", [])])
+        let runtime = AssistantRuntime()
+        let result = await runtime.submit("say hello colleagues in the meeting",
+                                          environment: environment(snapshot: snapshot, model: model))
+
+        guard case .success(.approvalRequired(let approval)) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(approval.action.text, "Hello colleagues")
+        XCTAssertEqual(approval.action.meetingID, snapshot.contextMeetingID)
+        XCTAssertTrue(model.requests[1].messages.contains {
+            $0["content"]?.contains("rocknroll_say needs text") == true
+        })
+        XCTAssertEqual(runtime.conversation.filter(\.isError).count, 1)
+        XCTAssertFalse(runtime.conversation.contains { $0.kind == .system && $0.isError })
+        XCTAssertTrue(actions.isEmpty)
+
+        let finished = await runtime.resumePendingApproval(approved: true)
+        guard case .success(.completed) = finished else { return XCTFail("got \(finished)") }
+        XCTAssertEqual(actions.map(\.text), ["Hello colleagues"])
+    }
+
+    func testUnknownActionTargetIsNotReportedAsMissingText() throws {
+        let registry = registry(snapshot: fixture())
+        let unknown = call("rocknroll_say", .object([
+            "meeting_id": .string(UUID().uuidString), "text": .string("Hello colleagues")]))
+        let validated = try registry.validate(unknown)
+        let tool = try XCTUnwrap(registry.tool(named: "rocknroll_say") as? any AssistantAgentActionTool)
+        XCTAssertThrowsError(try tool.canonicalAction(for: validated, arguments: validated.arguments)) {
+            guard case .unknownMeeting = $0 as? AssistantAgentError else {
+                return XCTFail("expected unknownMeeting, got \($0)")
+            }
+        }
+    }
+
+    func testFailureErrorIsNotDuplicated() async throws {
+        let model = ScriptedModel(steps: [])
+        let runtime = AssistantRuntime()
+        let result = await runtime.submit("fail", environment: environment(snapshot: fixture(), model: model))
+        guard case .failure(let error) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(runtime.conversation.filter { $0.kind == .system && $0.isError }.count, 1)
+
+        // AssistantTalkController observes the same Result failure after the runtime records it.
+        runtime.appendSystemForUI(error.localizedDescription)
+        XCTAssertEqual(runtime.conversation.filter { $0.kind == .system && $0.isError }.count, 1)
     }
 
     func testClarificationPausesWithoutToolCalls() async throws {
@@ -437,6 +533,7 @@ final class AssistantAgentTests: XCTestCase {
         func getMeeting(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func getTranscript(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func getOutcome(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
+        func getNotes(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func listTasks(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
         func search(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
             lastClient = client; return ["items": [["title": "Kickoff"]]]

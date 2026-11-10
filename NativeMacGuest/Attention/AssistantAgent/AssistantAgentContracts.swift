@@ -270,7 +270,14 @@ final class AssistantAgentToolRegistry: @unchecked Sendable {
 
     func validate(_ call: AssistantAgentToolCall) throws -> AssistantAgentToolCall {
         guard let tool = tools[call.name] else { throw AssistantAgentError.unknownTool(call.name) }
-        guard case .object(let object) = call.arguments else { throw AssistantAgentError.invalidArguments(call.name, "object expected") }
+        guard case .object = call.arguments else { throw AssistantAgentError.invalidArguments(call.name, "object expected") }
+        var validated = call
+        // Native tools may canonicalize an exact selected-meeting alias before the generic
+        // required/type checks. They cannot add arguments outside their published descriptor.
+        validated.arguments = try tool.validate(call.arguments)
+        guard case .object(let object) = validated.arguments else {
+            throw AssistantAgentError.invalidArguments(call.name, "object expected")
+        }
         for argument in tool.descriptor.arguments where argument.required && object[argument.name] == nil {
             throw AssistantAgentError.missingArgument(call.name, argument.name)
         }
@@ -293,8 +300,6 @@ final class AssistantAgentToolRegistry: @unchecked Sendable {
                 throw AssistantAgentError.invalidArguments(call.name, "\(key) must be one of the listed values")
             }
         }
-        var validated = call
-        validated.arguments = try tool.validate(call.arguments)
         return validated
     }
 }

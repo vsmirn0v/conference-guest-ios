@@ -1,0 +1,37 @@
+{
+  "version": "0.3.0",
+  "build": "86",
+  "channel": "beta",
+  "sourceCommit": "4f2033f",
+  "changes": [
+    "Meeting notes and Obsidian export foundation: durable MeetingLibrary with schema and legacy migration, in-app notes editor with autosave and formatting commands, manual markdown export",
+    "Obsidian export with managed rnr: blocks, structure scanning, conflict-safe patching, vault-path validation and .obsidian write-protection, background export worker and settings UI",
+    "Assistant notes: personal note tools and read-only rocknroll_get_notes MCP tool (server 0.3.0, 14 tools), offline parity in mcp/rocknroll_local.py with get_notes and note search",
+    "New parity tests (85 cases across MeetingLibrary, notes, search, markdown/Obsidian/manual export, assistant notes, MCP contract) caught and fixed six production bugs (ManagedBlock.parse field order, legacy import NOT NULL violation, searchNotes SQLITE_RANGE, saveOutcome and saveBinding bind mismatches, failOutbox Int64 trap, patcher trailing-newline false conflicts)"
+  ],
+  "artifact": {
+    "file": "RockNRoll-0.3.0-86-arm64.dmg",
+    "sha256": "b866ae5c97ff9a24c3047de730cedeaf17559f6a9d0026b37800068d9c964c96",
+    "length": 27936936,
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-86-arm64.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-86-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "Feature commits 101d15f and merge 4f2033f (origin/main at 863bdbb) are on the branch. The publisher verified the immutable DMG, beta alias, signed appcast and inventory over HTTPS byte-for-byte; independent HTTPS download of the immutable DMG matched the packaged SHA-256 b866ae5c.",
+  "measured": {
+    "featureTests": "New parity suites green on source 4f2033f: MeetingLibrary 6, MeetingNotesController 6, MeetingNoteSearch 4, MarkdownExport 10, ObsidianExport 8, MeetingManualExport 4, AssistantNotes 5, MCPSchemaContract 15, MCPNative, AssistantAgent 16 (0 failures); AssistantUIAcceptance 7 (1 skipped); offline python suite 28 OK",
+    "fullTestSuite": "NativeDesktopTests on source 4f2033f: 510 tests, 36 skipped, failures limited to host-dependent DesktopSharedTextTests Live Text OCR cases (XPC sandbox restriction / noObservations on this host; 2 in final run, flaky 2-5 across runs); zero failures in notes/library/export/MCP suites",
+    "distributionTooling": "NativeMacGuest/distribution unittest suite passed; py_compile passed",
+    "archive": "direct Release archive 0.3.0 (86) succeeded; app-group IO and one-use ticket check passed",
+    "export": "Developer ID export with Xcode cloud-managed notarization; app stapled and Gatekeeper-accepted (Notarized Developer ID)",
+    "package": "DMG created and revalidated read-only from its mount; contained app accepted as Notarized Developer ID"
+  },
+  "notVerified": [
+    "DesktopSharedTextTests Live Text OCR cases fail on this host (checkRichAnalysisAvailability XPC sandbox restriction) - environment-dependent, unrelated to this change",
+    "MeetingLibraryStore test fixtures log sqlite 'vnode unlinked while in use' WAL warnings when temp dirs are torn down before the store connection closes; cosmetic in tests, no test failure, follow-up to add explicit close",
+    "Sparkle update of an installed app to 86",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ],
+  "publishedAt": "2026-11-10T19:35:00+03:00"
+}

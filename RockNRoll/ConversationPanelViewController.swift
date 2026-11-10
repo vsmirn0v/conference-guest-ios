@@ -15,6 +15,17 @@ enum ConversationActivityFilter: CaseIterable {
     }
 }
 
+private enum LiveTranscriptContext: Equatable {
+    case content
+    case waiting
+    case unavailable(String)
+}
+
+private struct LiveTranscriptPresentation: Equatable {
+    let context: LiveTranscriptContext
+    let rows: [LiveTranscriptRow]
+}
+
 @MainActor
 final class ConversationPanelViewController: UIViewController, UITextViewDelegate, UIAdaptivePresentationControllerDelegate {
     private let catchUp: CatchUpStore
@@ -72,7 +83,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private var composerHeight: NSLayoutConstraint!
     private var catchUpHost: UIHostingController<CatchUpCardsView>!
     private var timeline = CatchUpTimeline()
-    private var renderedTranscriptSegments: [TranscriptSegment]?
+    private var renderedTranscript: LiveTranscriptPresentation?
     private var canViewTranscript: Bool?
     private var transcriptionEnabled = false
     private var lastMessageIDs = [String]()
@@ -186,10 +197,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         mode.apportionsSegmentWidthsByContent = true
         mode.addAction(UIAction { [weak self] _ in self?.renderMode() }, for: .valueChanged)
         callStrip.isHidden = call == nil || docked
-        Publishers.CombineLatest3(catchUp.$timeline, catchUp.$canViewTranscript,
-                                  catchUp.$transcriptionEnabled)
+        Publishers.CombineLatest4(catchUp.$timeline, catchUp.$canViewTranscript,
+                                  catchUp.$transcriptionEnabled, catchUp.$transcriptUnavailableReason)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] timeline, canView, enabled in
+            .sink { [weak self] timeline, canView, enabled, _ in
                 guard let self else { return }
                 self.timeline = timeline
                 self.canViewTranscript = canView
@@ -208,7 +219,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             .sink { [weak self] _ in self?.updateComposer() }
             .store(in: &subscriptions)
         chat.reactionHistory.$events.removeDuplicates().receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.requestContentRender(transcript: false) }
+            .sink { [weak self] _ in self?.requestContentRender() }
             .store(in: &subscriptions)
         Publishers.CombineLatest(chat.reactionHistory.$gaps, chat.reactionHistory.$hasTruncatedHistory)
             .map { gaps, truncated in !gaps.isEmpty || truncated }
@@ -218,7 +229,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             .store(in: &subscriptions)
         chat.$reactionHistoryAvailable.removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.requestContentRender(transcript: false); self?.renderMode()
+                self?.requestContentRender(); self?.renderMode()
             }.store(in: &subscriptions)
         for name in [UIApplication.didBecomeActiveNotification, UIApplication.willResignActiveNotification] {
             NotificationCenter.default.publisher(for: name).sink { [weak self] _ in
@@ -887,20 +898,23 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         let nearBottom = transcript.contentSize.height - transcript.contentOffset.y - transcript.bounds.height < 60
         let offset = transcript.contentOffset
         isRenderingTranscript = true
-        if canViewTranscript == true && transcriptionEnabled && !timeline.segments.isEmpty {
-            let segments = timeline.segments
-            if let previous = renderedTranscriptSegments,
-               segments.count >= previous.count, segments.starts(with: previous) {
-                if segments.count > previous.count {
-                    transcript.textStorage.append(transcriptLines(segments.dropFirst(previous.count),
-                                                                  precedingLines: previous.count))
+        if let presentation = liveTranscriptPresentation() {
+            if let previous = renderedTranscript,
+               previous.context == presentation.context,
+               presentation.rows.count >= previous.rows.count,
+               presentation.rows.starts(with: previous.rows) {
+                if presentation.rows.count > previous.rows.count {
+                    transcript.textStorage.append(transcriptRows(presentation.rows.dropFirst(previous.rows.count),
+                                                                 precedingRows: previous.rows.count))
                 }
             } else {
-                transcript.attributedText = liveTranscript()
+                transcript.attributedText = liveTranscript(presentation)
             }
-            renderedTranscriptSegments = segments
+            renderedTranscript = presentation
         } else {
-            renderedTranscriptSegments = nil
+            renderedTranscript = nil
+            transcript.font = .preferredFont(forTextStyle: .body)
+            transcript.textColor = .white
             let message = catchUp.transcriptUnavailableReason ?? CatchUpText.live(timeline: timeline, canView: canViewTranscript,
                                            enabled: transcriptionEnabled)
             if transcript.text != message { transcript.text = message }
@@ -914,31 +928,75 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         isRenderingTranscript = false
     }
 
-    private func liveTranscript() -> NSAttributedString {
+    private func liveTranscriptPresentation() -> LiveTranscriptPresentation? {
+        let merged = LiveTranscriptTimeline.rows(segments: timeline.segments,
+                                                reactions: chat.reactionHistory.events)
+        let transcriptActive = canViewTranscript == true && transcriptionEnabled
+        let rows: [LiveTranscriptRow]
+        if transcriptActive {
+            rows = merged
+        } else {
+            rows = merged.filter { row in
+                if case .reaction = row { return true }
+                return false
+            }
+        }
+        guard !rows.isEmpty else { return nil }
+        if transcriptActive {
+            return LiveTranscriptPresentation(context: timeline.segments.isEmpty ? .waiting : .content,
+                                              rows: rows)
+        }
+        let message = catchUp.transcriptUnavailableReason ?? CatchUpText.live(timeline: timeline,
+                                                                               canView: canViewTranscript,
+                                                                               enabled: transcriptionEnabled)
+        return LiveTranscriptPresentation(context: .unavailable(message), rows: rows)
+    }
+
+    private func liveTranscript(_ presentation: LiveTranscriptPresentation) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let caption = UIFont.preferredFont(forTextStyle: .caption1)
-        result.append(NSAttributedString(string: L("Text received by this phone may be incomplete.\n\n"),
+        result.append(NSAttributedString(string: liveTranscriptHeader(presentation.context),
                                          attributes: [.font: caption, .foregroundColor: UIColor.lightGray]))
-        result.append(transcriptLines(timeline.segments[...], precedingLines: 0))
+        result.append(transcriptRows(presentation.rows[...], precedingRows: 0))
         return result
     }
 
-    private func transcriptLines(_ lines: ArraySlice<TranscriptSegment>,
-                                 precedingLines: Int) -> NSAttributedString {
+    private func liveTranscriptHeader(_ context: LiveTranscriptContext) -> String {
+        switch context {
+        case .content:
+            return L("Text received by this phone may be incomplete.\n\n")
+        case .waiting:
+            return L("Text received by this phone may be incomplete.\n\n") + L("Waiting for spoken words…\n\n")
+        case .unavailable(let message):
+            return message + "\n\n"
+        }
+    }
+
+    private func transcriptRows(_ rows: ArraySlice<LiveTranscriptRow>,
+                                precedingRows: Int) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let body = UIFont.preferredFont(forTextStyle: .body)
         let caption = UIFont.preferredFont(forTextStyle: .caption1)
-        for (index, line) in lines.enumerated() {
-            if precedingLines + index > 0 { result.append(NSAttributedString(string: "\n\n")) }
-            if let time = line.spokenAt {
-                result.append(NSAttributedString(string: "\(time.formatted(date: .omitted, time: .shortened))  ",
+        for (index, row) in rows.enumerated() {
+            if precedingRows + index > 0 { result.append(NSAttributedString(string: "\n\n")) }
+            switch row {
+            case .line(let line):
+                if let time = line.spokenAt {
+                    result.append(NSAttributedString(string: "\(time.formatted(date: .omitted, time: .shortened))  ",
+                        attributes: [.font: caption, .foregroundColor: UIColor.lightGray]))
+                }
+                result.append(NSAttributedString(string: line.speaker ?? L("Participant"),
+                    attributes: [.font: UIFont.systemFont(ofSize: body.pointSize, weight: .semibold),
+                                 .foregroundColor: accent]))
+                result.append(NSAttributedString(string: "\n\(line.text)",
+                    attributes: [.font: body, .foregroundColor: UIColor.white]))
+            case .reaction(let event):
+                result.append(NSAttributedString(string: "\(event.timestamp.formatted(date: .omitted, time: .shortened))  ",
+                    attributes: [.font: caption, .foregroundColor: UIColor.lightGray]))
+                let name = event.isOwn ? L("You") : (event.displayName ?? L("Participant"))
+                result.append(NSAttributedString(string: "\(event.kind.emoji)  \(name)",
                     attributes: [.font: caption, .foregroundColor: UIColor.lightGray]))
             }
-            result.append(NSAttributedString(string: line.speaker ?? L("Participant"),
-                attributes: [.font: UIFont.systemFont(ofSize: body.pointSize, weight: .semibold),
-                             .foregroundColor: accent]))
-            result.append(NSAttributedString(string: "\n\(line.text)",
-                attributes: [.font: body, .foregroundColor: UIColor.white]))
         }
         return result
     }
