@@ -1,0 +1,533 @@
+{
+  "archive": "native-macos-m156-vpio-private-r4.tar.gz",
+  "archiveSHA256": "d0e29fa641d4e89d0f012e7e59c572c0597278112796e8a0a4ca533d00dbc95c",
+  "artifact": "native-macos-m156-vpio-private-r4-candidate",
+  "buildEvidenceSHA256": "6f36c2e0951050dbef75952b4d4293a0d3bae984dab7cc2ab43f782b4f1c0f87",
+  "capabilities": {
+    "cleanObsoleteWarmFallback": true,
+    "experimentalCoreAudio": true,
+    "experimentalPrivateInput": true,
+    "stoppedInputGraph": true
+  },
+  "destination": ".build/native-sdk/vpio-private-r4",
+  "files": {
+    "LiveKitWebRTC.xcframework/Info.plist": {
+      "sha256": "2e222659456517259d8bf041ea2e016e6f2f05b5f73dd2f2d9632e2cc2172f8e",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Headers": {
+      "target": "Versions/Current/Headers",
+      "type": "symlink"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/LiveKitWebRTC": {
+      "target": "Versions/Current/LiveKitWebRTC",
+      "type": "symlink"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Modules": {
+      "target": "Versions/Current/Modules",
+      "type": "symlink"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Resources": {
+      "target": "Versions/Current/Resources",
+      "type": "symlink"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/LiveKitWebRTC.h": {
+      "sha256": "ee485a1de509c2ccb0c0fe6b1306b59bb0d031b5ef2a5efce087850b055a3356",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioBuffer.h": {
+      "sha256": "c80b4e0e6a5a1d973d2abbf2eb301efad3c01ec1e195b97b1d69603cce51fc47",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioCustomProcessingDelegate.h": {
+      "sha256": "24d12662c891f140ae9cb5651ee54445dabac8e066e49302998aad2b3041e8ba",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioDevice.h": {
+      "sha256": "51de873d4f27a94b507530115d269ed48d82a84b168ae3a78486b90dc9d00b21",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioDeviceModule.h": {
+      "sha256": "6a1632cf8b850f8450bb9174d13257818bde1da70869d3529e8cb1ce669efe19",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioProcessingConfig.h": {
+      "sha256": "4246291c1878419ea26ea71e7abc3a5fa7923ee99f2da94446db8c497bda4357",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioProcessingModule.h": {
+      "sha256": "bf500cdb1a870a727bcaef53f0c896bb18132e54e10fa9b3196a0aba89abf702",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioProcessingState.h": {
+      "sha256": "53b5bd757a7246fa91625c94e7d77387ca52cb01df1b639b110767688d0925f7",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioRenderer.h": {
+      "sha256": "f67919b9e6d31b44a22b8380240d0743db8d2a9d7f00756834212384d36a3d76",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioSource.h": {
+      "sha256": "0a2d4cc325784344d70705f3217674db3c4f48f3635ca69c4aaa5c95fbd3a317",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCAudioTrack.h": {
+      "sha256": "b8ea7ad09dc5d4a81320820b9b82f94f8d18bec38038772a18579130420cbace",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCCVPixelBuffer.h": {
+      "sha256": "378971c0d5819b2fc724d94b8efb6d51614f0d86a710040c8fe0da9982eb8535",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCCallbackLogger.h": {
+      "sha256": "9a82956d6b0f47056cd65a5bd4dfa6c2a7ac1f092e210404d0336a1511ea0650",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCCameraVideoCapturer.h": {
+      "sha256": "1c6ef5fd6b4cfa847774fee2343af7139aa5b2bba4b5999dcffd18a999dee8be",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCCertificate.h": {
+      "sha256": "721ae34a3a9be97b689a40469be267e1b989915bed5a2fc89a5af46ef121f847",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCCodecSpecificInfo.h": {
+      "sha256": "703b6b3bd486692d6063212640abb0ae287b8fffb4a68530df82879bc94f45bd",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCCodecSpecificInfoH264.h": {
+      "sha256": "608a94a7c3a545000d5a511e09c10059671cd32542d18c879066dce3beb681c2",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCCodecSpecificInfoH265.h": {
+      "sha256": "697616d5cf051b93c29ddd37125951e0869b1fe9590a93ce5259e81b1a5f9490",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCConfiguration.h": {
+      "sha256": "e996fcaf5d7265582bbce467e0d8c63d865b965475335689f8ca6b4c4d2c786f",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCCryptoOptions.h": {
+      "sha256": "fe65b46dd7b8565bf2eb2eab74764faa72e42938943bd518694b83d5f830bf49",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDataChannel.h": {
+      "sha256": "c79212a911dc2c2e6bf8bbf8114672aec080ae3dbe701d22cd164bde8da917ae",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDataChannelConfiguration.h": {
+      "sha256": "0a456920f5bb0d61f38089153d12891e074e8495c5a4ebf75b2d810e02e8f2f0",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDataPacketCryptor.h": {
+      "sha256": "5dacdc29d6c700556b3516fc3436035be3a1505fb15ff1baf939559eeb323387",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDefaultAudioProcessingModule.h": {
+      "sha256": "d980625b538298514ca1f8533a1543523dd4634230f19f0ec0abdf201e639e90",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDefaultVideoDecoderFactory.h": {
+      "sha256": "65e11a9e13b9db888390c32abe2cc02fd7ffafe3a0b23da5e96a99198dbc2c21",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDefaultVideoEncoderFactory.h": {
+      "sha256": "1b33cca929ec75e77aff407221e1f33a82a41a824a15dd645a99e887cfd64ed8",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDesktopCapturer.h": {
+      "sha256": "11ac50ae5715fffdcac5057b506c9bbe30e72fa9c53a143f721f839495c7f680",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDesktopMediaList.h": {
+      "sha256": "c616bbcb1190dfb326dd8825fd0ffb2c59b61b7dbb3938836b4ea57ada992d39",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDesktopSource.h": {
+      "sha256": "d97d9e99463fb163c88115922d9f0a9d431ca59542ed2dac5c85784d4976ea20",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDispatcher.h": {
+      "sha256": "820bc6dc58df359e25b2516565c8525e9272e9bd76f7868ed62252ce979c63e2",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDtlsFingerprint.h": {
+      "sha256": "9f782333dc1663810820795855e71747f0cd7b9bd29ad0f3b8b2eeb3df043ac6",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCDtmfSender.h": {
+      "sha256": "91c35694c9e8a91e6732a32256a1fd3646da3dbabbea409aea8258ea0f31b1f3",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCEncodedImage.h": {
+      "sha256": "c0b46cd0c1c5b2c17b0c77050f03c4818b9713e4dfd2cde194c2b8c4bab15293",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCFieldTrials.h": {
+      "sha256": "addef2d91a571d2742aa829b7b5b320d184d5722e4d9673b05fb00f3fdaeeb8a",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCFileLogger.h": {
+      "sha256": "aab37a147edf8b23395b1d2c3d1bdd5d529279a6b0408508b7baa5b1b4084ff8",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCFileVideoCapturer.h": {
+      "sha256": "c348fab6787c2b5e69288de15742d067bfb5015d4730f1bcad50f277005524ec",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCFrameCryptor.h": {
+      "sha256": "4c9ba51895eeddb16934d4210f92b888db44de79f77bc84e43548d4285fcf30b",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCFrameCryptorKeyProvider.h": {
+      "sha256": "15c8471f64f864782c805b64b23c06ac6c6fb6b78b0ae40b5461ac8dc578cf0b",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCH264ProfileLevelId.h": {
+      "sha256": "1a5b44bdddb026405e439b7af6e2c932d721194764f5b69ba6f84eb92e8b6f00",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCH265ProfileLevelId.h": {
+      "sha256": "738f1efe7146de5f8aab6ea9c8696157de604f2edfea14d94115086e94c8e2af",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCI420Buffer.h": {
+      "sha256": "5d379b0051a3ae8c7dad640ecc06b8e0052cc4d933c5edf1f0f4b466c362b918",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCIODevice.h": {
+      "sha256": "a5f6531fbefd9acf6ebadb699e2efcccfd224d8eeda4096ad16436747ed843db",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCIceCandidate.h": {
+      "sha256": "cdd7179d31ea624c880a2dee9d58d556357ec7988d52866e8a736b268f5c3360",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCIceCandidateErrorEvent.h": {
+      "sha256": "67fbf5b962f424b7315299bdfd10069221cb239c501f821869c29dea2b996c74",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCIceServer.h": {
+      "sha256": "ba4ceb86d203ecbb22711171765ce12900ced7aad8f16c6b6fddf3e234ad39bf",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCLegacyStatsReport.h": {
+      "sha256": "d8a66dfdcbed96b886ab8e9ceaeb23a6130a46a8ba9b91bc5a4b700102935c96",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCLogging.h": {
+      "sha256": "2e6d65de379be82f4538f77a0af74ca6f1b95ad4e7ff4ddc47e715563c79ccd9",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMTLNSVideoView.h": {
+      "sha256": "8ed4586784fd13110edbbb50468dece0057f14528ffbd68f46b965ccbb20531f",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMTLVideoView.h": {
+      "sha256": "6f2911774f08d1513bef0820b930ce65cb525a0ece91c40813fae22507da5524",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMacros.h": {
+      "sha256": "31404ae5544e6a1e62f4a0adc997ee065999a9e283566d3d2ba7fe4fd891595e",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMediaConstraints.h": {
+      "sha256": "dd0e76d319431b0787571c82de210af4bb7c816a9c91e2021b92561c54446f40",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMediaSource.h": {
+      "sha256": "611b2bdcff2eef8d403f45fafed5394180a36442f83c69ab4e753e6c5e0f6965",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMediaStream.h": {
+      "sha256": "ab2f31397f7999d683372a4fe809e355fb9d6b3ba96158209571173cec591aaf",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMediaStreamTrack.h": {
+      "sha256": "607f32244cedde1fb034fae5376816d553359bad63babb5d5b3b464cfe5ae37c",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMetrics.h": {
+      "sha256": "d1b53b383578b0e090a910a6916dfcc5c34a9a7ff407d277d4cef1ff8e86298a",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMetricsSampleInfo.h": {
+      "sha256": "961ac135cd72de08952f93c8f8049d5d1f2d54fb7735a87f6bfe5fa0869ab418",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMutableI420Buffer.h": {
+      "sha256": "a78d7504616610072d1a6084609a136be483b3a79b4a7ebf10746b7d3c178639",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCMutableYUVPlanarBuffer.h": {
+      "sha256": "38bbf8912df7dcdc01da5a8384f42a57de04b1309ee0fcbeb75470f458d11e43",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCNativeI420Buffer.h": {
+      "sha256": "036eb773794caeca7388ecbcba81d6a74af2c6392c8a5e388e73d4e504b1a43a",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCNativeMutableI420Buffer.h": {
+      "sha256": "ddb069bea9ad4d42c23e7af53a1dda9fdb4586c269579b10ee3f6d63cc868e01",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCPeerConnection.h": {
+      "sha256": "4419d4808022c6537395c307b529c77e2e8319ab44917eaa84c15b79cc87c3a3",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCPeerConnectionFactory.h": {
+      "sha256": "983d152206f2b36b5157a31876af0a14f960dd59fa488f42bb551e8b1b80c7b6",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCPeerConnectionFactoryOptions.h": {
+      "sha256": "0b41865555067cff8b0c8ea7e191c3943da89ae0acd4bb61e716e7952ce1511c",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtcpParameters.h": {
+      "sha256": "80ab3c7807f357fa60870fe094fa0494976f499833577dc17dce541f1b063610",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpCapabilities.h": {
+      "sha256": "efede2043f722e0d351ef5b13dfd6a6f962a7927002a213eac866e81ac933f6a",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpCodecCapability.h": {
+      "sha256": "d350c250352cdc29e022624d2f278506d8c32dfbd102e26946c9a57e22615585",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpCodecParameters.h": {
+      "sha256": "7867fd1ab2e583d89c073ec0bd6d3b633db0749b22a2690eeca471266adc154b",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpEncodingParameters.h": {
+      "sha256": "be82d3f757a1a9514503c1aedc596cfac4e80d6e56c92f5020ff30db9d5293d5",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpHeaderExtension.h": {
+      "sha256": "c61437b3cf9fc5f9879315c85dde36284dd4927083b659d21beb178732887591",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpHeaderExtensionCapability.h": {
+      "sha256": "14b6295dc2821764bc5b637f4994dfcfce869368fc8b76ff8581ecd81c6471e9",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpParameters.h": {
+      "sha256": "c685e67fe248a2d87cc76b6a19185875d83a4e509c32410f6309ae199c025473",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpReceiver.h": {
+      "sha256": "1785c8bb2e1b0f4f9d16ba1463a8f6ef11646b35793821153f0f19bde2ecb795",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpSender.h": {
+      "sha256": "4b3b9bb82e529c5e8c17871e251055e3721fdef7bbd1dd1e5bc34b0d563f562e",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpSource.h": {
+      "sha256": "f4e1feef74e0233132216b415e403f839c9c8f754d659d7e84c471331e42172e",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCRtpTransceiver.h": {
+      "sha256": "1201d8bd9e2ab3a5cf09ce19b00b3367666b9e193d372313227efbdcda2f4aeb",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCSSLAdapter.h": {
+      "sha256": "8c262607c2a0e975bd418e3dfd1a34d4d8e56caebd018bf17ae2482852dd6766",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCSSLCertificateVerifier.h": {
+      "sha256": "038287284df474fd5a95e809a2bc2ce588d70a4d3f0cf9fb8edf102db0952889",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCSessionDescription.h": {
+      "sha256": "1be993410848bb8922931a01d24778381fefcb58f94b6d41cfa2adde67f356ac",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCStatisticsReport.h": {
+      "sha256": "b0690cae10e431244c62562000389b169c54744036d215e620f1d5da9aa8bc2a",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCTracing.h": {
+      "sha256": "5c0f9d766f37a886e4b9aeaf2702e0d71e32a5071d64e142919b8a725aa68d28",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoCapturer.h": {
+      "sha256": "45bcf05d27069a10b1ae6fd4ee799df29a63c7668f738ffa57e3e85dce3f6f21",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoCodecConstants.h": {
+      "sha256": "f121f09496262c246d65e1bfc4df38de9833a7b5cdb3318ad8489b420e147f45",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoCodecInfo.h": {
+      "sha256": "863d77b038546f89632c9d5274b08130837422e611dd6a67917fdd7bee758eb8",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoDecoder.h": {
+      "sha256": "f86ea0fd53d23a5b653679a766e750fc231a7c96edc426b1766cdbadd7862432",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoDecoderAV1.h": {
+      "sha256": "3d80d93d6d2caf7c3aba9a14b16bee2063f774cde6dd8cd4732914db9ad48750",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoDecoderFactory.h": {
+      "sha256": "3b914a4f3a9c2e49becda116e66db15d7fcb6254355243f3241c81c48684e1d9",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoDecoderFactoryH264.h": {
+      "sha256": "4711a604d58da813cdf5d439996eaea951502317eadd4b19e126bccfb18aa262",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoDecoderH264.h": {
+      "sha256": "5192e4610d87927ce406800c4e7efd751d1174fbbcabd6e15007bd432ae9619b",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoDecoderH265.h": {
+      "sha256": "415dc57ea1afeca56a1a777685e806a03ab2751743f500166f357362e2837e7d",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoDecoderVP8.h": {
+      "sha256": "dba8add530aaf6146a4509610c0b03ecae4142b4537366cebdd9e9e5c6395a28",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoDecoderVP9.h": {
+      "sha256": "5844fd3e863eaa4f0728369fc079331689863ad55804f95218f06b091c671a18",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoder.h": {
+      "sha256": "185ac46615ea68dd84cc10beb816e463c5df58ecb1cd561fb507703e3fdeceb9",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderAV1.h": {
+      "sha256": "c5247c3be5e25245265f0133059fde1a771718b1a148cafc9b718bfed19ef1b2",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderFactory.h": {
+      "sha256": "21fc11beb3bd9d7750473164ab3ad137af28d3f38a002a3961aa8351f433437a",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderFactoryH264.h": {
+      "sha256": "36f53a7ba8df2833c350d0c419a266309356c37b07a1a320f571ea6f36ae26e6",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderFactorySimulcast.h": {
+      "sha256": "0f71e15400b9ae22ab28c41da4cdc27fea46e9aa6aef291b08ee8dcd0355ff0d",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderH264.h": {
+      "sha256": "0bcbb0022bb65b3a17a9499028742c12ae42c5c3c5e918db5a5967a83238788d",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderH265.h": {
+      "sha256": "76217074ae6a479043b1b429e40110f7317fbfe3b0fc640899f64232a174b1d7",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderQpThresholds.h": {
+      "sha256": "92e4c2ca58327ea57f0ead9fddd3018bb59965ece049a963443b0e0f63bd900c",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderSettings.h": {
+      "sha256": "b5d87684ac7da710fde550c299aafc4aa48eadb622da1cdf897ea0e9cca06e53",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderSimulcast.h": {
+      "sha256": "3dd4e66bcbba5f10a9d5cf70b4395c5a388288bc55d62c2bfcc9aa914c0220d7",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderVP8.h": {
+      "sha256": "e43527ca30cc6fc2182e0f570c26d1b4386fafad84577db88f8db672cd8a4830",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoEncoderVP9.h": {
+      "sha256": "f10a6e4b3b59f10552c2f6985a4333c5acb9222fb81774e11e5dc373453d8566",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoFrame.h": {
+      "sha256": "88a8d5b5819a1ee9860b4ce46b624ea1df4cdbd86a182159de1dea32bbeef3e6",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoFrameBuffer.h": {
+      "sha256": "53a43f857d617c68ae32be36ffc3cbef23882d970738f243b65c2b2f20c80163",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoRenderer.h": {
+      "sha256": "503e946b0218f5e413efd344d285ccc406ab6808c8c6d56769d8dfb4e9f475d4",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoSource.h": {
+      "sha256": "9b8d469434f660b01a53efb76d41fb065416df2771c2419687cc035cb7794976",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoTrack.h": {
+      "sha256": "52ad86b5c2db941c1add96b2e8d03953f4f1637e4e82ba46afdbaf39a5ccc6a0",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCVideoViewShading.h": {
+      "sha256": "ab1939a8564c7a4f546ce9c19df620f434328044185a834ba01bf70513b1c8fe",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCYUVHelper.h": {
+      "sha256": "8cfce7ccba0e03748cf6f59b5ffa1a508ce05c043d20a93a4e0bcc63f2ff7253",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCYUVPlanarBuffer.h": {
+      "sha256": "1149f759dc5925ea514e7a990acfbdd2de018c20ef2df4dfecc1d38617417114",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/LiveKitWebRTC": {
+      "sha256": "0f7b53b46f8d56babe3f813d9ee9f257ace8e223a6c684fcf575d66a92190246",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Modules/module.modulemap": {
+      "sha256": "06300cfcc18a53788bf12c47a58dfc7d63128fc70268a86dee173f9a14775574",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Resources/Info.plist": {
+      "sha256": "072dd335624dbb21e45b846c08088e6b89a91012bc9ef20d50eaca0607d77ad6",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Resources/PrivacyInfo.xcprivacy": {
+      "sha256": "eb9337f2dee5992f74ae2b10f78f526d3eec1da8cfde029131081c0b18579614",
+      "type": "file"
+    },
+    "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/Current": {
+      "target": "A",
+      "type": "symlink"
+    },
+    "build-evidence.json": {
+      "sha256": "6f36c2e0951050dbef75952b4d4293a0d3bae984dab7cc2ab43f782b4f1c0f87",
+      "type": "file"
+    },
+    "provenance/build-receipt.json": {
+      "sha256": "7e29f9cfd45dc88ac2cb8c0cd54586a2039c7b508f3f30942c1645b45f8f6523",
+      "type": "file"
+    },
+    "provenance/build.log": {
+      "sha256": "f53b960db044bce0af1db98a1334218a8146b63a5b5ceea96a60507e3420f197",
+      "type": "file"
+    },
+    "provenance/source-manifest.json": {
+      "sha256": "08992f502f600d7c4e4aade25f967df0ca5a82c12d9df990df69030dbc343ee6",
+      "type": "file"
+    },
+    "provenance/source-patch.patch": {
+      "sha256": "4bdef56bb751983916ca30aa6345d2d94e467a844087970c257adcb8dccce25e",
+      "type": "file"
+    },
+    "provenance/source-verification.json": {
+      "sha256": "e7245fc5f5ad04b54b4e3720a99cd7a61ed630bdc7a4a904c52255b967bc6a15",
+      "type": "file"
+    },
+    "provenance/unit-tests.json": {
+      "sha256": "a017466dbc2e825cc2d8f39e25de8920d72e2769d50e85c55c202007b643f7bd",
+      "type": "file"
+    }
+  },
+  "frameworkBinarySHA256": "0f7b53b46f8d56babe3f813d9ee9f257ace8e223a6c684fcf575d66a92190246",
+  "packagedArchiveAvailable": true,
+  "productionPolicy": "audioEngine only; no CoreAudio selection; no automatic permission prompt",
+  "qualification": "R4 build and packaging only; hardware and Release qualification pending",
+  "schema": 1,
+  "sourceReplayIsSelfContained": false
+}
