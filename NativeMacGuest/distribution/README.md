@@ -33,6 +33,17 @@ pins and public update key are in `build_support.py`. Sparkle is embedded with
 Xcode code signing. Generated files live in `<output-dir>/Spec` and build
 evidence records the distribution, dependency and final framework hashes.
 
+Direct builds also require native audio-route recovery evidence in the selected
+framework's `build-evidence.json`. Its `audioRouteRecovery` object must contain
+the ordered `patches` map, merged `sourceOverrides`, `capabilities`, base binary
+and source-manifest hashes from `configuration-recovery-guard.lock.json` and
+`default-route-recovery.lock.json`. Set `sourceRevision` and a distinct final
+`sourceManifestSHA256` for the actual patched source build. The builder rejects
+the original `native-framework-screen-r5` binary even if its evidence is copied
+to a new directory. This check does not compile a framework or replace the
+committed SDK; pass a separately built, verified `--framework-root` candidate.
+App Store dependency provisioning remains unchanged.
+
 Export and notarize through the account already signed into Xcode:
 
 ```sh

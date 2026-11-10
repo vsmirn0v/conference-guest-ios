@@ -17,7 +17,8 @@ import native_dependencies as dependencies
 
 class NativeDependenciesTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        (ROOT / ".build").mkdir(exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=ROOT / ".build")
         self.addCleanup(self.temporary.cleanup)
         self.repository = pathlib.Path(self.temporary.name) / "fresh-clone"
         self.vendor = self.repository / "Dependencies/native-macos"
@@ -99,6 +100,84 @@ class NativeDependenciesTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(ROOT / "NativeMacGuest/build.py"), "--compile-only", action], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("cannot install or archive", result.stderr)
+
+
+class AudioRouteRecoveryFrameworkTests(unittest.TestCase):
+    def setUp(self):
+        (ROOT / ".build").mkdir(exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=ROOT / ".build")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = pathlib.Path(self.temporary.name) / "candidate"
+        self.binary = self.root / "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/LiveKitWebRTC"
+        self.binary.parent.mkdir(parents=True)
+        self.binary.write_bytes(b"new audio route candidate")
+        self.contract = dependencies.audio_route_recovery_contract()
+        self.evidence = {
+            "audioRouteRecovery": self.contract,
+            "sourceRevision": self.contract["upstreamRevision"],
+            "sourceManifestSHA256": "b" * 64,
+            "frameworkBinarySHA256": dependencies.sha256(self.binary),
+        }
+        self.write_evidence()
+
+    def write_evidence(self):
+        (self.root / "build-evidence.json").write_text(json.dumps(self.evidence))
+
+    def test_verifies_candidate_against_both_checked_in_patches(self):
+        self.assertEqual(dependencies.verify_audio_route_recovery_framework(self.root), self.contract)
+        self.assertEqual(self.contract["capabilities"], {
+            "configurationRecoveryRaceGuard": True,
+            "defaultRouteNativeHandover": True,
+        })
+        self.assertEqual(len(self.contract["patches"]), 2)
+
+    def test_legacy_framework_without_route_evidence_is_rejected(self):
+        del self.evidence["audioRouteRecovery"]
+        self.write_evidence()
+        with self.assertRaisesRegex(ValueError, "no audioRouteRecovery evidence"):
+            dependencies.verify_audio_route_recovery_framework(self.root)
+
+    def test_changed_patch_identity_is_rejected(self):
+        name = "Experiments/WebRTCM156/default-route-recovery.patch"
+        self.evidence["audioRouteRecovery"]["patches"][name] = "0" * 64
+        self.write_evidence()
+        with self.assertRaisesRegex(ValueError, r"audioRouteRecovery\.patches"):
+            dependencies.verify_audio_route_recovery_framework(self.root)
+
+    def test_original_source_manifest_is_rejected(self):
+        self.evidence["sourceManifestSHA256"] = self.contract["baseSourceManifestSHA256"]
+        self.write_evidence()
+        with self.assertRaisesRegex(ValueError, "distinct final source-manifest"):
+            dependencies.verify_audio_route_recovery_framework(self.root)
+
+    def test_original_binary_cannot_claim_route_recovery(self):
+        actual_sha256 = dependencies.sha256
+        def only_original_binary(path):
+            if pathlib.Path(path) == self.binary:
+                return self.contract["baseFrameworkBinarySHA256"]
+            return actual_sha256(path)
+        with mock.patch.object(dependencies, "sha256", side_effect=only_original_binary):
+            with self.assertRaisesRegex(ValueError, "reuses the original binary"):
+                dependencies.verify_audio_route_recovery_framework(self.root)
+
+    def test_direct_builder_stops_before_preparing_an_unpatched_framework(self):
+        legacy = self.root / "legacy-framework"
+        legacy.mkdir()
+        (legacy / "build-evidence.json").write_text(json.dumps({
+            "sourceRevision": self.contract["upstreamRevision"],
+            "sourceManifestSHA256": self.contract["baseSourceManifestSHA256"],
+            "frameworkBinarySHA256": self.contract["baseFrameworkBinarySHA256"],
+        }))
+        output = self.root / "app-build"
+        result = subprocess.run([
+            sys.executable, str(ROOT / "NativeMacGuest/build.py"),
+            "--compile-only", "--distribution", "direct",
+            "--framework-root", str(legacy), "--output-dir", str(output),
+        ], cwd=ROOT, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no audioRouteRecovery evidence", result.stderr)
+        self.assertFalse((output / "Dependencies").exists())
+        self.assertFalse((output / "Xcode").exists())
 
 
 if __name__ == "__main__":

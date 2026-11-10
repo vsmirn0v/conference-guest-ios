@@ -59,6 +59,76 @@ def verify_framework(root, lock):
         raise ValueError("Native SDK build evidence does not match its locked binary")
 
 
+AUDIO_ROUTE_RECOVERY_PATCHES = (
+    "configuration-recovery-guard",
+    "default-route-recovery",
+)
+
+
+def audio_route_recovery_lock_paths(repository=REPOSITORY):
+    return [repository / "Experiments/WebRTCM156" / f"{name}.lock.json"
+            for name in AUDIO_ROUTE_RECOVERY_PATCHES]
+
+
+def audio_route_recovery_contract(repository=REPOSITORY):
+    """Bind the required native fixes to the checked-in patches, not release prose."""
+    repository = pathlib.Path(repository)
+    base = None
+    capabilities, overrides, patches = {}, {}, {}
+    for name, lock_path in zip(AUDIO_ROUTE_RECOVERY_PATCHES,
+                               audio_route_recovery_lock_paths(repository)):
+        lock = json.loads(lock_path.read_text())
+        patch_path = lock_path.with_suffix("").with_suffix(".patch")
+        relative_patch = patch_path.relative_to(repository).as_posix()
+        if (lock.get("formatVersion") != 1 or
+                sha256(patch_path) != lock.get("patchSHA256")):
+            raise ValueError(f"Audio route patch differs from its lock: {patch_path}")
+        if not lock.get("capabilities") or not all(
+                value is True for value in lock["capabilities"].values()):
+            raise ValueError(f"Audio route patch has invalid capabilities: {lock_path}")
+        identity = {key: lock.get(key) for key in (
+            "baseFrameworkBinarySHA256", "baseSourceManifestSHA256", "upstreamRevision")}
+        if base is None:
+            base = identity
+        elif identity != base:
+            raise ValueError("Audio route patches do not share the same WebRTC baseline")
+        # Later patches may intentionally replace an earlier version of a file.
+        # Keep the final override and the complete ordered patch sequence.
+        capabilities.update(lock["capabilities"])
+        overrides.update(lock["sourceOverrides"])
+        patches[relative_patch] = lock["patchSHA256"]
+    return {**base, "formatVersion": 1, "capabilities": capabilities,
+            "sourceOverrides": overrides, "patches": patches}
+
+
+def verify_audio_route_recovery_framework(root, repository=REPOSITORY):
+    """Reject a legacy binary before it can become another direct-release candidate."""
+    root = pathlib.Path(root)
+    evidence = json.loads((root / "build-evidence.json").read_text())
+    contract = audio_route_recovery_contract(repository)
+    actual = evidence.get("audioRouteRecovery")
+    if actual != contract:
+        if not isinstance(actual, dict):
+            raise ValueError(
+                "Native framework has no audioRouteRecovery evidence. Build a new framework "
+                "with both checked-in audio route patches; do not reuse native-framework-screen-r5.")
+        for key, expected in contract.items():
+            if actual.get(key) != expected:
+                raise ValueError(f"Native framework audioRouteRecovery.{key} does not match "
+                                 "the checked-in patches; build and verify a new framework")
+    if evidence.get("sourceRevision") != contract["upstreamRevision"]:
+        raise ValueError("Native framework WebRTC revision differs from the audio route baseline")
+    final_manifest = evidence.get("sourceManifestSHA256")
+    if (not isinstance(final_manifest, str) or len(final_manifest) != 64 or
+            any(character not in "0123456789abcdef" for character in final_manifest) or
+            final_manifest == contract["baseSourceManifestSHA256"]):
+        raise ValueError("Native framework needs a distinct final source-manifest SHA-256")
+    binary = root / "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/LiveKitWebRTC"
+    if sha256(binary) == contract["baseFrameworkBinarySHA256"]:
+        raise ValueError("Native framework reuses the original binary despite audio recovery evidence")
+    return contract
+
+
 def ensure_framework(destination=None, repository=REPOSITORY):
     lock = sdk_lock(repository)
     canonical = (repository / lock["destination"]).resolve()

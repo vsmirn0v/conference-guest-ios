@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Provision/build the external Mac companion; never modify the iOS app bundle."""
 import argparse, hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, tempfile
-from native_dependencies import ensure_framework
+from native_dependencies import (AUDIO_ROUTE_RECOVERY_PATCHES, audio_route_recovery_lock_paths,
+    ensure_framework, verify_audio_route_recovery_framework)
 from distribution.build_support import (APP_NAME, APP_BUNDLE_NAME, EXECUTABLE_NAME,
     application_executable, configure_distribution, find_application, installation_destination, resolve_source_paths)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -30,9 +31,12 @@ build = a.output_dir.resolve()
 archive = build/(f'RockNRollNativeGuest-{a.version}-{a.build_number}.xcarchive') if a.archive else None
 project = build/'Project'; project.mkdir(parents=True, exist_ok=True)
 env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
-# The helper explicitly controls InputMixer mute. The shipping framework clears
-# it on StartRecording; this isolated native artifact preserves that intent.
 framework_root = ensure_framework(a.framework_root)
+if a.distribution == 'direct':
+    try:
+        verify_audio_route_recovery_framework(framework_root, ROOT)
+    except (KeyError, ValueError) as error:
+        raise SystemExit(str(error)) from error
 framework_evidence = json.loads((framework_root/'build-evidence.json').read_text())
 framework_binary = framework_root/'LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/LiveKitWebRTC'
 if hashlib.sha256(framework_binary.read_bytes()).hexdigest() != framework_evidence['frameworkBinarySHA256']:
@@ -106,6 +110,9 @@ sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/NativeGuest.en
 sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-livekit.json']
 sources += sorted((ROOT/'Dependencies/native-macos/livekit-patches').glob('*.patch'))
 sources += [ROOT/'NativeMacGuest/native_dependencies.py', ROOT/'Dependencies/native-macos/sdk.lock.json']
+if a.distribution == 'direct':
+    sources += audio_route_recovery_lock_paths(ROOT)
+    sources += [ROOT/'Experiments/WebRTCM156'/(name+'.patch') for name in AUDIO_ROUTE_RECOVERY_PATCHES]
 sources += [ROOT/'NativeMacGuest/prepare-sherpa.py', ROOT/'Dependencies/native-macos/sherpa-onnx.lock.json']
 sources += sorted(x for x in (ROOT/'Dependencies/SherpaOnnxKit').rglob('*') if x.is_file() and x.suffix in {'.swift'} and '.build' not in x.parts)
 sources += [ROOT/'Dependencies/SherpaOnnxKit/Artifacts/evidence.json']

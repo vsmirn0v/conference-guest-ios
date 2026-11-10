@@ -32,5 +32,8 @@
     "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted",
     "the complete 502-test native suite was not rerun to completion after merging main and the feature branch"
   ],
-  "publishedAt": "2026-11-10T22:20:56+03:00"
+  "publishedAt": "2026-11-10T22:20:56+03:00",
+  "integrationErrata": [
+    "Post-test analysis of build-87.log found that the selected framework was native-framework-screen-r5 with unsigned binary SHA-256 a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845. It did not include the source patches from 863bdbb or 5c51eb7, despite the changes entry above. Those route fixes remain untested in the published application; this note does not alter the published artifact or its publication evidence."
+  ]
 }
