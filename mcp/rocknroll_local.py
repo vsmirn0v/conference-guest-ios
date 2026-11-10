@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 PROTOCOL_VERSION = "2025-03-26"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 BUNDLE_ID = "dev.vsmirn0v.conferenceguest.nativeguest"
 DEFAULT_RELATIVE_ROOT = pathlib.Path("Library/Containers") / BUNDLE_ID / "Data/Library/Application Support"
 MAX_LIMIT = 100
@@ -60,16 +60,16 @@ def parse_time(value: Any, field: str) -> dt.datetime | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise MCPError("INVALID_ARGUMENT", f"{field} must be an RFC 3339 timestamp.")
+        raise MCPError("INVALID_ARGUMENT", f"{field} must be an RFC 3339 timestamp.", details={"field": field, "reason": "format"})
     text = value.strip()
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     try:
         parsed = dt.datetime.fromisoformat(text)
     except ValueError as exc:
-        raise MCPError("INVALID_ARGUMENT", f"{field} must be an RFC 3339 timestamp.") from exc
+        raise MCPError("INVALID_ARGUMENT", f"{field} must be an RFC 3339 timestamp.", details={"field": field, "reason": "format"}) from exc
     if parsed.tzinfo is None:
-        raise MCPError("INVALID_ARGUMENT", f"{field} must include a time-zone offset.")
+        raise MCPError("INVALID_ARGUMENT", f"{field} must include a time-zone offset.", details={"field": field, "reason": "format"})
     return parsed
 
 
@@ -77,7 +77,7 @@ def parse_bool(value: Any, field: str) -> bool | None:
     if value is None:
         return None
     if not isinstance(value, bool):
-        raise MCPError("INVALID_ARGUMENT", f"{field} must be a boolean.")
+        raise MCPError("INVALID_ARGUMENT", f"{field} must be a boolean.", details={"field": field, "reason": "type"})
     return value
 
 
@@ -85,8 +85,10 @@ def clamp_limit(value: Any) -> int:
     if value is None:
         return DEFAULT_LIMIT
     if not isinstance(value, int) or isinstance(value, bool):
-        raise MCPError("INVALID_ARGUMENT", "limit must be an integer.")
-    return max(1, min(MAX_LIMIT, value))
+        raise MCPError("INVALID_ARGUMENT", "limit must be an integer.", details={"field": "limit", "reason": "type"})
+    if value < 1 or value > MAX_LIMIT:
+        raise MCPError("INVALID_ARGUMENT", f"limit must be between 1 and {MAX_LIMIT}.", details={"field": "limit", "reason": "range"})
+    return value
 
 
 def stable_id(kind: str, source: str, raw: Any) -> str:
@@ -429,7 +431,10 @@ class OfflineRocknrollBackend:
         end = parse_time(args.get("to"), "to")
         query = args.get("query")
         if query is not None and not isinstance(query, str):
-            raise MCPError("INVALID_ARGUMENT", "query must be a string.")
+            raise MCPError("INVALID_ARGUMENT", "query must be a string.", details={"field": "query", "reason": "type"})
+        if isinstance(query, str):
+            # The query filter is trimmed; a whitespace-only value is ignored.
+            query = query.strip() or None
         kinds = args.get("kind")
         if kinds is None:
             selected = {"calendar", "outcome", "transcript_fragment"}
@@ -633,7 +638,8 @@ class OfflineRocknrollBackend:
     def search(self, args: dict[str, Any]) -> dict[str, Any]:
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
-            raise MCPError("INVALID_ARGUMENT", "query is required.")
+            raise MCPError("INVALID_ARGUMENT", "query must be non-empty after trimming.", details={"field": "query", "reason": "empty"})
+        query = query.strip()
         start = parse_time(args.get("from"), "from")
         end = parse_time(args.get("to"), "to")
         types = args.get("types")
@@ -689,7 +695,7 @@ class OfflineRocknrollBackend:
 
     def call_tool(self, name: str, args: dict[str, Any]) -> Any:
         if not isinstance(args, dict):
-            raise MCPError("INVALID_ARGUMENT", "Tool arguments must be an object.")
+            raise MCPError("INVALID_ARGUMENT", "Tool arguments must be an object.", details={"field": "arguments", "reason": "type"})
         tools = {
             "rocknroll_status": self.source_status,
             "rocknroll_list_meetings": self.list_meetings,
@@ -702,34 +708,113 @@ class OfflineRocknrollBackend:
         handler = tools.get(name)
         if handler is None:
             raise MCPError("CAPABILITY_UNAVAILABLE", f"Unsupported tool: {name}")
+        # Structural validation runs before any handler, mirroring the native profile.
+        validate_arguments(name, args)
         return redact(handler(args))
+
+
+def _invalid(field: str, reason: str, message: str) -> None:
+    raise MCPError("INVALID_ARGUMENT", message, details={"field": field, "reason": reason})
+
+
+def _validate_value(value: Any, prop: dict[str, Any], field: str) -> None:
+    if value is None:
+        _invalid(field, "null", f"{field} must not be null.")
+    type_ = prop.get("type")
+    if type_ == "string":
+        if not isinstance(value, str):
+            _invalid(field, "type", f"{field} must be a string.")
+        if prop.get("minLength") and len(value) < prop["minLength"]:
+            _invalid(field, "empty", f"{field} must not be empty.")
+        if "enum" in prop and value not in prop["enum"]:
+            _invalid(field, "enum", f"{field} must be one of: {', '.join(prop['enum'])}.")
+    elif type_ == "boolean":
+        if not isinstance(value, bool):
+            _invalid(field, "type", f"{field} must be a boolean.")
+    elif type_ == "integer":
+        if not isinstance(value, int) or isinstance(value, bool):
+            _invalid(field, "type", f"{field} must be an integer.")
+        if "minimum" in prop and value < prop["minimum"]:
+            _invalid(field, "range", f"{field} must be at least {prop['minimum']}.")
+        if "maximum" in prop and value > prop["maximum"]:
+            _invalid(field, "range", f"{field} must be at most {prop['maximum']}.")
+    elif type_ == "array":
+        if not isinstance(value, list):
+            _invalid(field, "type", f"{field} must be an array.")
+        item_prop = prop.get("items")
+        if item_prop:
+            for index, item in enumerate(value):
+                _validate_value(item, item_prop, f"{field}[{index}]")
+
+
+def validate_arguments(tool: str, args: dict[str, Any]) -> None:
+    """Enforce the published inputSchema before dispatch (native parity)."""
+    schemas = {item["name"]: item["inputSchema"] for item in offline_tools()}
+    schema = schemas.get(tool)
+    if schema is None:
+        raise MCPError("CAPABILITY_UNAVAILABLE", f"Unsupported tool: {tool}")
+    properties = schema.get("properties", {})
+    for field in schema.get("required", []):
+        if field not in args:
+            _invalid(field, "required", f"{field} is required.")
+    for field, value in args.items():
+        prop = properties.get(field)
+        if prop is None:
+            _invalid(field, "unknown_field", f"Unknown argument: {field}.")
+        _validate_value(value, prop, field)
+    if "from" in properties and "to" in properties and args.get("from") is not None and args.get("to") is not None:
+        start = parse_time(args["from"], "from")
+        end = parse_time(args["to"], "to")
+        if start and end and start >= end:
+            _invalid("from", "range", "from must be earlier than to.")
 
 
 def tool_schema(name: str, description: str, properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
     return {
         "name": name,
         "description": description,
-        "inputSchema": {"type": "object", "properties": properties, "required": required or []},
+        "inputSchema": {
+            "type": "object",
+            "properties": properties,
+            "required": required or [],
+            "additionalProperties": False,
+        },
         "annotations": {"readOnlyHint": True, "destructiveHint": False},
     }
 
 
 def offline_tools() -> list[dict[str, Any]]:
-    time_filter = {"from": {"type": "string", "format": "date-time"}, "to": {"type": "string", "format": "date-time"}}
-    pagination = {"cursor": {"type": "string"}, "limit": {"type": "integer", "default": DEFAULT_LIMIT, "maximum": MAX_LIMIT}}
-    meeting_id = {"meeting_id": {"type": "string"}}
+    time_filter = {
+        "from": {"type": "string", "format": "date-time", "description": "RFC 3339 lower time bound; a time-zone offset or Z is required. When both bounds are given, from must be earlier than to."},
+        "to": {"type": "string", "format": "date-time", "description": "RFC 3339 exclusive upper time bound; a time-zone offset or Z is required."},
+    }
+    pagination = {
+        "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "default": DEFAULT_LIMIT, "description": f"Maximum number of items to return; values outside 1...{MAX_LIMIT} are rejected. Defaults to {DEFAULT_LIMIT}."},
+        "cursor": {"type": "string", "description": "Opaque page cursor copied verbatim from a previous response's next_cursor."},
+    }
+    meeting_id = {"meeting_id": {"type": "string", "minLength": 1, "description": "Opaque cached record identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title."}}
     return [
         tool_schema("rocknroll_status", "Report offline sources, capabilities and limitations.", {}),
         tool_schema("rocknroll_list_meetings", "List cached calendar meetings, outcomes and transcript fragments.",
-                    {**time_filter, "query": {"type": "string"}, "kind": {"type": "string", "enum": ["calendar", "outcome", "transcript_fragment"]}, **pagination}),
-        tool_schema("rocknroll_get_meeting", "Get one cached meeting-like record.", {**meeting_id}, ["meeting_id"]),
+                    {**time_filter,
+                     "query": {"type": "string", "description": "Optional case-insensitive substring filter over titles and summaries; the value is trimmed and a whitespace-only filter is ignored."},
+                     "kind": {"type": "string", "enum": ["calendar", "outcome", "transcript_fragment"], "description": "Restrict results to one cached kind; defaults to all three."},
+                     **pagination}),
+        tool_schema("rocknroll_get_meeting", "Get one cached meeting-like record.", dict(meeting_id), ["meeting_id"]),
         tool_schema("rocknroll_get_transcript", "Get observed transcript fragments with explicit partial coverage.",
                     {**meeting_id, **time_filter, **pagination}, ["meeting_id"]),
-        tool_schema("rocknroll_get_outcome", "Get one stored meeting outcome by outcome ID.", {"outcome_id": {"type": "string"}}, ["outcome_id"]),
+        tool_schema("rocknroll_get_outcome", "Get one stored meeting outcome by outcome ID.",
+                    {"outcome_id": {"type": "string", "minLength": 1, "description": "Opaque outcome identifier: the id of a kind:outcome item from rocknroll_list_meetings or an outcome result from rocknroll_search. This is not a meeting_id."}},
+                    ["outcome_id"]),
         tool_schema("rocknroll_list_tasks", "List stored tasks with optional meeting, owner and completion filters.",
-                    {**meeting_id, "done": {"type": "boolean"}, "owner": {"type": "string"}, **pagination}),
+                    {**meeting_id,
+                     "done": {"type": "boolean", "description": "Filter by completion state."},
+                     "owner": {"type": "string", "description": "Case-insensitive substring match on the task owner."},
+                     **pagination}),
         tool_schema("rocknroll_search", "Search meeting titles, outcomes, tasks and observed transcript fragments.",
-                    {"query": {"type": "string"}, "types": {"type": "array", "items": {"type": "string"}}, **time_filter, **pagination}, ["query"]),
+                    {"query": {"type": "string", "minLength": 1, "description": "Case-insensitive search text, trimmed; must be non-empty after trimming."},
+                     "types": {"type": "array", "items": {"type": "string", "enum": ["meeting", "outcome", "task", "transcript"]}, "description": "Result types to search; defaults to all four. Unknown values are rejected."},
+                     **time_filter, **pagination}, ["query"]),
     ]
 
 

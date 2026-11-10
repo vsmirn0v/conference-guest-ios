@@ -11,54 +11,83 @@ struct MCPToolFailure: Error {
     let code: String
     let message: String
     let retryable: Bool
+    let details: [String: String]
 
-    init(_ code: String, _ message: String, retryable: Bool = false) {
-        self.code = code; self.message = message; self.retryable = retryable
+    init(_ code: String, _ message: String, retryable: Bool = false, details: [String: String] = [:]) {
+        self.code = code; self.message = message; self.retryable = retryable; self.details = details
     }
 
     var envelope: MCPJSON {
-        ["code": code, "message": message, "retryable": retryable, "details": [:]]
+        ["code": code, "message": message, "retryable": retryable, "details": details]
     }
 }
 
 enum MCPValue {
     static func string(_ value: Any?, key: String) throws -> String {
-        guard let value = value as? String, !value.isEmpty else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) is required.") }
+        guard let value = value as? String else {
+            let reason = value == nil ? "required" : (value is NSNull ? "null" : "type")
+            throw MCPToolFailure("INVALID_ARGUMENT", "\(key) is required.", details: ["field": key, "reason": reason])
+        }
+        guard !value.isEmpty else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) is required.", details: ["field": key, "reason": "empty"]) }
         return value
     }
 
     static func optionalString(_ value: Any?, key: String) throws -> String? {
         guard let value else { return nil }
-        guard let text = value as? String else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be a string.") }
+        guard !(value is NSNull) else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must not be null.", details: ["field": key, "reason": "null"]) }
+        guard let text = value as? String else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be a string.", details: ["field": key, "reason": "type"]) }
         return text
     }
 
     static func bool(_ value: Any?, key: String) throws -> Bool {
-        guard let value = value as? Bool else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be a boolean.") }
-        return value
+        guard let value else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be a boolean.", details: ["field": key, "reason": "required"])
+        }
+        guard !(value is NSNull) else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must not be null.", details: ["field": key, "reason": "null"])
+        }
+        // `as? Bool` alone would accept numeric NSNumbers (1 → true) on Darwin.
+        guard isStrictBool(value), let flag = value as? Bool else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be a boolean.", details: ["field": key, "reason": "type"])
+        }
+        return flag
     }
 
     static func optionalBool(_ value: Any?, key: String) throws -> Bool? {
         guard let value else { return nil }
+        guard !(value is NSNull) else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must not be null.", details: ["field": key, "reason": "null"]) }
         return try bool(value, key: key)
     }
 
     static func integer(_ value: Any?, key: String, default fallback: Int, maximum: Int) throws -> Int {
         guard let value else { return fallback }
-        guard let number = value as? Int, number > 0 else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be a positive integer.") }
+        guard let number = value as? Int, !isStrictBool(value) else {
+            let reason = value is NSNull ? "null" : "type"
+            throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be a positive integer.", details: ["field": key, "reason": reason])
+        }
+        guard number > 0 else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be a positive integer.", details: ["field": key, "reason": "range"]) }
         return min(maximum, number)
     }
 
+    /// RFC 3339 with a mandatory time-zone offset (Z is accepted and normalized).
     static func date(_ value: Any?, key: String) throws -> Date? {
         guard let value else { return nil }
-        guard let text = value as? String else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be an RFC 3339 timestamp.") }
+        guard let text = value as? String, !(value is NSNull) else {
+            let reason = value is NSNull ? "null" : "format"
+            throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be an RFC 3339 timestamp with a time-zone offset.", details: ["field": key, "reason": reason])
+        }
         let cleaned = text.hasSuffix("Z") ? String(text.dropLast()) + "+00:00" : text
         let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: cleaned) { return date }
-        let flexible = DateFormatter(); flexible.locale = Locale(identifier: "en_US_POSIX"); flexible.calendar = Calendar(identifier: .gregorian)
-        flexible.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXXXX"
-        guard let date = flexible.date(from: cleaned) else { throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be an RFC 3339 timestamp.") }
+        guard let date = formatter.date(from: cleaned) else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "\(key) must be an RFC 3339 timestamp with a time-zone offset.", details: ["field": key, "reason": "format"])
+        }
         return date
+    }
+
+    /// On Darwin boolean NSNumbers arriving from JSON must not be mistaken for integers.
+    private static func isStrictBool(_ value: Any) -> Bool {
+        guard let number = value as? NSNumber else { return value is Bool }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
 }
 
@@ -122,7 +151,9 @@ struct MCPAuditEvent {
     var approval: (String, MCPJSON) async -> Bool = { _, _ in false }
 
     func begin(client: MCPClientIdentity, actionID: String, payload: MCPJSON) throws -> MCPActionRecord? {
-        guard UUID(uuidString: actionID) != nil else { throw MCPToolFailure("INVALID_ARGUMENT", "action_id must be a UUID.") }
+        guard UUID(uuidString: actionID) != nil else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "action_id must be a UUID.", details: ["field": "action_id", "reason": "format"])
+        }
         let canonical = canonicalPayload(payload)
         let hash = mcpSHA256(canonical)
         if let existing = records[actionID] {
@@ -224,30 +255,9 @@ struct MCPAuditEvent {
 
 // MARK: - JSON-RPC server
 
-struct MCPToolDefinition {
-    let name: String
-    let description: String
-    let readOnly: Bool
-    let scope: String
-}
-
-func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
-    [
-        .init(name: "rocknroll_status", description: "Report native backend, capabilities and app state.", readOnly: true, scope: "meetings:read"),
-        .init(name: "rocknroll_list_meetings", description: "List active, favorite, recent, calendar and outcome meetings.", readOnly: true, scope: "meetings:read"),
-        .init(name: "rocknroll_get_meeting", description: "Get one native meeting record.", readOnly: true, scope: "meetings:read"),
-        .init(name: "rocknroll_get_transcript", description: "Get the authoritative transcript available to the native meeting.", readOnly: true, scope: "meetings:read"),
-        .init(name: "rocknroll_get_outcome", description: "Get one stored outcome by outcome ID.", readOnly: true, scope: "meetings:read"),
-        .init(name: "rocknroll_list_tasks", description: "List tasks from native meeting outcomes.", readOnly: true, scope: "meetings:read"),
-        .init(name: "rocknroll_search", description: "Search native meetings, outcomes, tasks and transcripts.", readOnly: true, scope: "meetings:read"),
-        .init(name: "rocknroll_get_settings", description: "Read allowlisted native settings and resolved attention configuration.", readOnly: true, scope: "settings:read"),
-        .init(name: "rocknroll_control_meeting", description: "Request a bound native meeting control.", readOnly: false, scope: "meetings:control"),
-        .init(name: "rocknroll_set_favorite", description: "Set a favorite room through the native library.", readOnly: false, scope: "favorites:write"),
-        .init(name: "rocknroll_update_task", description: "Update an allowlisted task field.", readOnly: false, scope: "tasks:write"),
-        .init(name: "rocknroll_update_settings", description: "Update an allowlisted native setting.", readOnly: false, scope: "settings:write"),
-        .init(name: "rocknroll_run_assistant", description: "Run a safe in-app assistant prompt.", readOnly: false, scope: "assistant:run"),
-    ]
-}
+// MCPToolDefinition and nativeMCPToolDefinitions live in MCPToolSchemas.swift,
+// next to the declarative schemas that tools/list publishes and that
+// MCPSchemaValidator enforces before dispatch.
 
 @MainActor final class MCPJSONRPCServer {
     let backend: any MCPBackend
@@ -264,7 +274,7 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
                 return rpcResult(id: request["id"], value: [
                     "protocolVersion": "2025-03-26",
                     "capabilities": ["tools": ["listChanged": false]],
-                    "serverInfo": ["name": "rocknroll-native", "version": "0.1.0"],
+                    "serverInfo": ["name": "rocknroll-native", "version": "0.2.0"],
                 ])
             case "ping": return rpcResult(id: request["id"], value: [:])
             case "tools/list":
@@ -272,7 +282,7 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
                     [
                         "name": $0.name, "description": $0.description,
                         "annotations": ["readOnlyHint": $0.readOnly, "destructiveHint": false],
-                        "inputSchema": ["type": "object", "properties": [:], "required": []],
+                        "inputSchema": $0.schema.json,
                     ]
                 }
                 return rpcResult(id: request["id"], value: ["tools": tools])
@@ -282,7 +292,13 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
                     throw MCPToolFailure("INVALID_ARGUMENT", "A supported tool name is required.")
                 }
                 guard client.scopes.contains(definition.scope) else { throw MCPToolFailure("SCOPE_DENIED", "The client lacks the \(definition.scope) scope.") }
+                if let raw = params["arguments"], !(raw is MCPJSON) {
+                    throw MCPToolFailure("INVALID_ARGUMENT", "arguments must be an object.", details: ["field": "arguments", "reason": "type"])
+                }
                 let args = params["arguments"] as? MCPJSON ?? [:]
+                // Structural validation runs before any handler so an invalid call
+                // records no action and shows no approval prompt.
+                try MCPSchemaValidator.validate(args, schema: definition.schema)
                 let value: MCPJSON
                 switch name {
                 case "rocknroll_status": value = try await backend.status()

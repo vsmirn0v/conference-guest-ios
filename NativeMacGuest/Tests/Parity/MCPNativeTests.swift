@@ -36,18 +36,24 @@ import XCTest
         _ = Self.disableBuggyMemoryChecker
     }
 
-    // Xcode 26's memory checker re-invokes each completed test body inside its
-    // error-observation machinery, which trips a Swift 6.3/6.4 concurrency
-    // runtime assertion ("freed pointer was not the last allocation",
-    // swiftlang/swift#87481) and aborts the test host. Shadowing the hook on
-    // this class only (the original stays intact for every other test class)
-    // keeps the suite runnable; these tests own no Objective-C fixtures, so
-    // the checker buys nothing here.
+    // Swift 6.3/6.4 (Xcode 26) XCTest wraps every test body in a private memory
+    // checker, `assertInvalidObjectsDeallocatedAfterScope:`, whose post-scope
+    // assertion trips a concurrency-runtime bug ("freed pointer was not the
+    // last allocation", swiftlang/swift#87481) whenever the body touched the
+    // attention store — aborting the test host. The checker takes the body as
+    // its scope block, so the safe neutralization is to KEEP running the block
+    // and skip only the assertion. Do NOT replace the implementation with a
+    // plain no-op (or class_addMethod it onto a subclass): XCTest runs the test
+    // body inside this method, so swallowing it produces tests that report
+    // "passed" in ~0 ms while their bodies never execute.
     private static let disableBuggyMemoryChecker: Void = {
         let selector = NSSelectorFromString("assertInvalidObjectsDeallocatedAfterScope:")
-        let block: @convention(block) (XCTestCase, AnyObject?) -> Void = { _, _ in }
-        let imp = imp_implementationWithBlock(block)
-        class_addMethod(MCPNativeTests.self, selector, imp, "v@:@")
+        guard let method = class_getInstanceMethod(XCTestCase.self, selector) else { return }
+        let block: @convention(block) (AnyObject?, AnyObject?) -> Void = { _, scope in
+            guard let scope else { return }
+            unsafeBitCast(scope, to: (@convention(block) () -> Void).self)()
+        }
+        method_setImplementation(method, imp_implementationWithBlock(block))
     }()
 
     private func tempFile(_ name: String = "endpoint.json") -> URL {
@@ -95,16 +101,24 @@ import XCTest
 
     // MARK: Async-body runner
     //
-    // XCTest's asynchronous test invocation on Swift 6.3/6.4 (Xcode 26) trips a
-    // concurrency-runtime assertion ("freed pointer was not the last allocation",
-    // swiftlang/swift#87481) whenever the test body touches the attention store.
-    // Running the async body via a plain Task + XCTWaiter sidesteps the buggy
-    // error-observation path; fixtures stay local to the closure so the test case
-    // never retains MainActor-isolated objects.
+    // XCTest's asynchronous test invocation on Swift 6.3/6.4 (Xcode 26) is
+    // unreliable (concurrency-runtime assertion "freed pointer was not the last
+    // allocation", swiftlang/swift#87481): bodies either trip the assertion or
+    // are silently skipped and reported as passed in ~0 ms. Empirically the
+    // silent-skip path hits any `async` test method here, not just ones that
+    // touch the attention store, so ALL async bodies must go through this
+    // wrapper instead of being declared `async` test methods. Running the body
+    // via a plain Task + XCTWaiter sidesteps the buggy error-observation path;
+    // fixtures stay local to the closure so the test case never retains
+    // MainActor-isolated objects.
 
-    private func runAsyncTest(file: StaticString = #filePath, line: UInt = #line, _ body: @escaping @MainActor () async -> Void) {
+    private func runAsyncTest(file: StaticString = #filePath, line: UInt = #line, _ body: @escaping @MainActor () async throws -> Void) {
         let done = expectation(description: "async body")
-        Task { await body(); done.fulfill() }
+        Task {
+            do { try await body() }
+            catch { XCTFail("Async body threw: \(error)", file: file, line: line) }
+            done.fulfill()
+        }
         // XCTWaiter instead of XCTestCase.wait(for:) — macOS 26 shadows the name with a Foundation `wait` symbol.
         let result = XCTWaiter().wait(for: [done], timeout: 120)
         XCTAssertEqual(result, .completed, "Async test body timed out", file: file, line: line)
@@ -206,75 +220,79 @@ import XCTest
         func runAssistant(_: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON { [:] }
     }
 
-    func testToolsListExposesTwelveToolsWithHonestAnnotations() async throws {
-        let server = MCPJSONRPCServer(backend: StubBackend())
-        let listResponse = await server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"], client: client())
-        let result = try XCTUnwrap(listResponse)?["result"] as? MCPJSON
-        let tools = try XCTUnwrap(result?["tools"] as? [MCPJSON])
-        XCTAssertEqual(tools.count, nativeMCPToolDefinitions().count)
-        let byName = Dictionary(uniqueKeysWithValues: tools.compactMap { tool -> (String, MCPJSON)? in
-            guard let name = tool["name"] as? String else { return nil }
-            return (name, tool)
-        })
-        XCTAssertEqual(byName.count, nativeMCPToolDefinitions().count)
-        for definition in nativeMCPToolDefinitions() {
-            let tool = try XCTUnwrap(byName[definition.name])
-            let annotations = try XCTUnwrap(tool["annotations"] as? MCPJSON)
-            XCTAssertEqual(annotations["readOnlyHint"] as? Bool, definition.readOnly, definition.name)
-            XCTAssertEqual(annotations["destructiveHint"] as? Bool, false, definition.name)
-            XCTAssertFalse((tool["description"] as? String ?? "").isEmpty, definition.name)
+    func testToolsListExposesTwelveToolsWithHonestAnnotations() {
+        runAsyncTest { @MainActor in
+            let server = MCPJSONRPCServer(backend: StubBackend())
+            let listResponse = await server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"], client: self.client())
+            let result = try XCTUnwrap(listResponse)?["result"] as? MCPJSON
+            let tools = try XCTUnwrap(result?["tools"] as? [MCPJSON])
+            XCTAssertEqual(tools.count, nativeMCPToolDefinitions().count)
+            let byName = Dictionary(uniqueKeysWithValues: tools.compactMap { tool -> (String, MCPJSON)? in
+                guard let name = tool["name"] as? String else { return nil }
+                return (name, tool)
+            })
+            XCTAssertEqual(byName.count, nativeMCPToolDefinitions().count)
+            for definition in nativeMCPToolDefinitions() {
+                let tool = try XCTUnwrap(byName[definition.name])
+                let annotations = try XCTUnwrap(tool["annotations"] as? MCPJSON)
+                XCTAssertEqual(annotations["readOnlyHint"] as? Bool, definition.readOnly, definition.name)
+                XCTAssertEqual(annotations["destructiveHint"] as? Bool, false, definition.name)
+                XCTAssertFalse((tool["description"] as? String ?? "").isEmpty, definition.name)
+            }
+            let initResponse = await server.handle(["jsonrpc": "2.0", "id": 2, "method": "initialize"], client: self.client())
+            let initialize = try XCTUnwrap(initResponse)
+            XCTAssertEqual((initialize["result"] as? MCPJSON)?["serverInfo"] as? NSDictionary, ["name": "rocknroll-native", "version": "0.2.0"] as NSDictionary)
+            let unknownResponse = await server.handle(["jsonrpc": "2.0", "id": 3, "method": "bogus/method"], client: self.client())
+            let unknown = try XCTUnwrap(unknownResponse)
+            XCTAssertEqual((unknown["error"] as? MCPJSON)?["code"] as? Int, -32601)
+            let notification = await server.handle(["jsonrpc": "2.0", "method": "notifications/initialized"], client: self.client())
+            XCTAssertNil(notification)
         }
-        let initResponse = await server.handle(["jsonrpc": "2.0", "id": 2, "method": "initialize"], client: client())
-        let initialize = try XCTUnwrap(initResponse)
-        XCTAssertEqual((initialize["result"] as? MCPJSON)?["serverInfo"] as? NSDictionary, ["name": "rocknroll-native", "version": "0.1.0"] as NSDictionary)
-        let unknownResponse = await server.handle(["jsonrpc": "2.0", "id": 3, "method": "bogus/method"], client: client())
-        let unknown = try XCTUnwrap(unknownResponse)
-        XCTAssertEqual((unknown["error"] as? MCPJSON)?["code"] as? Int, -32601)
-        let notification = await server.handle(["jsonrpc": "2.0", "method": "notifications/initialized"], client: client())
-        XCTAssertNil(notification)
     }
 
     // MARK: Loopback HTTP transport
 
-    func testTransportPairsAndServesScopedRpc() async throws {
-        let tokens = MCPTokenStore()
-        let server = MCPJSONRPCServer(backend: StubBackend())
-        let transport = MCPHTTPTransport(server: server, tokens: tokens, endpointFile: tempFile())
-        try await transport.start()
-        addTeardownBlock { transport.stop() }
-        let endpoint = try XCTUnwrap(tokens.endpoint(host: "127.0.0.1", port: transport.port ?? 0, path: "/mcp"))
-        let endpointData = try Data(contentsOf: transport.endpointFile)
-        let endpointObject = try XCTUnwrap(JSONSerialization.jsonObject(with: endpointData) as? MCPJSON)
-        XCTAssertEqual(endpointObject["port"] as? Int, Int(endpoint.port))
-        let permissions = try FileManager.default.attributesOfItem(atPath: transport.endpointFile.path)[.posixPermissions] as? Int
-        XCTAssertEqual(permissions, 0o600, "The endpoint file carries the pairing secret")
+    func testTransportPairsAndServesScopedRpc() {
+        runAsyncTest { @MainActor in
+            let tokens = MCPTokenStore()
+            let server = MCPJSONRPCServer(backend: StubBackend())
+            let transport = MCPHTTPTransport(server: server, tokens: tokens, endpointFile: self.tempFile())
+            try await transport.start()
+            self.addTeardownBlock { transport.stop() }
+            let endpoint = try XCTUnwrap(tokens.endpoint(host: "127.0.0.1", port: transport.port ?? 0, path: "/mcp"))
+            let endpointData = try Data(contentsOf: transport.endpointFile)
+            let endpointObject = try XCTUnwrap(JSONSerialization.jsonObject(with: endpointData) as? MCPJSON)
+            XCTAssertEqual(endpointObject["port"] as? Int, Int(endpoint.port))
+            let permissions = try FileManager.default.attributesOfItem(atPath: transport.endpointFile.path)[.posixPermissions] as? Int
+            XCTAssertEqual(permissions, 0o600, "The endpoint file carries the pairing token secret")
 
-        let url = URL(string: "http://127.0.0.1:\(endpoint.port)")!
-        // Bad pairing token.
-        let (badPair, badStatus) = try await post(url.appendingPathComponent("pair"), object: ["pairing_token": "wrong"], token: nil)
-        XCTAssertEqual(badStatus, 401); _ = badPair
-        // Good pairing token: default read scopes.
-        let (pairBody, pairStatus) = try await post(url.appendingPathComponent("pair"), object: ["pairing_token": endpoint.pairingToken, "client": "codex"], token: nil)
-        XCTAssertEqual(pairStatus, 200)
-        let clientToken = try XCTUnwrap(pairBody?["client_token"] as? String)
-        XCTAssertEqual(pairBody?["scopes"] as? [String], ["meetings:read", "settings:read"])
+            let url = URL(string: "http://127.0.0.1:\(endpoint.port)")!
+            // Bad pairing token.
+            let (badPair, badStatus) = try await self.post(url.appendingPathComponent("pair"), object: ["pairing_token": "wrong"], token: nil)
+            XCTAssertEqual(badStatus, 401); _ = badPair
+            // Good pairing token: default read scopes.
+            let (pairBody, pairStatus) = try await self.post(url.appendingPathComponent("pair"), object: ["pairing_token": endpoint.pairingToken, "client": "codex"], token: nil)
+            XCTAssertEqual(pairStatus, 200)
+            let clientToken = try XCTUnwrap(pairBody?["client_token"] as? String)
+            XCTAssertEqual(pairBody?["scopes"] as? [String], ["meetings:read", "settings:read"])
 
-        // Unauthenticated tool call.
-        let (unauth, unauthStatus) = try await post(url.appendingPathComponent("mcp"), object: rpc("tools/call", name: "rocknroll_status"), token: nil)
-        XCTAssertEqual(unauthStatus, 401); _ = unauth
-        // Authorized read.
-        let (statusBody, statusCode) = try await post(url.appendingPathComponent("mcp"), object: rpc("tools/call", name: "rocknroll_status"), token: clientToken)
-        XCTAssertEqual(statusCode, 200)
-        let result = statusBody?["result"] as? MCPJSON
-        let content = (result?["content"] as? [MCPJSON])?.first
-        XCTAssertEqual(result?["isError"] as? Bool, false)
-        XCTAssertTrue((content?["text"] as? String ?? "").contains("stub"))
-        // Read-only token cannot call a write tool: the transport rejects before dispatch.
-        let (denied, deniedStatus) = try await post(url.appendingPathComponent("mcp"), object: rpc("tools/call", name: "rocknroll_update_settings"), token: clientToken)
-        XCTAssertEqual(deniedStatus, 401); _ = denied
-        // Unknown path.
-        let (_, notFound) = try await post(url.appendingPathComponent("nope"), object: [:], token: clientToken)
-        XCTAssertEqual(notFound, 404)
+            // Unauthenticated tool call.
+            let (unauth, unauthStatus) = try await self.post(url.appendingPathComponent("mcp"), object: self.rpc("tools/call", name: "rocknroll_status"), token: nil)
+            XCTAssertEqual(unauthStatus, 401); _ = unauth
+            // Authorized read.
+            let (statusBody, statusCode) = try await self.post(url.appendingPathComponent("mcp"), object: self.rpc("tools/call", name: "rocknroll_status"), token: clientToken)
+            XCTAssertEqual(statusCode, 200)
+            let result = statusBody?["result"] as? MCPJSON
+            let content = (result?["content"] as? [MCPJSON])?.first
+            XCTAssertEqual(result?["isError"] as? Bool, false)
+            XCTAssertTrue((content?["text"] as? String ?? "").contains("stub"))
+            // Read-only token cannot call a write tool: the transport rejects before dispatch.
+            let (denied, deniedStatus) = try await self.post(url.appendingPathComponent("mcp"), object: self.rpc("tools/call", name: "rocknroll_update_settings"), token: clientToken)
+            XCTAssertEqual(deniedStatus, 401); _ = denied
+            // Unknown path.
+            let (_, notFound) = try await self.post(url.appendingPathComponent("nope"), object: [:], token: clientToken)
+            XCTAssertEqual(notFound, 404)
+        }
     }
 
     private func rpc(_ method: String, name: String? = nil, arguments: MCPJSON = [:]) -> MCPJSON {
@@ -297,36 +315,40 @@ import XCTest
 
     // MARK: Backend reads without a workspace
 
-    func testBackendReadsAreSafeWithNoWorkspace() async throws {
-        let backend = NativeDesktopMCPBackend(defaults: defaults())
-        let status = try await backend.status()
-        XCTAssertEqual(status["backend"] as? String, "native")
-        XCTAssertEqual((status["app"] as? MCPJSON)?["active_meetings"] as? Int, 0)
-        let listed = try await backend.listMeetings([:], client: client())
-        XCTAssertEqual((listed["items"] as? [MCPJSON])?.count, 0)
-        XCTAssertEqual(listed["coverage"] as? String, "complete")
-        let searched = try await backend.search(["query": "anything"], client: client())
-        XCTAssertEqual((searched["items"] as? [MCPJSON])?.count, 0)
-        await assertFailure("MEETING_NOT_FOUND") {
-            try await backend.getMeeting(["meeting_id": "session:native:\(UUID().uuidString)"], client: client())
-        }
-        await assertFailure("MEETING_NOT_FOUND") {
-            try await backend.controlMeeting(["action_id": UUID().uuidString, "meeting_id": "session:native:\(UUID().uuidString)", "desired_state": ["leave": true]], client: client())
-        }
-        await assertFailure("APP_NOT_RUNNING") {
-            try await backend.runAssistant(["action_id": UUID().uuidString, "prompt": "hi"], client: client())
+    func testBackendReadsAreSafeWithNoWorkspace() {
+        runAsyncTest { @MainActor in
+            let backend = NativeDesktopMCPBackend(defaults: self.defaults())
+            let status = try await backend.status()
+            XCTAssertEqual(status["backend"] as? String, "native")
+            XCTAssertEqual((status["app"] as? MCPJSON)?["active_meetings"] as? Int, 0)
+            let listed = try await backend.listMeetings([:], client: self.client())
+            XCTAssertEqual((listed["items"] as? [MCPJSON])?.count, 0)
+            XCTAssertEqual(listed["coverage"] as? String, "complete")
+            let searched = try await backend.search(["query": "anything"], client: self.client())
+            XCTAssertEqual((searched["items"] as? [MCPJSON])?.count, 0)
+            await self.assertFailure("MEETING_NOT_FOUND") {
+                try await backend.getMeeting(["meeting_id": "session:native:\(UUID().uuidString)"], client: self.client())
+            }
+            await self.assertFailure("MEETING_NOT_FOUND") {
+                try await backend.controlMeeting(["action_id": UUID().uuidString, "meeting_id": "session:native:\(UUID().uuidString)", "desired_state": ["leave": true]], client: self.client())
+            }
+            await self.assertFailure("APP_NOT_RUNNING") {
+                try await backend.runAssistant(["action_id": UUID().uuidString, "prompt": "hi"], client: self.client())
+            }
         }
     }
 
-    func testMutationsRequireExpectedRevisionBeforeAnyLookup() async throws {
-        let backend = NativeDesktopMCPBackend(defaults: defaults())
-        // No expected_revision: refused before the room lookup, so nothing is touched.
-        await assertFailure("INVALID_ARGUMENT") {
-            try await backend.setFavorite(["action_id": UUID().uuidString, "room_id": "room:native:\(UUID().uuidString)", "favorite": true], client: client())
-        }
-        XCTAssertTrue(backend.actions.recordedActions.isEmpty, "A refused action leaves no pending record")
-        await assertFailure("APP_NOT_RUNNING") {
-            try await backend.updateSettings(["action_id": UUID().uuidString, "sections": [:]], client: client())
+    func testMutationsRequireExpectedRevisionBeforeAnyLookup() {
+        runAsyncTest { @MainActor in
+            let backend = NativeDesktopMCPBackend(defaults: self.defaults())
+            // No expected_revision: refused before the room lookup, so nothing is touched.
+            await self.assertFailure("INVALID_ARGUMENT") {
+                try await backend.setFavorite(["action_id": UUID().uuidString, "room_id": "room:native:\(UUID().uuidString)", "favorite": true], client: self.client())
+            }
+            XCTAssertTrue(backend.actions.recordedActions.isEmpty, "A refused action leaves no pending record")
+            await self.assertFailure("APP_NOT_RUNNING") {
+                try await backend.updateSettings(["action_id": UUID().uuidString, "sections": [:]], client: self.client())
+            }
         }
     }
 
@@ -365,6 +387,7 @@ import XCTest
             }
             let sections = read["sections"] as? MCPJSON
             XCTAssertNotNil(sections?["app"]); XCTAssertNotNil(sections?["attention"])
+            XCTAssertNotNil((sections?["app"] as? MCPJSON)?["favorite_revision"], "set_favorite callers need a discoverable revision")
             guard let encoded = try? JSONSerialization.data(withJSONObject: read, options: [.sortedKeys]) else {
                 XCTFail("settings must be serializable"); return
             }

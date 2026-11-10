@@ -64,7 +64,19 @@ import Foundation
     }
 
     private func timeFilter(_ args: MCPJSON) throws -> (Date?, Date?) {
+        // NOTE: keep this a single-expression tuple of throwing calls. Expanding
+        // it into multiple `let` bindings + a comparison + early throw miscompiles
+        // under Swift 6.3/6.4 (swiftlang/swift#87481) and aborts the host process
+        // with "freed pointer was not the last allocation" at runtime.
         (try MCPValue.date(args["from"], key: "from"), try MCPValue.date(args["to"], key: "to"))
+    }
+
+    /// from/to ordering lives outside `timeFilter` so the parser keeps its
+    /// single-expression shape (see the note there).
+    private func assertOrdered(_ from: Date?, _ to: Date?) throws {
+        if let from, let to, from >= to {
+            throw MCPToolFailure("INVALID_ARGUMENT", "from must be earlier than to.", details: ["field": "from", "reason": "range"])
+        }
     }
 
     private func inRange(_ date: Date?, from: Date?, to: Date?) -> Bool {
@@ -78,7 +90,7 @@ import Foundation
     func status() async throws -> MCPJSON {
         [
             "backend": "native",
-            "server": ["name": "rocknroll-native", "version": "0.1.0"],
+            "server": ["name": "rocknroll-native", "version": "0.2.0"],
             "app": [
                 "running": true,
                 "bundle_id": Bundle.main.bundleIdentifier ?? "dev.vsmirn0v.conferenceguest.nativeguest",
@@ -156,7 +168,10 @@ import Foundation
 
     func listMeetings(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
         let (from, to) = try timeFilter(args)
-        let query = try MCPValue.optionalString(args["query"], key: "query")?.lowercased()
+        try assertOrdered(from, to)
+        // The query filter is trimmed; a whitespace-only value is ignored.
+        let trimmed = try MCPValue.optionalString(args["query"], key: "query").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let query = (trimmed?.isEmpty == true ? nil : trimmed)?.lowercased()
         let kind = try MCPValue.optionalString(args["kind"], key: "kind")
         if let kind, !["active", "favorite", "recent", "calendar", "outcome"].contains(kind) {
             throw MCPToolFailure("CAPABILITY_UNAVAILABLE", "Unknown meeting kind: \(kind)")
@@ -176,7 +191,10 @@ import Foundation
             if left != right { return left < right }
             return (lhs["id"] as? String ?? "") < (rhs["id"] as? String ?? "")
         }
-        return try page(kind: "meetings", filters: ["from": from as Any, "to": to as Any, "query": query as Any, "kind": kind as Any], args: args, items: items)
+        // Dates are stringified for the cursor key: a boxed Date/Optional<Date> in
+        // this dictionary trips the Swift 6.3/6.4 miscompile (swiftlang/swift#87481)
+        // and aborts the host, and JSONSerialization cannot encode Date anyway.
+        return try page(kind: "meetings", filters: ["from": mcpDate(from) as Any, "to": mcpDate(to) as Any, "query": query as Any, "kind": kind as Any], args: args, items: items)
     }
 
     static func cardDate(_ item: MCPJSON) -> Date? {
@@ -246,6 +264,7 @@ import Foundation
         guard id.hasPrefix("session:") else { throw MCPToolFailure("TRANSCRIPT_UNAVAILABLE", "Only an active session has an authoritative native transcript.") }
         let model = try activeMeeting(id)
         let (from, to) = try timeFilter(args)
+        try assertOrdered(from, to)
         let service = model.transcript.map { message in
             [
                 "id": "utterance:native:\(message.id)", "speaker": message.participantName,
@@ -267,7 +286,7 @@ import Foundation
             let date = (item["at"] as? String).flatMap { formatter.date(from: $0) }
             return inRange(date, from: from, to: to)
         }.sorted { (($0["at"] as? String) ?? "") < (($1["at"] as? String) ?? "") }
-        var result = try page(kind: "transcript", filters: ["meeting_id": id, "from": from as Any, "to": to as Any], args: args, items: items)
+        var result = try page(kind: "transcript", filters: ["meeting_id": id, "from": mcpDate(from) as Any, "to": mcpDate(to) as Any], args: args, items: items)
         result["coverage"] = model.guestFeatures.transcriptionStatus == .active ? "unknown" : "partial"
         return result
     }
@@ -314,32 +333,37 @@ import Foundation
     }
 
     func search(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
-        let query = try MCPValue.string(args["query"], key: "query").lowercased()
+        let rawQuery = try MCPValue.string(args["query"], key: "query")
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "query must not be empty.", details: ["field": "query", "reason": "empty"])
+        }
+        let needle = query.lowercased()
         let types = args["types"] as? [String] ?? ["meeting", "outcome", "task", "transcript"]
         var results: [MCPJSON] = []
         if types.contains("meeting") {
             for item in allMeetingItems() {
                 let text = ((item["title"] as? String) ?? "").lowercased()
-                if text.contains(query) { results.append(["type": "meeting", "meeting": item, "matched_field": "title"]) }
+                if text.contains(needle) { results.append(["type": "meeting", "meeting": item, "matched_field": "title"]) }
             }
         }
         if types.contains("outcome") {
             for value in attention?.store.assistant.outcomes ?? [] {
                 let item = outcomeCard(value)
                 let haystack = ((item["title"] as? String) ?? "") + " " + value.summary
-                if haystack.lowercased().contains(query) { results.append(["type": "outcome", "meeting": item, "matched_field": "title_or_summary"]) }
+                if haystack.lowercased().contains(needle) { results.append(["type": "outcome", "meeting": item, "matched_field": "title_or_summary"]) }
             }
         }
         if types.contains("task") {
             for value in attention?.store.assistant.outcomes ?? [] {
-                for task in value.tasks where task.text.lowercased().contains(query) {
+                for task in value.tasks where task.text.lowercased().contains(needle) {
                     results.append(["type": "task", "task": ["id": mcpTaskID(value.id, task), "text": task.text, "owner": task.owner, "done": task.done, "meeting_id": mcpOutcomeID(value.id)], "matched_field": "text"])
                 }
             }
         }
         if types.contains("transcript") {
             for model in app?.meetings ?? [] {
-                for message in model.transcript + model.localTranscript where message.text.lowercased().contains(query) {
+                for message in model.transcript + model.localTranscript where message.text.lowercased().contains(needle) {
                     results.append(["type": "transcript", "meeting": activeCard(model), "utterance": ["speaker": message.participantName, "text": message.text, "at": mcpDate(Self.spokenDate(message)) ?? ""], "matched_field": "text"])
                 }
             }
@@ -361,16 +385,29 @@ import Foundation
             sections["app"] = [
                 "display_name": library?.displayName ?? "", "multiple_meetings": defaults.object(forKey: "nativeDesktop.multipleMeetings") as? Bool ?? true,
                 "calendar_enabled": library?.calendar.enabled ?? false, "calendar_access": String(describing: library?.calendar.access ?? .notDetermined),
+                // Published so rocknroll_set_favorite callers can supply expected_revision.
+                "favorite_revision": favoriteRevision,
             ]
         }
         if requested.contains("attention") {
+            // Sub-expressions are hoisted into lets: nesting the provider/writer
+            // calls and mapValues directly inside the dictionary literal miscompiles
+            // under Swift 6.3/6.4 (swiftlang/swift#87481) and aborts the host
+            // process with "freed pointer was not the last allocation".
+            let provider = providerInfo(store.provider, store: store)
+            let writer = providerInfo(store.effectiveWriter, store: store)
+            // String-keyed: the raw store dictionary is keyed by the
+            // AttentionSituation enum, which JSONSerialization cannot encode
+            // (and whose bridging trips the Swift 6.3/6.4 arena miscompile,
+            // swiftlang/swift#87481, aborting the host mid-serialization).
+            let modes = Dictionary(uniqueKeysWithValues: store.situationModes.map { ($0.key.rawValue, $0.value.rawValue) })
             sections["attention"] = [
                 "judge_enabled": store.enabled, "pause_on_battery": store.pauseOnBattery,
                 "draft_replies": store.draftReplies, "local_drafts": store.localDrafts,
                 "push_to_talk": store.pushToTalk, "talk_back": store.talkBack,
                 "generate_outcomes": store.generateOutcomes, "remote_outcomes": store.remoteOutcomes,
-                "provider": providerInfo(store.provider, store: store), "writer": providerInfo(store.effectiveWriter, store: store),
-                "situation_modes": store.situationModes.mapValues { $0.rawValue },
+                "provider": provider, "writer": writer,
+                "situation_modes": modes,
             ]
         }
         if requested.contains("meeting") {
@@ -379,9 +416,15 @@ import Foundation
                 let model = try activeMeeting(id)
                 let preset = store.preset(room: model.invitation, latest: nil, series: model.calendarSeriesID)
                 let situation: AttentionSituation = workspace().map { $0.isOnScreen(model) ? .onScreen : (model.snapshot.playoutOn ? .background : .silenced) } ?? .silenced
+                // Hoisted out of the literal for the same swiftlang/swift#87481 reason
+                // as the attention branch above.
+                let configuredMode: Any = preset?.mode?.rawValue ?? NSNull()
+                let effectiveMode = (preset?.mode ?? store.mode(for: situation)).rawValue
+                let inheritedFrom: Any = preset.map { _ in ["meeting_preset"] } ?? ["situation_default"]
+                let presetID: Any = preset?.id.uuidString ?? NSNull()
                 meeting = [
-                    "configured_mode": preset?.mode?.rawValue ?? NSNull(), "effective_mode": (preset?.mode ?? store.mode(for: situation)).rawValue,
-                    "inherited_from": preset.map { _ in ["meeting_preset"] } ?? ["situation_default"], "preset_id": preset?.id.uuidString ?? NSNull(),
+                    "configured_mode": configuredMode, "effective_mode": effectiveMode,
+                    "inherited_from": inheritedFrom, "preset_id": presetID,
                 ]
             }
             sections["meeting"] = meeting
@@ -401,7 +444,9 @@ import Foundation
     }
 
     private func expectRevision(_ expected: Any?, actual: String) throws {
-        guard let expected = expected as? String, !expected.isEmpty else { throw MCPToolFailure("INVALID_ARGUMENT", "expected_revision is required.") }
+        guard let expected = expected as? String, !expected.isEmpty else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "expected_revision is required.", details: ["field": "expected_revision", "reason": "required"])
+        }
         guard expected == actual else { throw MCPToolFailure("REVISION_CONFLICT", "The target changed before the action was applied.", retryable: true) }
     }
 
@@ -525,9 +570,15 @@ import Foundation
 
     func runAssistant(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
         let (id, replay) = try beginAction(args, client: client); if let replay { return replay }
-        guard let app, let talk = attention?.talk else { throw MCPToolFailure("APP_NOT_RUNNING", "The native assistant is unavailable.") }
-        let prompt = try MCPValue.string(args["prompt"], key: "prompt")
+        // Reject the unsupported field before any workspace lookup so clients
+        // reliably get CAPABILITY_UNAVAILABLE rather than APP_NOT_RUNNING.
         if args["conversation_id"] != nil { throw MCPToolFailure("CAPABILITY_UNAVAILABLE", "This assistant does not expose external conversation IDs.") }
+        let rawPrompt = try MCPValue.string(args["prompt"], key: "prompt")
+        let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "prompt must not be empty.", details: ["field": "prompt", "reason": "empty"])
+        }
+        guard let app, let talk = attention?.talk else { throw MCPToolFailure("APP_NOT_RUNNING", "The native assistant is unavailable.") }
         if let meetingID = try MCPValue.optionalString(args["meeting_id"], key: "meeting_id") {
             guard meetingID.hasPrefix("session:") else { throw MCPToolFailure("INVALID_ARGUMENT", "meeting_id must identify an active session.") }
             let model = try activeMeeting(meetingID)

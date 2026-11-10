@@ -36,6 +36,37 @@ changing a single command.
 Secrets never cross the wire: settings reads report `has_key` booleans, and API
 keys stay in the macOS keychain.
 
+## Schemas and validation (server 0.2.0)
+
+Every tool publishes a real, self-contained `inputSchema` (no `$ref`, every
+property described, `additionalProperties: false`). Arguments are validated
+against that schema **before** dispatch and before any approval prompt, so a
+structurally invalid call never reaches the backend, never records an action,
+and never asks the user for approval. Validation rejects with a structured
+error `details: {field, reason}`:
+
+- unknown fields (`unknown_field`), including unknown keys inside a `sections`
+  patch (`sections.attention.bogus`),
+- missing required fields (`required`), explicit `null` (`null`), wrong types
+  with no coercion (`type`), empty strings (`empty`), out-of-enum values
+  (`enum`), and out-of-range limits or malformed dates (`range` / `format`).
+
+`limit` must be 1–100; RFC 3339 timestamps must carry a time-zone offset; when
+both bounds are given, `from` must be earlier than `to`. Scope checks run
+before validation, so an under-scoped client still gets `SCOPE_DENIED`.
+
+The exact argument contract per tool lives in [CONTRACTS.md](CONTRACTS.md);
+a generated example of the live native catalog is checked in at
+[examples/tools-list.native.json](examples/tools-list.native.json) and is
+asserted to match the server output in
+`MCPSchemaContractTests.testToolsListExampleFileMatchesLiveCatalog`.
+
+**Compatibility:** tool names, scope names, and annotations are unchanged from
+0.1.0, and tools whose arguments are all optional still accept `{}`. Because
+the catalog is static, `listChanged` remains `false`; clients that cached the
+0.1.0 catalog (empty schemas) only need to reconnect — restart the app (or
+re-pair) so the client fetches a fresh `tools/list`.
+
 ## Pairing a real client (native profile)
 
 1. **Run the app.** The MCP listener starts automatically at launch and binds a
@@ -124,8 +155,10 @@ python3 mcp/rocknroll_local.py --data-root mcp/fixtures
 ## Tests
 
 ```bash
-python3 -m unittest discover -s mcp/tests -v   # 13 offline protocol tests
+python3 -m unittest discover -s mcp/tests -v   # 22 offline protocol + schema-parity tests
 ```
 
-The native transport (pairing, scope enforcement, HTTP surface) is covered by
-`MCPNativeTests` in the `RockNativeGuest` Xcode target (11 tests).
+The native surface is covered in the `RockNativeGuest` Xcode target:
+`MCPNativeTests` (12 pairing/transport/backend tests) and
+`MCPSchemaContractTests` (15 catalog, drift-guard, validation-matrix, and
+side-effect-safety tests).

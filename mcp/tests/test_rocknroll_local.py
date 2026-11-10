@@ -160,5 +160,94 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(self.server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
 
 
+class SchemaContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.fixture = ROOT / "mcp" / "fixtures"
+        self.temp = pathlib.Path(tempfile.mkdtemp(prefix="rocknroll-mcp-schema-"))
+        self.root = self.temp / "data"
+        shutil.copytree(self.fixture, self.root)
+        self.server = rocknroll_local.MCPServer(rocknroll_local.OfflineRocknrollBackend(self.root))
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.temp)
+
+    def request(self, name: str, arguments):
+        return self.server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                   "params": {"name": name, "arguments": arguments}})
+
+    def error(self, response) -> dict:
+        self.assertTrue(response["result"]["isError"], response)
+        return json.loads(response["result"]["content"][0]["text"])["error"]
+
+    def assert_invalid(self, response, field: str, reason: str) -> None:
+        error = self.error(response)
+        self.assertEqual(error["code"], "INVALID_ARGUMENT", error)
+        self.assertEqual(error["details"], {"field": field, "reason": reason})
+
+    def tools_by_name(self) -> dict:
+        listed = self.server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        return {tool["name"]: tool for tool in listed["result"]["tools"]}
+
+    def test_catalog_publishes_described_closed_schemas(self) -> None:
+        tools = self.tools_by_name()
+        self.assertEqual(len(tools), 7)
+        for name, tool in tools.items():
+            schema = tool["inputSchema"]
+            self.assertEqual(schema["type"], "object", name)
+            self.assertFalse(schema["additionalProperties"], name)
+            required = schema["required"]
+            self.assertEqual(set(required) - set(schema["properties"]), set(), name)
+            for field, prop in schema["properties"].items():
+                self.assertTrue(prop.get("description"), f"{name}.{field} needs a description")
+
+    def test_initialize_reports_bumped_version(self) -> None:
+        initialized = self.server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                          "params": {"protocolVersion": rocknroll_local.PROTOCOL_VERSION}})
+        self.assertEqual(initialized["result"]["serverInfo"]["version"], "0.2.0")
+
+    def test_unknown_fields_are_rejected_before_dispatch(self) -> None:
+        self.assert_invalid(self.request("rocknroll_status", {"bogus": 1}), "bogus", "unknown_field")
+        listed = self.request("rocknroll_list_meetings", {"kind": "outcome"})
+        self.assertFalse(listed["result"]["isError"])
+
+    def test_required_and_min_length_fields(self) -> None:
+        self.assert_invalid(self.request("rocknroll_get_meeting", {}), "meeting_id", "required")
+        self.assert_invalid(self.request("rocknroll_get_outcome", {}), "outcome_id", "required")
+        self.assert_invalid(self.request("rocknroll_search", {}), "query", "required")
+        self.assert_invalid(self.request("rocknroll_search", {"query": "   "}), "query", "empty")
+        self.assert_invalid(self.request("rocknroll_get_meeting", {"meeting_id": ""}), "meeting_id", "empty")
+
+    def test_types_are_strict_and_null_is_rejected(self) -> None:
+        self.assert_invalid(self.request("rocknroll_list_tasks", {"done": "true"}), "done", "type")
+        self.assert_invalid(self.request("rocknroll_list_tasks", {"done": 1}), "done", "type")
+        self.assert_invalid(self.request("rocknroll_list_tasks", {"done": None}), "done", "null")
+        self.assert_invalid(self.request("rocknroll_search", {"query": "x", "limit": "20"}), "limit", "type")
+        self.assert_invalid(self.request("rocknroll_search", {"query": "x", "limit": True}), "limit", "type")
+
+    def test_limit_bounds_are_enforced(self) -> None:
+        self.assert_invalid(self.request("rocknroll_search", {"query": "x", "limit": 0}), "limit", "range")
+        self.assert_invalid(self.request("rocknroll_search", {"query": "x", "limit": 101}), "limit", "range")
+        ok = self.request("rocknroll_search", {"query": "x", "limit": 100})
+        self.assertFalse(ok["result"]["isError"])
+
+    def test_enums_are_enforced(self) -> None:
+        self.assert_invalid(self.request("rocknroll_list_meetings", {"kind": "bogus"}), "kind", "enum")
+        self.assert_invalid(self.request("rocknroll_search", {"query": "x", "types": ["bogus"]}), "types[0]", "enum")
+        self.assert_invalid(self.request("rocknroll_search", {"query": "x", "types": [7]}), "types[0]", "type")
+
+    def test_dates_require_offsets_and_ordering(self) -> None:
+        self.assert_invalid(self.request("rocknroll_list_meetings", {"from": "2026-01-01T09:00:00"}), "from", "format")
+        self.assert_invalid(self.request("rocknroll_list_meetings", {
+            "from": "2026-02-01T09:00:00+03:00", "to": "2026-01-01T09:00:00+03:00",
+        }), "from", "range")
+        ok = self.request("rocknroll_list_meetings", {"from": "2026-01-01T00:00:00Z", "to": "2026-12-01T00:00:00+03:00"})
+        self.assertFalse(ok["result"]["isError"])
+
+    def test_whitespace_query_filter_is_ignored(self) -> None:
+        ignored = json.loads(self.request("rocknroll_list_meetings", {"query": "   "})["result"]["content"][0]["text"])
+        unfiltered = json.loads(self.request("rocknroll_list_meetings", {})["result"]["content"][0]["text"])
+        self.assertEqual(ignored["items"], unfiltered["items"])
+
+
 if __name__ == "__main__":
     unittest.main()
