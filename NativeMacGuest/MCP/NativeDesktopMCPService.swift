@@ -1,8 +1,17 @@
 import AppKit
 import Foundation
 
+/// One renderable snapshot of the server for the settings panel.
+struct NativeDesktopMCPStatus: Equatable {
+    var running = false
+    var port: UInt16?
+    var endpointFilePath = ""
+    var error: String?
+    var pairedClients: [MCPClientIdentity] = []
+}
+
 /// Owns the native MCP adapter lifecycle and exposes the one-time pairing flow.
-@MainActor final class NativeDesktopMCPService {
+@MainActor final class NativeDesktopMCPService: ObservableObject {
     private let workspace: NativeDesktopWorkspace
     private let tokens = MCPTokenStore()
     private let backend: NativeDesktopMCPBackend
@@ -11,6 +20,7 @@ import Foundation
     private let rpc: MCPJSONRPCServer
     private let transport: MCPHTTPTransport
     private(set) var endpointFile: URL
+    @Published private(set) var status = NativeDesktopMCPStatus()
     var pairingToken: String { tokens.endpoint(host: "127.0.0.1", port: transport.port ?? 0, path: "/mcp").pairingToken }
     var isRunning: Bool { transport.port != nil }
     var onError: (String) -> Void = { message in NSLog("Rock'N'Roll MCP: %@", message) }
@@ -25,7 +35,24 @@ import Foundation
         })
         rpc = MCPJSONRPCServer(backend: backend)
         transport = MCPHTTPTransport(server: rpc, tokens: tokens, endpointFile: configured)
-        transport.onError = { [weak self] message in self?.onError(message) }
+        transport.onError = { [weak self] message in self?.handleTransportError(message) }
+        tokens.onChange = { [weak self] in self?.refreshStatus() }
+        refreshStatus()
+    }
+
+    /// Forgets one paired client; its token stops working immediately.
+    func revokeClient(_ client: MCPClientIdentity) { tokens.revoke(tokenHash: client.tokenHash) }
+
+    private func handleTransportError(_ message: String) {
+        refreshStatus(error: message)
+        onError(message)
+    }
+
+    private func refreshStatus(error: String? = nil) {
+        status = NativeDesktopMCPStatus(running: isRunning, port: transport.port,
+                                        endpointFilePath: endpointFile.path,
+                                        error: error ?? (isRunning ? nil : status.error),
+                                        pairedClients: tokens.pairedClients)
     }
 
     func start() async {
@@ -38,13 +65,28 @@ import Foundation
                 endpointFile = fallback
                 transport.updateEndpointFile(fallback)
                 transport.stop()
-                transport.onError = { [weak self] message in self?.onError(message) }
-                do { try await transport.start() } catch { onError("Unable to start MCP endpoint: \(error)") }
-            } else { onError("Unable to start MCP endpoint: \(error)") }
+                transport.onError = { [weak self] message in self?.handleTransportError(message) }
+                do {
+                    try await transport.start()
+                    refreshStatus()
+                } catch {
+                    let message = "Unable to start MCP endpoint: \(error)"
+                    refreshStatus(error: message)
+                    onError(message)
+                }
+            } else {
+                let message = "Unable to start MCP endpoint: \(error)"
+                refreshStatus(error: message)
+                onError(message)
+            }
         }
+        refreshStatus()
     }
 
-    func stop() { transport.stop() }
+    func stop() {
+        transport.stop()
+        refreshStatus()
+    }
 
     /// Issues a fresh pairing token and endpoint description for the user to approve.
     func makePairingInstruction() -> String {

@@ -21,6 +21,8 @@ import UserNotifications
     #if NATIVE_DIRECT_UPDATES
     var updates: NativeDesktopUpdates?
     #endif
+    /// The local MCP server that lets AI clients work with meetings; set once it starts.
+    var mcpService: NativeDesktopMCPService?
     /// A library section is shown unless a meeting is selected in the sidebar.
     @Published var selection: Section = .home { didSet { if selectedMeetingID != nil { selectedMeetingID = nil } } }
     /// The meeting shown in the main window's detail column.

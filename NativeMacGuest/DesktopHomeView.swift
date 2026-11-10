@@ -40,9 +40,9 @@ struct NativeDesktopHomeView: View {
     }
     @ViewBuilder private var settingsView: some View {
         #if NATIVE_DIRECT_UPDATES
-        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention, updates: workspace.updates)
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention, updates: workspace.updates, mcpService: workspace.mcpService)
         #else
-        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention)
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention, mcpService: workspace.mcpService)
         #endif
     }
     var body: some View {
@@ -450,6 +450,8 @@ struct NativeDesktopSettingsView: View {
     #if NATIVE_DIRECT_UPDATES
     var updates: NativeDesktopUpdates? = nil
     #endif
+    /// The local MCP server, surfaced on its own settings tab.
+    var mcpService: NativeDesktopMCPService? = nil
     @FocusState private var editingName: Bool
     @AppStorage("nativeDesktop.multipleMeetings") private var multipleMeetings = true
     @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
@@ -532,6 +534,10 @@ struct NativeDesktopSettingsView: View {
             if let attention {
                 NativeDesktopIntelligenceSettings(store: attention.store, attention: attention)
                     .tabItem { Label(L("Assistant"), systemImage: "sparkles") }.tag(6)
+            }
+            if let mcpService {
+                NativeDesktopMCPSettings(service: mcpService)
+                    .tabItem { Label(L("MCP Server"), systemImage: "network") }.tag(7)
             }
             #if NATIVE_DIRECT_UPDATES
             if let updates { NativeDesktopUpdatesView(updates: updates).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag(4) }

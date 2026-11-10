@@ -179,6 +179,7 @@ struct NativeGuestApplication {
             if let workspace {
                 let service = NativeDesktopMCPService(workspace: workspace)
                 mcpService = service
+                workspace.mcpService = service
                 // The assistant's optional MCP tools talk to the same backend in-process.
                 workspace.attention.externalToolProvider = AssistantMCPLoopbackProvider(backend: service.toolBackend)
                 Task { await service.start() }

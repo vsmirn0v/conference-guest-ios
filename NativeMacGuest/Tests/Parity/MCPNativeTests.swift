@@ -141,6 +141,30 @@ import XCTest
         }
     }
 
+    /// The settings panel's client list: pairing lists clients, revoke kills the token.
+    func testPairedClientsListAndRevoke() throws {
+        let tokens = MCPTokenStore()
+        var changes = 0
+        tokens.onChange = { changes += 1 }
+        let first = try tokens.pair(token: tokens.endpoint(host: "h", port: 1, path: "/mcp").pairingToken, label: "codex", requestedScopes: nil)
+        let second = try tokens.pair(token: tokens.endpoint(host: "h", port: 1, path: "/mcp").pairingToken, label: "agent", requestedScopes: ["meetings:read"])
+        XCTAssertEqual(tokens.pairedClients.map(\.label), ["agent", "codex"], "Clients are ordered by label")
+        XCTAssertEqual(changes, 2)
+        // A revoked token fails authentication immediately.
+        let victim = try XCTUnwrap(tokens.pairedClients.first { $0.label == "codex" })
+        tokens.revoke(tokenHash: victim.tokenHash)
+        XCTAssertEqual(tokens.pairedClients.map(\.label), ["agent"])
+        XCTAssertEqual(changes, 3)
+        XCTAssertThrowsError(try tokens.authenticate(authorization: "Bearer \(first.token)", requiredScope: "meetings:read")) {
+            XCTAssertEqual(($0 as? MCPToolFailure)?.code, "ACCESS_DENIED")
+        }
+        // The other client is untouched.
+        XCTAssertNoThrow(try tokens.authenticate(authorization: "Bearer \(second.token)", requiredScope: "meetings:read"))
+        // Revoking an unknown hash is a no-op.
+        tokens.revoke(tokenHash: "unknown")
+        XCTAssertEqual(changes, 3)
+    }
+
     // MARK: Action center: idempotency and audit
 
     func testActionCenterReplaysSamePayloadAndRejectsMismatchedReuse() throws {

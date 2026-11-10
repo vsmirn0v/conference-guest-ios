@@ -92,7 +92,7 @@ func mcpTaskID(_ outcome: UUID, _ task: MeetingOutcomeTask) -> String { "task:na
 
 // MARK: - Auth, actions and audit
 
-struct MCPClientIdentity {
+struct MCPClientIdentity: Equatable, Sendable {
     let tokenHash: String
     let scopes: Set<String>
     let label: String
@@ -160,8 +160,19 @@ struct MCPAuditEvent {
     private(set) var pairingToken = UUID().uuidString + UUID().uuidString
     private var clients: [String: MCPClientIdentity] = [:]
     var writeScopesByDefault = false
+    /// Called after any change to the paired-client set, so UI can refresh.
+    var onChange: (() -> Void)?
+
+    /// Paired clients, ordered by label for display.
+    var pairedClients: [MCPClientIdentity] { clients.values.sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending } }
 
     func resetPairingToken() { pairingToken = UUID().uuidString + UUID().uuidString }
+
+    /// Forgets one paired client; its token stops working immediately.
+    func revoke(tokenHash: String) {
+        guard clients.removeValue(forKey: tokenHash) != nil else { return }
+        onChange?()
+    }
 
     func pair(token: String, label: String, requestedScopes: [String]?) throws -> (token: String, scopes: [String]) {
         guard token == pairingToken else { throw MCPToolFailure("ACCESS_DENIED", "The pairing token was rejected.") }
@@ -176,6 +187,7 @@ struct MCPAuditEvent {
         clients[mcpSHA256(token)] = MCPClientIdentity(tokenHash: mcpSHA256(token), scopes: scopes, label: label)
         // A pairing token is single-use: rotate it so a copied token dies after pairing.
         resetPairingToken()
+        onChange?()
         return (token, scopes.sorted())
     }
 
