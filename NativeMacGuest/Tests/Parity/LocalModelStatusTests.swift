@@ -47,9 +47,10 @@ import XCTest
 
     private func statusStore(listen: ListenModelStore, voice: VoiceCloneStore, attention: AttentionStore,
                              asr: LocalSpeechRecognizer = LocalSpeechRecognizer(),
-                             engine: ClonedVoiceEngine = ClonedVoiceEngine()) -> LocalModelStatusStore {
+                             engine: ClonedVoiceEngine = ClonedVoiceEngine(),
+                             defaults: UserDefaults = UserDefaults(suiteName: "local-models-\(UUID().uuidString)")!) -> LocalModelStatusStore {
         .init(store: attention, listen: listen, voice: voice,
-              speechRecognizer: asr, voiceEngine: engine, memoryTracker: .shared)
+              speechRecognizer: asr, voiceEngine: engine, memoryTracker: .shared, defaults: defaults)
     }
 
     private func attentionStore(voiceEngine: VoiceEngine = .cloned) -> AttentionStore {
@@ -81,6 +82,22 @@ import XCTest
         }
         return (listen, VoiceCloneStore(model: model, listen: listen,
                                         folder: folder.appendingPathComponent("Voices-\(UUID().uuidString)"), build: "1"))
+    }
+
+    /// Production shapes the status store's `listenStore` and the voice store's
+    /// `listen` as the same shared catalog, so last-known records for the voice
+    /// model survive pruning. This fixture mirrors that by sharing one store.
+    private func sharedCatalogVoice() throws -> (ListenModelStore, VoiceCloneStore) {
+        let vox = catalogModel(id: "voxcpm2-test", role: VoiceCloneSupport.role, kind: VoiceCloneSupport.kind,
+                               config: ["architecture": "h16g"])
+        let listen = listenStore(models: [vox], enabled: false)
+        let prepared = listen.folder(vox)
+        try FileManager.default.createDirectory(at: prepared, withIntermediateDirectories: true)
+        try "1".write(to: prepared.appendingPathComponent(".prepared"), atomically: true, encoding: .utf8)
+        let url = folder.appendingPathComponent("Voices-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let voice = VoiceCloneStore(model: vox, listen: listen, folder: url, build: "1")
+        return (listen, voice)
     }
 
     // MARK: Readiness and residency
@@ -221,6 +238,71 @@ import XCTest
         XCTAssertEqual(store.voiceStatus.memory, estimate)
     }
 
+    // MARK: Last-known estimates (iteration 2)
+
+    func testLastKnownShownWhenUnloaded() throws {
+        let (listen, _) = speechFixtures()
+        let (_, voice) = try voiceFixtures()
+        let defaults = UserDefaults(suiteName: "local-models-\(UUID().uuidString)")!
+        let record = ModelMemoryRecord(bytes: 512 * 1_024 * 1_024, measuredAt: Date(), build: "test", afterInference: false)
+        LocalModelStatusStore.writeLastKnownRecords(["speech:listen-model": record], to: defaults)
+        let store = statusStore(listen: listen, voice: voice, attention: attentionStore(), defaults: defaults)
+        XCTAssertNil(store.speechStatus.memory, "no live estimate for an unloaded model")
+        XCTAssertEqual(store.speechStatus.memoryLastKnown, record)
+    }
+
+    func testLiveEstimateSupersedesLastKnown() throws {
+        let (listen, runtimeModel) = speechFixtures()
+        let (_, voice) = try voiceFixtures()
+        let defaults = UserDefaults(suiteName: "local-models-\(UUID().uuidString)")!
+        let record = ModelMemoryRecord(bytes: 512 * 1_024 * 1_024, measuredAt: Date(), build: "test", afterInference: false)
+        LocalModelStatusStore.writeLastKnownRecords(["speech:listen-model": record], to: defaults)
+        let store = statusStore(listen: listen, voice: voice, attention: attentionStore(), defaults: defaults)
+        let estimate = ModelMemoryEstimate(bytes: 700 * 1_024 * 1_024, measuredAt: Date(), afterInference: false)
+        store.refreshForTesting(asr: .init(model: runtimeModel, phase: .loaded, activeDecodes: 1),
+                                memory: .init(estimates: [.speech: estimate]))
+        XCTAssertEqual(store.speechStatus.memory, estimate)
+        XCTAssertNil(store.speechStatus.memoryLastKnown, "a live estimate hides the historical record")
+    }
+
+    /// The beta-84 defect: a model loaded but never measured this session showed
+    /// no memory line at all. It now fills the gap with the last-known record.
+    func testLoadedButUnmeasuredVoiceShowsLastKnown() throws {
+        let (listen, voice) = try sharedCatalogVoice()
+        let defaults = UserDefaults(suiteName: "local-models-\(UUID().uuidString)")!
+        let record = ModelMemoryRecord(bytes: 900 * 1_024 * 1_024, measuredAt: Date(), build: "test", afterInference: false)
+        LocalModelStatusStore.writeLastKnownRecords(["voice:voxcpm2-test": record], to: defaults)
+        let store = statusStore(listen: listen, voice: voice, attention: attentionStore(), defaults: defaults)
+        store.refreshForTesting(voice: .init(folder: listen.folder(voice.model!), phase: .loaded, activeSpeeches: 0))
+        XCTAssertEqual(store.voiceStatus.residency, .loaded(active: false))
+        XCTAssertNil(store.voiceStatus.memory, "no live estimate yet this session")
+        XCTAssertEqual(store.voiceStatus.memoryLastKnown, record)
+    }
+
+    func testManagedEnginesNeverReadLastKnown() throws {
+        let (listen, voice) = try sharedCatalogVoice()
+        let defaults = UserDefaults(suiteName: "local-models-\(UUID().uuidString)")!
+        let record = ModelMemoryRecord(bytes: 100 * 1_024 * 1_024, measuredAt: Date(), build: "test", afterInference: false)
+        LocalModelStatusStore.writeLastKnownRecords(["voice:voxcpm2-test": record], to: defaults)
+        let store = statusStore(listen: listen, voice: voice, attention: attentionStore(voiceEngine: .system), defaults: defaults)
+        XCTAssertEqual(LocalModelStatusStore.lastKnownRecords(from: defaults)["voice:voxcpm2-test"], record,
+                       "record survives pruning so the managed path is what ignores it")
+        guard case .managed = store.voiceStatus.readiness else { return XCTFail("system voice is managed") }
+        XCTAssertNil(store.voiceStatus.memoryLastKnown, "managed engines never read last-known")
+    }
+
+    func testPruneDropsRecordsForUnknownModels() throws {
+        let (listen, _) = speechFixtures()
+        let (_, voice) = try voiceFixtures()
+        let defaults = UserDefaults(suiteName: "local-models-\(UUID().uuidString)")!
+        let record = ModelMemoryRecord(bytes: 100 * 1_024 * 1_024, measuredAt: Date(), build: "test", afterInference: false)
+        LocalModelStatusStore.writeLastKnownRecords(["speech:ghost-model": record, "speech:listen-model": record], to: defaults)
+        _ = statusStore(listen: listen, voice: voice, attention: attentionStore(), defaults: defaults)
+        let kept = LocalModelStatusStore.lastKnownRecords(from: defaults)
+        XCTAssertNil(kept["speech:ghost-model"], "records for models absent from the catalog are dropped")
+        XCTAssertNotNil(kept["speech:listen-model"])
+    }
+
     // MARK: Memory tracker
 
     func testConcurrentMeasurementsAreContendedNotAttributed() {
@@ -233,6 +315,22 @@ import XCTest
         tracker.complete(.voice, token: voice, success: true)
         XCTAssertTrue(tracker.runtime.value.estimates.isEmpty, "a contended load publishes no estimate")
         XCTAssertTrue(tracker.runtime.value.contended.isEmpty)
+    }
+
+    func testContendedCompletionRecordsUnmeasuredThenRecovers() {
+        let tracker = LocalModelMemoryTracker.shared
+        let speech = tracker.begin(.speech)
+        let voice = tracker.begin(.voice)
+        tracker.complete(.speech, token: speech, success: true)
+        tracker.complete(.voice, token: voice, success: true)
+        XCTAssertEqual(tracker.runtime.value.unmeasured[.speech], .contended, "a contended load records why the figure is missing")
+        XCTAssertEqual(tracker.runtime.value.unmeasured[.voice], .contended)
+        XCTAssertNil(tracker.runtime.value.estimates[.speech])
+        let retry = tracker.begin(.speech)
+        XCTAssertNil(tracker.runtime.value.unmeasured[.speech], "a new measurement clears the reason")
+        tracker.complete(.speech, token: retry, success: true)
+        XCTAssertNotNil(tracker.runtime.value.estimates[.speech], "the next uncontended load publishes an estimate")
+        XCTAssertNil(tracker.runtime.value.unmeasured[.speech])
     }
 
     func testSystemMemoryProbeReportsSaneSnapshot() {

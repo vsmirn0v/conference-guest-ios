@@ -218,6 +218,16 @@ struct NativeDesktopHomeView: View {
                 NativeDesktopTranscriptionPill(model: meeting, compact: true, announcesInline: detailWidth >= Self.inlineAnnouncementWidth)
             }
         }
+        // The chip sits in its own toolbar item: sharing the button group's
+        // capsule clips the chip's outline. Shown on every home screen (not only
+        // the Assistant) so the status is always one tap away.
+        if workspace.selectedMeeting == nil {
+            ToolbarItem(placement: .primaryAction) {
+                LocalModelStatusIndicator(models: workspace.attention.localModels,
+                    onOpenTranscription: { workspace.settingsTab = 5; workspace.selection = .settings },
+                    onOpenVoice: { workspace.settingsTab = 6; workspace.selection = .settings })
+            }
+        }
         ToolbarItemGroup(placement: .primaryAction) {
             if let meeting = embeddedMeeting {
                 NativeDesktopMeetingsButton(workspace: workspace, current: meeting)
@@ -230,11 +240,6 @@ struct NativeDesktopHomeView: View {
                 Button { workspace.toggleWindow(meeting) } label: { Label(L("Open in New Window"), systemImage: "macwindow.on.rectangle") }
                     .help(L("Open in New Window"))
             } else if workspace.selectedMeeting == nil {
-                if workspace.selection == .assistant {
-                    LocalModelStatusIndicator(models: workspace.attention.localModels,
-                        onOpenTranscription: { workspace.settingsTab = 5; workspace.selection = .settings },
-                        onOpenVoice: { workspace.settingsTab = 6; workspace.selection = .settings })
-                }
                 Button { addingFavorite = true } label: { Label(L("Add favorite"), systemImage: "plus") }
                     .help(L("Save a meeting invitation"))
             }
@@ -535,7 +540,7 @@ struct NativeDesktopSettingsView: View {
                 startLiveAudioCheck: { try await meeting?.engine.startPrivateAudioCheck() },
                 stopLiveAudioCheck: { try await meeting?.engine.stopPrivateAudioCheck() },
                 liveAudioLevel: { meeting?.engine.privateAudioLevel }).tabItem { Label(L("Camera & sound"), systemImage: "slider.horizontal.3") }.tag(3)
-            NativeDesktopTranscriptionSettings(store: .shared).tabItem { Label(L("Transcription"), systemImage: "text.bubble") }.tag(5)
+            NativeDesktopTranscriptionSettings(store: .shared, models: attention?.localModels).tabItem { Label(L("Transcription"), systemImage: "text.bubble") }.tag(5)
             if let attention {
                 NativeDesktopIntelligenceSettings(store: attention.store, attention: attention)
                     .tabItem { Label(L("Assistant"), systemImage: "sparkles") }.tag(6)

@@ -2085,6 +2085,17 @@
 "Measuring…" = "Measuring…";
 "Measuring memory… another model loaded at the same time, so this estimate is hidden." = "Measuring memory… another model loaded at the same time, so this estimate is hidden.";
 "≈ %@ of %@ available" = "≈ %@ of %@ available";
+"Measuring memory…" = "Measuring memory…";
+"Measuring memory… another model is loading" = "Measuring memory… another model is loading";
+"≈ %@ of %@ · live estimate" = "≈ %@ of %@ · live estimate";
+"≈ %@ · live estimate" = "≈ %@ · live estimate";
+"last measured %@ · not measured this session" = "last measured %@ · not measured this session";
+"Last measured ≈ %@ · %@ · not loaded" = "Last measured ≈ %@ · %@ · not loaded";
+"Not measured yet" = "Not measured yet";
+"No measurement yet — attributed on first load" = "No measurement yet — attributed on first load";
+"%@ ≈%@" = "%@ ≈%@";
+"%@ not measured" = "%@ not measured";
+"other %@" = "other %@";
 "Prepare" = "Prepare";
 "Open settings…" = "Open settings…";
 "Not supported" = "Not supported";

@@ -102,12 +102,66 @@ struct LocalModelStatusPopover: View {
                     Text(L("Measuring…")).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if let memory = models.systemMemory, memory.total > 0 {
-                ProgressView(value: min(1, Double(memory.used) / Double(memory.total)))
-                    .accessibilityIdentifier("local-models.memory")
-            }
+            stackedBar
+            Text(legend).font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Speech and voice live estimates as segments of total memory, everything
+    /// else the Mac is doing in one segment, available memory as the track.
+    /// Only live estimates are drawn; historical records stay in their rows.
+    private var stackedBar: some View {
+        let memory = models.systemMemory
+        let total = Double(memory?.total ?? 0)
+        let speechBytes = Double(models.speechStatus.memory?.bytes ?? 0)
+        let voiceBytes = Double(models.voiceStatus.memory?.bytes ?? 0)
+        let used = Double(memory?.used ?? 0)
+        var fractions = total > 0 ? [speechBytes / total, voiceBytes / total, max(0, used - speechBytes - voiceBytes) / total] : [0, 0, 0]
+        let sum = fractions.reduce(0, +)
+        if sum > 1 { fractions = fractions.map { $0 / sum } }
+        return GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.08)).frame(height: 6)
+                HStack(spacing: 1.5) {
+                    ForEach(Array(fractions.enumerated()), id: \.offset) { index, fraction in
+                        if fraction > 0 {
+                            Capsule().fill([Color.teal, Color.indigo, Color.blue.opacity(0.35)][index])
+                                .frame(width: max(3, geometry.size.width * fraction), height: 6)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 6)
+        .accessibilityIdentifier("local-models.memory")
+        .accessibilityValue(legend)
+    }
+
+    private func isManaged(_ readiness: LocalModelReadiness) -> Bool {
+        if case .managed = readiness { return true }
+        return false
+    }
+
+    private var legend: String {
+        var parts: [String] = []
+        for status in [models.speechStatus, models.voiceStatus] {
+            guard ![LocalModelReadiness.off, .unavailable].contains(status.readiness),
+                  !isManaged(status.readiness) else { continue }
+            if let estimate = status.memory {
+                parts.append(L("%@ ≈%@", status.title, formatted(estimate.bytes)))
+            } else {
+                parts.append(L("%@ not measured", status.title))
+            }
+        }
+        if let memory = models.systemMemory {
+            let live = Double(models.speechStatus.memory?.bytes ?? 0) + Double(models.voiceStatus.memory?.bytes ?? 0)
+            let other = max(0, Double(memory.used) - live)
+            parts.append(L("other %@", formatted(UInt64(other))))
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func formatted(_ bytes: UInt64) -> String {
@@ -139,14 +193,7 @@ private struct LocalModelStatusRow: View {
             if case .downloading(let progress) = status.readiness {
                 ProgressView(value: progress).controlSize(.small)
             }
-            if status.memoryContended {
-                Label(L("Measuring memory… another model loaded at the same time, so this estimate is hidden."),
-                      systemImage: "ellipsis.circle").font(.caption).foregroundStyle(.secondary)
-            } else if let estimate = status.memory, let systemMemory, systemMemory.available > 0 {
-                Label(L("≈ %@ of %@ available", formatted(estimate.bytes), formatted(systemMemory.available)),
-                      systemImage: "memorychip")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            memoryBlock
             actions
         }
         .accessibilityElement(children: .contain)
@@ -249,6 +296,68 @@ private struct LocalModelStatusRow: View {
         case .unloaded: return L("Not loaded")
         case .notApplicable: return ""
         }
+    }
+
+    /// Per-model memory figure, following the state matrix: live estimate while
+    /// loaded, ghost last-known otherwise, honest "not measured" text otherwise.
+    /// Managed and not-applicable models render no block at all.
+    @ViewBuilder private var memoryBlock: some View {
+        if status.residency == .notApplicable {
+            EmptyView()
+        } else if case .loading = status.residency {
+            Label(status.memoryContended
+                  ? L("Measuring memory… another model is loading")
+                  : L("Measuring memory…"),
+                  systemImage: "timer")
+                .font(.caption).foregroundStyle(.secondary)
+        } else if let estimate = status.memory {
+            figure(bytes: estimate.bytes, ghost: false, caption: liveCaption(bytes: estimate.bytes))
+        } else if let record = status.memoryLastKnown {
+            if case .loaded = status.residency {
+                figure(bytes: record.bytes, ghost: true,
+                       caption: L("last measured %@ · not measured this session", date(record.measuredAt)))
+            } else {
+                figure(bytes: record.bytes, ghost: true,
+                       caption: L("Last measured ≈ %@ · %@ · not loaded", formatted(record.bytes), date(record.measuredAt)))
+            }
+        } else if case .loaded = status.residency {
+            Text(L("Not measured yet")).font(.caption).foregroundStyle(.secondary)
+        } else {
+            Text(L("No measurement yet — attributed on first load")).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// One model's share of total memory as a thin bar above its provenance
+    /// caption. The bar is omitted while the system total is still sampling.
+    @ViewBuilder private func figure(bytes: UInt64, ghost: Bool, caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let total = systemMemory?.total, total > 0 {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.08))
+                        Capsule().fill(roleColor.opacity(ghost ? 0.35 : 0.9))
+                            .frame(width: max(3, geometry.size.width * min(1, Double(bytes) / Double(total))))
+                    }
+                }
+                .frame(height: 5)
+            }
+            Text(caption).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func liveCaption(bytes: UInt64) -> String {
+        if let total = systemMemory?.total, total > 0 {
+            return L("≈ %@ of %@ · live estimate", formatted(bytes), formatted(total))
+        }
+        return L("≈ %@ · live estimate", formatted(bytes))
+    }
+
+    private var roleColor: Color {
+        status.role == .speech ? .teal : .indigo
+    }
+
+    private func date(_ value: Date) -> String {
+        value.formatted(.dateTime.day().month(.abbreviated))
     }
 
     private func formatted(_ bytes: UInt64) -> String {

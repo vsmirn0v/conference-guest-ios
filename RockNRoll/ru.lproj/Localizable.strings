@@ -2083,6 +2083,17 @@
 "Measuring…" = "Измерение…";
 "Measuring memory… another model loaded at the same time, so this estimate is hidden." = "Измерение памяти… другая модель загружалась одновременно, поэтому эта оценка скрыта.";
 "≈ %@ of %@ available" = "≈ %@ из доступных %@";
+"Measuring memory…" = "Измерение памяти…";
+"Measuring memory… another model is loading" = "Измерение памяти… другая модель загружается";
+"≈ %@ of %@ · live estimate" = "≈ %@ из %@ · оценка сейчас";
+"≈ %@ · live estimate" = "≈ %@ · оценка сейчас";
+"last measured %@ · not measured this session" = "измерено %@ · в этот раз не измерено";
+"Last measured ≈ %@ · %@ · not loaded" = "Последнее измерение ≈ %@ · %@ · не загружена";
+"Not measured yet" = "Ещё не измерено";
+"No measurement yet — attributed on first load" = "Пока нет измерений — объём определится при первой загрузке";
+"%@ ≈%@" = "%@ ≈%@";
+"%@ not measured" = "%@ не измерено";
+"other %@" = "остальное %@";
 "Prepare" = "Подготовить";
 "Open settings…" = "Открыть настройки…";
 "Not supported" = "Не поддерживается";

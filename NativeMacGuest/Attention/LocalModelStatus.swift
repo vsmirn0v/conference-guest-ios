@@ -42,7 +42,11 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
     let readiness: LocalModelReadiness
     let residency: LocalModelResidency
     let computePath: LocalModelComputePath
+    /// A live estimate, shown only while the model is loaded.
     let memory: ModelMemoryEstimate?
+    /// A persisted measurement from an earlier session for the same model,
+    /// shown only when there is no live estimate. Never mixed into it.
+    var memoryLastKnown: ModelMemoryRecord? = nil
     let memoryContended: Bool
 }
 
@@ -57,6 +61,9 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
     let attentionStore: AttentionStore
     let listenStore: ListenModelStore
     let voiceStore: VoiceCloneStore
+    let defaults: UserDefaults
+
+    static let lastKnownDefaultsKey = "localModels.memoryEstimates.v1"
 
     var systemMemoryProbe: () -> LocalSystemMemorySnapshot? = LocalModelSystemMemoryProbe.snapshot
 
@@ -71,10 +78,11 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
 
     init(store: AttentionStore, listen: ListenModelStore = .shared, voice: VoiceCloneStore = .shared,
          speechRecognizer: LocalSpeechRecognizer = .shared, voiceEngine: ClonedVoiceEngine = .shared,
-         memoryTracker: LocalModelMemoryTracker = .shared) {
+         memoryTracker: LocalModelMemoryTracker = .shared, defaults: UserDefaults = .standard) {
         self.attentionStore = store
         self.listenStore = listen
         self.voiceStore = voice
+        self.defaults = defaults
         self.speechRecognizer = speechRecognizer
         self.voiceEngine = voiceEngine
         self.memoryTracker = memoryTracker
@@ -154,7 +162,10 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
     }
 
     private func subscribe() {
-        listenStore.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.rebuildStatuses() }.store(in: &subscriptions)
+        listenStore.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
+            self?.pruneLastKnownRecords()
+            self?.rebuildStatuses()
+        }.store(in: &subscriptions)
         voiceStore.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.rebuildStatuses() }.store(in: &subscriptions)
         attentionStore.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.rebuildStatuses() }.store(in: &subscriptions)
         speechRecognizer.runtime.receive(on: DispatchQueue.main).sink { [weak self] snapshot in
@@ -167,8 +178,74 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
         }.store(in: &subscriptions)
         memoryTracker.runtime.receive(on: DispatchQueue.main).sink { [weak self] state in
             self?.memory = state
+            self?.persistLiveEstimates()
             self?.rebuildStatuses()
         }.store(in: &subscriptions)
+        pruneLastKnownRecords()
+    }
+
+    // MARK: Last-known estimates
+
+    private var currentBuild: String {
+        ((Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "0") + " " +
+            ProcessInfo.processInfo.operatingSystemVersionString
+    }
+
+    static func lastKnownRecords(from defaults: UserDefaults) -> [String: ModelMemoryRecord] {
+        guard let data = defaults.data(forKey: lastKnownDefaultsKey) else { return [:] }
+        return (try? JSONDecoder().decode([String: ModelMemoryRecord].self, from: data)) ?? [:]
+    }
+
+    static func writeLastKnownRecords(_ records: [String: ModelMemoryRecord], to defaults: UserDefaults) {
+        guard let data = try? JSONEncoder().encode(records) else { return }
+        defaults.set(data, forKey: lastKnownDefaultsKey)
+    }
+
+    /// A live estimate refreshes the persisted record for its model, but only
+    /// when the measured model is the configured one, so a switched selection
+    /// never inherits another model's figure.
+    private func persistLiveEstimates() {
+        var records = Self.lastKnownRecords(from: defaults)
+        var changed = false
+        func record(_ estimate: ModelMemoryEstimate, for key: String) {
+            guard records[key]?.measuredAt != estimate.measuredAt || records[key]?.bytes != estimate.bytes else { return }
+            records[key] = .init(bytes: estimate.bytes, measuredAt: estimate.measuredAt, build: currentBuild,
+                                 afterInference: estimate.afterInference)
+            changed = true
+        }
+        if let estimate = memory.estimates[.speech], let model = listenStore.selected,
+           speechRuntime.model != nil, speechRuntime.model == listenStore.recognizerModel() {
+            record(estimate, for: "speech:\(model.id)")
+        }
+        if let estimate = memory.estimates[.voice], let model = voiceStore.model,
+           let folder = voiceStore.bundleFolder, voiceRuntime.folder == folder {
+            record(estimate, for: "voice:\(model.id)")
+        }
+        if changed { Self.writeLastKnownRecords(records, to: defaults) }
+    }
+
+    /// Records whose model no longer exists in the catalog (e.g. deleted or
+    /// removed by a catalog update) are dropped.
+    private func pruneLastKnownRecords() {
+        var records = Self.lastKnownRecords(from: defaults)
+        let known = Set(listenStore.catalog.models.map(\.id))
+        let kept = records.filter { element in
+            guard let id = element.key.split(separator: ":", maxSplits: 1).last.map(String.init) else { return false }
+            return known.contains(id)
+        }
+        guard kept.count != records.count else { return }
+        records = Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
+        Self.writeLastKnownRecords(records, to: defaults)
+    }
+
+    private func lastKnownEstimate(for role: LocalModelMemoryRole) -> ModelMemoryRecord? {
+        let id: String?
+        switch role {
+        case .speech: id = listenStore.selected?.id
+        case .voice: id = voiceStore.model?.id
+        }
+        guard let id else { return nil }
+        return Self.lastKnownRecords(from: defaults)["\(role.rawValue):\(id)"]
     }
 
     private func isManaged(_ readiness: LocalModelReadiness) -> Bool {
@@ -274,13 +351,15 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
         case .unloading: residency = .unloading
         case .unloaded, .failed: residency = .unloaded
         }
-        let estimate: ModelMemoryEstimate?
+        let live: ModelMemoryEstimate?
         if case .loaded = residency {
-            estimate = memory.estimates[.speech]
+            live = memory.estimates[.speech]
         } else {
-            estimate = nil
+            live = nil
         }
-        return replacing(base, readiness: readiness, residency: residency, memory: estimate)
+        let lastKnown = live == nil ? lastKnownEstimate(for: .speech) : nil
+        return replacing(base, readiness: readiness, residency: residency, memory: live,
+                         memoryLastKnown: lastKnown)
     }
 
     private func makeVoiceStatus() -> LocalModelStatusSnapshot {
@@ -328,13 +407,15 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
         case .unloading: residency = .unloading
         case .unloaded, .failed: residency = .unloaded
         }
-        let estimate: ModelMemoryEstimate?
+        let live: ModelMemoryEstimate?
         if case .loaded = residency {
-            estimate = memory.estimates[.voice]
+            live = memory.estimates[.voice]
         } else {
-            estimate = nil
+            live = nil
         }
-        return replacing(base, readiness: readiness, residency: residency, memory: estimate)
+        let lastKnown = live == nil ? lastKnownEstimate(for: .voice) : nil
+        return replacing(base, readiness: readiness, residency: residency, memory: live,
+                         memoryLastKnown: lastKnown)
     }
 
     private func managedVoice(_ provider: String, detail: String) -> LocalModelStatusSnapshot {
@@ -353,9 +434,10 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
     }
 
     private func replacing(_ snapshot: LocalModelStatusSnapshot, readiness: LocalModelReadiness,
-                           residency: LocalModelResidency, memory: ModelMemoryEstimate? = nil) -> LocalModelStatusSnapshot {
+                           residency: LocalModelResidency, memory: ModelMemoryEstimate? = nil,
+                           memoryLastKnown: ModelMemoryRecord? = nil) -> LocalModelStatusSnapshot {
         .init(role: snapshot.role, title: snapshot.title, modelName: snapshot.modelName, readiness: readiness,
               residency: residency, computePath: snapshot.computePath, memory: memory,
-              memoryContended: snapshot.memoryContended)
+              memoryLastKnown: memoryLastKnown, memoryContended: snapshot.memoryContended)
     }
 }

@@ -9,6 +9,22 @@ struct ModelMemoryEstimate: Equatable, Sendable {
     let afterInference: Bool
 }
 
+/// A persisted measurement from an earlier session, keyed by model ID. Shown
+/// only when no live estimate exists and always labeled with its date.
+struct ModelMemoryRecord: Codable, Equatable, Sendable {
+    var bytes: UInt64
+    var measuredAt: Date
+    var build: String
+    var afterInference: Bool
+}
+
+/// Why a load produced no attributable memory figure.
+enum ModelMemoryUnmeasuredReason: String, Equatable, Sendable {
+    /// Another model loaded at the same time; the process-wide delta could not
+    /// be attributed. Retried automatically on the role's next load.
+    case contended
+}
+
 /// Total/used/available Mac memory. Values are estimates: macOS can reclaim
 /// inactive and purgeable pages at any time.
 struct LocalSystemMemorySnapshot: Equatable, Sendable {
@@ -24,6 +40,9 @@ enum LocalModelMemoryRole: String, Hashable, Sendable {
 struct LocalModelMemoryRuntimeState: Equatable, Sendable {
     var estimates: [LocalModelMemoryRole: ModelMemoryEstimate] = [:]
     var contended: Set<LocalModelMemoryRole> = []
+    /// Roles whose most recent load could not be attributed (e.g. a concurrent
+    /// load). Distinct from "no estimate": it explains why the number is missing.
+    var unmeasured: [LocalModelMemoryRole: ModelMemoryUnmeasuredReason] = [:]
     var lastProcessFootprint: UInt64?
 }
 
@@ -61,6 +80,7 @@ final class LocalModelMemoryTracker: @unchecked Sendable {
             active[role] = .init(token: token, baseline: baseline, contended: false)
             baselines[role] = nil
             state.estimates[role] = nil
+            state.unmeasured[role] = nil
             if active.count > 1 {
                 for key in active.keys { active[key]?.contended = true }
                 state.contended.formUnion(active.keys)
@@ -71,7 +91,9 @@ final class LocalModelMemoryTracker: @unchecked Sendable {
         }
     }
 
-    /// Completes a load. A failed or contended measurement publishes no estimate.
+    /// Completes a load. A failed or contended measurement publishes no
+    /// estimate; a contended one records an explicit unmeasured reason so the UI
+    /// can explain the gap and the next load retries attribution.
     func complete(_ role: LocalModelMemoryRole, token: UUID, success: Bool) {
         queue.sync {
             guard let measurement = active[role], measurement.token == token else { return }
@@ -82,6 +104,15 @@ final class LocalModelMemoryTracker: @unchecked Sendable {
                 let bytes = after > baseline ? after - baseline : 0
                 state.estimates[role] = .init(bytes: bytes, measuredAt: Date(), afterInference: false)
                 baselines[role] = baseline
+                state.unmeasured[role] = nil
+            } else {
+                state.estimates[role] = nil
+                if success, measurement.contended {
+                    state.unmeasured[role] = .contended
+                    probeLog("local-model-memory-contended", ["role": role.rawValue])
+                } else {
+                    state.unmeasured[role] = nil
+                }
             }
             active[role] = nil
             state.contended.remove(role)
@@ -110,6 +141,7 @@ final class LocalModelMemoryTracker: @unchecked Sendable {
             baselines[role] = nil
             state.estimates[role] = nil
             state.contended.remove(role)
+            state.unmeasured[role] = nil
             state.lastProcessFootprint = ProcessMemoryProbe.footprint()
             publish()
         }

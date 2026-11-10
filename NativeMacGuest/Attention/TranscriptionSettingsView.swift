@@ -3,6 +3,9 @@ import SwiftUI
 /// Settings → Transcription: transcribe meetings on this Mac, and the models to do it with.
 struct NativeDesktopTranscriptionSettings: View {
     @ObservedObject var store: ListenModelStore
+    /// Readiness and memory of the on-device models. Nil when the settings
+    /// view is built without an Attention coordinator (previews, tests).
+    var models: LocalModelStatusStore? = nil
 
     var body: some View {
         Form {
@@ -35,6 +38,13 @@ struct NativeDesktopTranscriptionSettings: View {
                 ForEach(store.catalog.listen) { model in row(model) }
                 Text(L("Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let models {
+                Section(L("On-device models")) {
+                    LocalModelStatusIndicator(models: models)
+                    Text(L("Readiness and memory of the speech and voice models that run on this Mac. A model can be ready while not loaded; it loads when a meeting needs it."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Section(L("Privacy")) {
                 Label(L("Audio is processed in memory and never recorded or sent anywhere."), systemImage: "lock")
