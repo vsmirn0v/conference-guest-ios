@@ -249,6 +249,31 @@ import XCTest
         XCTAssertFalse(a.isEnabled || b.isEnabled); XCTAssertTrue(module.muted)
     }
 
+    // A rebuild while already muted (beta 84, Bluetooth → built-in): senders off, but no
+    // native mute that would only wait on the rebuilding worker. Unconfirmed mutes still mute.
+    func testRebuildWhileConfirmedMutedSkipsTheNativeMute() async throws {
+        let (engine, module) = make()
+        let daily = try await engine.attach(meetingID: UUID()), sender = FakeSender()
+        daily.addSender(sender)
+        ok(await daily.assumeTalk())
+        XCTAssertTrue(engine.muteConfirmed)
+        module.log.removeAll()
+        ok(await engine.engineChanged(.stopped)?.value ?? false)
+        XCTAssertFalse(sender.isEnabled)
+        XCTAssertFalse(module.log.contains("mute:true"), "Confirmed muted: no native mute during the rebuild")
+        ok(await engine.engineChanged(.started)?.value ?? false)
+        XCTAssertTrue(module.muted)
+
+        // An unmute that fails leaves the mute unconfirmed: the next rebuild mutes natively.
+        module.failUnmute = true
+        no(await daily.setMuted(false))
+        XCTAssertFalse(engine.muteConfirmed)
+        module.failUnmute = false; module.log.removeAll()
+        ok(await engine.engineChanged(.stopped)?.value ?? false)
+        XCTAssertTrue(module.log.contains("mute:true"))
+        XCTAssertTrue(engine.muteConfirmed)
+    }
+
     func testAFailedRestoreLeavesTheMeetingMutedAndReportsIt() async throws {
         let (engine, module) = make()
         let daily = try await engine.attach(meetingID: UUID()), sender = FakeSender()

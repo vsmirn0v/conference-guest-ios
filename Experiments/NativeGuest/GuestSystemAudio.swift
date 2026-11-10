@@ -309,6 +309,15 @@ final class GuestAudioOperationTrace: @unchecked Sendable {
              "audioActiveOperation": entries.first { $0.startedAt != nil && $0.finishedAt == nil }?.evidence(at: now) ?? [:]]
         }
     }
+    /// The running operation's name and native call, if any (cheap; for lifecycle events).
+    func activeSummary() -> [String: Any] {
+        locked {
+            guard let entry = entries.first(where: { $0.startedAt != nil && $0.finishedAt == nil }) else { return [:] }
+            var value: [String: Any] = ["activeOperation": entry.name]
+            if let call = entry.nativeCall, entry.nativeFinishedAt == nil { value["activeNativeCall"] = call }
+            return value
+        }
+    }
 }
 
 /// This owner belongs only to the native probe process. Availability is an explicit privacy gate.
@@ -357,6 +366,28 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private func reportSpontaneous(_ change: GuestEngineChange) {
         let handler = locked { operationDepth == 0 ? spontaneousChangeHandler : nil }
         handler?(change)
+    }
+    private static let lifecycleCounters = ["enginesCreated", "engineStarts", "engineStops", "enginesReleased", "deviceUpdates"]
+    /// One timestamped event per device update and engine create/start/stop/release, so a
+    /// diagnostics bundle shows how many rebuilds a route change caused and in what order
+    /// (beta 84: a Bluetooth → built-in switch gave several dropouts, but only counters
+    /// were kept). Runs on the native worker: cached values only; the route is read off
+    /// it, bounded, and only for device updates.
+    private func logLifecycle(_ kind: String, _ extra: [String: Any] = [:]) {
+        var fields = locked { () -> [String: Any] in
+            var value: [String: Any] = ["kind": kind, "ownOperation": operationDepth > 0]
+            for key in Self.lifecycleCounters { value[key] = cached[key] as? Int ?? 0 }
+            return value
+        }
+        fields.merge(operationTrace.activeSummary()) { current, _ in current }
+        fields.merge(extra) { current, _ in current }
+        probeLog("audio-engine-lifecycle", probeSafe(fields) as? [String: Any] ?? fields)
+        guard kind == "device-update" else { return }
+        let update = fields["deviceUpdates"] as? Int ?? 0, at = ProcessInfo.processInfo.systemUptime
+        Task.detached(priority: .utility) {
+            let route = await GuestAcousticEnvironment.boundedRoute(timeout: 1)
+            probeLog("audio-device-route", ["deviceUpdates": update, "requestedAt": at, "route": probeSafe(route)])
+        }
     }
     /// Microphone permission as every check here sees it (debug tests may override it,
     /// together with manual rendering, to run without the test host's permission).
@@ -1042,7 +1073,8 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didCreateEngine engine: AVAudioEngine) -> Int {
         let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, didCreateEngine: engine) ?? 0
-        locked { cached["enginesCreated"] = (cached["enginesCreated"] as? Int ?? 0) + 1 }; return forwarded
+        locked { cached["enginesCreated"] = (cached["enginesCreated"] as? Int ?? 0) + 1 }
+        logLifecycle("engine-created"); return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, willEnableEngine engine: AVAudioEngine,
                            isPlayoutEnabled: Bool, isRecordingEnabled: Bool, isVoiceProcessingEnabled: Bool) -> Int {
@@ -1055,6 +1087,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, willStartEngine: engine,
             isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
         locked { cached["engineStarts"] = (cached["engineStarts"] as? Int ?? 0) + 1 }
+        logLifecycle("engine-start", ["playout": isPlayoutEnabled, "recording": isRecordingEnabled])
         reportSpontaneous(.started); return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didStopEngine engine: AVAudioEngine,
@@ -1062,6 +1095,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, didStopEngine: engine,
             isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
         locked { cached["engineStops"] = (cached["engineStops"] as? Int ?? 0) + 1 }
+        logLifecycle("engine-stop", ["playout": isPlayoutEnabled, "recording": isRecordingEnabled])
         reportSpontaneous(.stopped); return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didDisableEngine engine: AVAudioEngine,
@@ -1085,6 +1119,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         }
         graph?.detach()
         locked { cached["enginesReleased"] = (cached["enginesReleased"] as? Int ?? 0) + 1 }
+        logLifecycle("engine-released")
         reportSpontaneous(.stopped); return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, engine: AVAudioEngine,
@@ -1158,6 +1193,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     func audioDeviceModuleDidUpdateDevices(_ audioDeviceModule: LKRTCAudioDeviceModule) {
         forwardObserver?.audioDeviceModuleDidUpdateDevices(audioDeviceModule)
         locked { cached["deviceUpdates"] = (cached["deviceUpdates"] as? Int ?? 0) + 1 }
+        logLifecycle("device-update")
     }
     private static func signature(_ format: AVAudioFormat) -> [Double] {
         let s = format.streamDescription.pointee

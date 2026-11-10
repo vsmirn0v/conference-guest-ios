@@ -87,6 +87,9 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     private(set) var talkMeetingID: UUID?
     private(set) var talkEpoch: UInt64 = 0
     private(set) var moduleMuted = true
+    /// The module's last native mute succeeded and nothing has tried to unmute it since.
+    /// `moduleMuted` alone is set even when the native mute timed out.
+    private(set) var muteConfirmed = false
     private(set) var privateCheckActive = false
     private(set) var playoutOn = false
     private(set) var transcriptionOutputOn = false
@@ -338,6 +341,10 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
             for attachment in attachments.values { attachment.disableSenders() }
             return Task { await work.run { [self] in
                 guard let module else { return true }
+                // Already confirmed muted with senders off: a native mute now only waits on
+                // the rebuilding ADM worker (beta 84, Bluetooth → built-in: >2 s, then a
+                // timeout and a queued suppress behind it) and changes nothing.
+                if muteConfirmed, moduleMuted, !talkUnmuted, !privateCheckActive { return true }
                 return await muteModuleLocked(module)
             } }
         case .started:
@@ -397,6 +404,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
                 return false
             }
             privateCheckActive = true
+            muteConfirmed = false
             return true
         }
     }
@@ -442,6 +450,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         // Still the talk meeting at the same epoch after the (possibly slow) activation.
         guard talkMeetingID == attachment.meetingID, epoch == talkEpoch else { return false }
         attachment.enableSenders()
+        muteConfirmed = false
         guard await module.setMicrophoneMuted(false, timeout: timeouts.mute) else {
             attachment.disableSenders(); module.suppressMicrophone(); moduleMuted = true
             return false
@@ -459,8 +468,10 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     private func muteModuleLocked(_ module: SharedAudioModule) async -> Bool {
         moduleMuted = true
         guard await module.setMicrophoneMuted(true, timeout: timeouts.mute) else {
+            muteConfirmed = false
             module.suppressMicrophone(); return false
         }
+        muteConfirmed = true
         return true
     }
 
@@ -497,7 +508,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         foregroundPrepared = false
         let stopped = await module.shutdown(timeout: timeouts.shutdown)
         self.module = nil
-        playoutOn = false; transcriptionOutputOn = false; moduleMuted = true; privateCheckActive = false
+        playoutOn = false; transcriptionOutputOn = false; moduleMuted = true; muteConfirmed = false; privateCheckActive = false
         if !stopped { quarantine() }
         return stopped
     }
