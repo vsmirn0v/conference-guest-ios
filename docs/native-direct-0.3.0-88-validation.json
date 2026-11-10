@@ -1,0 +1,36 @@
+{
+  "version": "0.3.0",
+  "build": "88",
+  "channel": "beta",
+  "sourceCommit": "37e53ed73d84768f3eec09675f3fcf12f8e50e52 plus the NativeMacGuest integration published on main as 3c21035",
+  "changes": [
+    "WebRTC M156 audio-route recovery r1 framework is actually linked into this build: LK namespace overlay regenerated, configuration-recovery race guard and default-route native handover included, fixing the build-87 errata where the published app carried the unpatched screen-r5 framework",
+    "All seven LKRTC desktop audio gate exports present and verified in the packaged framework (binary SHA-256 9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977, source manifest SHA-256 6d82900d4a71ee10b9b294bcbfffcbc064e5f9e36762044ea837acbcab6dc3ae)",
+    "Rebuild tooling committed to the repo: Experiments/WebRTCM156/rebuild_framework.py, REBUILD.md, and the namespace overlay patch/audit so the framework can be reproduced from git alone"
+  ],
+  "artifact": {
+    "file": "RockNRoll-0.3.0-88-arm64.dmg",
+    "sha256": "670031b53a71e413491ecbf4e14c430638863eff11608c61841a3d479ec604e7",
+    "length": 27943686,
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-88-arm64.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-88-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "The publisher verified local signatures and digests, passed read-only SSH preflight, atomically promoted beta 88, and verified HTTPS readback. Published inventory SHA-256 b22cb99e, appcast SHA-256 8663cb91, DMG SHA-256 670031b5.",
+  "measured": {
+    "repoTests": "Native dependency unittest suite 14/14 passed; distribution unittest suite 27/27 passed.",
+    "nativeTests": "Default-route policy 6/6, configuration-recovery gate 6/6, fine audio buffer 12/12; verify_audio_route_recovery_framework PASSED.",
+    "treeVerification": "rebuild_framework.py verify-tree: screen-r5 baseline plus 7 locked route files plus known delta sdk/BUILD.gn.",
+    "archive": "direct Release archive 0.3.0 (88) succeeded in the beta-88 worktree; app identity is 0.3.0 (88), arm64, signed by the expected Apple Development identity with the provisioned app-group team.",
+    "export": "Developer ID export with notarization succeeded in a single pass; the app is stapled and Gatekeeper-accepted as Notarized Developer ID.",
+    "package": "DMG checksum verified and the contained notarized app was revalidated read-only from its mount."
+  },
+  "notVerified": [
+    "physical AirPods-to-speakers and speakers-to-AirPods route switching on build 88; the fix is verified at build and native-test level only",
+    "Sparkle update of an installed app to 88",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted",
+    "the beta-88 worktree base 37e53ed predates four main commits (0794698, fbb3ec0, 17432d9, e4d8aa9); those unrelated UI/assistant changes are not in this build"
+  ],
+  "publishedAt": "2026-11-11T01:17:00+03:00"
+}
