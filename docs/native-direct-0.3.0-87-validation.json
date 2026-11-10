@@ -1,0 +1,36 @@
+{
+  "version": "0.3.0",
+  "build": "87",
+  "channel": "beta",
+  "sourceCommit": "0796a7143bce089b4315fab2b333917ab8788ab2",
+  "changes": [
+    "Assistant selected-meeting fixes: the selected active meeting UUID is used for a missing meeting_id or an exact selected-title alias, invalid calls are returned to the model for bounded correction, unavailable targets report unknownMeeting instead of misleading missing-text errors, and duplicate terminal errors are suppressed",
+    "Cloned-voice cache recovery and meeting voice-setting fixes from f37ddc9",
+    "WebRTC M156 audio route recovery guards from 863bdbb and 5c51eb7",
+    "Includes the meeting notes, Obsidian export, assistant notes and voice foundation already shipped in beta 86"
+  ],
+  "artifact": {
+    "file": "RockNRoll-0.3.0-87-arm64.dmg",
+    "sha256": "6feb6a16f0369d3fc6e33e947d094f6d00958fa6cc8810bf07d0784367cc24b9",
+    "length": 27945076,
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-87-arm64.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-87-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "The publisher verified local signatures and digests, passed read-only SSH preflight, atomically promoted beta 87, and verified HTTPS readback. Independent HTTPS downloads of latest.json, appcast.xml and the immutable DMG matched the published inventory hash dbb0432, appcast hash cbf13a1 and DMG SHA-256 6feb6a1 byte-for-byte.",
+  "measured": {
+    "featureTests": "Assistant/notes/MCP integration on merged main: 53 tests, 0 failures. Cloned-voice and configured meeting voice-reply coverage on merged main: 17 tests, 1 skipped, 0 failures.",
+    "fullTestSuite": "A pre-merge full native run executed 502 tests with 37 skipped and two failures in the host-dependent voice-reply sample test; the merged voice fix was verified green in the beta-87 focused run. The full 502-test suite was not rerun to completion after merge.",
+    "distributionTooling": "NativeMacGuest/distribution unittest suite passed (27 tests) after setting the shell username for xcodegen.",
+    "archive": "direct Release archive 0.3.0 (87) succeeded; app identity is 0.3.0 (87), arm64, signed by the expected Apple Development identity with the provisioned app-group team.",
+    "export": "Developer ID export with Xcode cloud-managed notarization succeeded; the app is stapled and Gatekeeper-accepted as Notarized Developer ID.",
+    "package": "DMG checksum verified and the contained notarized app was revalidated read-only from its mount."
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 87",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted",
+    "the complete 502-test native suite was not rerun to completion after merging main and the feature branch"
+  ],
+  "publishedAt": "2026-11-10T22:20:56+03:00"
+}
