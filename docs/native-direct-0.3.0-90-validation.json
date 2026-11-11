@@ -1,0 +1,35 @@
+{
+  "version": "0.3.0",
+  "build": "90",
+  "channel": "beta",
+  "sourceCommit": "bfb20fc (main, fix: keep voice specializations in an explicit app-group cache)",
+  "changes": [
+    "Fix the beta-89 cloned-voice recurrence: specializations are stored in an explicit app-group AIModelCache instead of the OS-managed purgeable default cache, so macOS storage-pressure purges no longer wipe them between launches",
+    "Purge policy drops .storagePressure; only a source-asset change invalidates a voice-model entry",
+    "All specialize and rebuild-delete paths share one cache scope",
+    "New vox-cache-lookup probes (per-asset cache hit/miss) and a rebuild-time low-disk probe for the next diagnostics"
+  ],
+  "artifact": {
+    "file": "RockNRoll-0.3.0-90-arm64.dmg",
+    "sha256": "2cdc2fb2ade8a89d7f919af53fcca6abfff4e4bbd1fb366714fc52c6f47c2307",
+    "length": 27996743,
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-90-arm64.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-90-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "The publisher verified local signatures and digests, passed read-only SSH preflight, atomically promoted beta 90, and verified HTTPS readback. Independently re-downloaded artifact SHA-256 2cdc2fb2 matches; appcast SHA-256 6e5ba10e, inventory SHA-256 e1396662.",
+  "measured": {
+    "buildEvidence": "direct Release archive 0.3.0 (90) succeeded from detached worktree at bfb20fc with zero compile errors; notarized Developer ID export with stapling succeeded in a single pass; DMG checksum verified and the contained notarized app revalidated read-only from its mount",
+    "repoTests": "VoiceCloneTests + LocalModelStatusTests 41 tests passed (1 hardware-only skip) and AttentionTests 64 tests passed (2 skips) on main before the worktree cut",
+    "export": "Developer ID export with notarization succeeded in a single pass; the app is stapled and Gatekeeper-accepted as Notarized Developer ID",
+    "package": "DMG checksum verified and the contained notarized app was revalidated read-only from its mount"
+  },
+  "notVerified": [
+    "cloned-voice preview playback on the user's nearly-full disk: the fix moves specializations to an app-group cache with a no-storage-pressure purge policy, but Apple documents that macOS 27 cache entries may re-specialize more often than the policy says; the shipped vox-cache-lookup probes exist to prove hit/miss in the next diagnostics",
+    "with ~5 GB free on the user's volume, OS-level cache reclamation pressure persists; durable voice-model preparation likely also requires freeing disk space",
+    "Sparkle update of an installed app to 90",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ],
+  "publishedAt": "2026-11-11T08:25:00+03:00"
+}
