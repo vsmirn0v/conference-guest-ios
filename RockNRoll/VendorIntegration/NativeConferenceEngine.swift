@@ -42,6 +42,7 @@ final class NativeConferenceEngine: CallEngine {
     private var transportWatchTask: Task<Void, Never>?
     private var transportWatchdog = MediaTransportWatchdog()
     private var reconnectConfirmation = MediaTransportRecoveryConfirmation()
+    private var transportObservationGeneration: UInt64 = 0
     private var lastNetworkPath: NWPath?
     private var reconnectingForNetwork = false
     private var mediaConnectionConfirmed = false
@@ -139,7 +140,12 @@ final class NativeConferenceEngine: CallEngine {
     private var configuredNetworkURL: URL?
     private var leaveRequested = false { didSet { updatePiPMicrophoneStatus() } }
     private var hasBecomeActive = false
-    private var isSDKActive = false { didSet { updatePiPMicrophoneStatus() } }
+    private var isSDKActive = false {
+        didSet {
+            if isSDKActive != oldValue { resetTransportObservation() }
+            updatePiPMicrophoneStatus()
+        }
+    }
     private var isNetworkAvailable = true { didSet { updatePiPMicrophoneStatus() } }
     private var needsMediaReconnect = false
     private var isMediaReconnecting = false { didSet { updatePiPMicrophoneStatus() } }
@@ -376,7 +382,7 @@ final class NativeConferenceEngine: CallEngine {
                 // system owner's deferred deactivation can reach the main queue.
                 self.needsMediaReconnect = true
                 self.isAudioInterrupted = true
-                self.reconnectConfirmation = MediaTransportRecoveryConfirmation()
+                self.resetTransportObservation()
                 self.audioGate.markInterrupted()
                 self.screenPresenter?.beginRecovery()
             }
@@ -562,7 +568,7 @@ final class NativeConferenceEngine: CallEngine {
             Task { @MainActor [weak self] in
                 guard let self, self.sessionEpoch == epoch, self.hasJoinStarted else { return }
                 self.audioGate.deactivate()
-                self.reconnectConfirmation = MediaTransportRecoveryConfirmation()
+                self.resetTransportObservation()
                 self.updateMediaRecoveryBudget()
                 self.traceMediaRecovery("audio-deactivated")
                 self.isAudioInterrupted = true
@@ -594,10 +600,10 @@ final class NativeConferenceEngine: CallEngine {
         systemCall.onHoldChanged = { [weak self] held in
             Task { @MainActor [weak self] in
                 guard let self, self.sessionEpoch == epoch else { return }
+                if self.isSystemHeld != held { self.resetTransportObservation() }
                 self.isSystemHeld = held
                 self.prepareToFloat()
                 self.audioGate.setHeld(held)
-                if held { self.reconnectConfirmation = MediaTransportRecoveryConfirmation() }
                 self.updateMediaRecoveryBudget()
                 self.traceMediaRecovery(held ? "hold" : "unhold")
                 if self.hasBecomeActive {
@@ -662,7 +668,7 @@ final class NativeConferenceEngine: CallEngine {
         updateMediaRecoveryBudget()
         isSDKActive = false
         mediaConnectionConfirmed = false
-        reconnectConfirmation = MediaTransportRecoveryConfirmation()
+        resetTransportObservation()
         updatePiPMicrophoneStatus()
         hasScheduledMediaRestart = false
         mediaReconnectGeneration &+= 1
@@ -1290,8 +1296,8 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func applyNetworkUpdate(available: Bool, routeChanged: Bool) {
+        if isNetworkAvailable != available { resetTransportObservation() }
         isNetworkAvailable = available
-        if !available { reconnectConfirmation = MediaTransportRecoveryConfirmation() }
         networkRecovery.pathChanged(available: available, at: ProcessInfo.processInfo.systemUptime)
         updateMediaRecoveryBudget()
         if isMediaReconnecting && available { startMediaAfterActivation() }
@@ -1359,11 +1365,17 @@ final class NativeConferenceEngine: CallEngine {
             isNetworkAvailable && !leaveRequested && finishing == nil
     }
 
+    private func resetTransportObservation() {
+        transportObservationGeneration &+= 1
+        transportWatchdog.reset()
+        reconnectConfirmation = MediaTransportRecoveryConfirmation()
+    }
+
     /// A cell handover can stop the media transport while the path looks unchanged and
     /// signalling still reports the meeting active. Rebuild media when it stalls.
     private func startTransportWatch() {
         transportWatchTask?.cancel()
-        transportWatchdog.reset()
+        resetTransportObservation()
         let epoch = sessionEpoch
         transportWatchTask = Task { @MainActor [weak self] in
             var samples = 0
@@ -1371,14 +1383,16 @@ final class NativeConferenceEngine: CallEngine {
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
                 guard let self, self.sessionEpoch == epoch, self.hasJoinStarted else { return }
                 guard self.canVerifyRecoveryTransport || self.isTransportWatchEligible else {
-                    self.reconnectConfirmation = MediaTransportRecoveryConfirmation()
-                    self.transportWatchdog.reset()
+                    self.resetTransportObservation()
                     continue
                 }
                 let scope = GuestPeerRegistry.Scope(generation: epoch, attempt: self.mediaAttemptEpoch)
+                let observation = self.transportObservationGeneration
                 let health = await GuestTransportHealth.sample(scope: scope)
                 guard !Task.isCancelled, self.sessionEpoch == epoch else { return }
-                guard self.mediaAttemptEpoch == scope.attempt else { continue }
+                guard self.mediaAttemptEpoch == scope.attempt,
+                      self.transportObservationGeneration == observation else { continue }
+                guard let health else { self.resetTransportObservation(); continue }
                 let now = ProcessInfo.processInfo.systemUptime
                 if self.canVerifyRecoveryTransport {
                     if self.reconnectConfirmation.observe(health.connectedPairs, at: now) {
@@ -1401,10 +1415,10 @@ final class NativeConferenceEngine: CallEngine {
                 self.reconnectConfirmation = MediaTransportRecoveryConfirmation()
                 guard self.isTransportWatchEligible else { self.transportWatchdog.reset(); continue }
                 if samples % 15 == 0 {
-                    AppDiagnostics.log("guest-transport", ["peers": health.summary, "ice": "\(health.sample.ice)"])
+                    AppDiagnostics.log("guest-transport", ["peers": health.summary])
                 }
                 samples += 1
-                guard let stall = self.transportWatchdog.observe(health.sample, at: now) else { continue }
+                guard let stall = self.transportWatchdog.observe(health.samples, at: now) else { continue }
                 self.traceMediaRecovery("media-transport-stalled", details: ["stall": stall.rawValue, "peers": health.summary])
                 self.networkRecovery.mediaStalled(at: now)
                 self.updateConnectionGap()

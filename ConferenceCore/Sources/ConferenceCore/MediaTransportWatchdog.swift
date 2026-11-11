@@ -10,15 +10,25 @@ public struct MediaTransportWatchdog {
         case iceFailed = "ice-failed", iceDisconnected = "ice-disconnected", noInbound = "no-inbound"
     }
     public struct Sample: Equatable, Sendable {
-        /// Open peer connections of the current media attempt.
-        public var transports: Int
-        /// The worst ICE state among them.
-        public var ice: ICE
-        /// Monotonic per transport: received bytes plus connectivity checks, summed.
-        public var inbound: Int64
-        public init(transports: Int, ice: ICE, inbound: Int64) {
-            self.transports = transports; self.ice = ice; self.inbound = inbound
+        public let peer: UUID
+        public let ice: ICE
+        /// Received bytes and connectivity checks, keyed by selected candidate pair ID.
+        public let selectedPairs: [String: Int64]
+
+        public init(peer: UUID, ice: ICE, selectedPairs: [String: Int64]) {
+            self.peer = peer
+            self.ice = ice
+            self.selectedPairs = selectedPairs
         }
+    }
+
+    private struct PairProgress {
+        var inbound: Int64
+        var lastAdvanceAt: TimeInterval
+    }
+    private struct PeerProgress {
+        var disconnectedSince: TimeInterval?
+        var pairs: [String: PairProgress] = [:]
     }
 
     public let silenceLimit: TimeInterval
@@ -26,9 +36,7 @@ public struct MediaTransportWatchdog {
     /// A longer gap between samples means the process was suspended; start over.
     public let sampleGapLimit: TimeInterval
     private var lastSampleAt: TimeInterval?
-    private var lastInbound: Int64?
-    private var lastAdvanceAt: TimeInterval?
-    private var disconnectedSince: TimeInterval?
+    private var peers: [UUID: PeerProgress] = [:]
     private var reported = false
 
     public init(silenceLimit: TimeInterval = 10, disconnectLimit: TimeInterval = 8, sampleGapLimit: TimeInterval = 6) {
@@ -37,29 +45,42 @@ public struct MediaTransportWatchdog {
 
     /// Call whenever the transport is not expected to be live (joining, rebuilding, on hold).
     public mutating func reset() {
-        lastSampleAt = nil; lastInbound = nil; lastAdvanceAt = nil; disconnectedSince = nil; reported = false
+        lastSampleAt = nil; peers.removeAll(); reported = false
     }
 
     /// Reports a stall once; `reset()` re-arms it.
-    public mutating func observe(_ sample: Sample, at now: TimeInterval) -> Stall? {
-        guard sample.transports > 0 else { reset(); return nil }
-        if let last = lastSampleAt, now - last > sampleGapLimit { reset() }
+    public mutating func observe(_ samples: [Sample], at now: TimeInterval) -> Stall? {
+        guard !samples.isEmpty else { reset(); return nil }
+        if let last = lastSampleAt, now < last || now - last > sampleGapLimit { reset() }
         lastSampleAt = now
         guard !reported else { return nil }
-        // Any change counts as progress: a replaced transport restarts its counters.
-        if sample.inbound != lastInbound { lastAdvanceAt = now }
-        lastInbound = sample.inbound
-        switch sample.ice {
-        case .failed:
-            return report(.iceFailed)
-        case .disconnected:
-            let since = disconnectedSince ?? now
-            disconnectedSince = since
-            if now - since >= disconnectLimit { return report(.iceDisconnected) }
-        default:
-            disconnectedSince = nil
+        if samples.contains(where: { $0.ice == .failed }) { return report(.iceFailed) }
+        var currentPeers: [UUID: PeerProgress] = [:]
+        for sample in samples {
+            var peer = peers[sample.peer] ?? PeerProgress()
+            if sample.ice == .disconnected {
+                let since = peer.disconnectedSince ?? now
+                peer.disconnectedSince = since
+                if now - since >= disconnectLimit { return report(.iceDisconnected) }
+            } else {
+                peer.disconnectedSince = nil
+            }
+            var currentPairs: [String: PairProgress] = [:]
+            if sample.ice == .connected {
+                for (pairID, inbound) in sample.selectedPairs {
+                    var pair = peer.pairs[pairID] ?? PairProgress(inbound: inbound, lastAdvanceAt: now)
+                    if pair.inbound != inbound {
+                        // A counter reset starts a fresh observation interval.
+                        pair = PairProgress(inbound: inbound, lastAdvanceAt: now)
+                    }
+                    if now - pair.lastAdvanceAt >= silenceLimit { return report(.noInbound) }
+                    currentPairs[pairID] = pair
+                }
+            }
+            peer.pairs = currentPairs
+            currentPeers[sample.peer] = peer
         }
-        if let advanced = lastAdvanceAt, now - advanced >= silenceLimit { return report(.noInbound) }
+        peers = currentPeers
         return nil
     }
 

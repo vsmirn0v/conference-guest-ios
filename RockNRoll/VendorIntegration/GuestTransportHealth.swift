@@ -7,36 +7,30 @@ import WebRTC
 /// The summary holds states, counters and candidate kinds only, never addresses.
 enum GuestTransportHealth {
     struct Result {
-        var sample: MediaTransportWatchdog.Sample
-        var summary: [[String: Any]]
+        var samples: [MediaTransportWatchdog.Sample] = []
+        var summary: [[String: Any]] = []
         var connectedPairs: [MediaTransportRecoveryConfirmation.Pair: Int64] = [:]
     }
 
-    static func sample(scope: GuestPeerRegistry.Scope) async -> Result {
-        var result = Result(sample: .init(transports: 0, ice: .other, inbound: 0), summary: [])
-        var states: [MediaTransportWatchdog.ICE] = []
-        var connectedPeerCount = 0
-        for (peerID, peer) in GuestPeerRegistry.peers(in: scope) {
-            let report: RTCStatisticsReport = await withCheckedContinuation { completion in
-                peer.statistics { completion.resume(returning: $0) }
-            }
-            guard peer.connectionState != .closed else { continue }
-            let ice = map(peer.iceConnectionState)
-            states.append(ice)
-            var hasConnectedPair = false
-            var inbound: Int64 = 0
-            var row: [String: Any] = ["ice": name(peer.iceConnectionState), "connection": peer.connectionState.rawValue]
+    static func sample(scope: GuestPeerRegistry.Scope) async -> Result? {
+        var result = Result()
+        var allPeersConnected = true
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        let peers = GuestPeerRegistry.peers(in: scope)
+        for (peerID, peer) in peers {
+            guard let report = await statistics(of: peer, before: deadline) else { return nil }
+            let state = peer.connectionState, iceState = peer.iceConnectionState
+            guard state != .closed else { return nil }
+            let ice: MediaTransportWatchdog.ICE = state == .failed ? .failed : map(iceState)
+            var selectedPairs: [String: Int64] = [:]
+            var row: [String: Any] = ["ice": name(iceState), "connection": state.rawValue]
             for entry in report.statistics.values {
                 switch entry.type {
-                case "candidate-pair":
-                    inbound += receivedProgress(entry)
                 case "transport":
                     guard let pairID = entry.values["selectedCandidatePairId"] as? String,
                           let pair = report.statistics[pairID], pair.type == "candidate-pair" else { continue }
-                    if ice == .connected, peer.connectionState == .connected,
-                       pair.values["state"] as? String == "succeeded" {
-                        result.connectedPairs[.init(peer: peerID, pair: pairID)] = receivedProgress(pair)
-                        hasConnectedPair = true
+                    if pair.values["state"] as? String == "succeeded" {
+                        selectedPairs[pairID] = receivedProgress(pair)
                     }
                     row["rttMs"] = Int(((pair.values["currentRoundTripTime"] as? NSNumber)?.doubleValue ?? 0) * 1000)
                     row["pairReceivedBytes"] = number(pair, "bytesReceived")
@@ -56,16 +50,39 @@ enum GuestTransportHealth {
                 default: break
                 }
             }
-            row["inbound"] = inbound
-            result.sample.inbound += inbound
+            row["inbound"] = selectedPairs.values.reduce(0, +)
             result.summary.append(row)
-            if hasConnectedPair { connectedPeerCount += 1 }
+            result.samples.append(.init(peer: peerID, ice: ice, selectedPairs: selectedPairs))
+            if ice == .connected && state == .connected && !selectedPairs.isEmpty {
+                for (pairID, inbound) in selectedPairs {
+                    result.connectedPairs[.init(peer: peerID, pair: pairID)] = inbound
+                }
+            } else {
+                allPeersConnected = false
+            }
         }
-        result.sample.transports = states.count
-        result.sample.ice = states.contains(.failed) ? .failed : states.contains(.disconnected) ? .disconnected :
-            states.contains(.checking) ? .checking : states.contains(.connected) ? .connected : .other
-        if connectedPeerCount != states.count { result.connectedPairs.removeAll() }
+        guard ProcessInfo.processInfo.systemUptime <= deadline,
+              Set(peers.map(\.id)) == Set(GuestPeerRegistry.peers(in: scope).map(\.id)) else { return nil }
+        if !allPeersConnected { result.connectedPairs.removeAll() }
         return result
+    }
+
+    private static func statistics(of peer: RTCPeerConnection, before deadline: TimeInterval) async -> RTCStatisticsReport? {
+        let remaining = deadline - ProcessInfo.processInfo.systemUptime
+        guard remaining > 0 else { return nil }
+        let stream = AsyncStream<RTCStatisticsReport>(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let timeout = Task {
+                do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in timeout.cancel() }
+            peer.statistics { report in
+                continuation.yield(report)
+                continuation.finish()
+            }
+        }
+        var iterator = stream.makeAsyncIterator()
+        return await iterator.next()
     }
 
     private static func receivedProgress(_ pair: RTCStatistics) -> Int64 {
