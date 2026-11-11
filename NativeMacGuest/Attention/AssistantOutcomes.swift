@@ -1,11 +1,71 @@
 import ConferenceCore
 import Foundation
 
-struct MeetingOutcomeRequest: Sendable {
+struct MeetingOutcomeRequest: Codable, Sendable {
     var meetingTitle: String
     var endedAt: Date
     var window: AttentionWindow
     var language: String
+}
+
+/// Only the bounded input used by the writer. Retained locally until success or deletion.
+struct MeetingOutcomeInput: Codable, Sendable {
+    var request: MeetingOutcomeRequest
+    var provider: AttentionProvider
+}
+
+enum MeetingOutcomeFailure: String, LocalizedError {
+    case timeout, offline, dns, tls, connection, transport, interrupted
+    case authentication, rateLimit, quota, invalidResponse, providerError, configuration, storage
+    case destinationChanged
+
+    init(transportCode: URLError.Code?) {
+        switch transportCode {
+        case .timedOut: self = .timeout
+        case .notConnectedToInternet: self = .offline
+        case .cannotFindHost, .dnsLookupFailed: self = .dns
+        case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted,
+             .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+             .clientCertificateRejected, .clientCertificateRequired: self = .tls
+        case .cannotConnectToHost, .networkConnectionLost: self = .connection
+        case .cancelled: self = .interrupted
+        default: self = .transport
+        }
+    }
+
+    init(writerError: Error) {
+        if let failure = writerError as? Self { self = failure; return }
+        if writerError is CancellationError { self = .interrupted; return }
+        switch writerError as? AttentionJudgeError {
+        case .unauthorized: self = .authentication
+        case .missingKey, .notConfigured: self = .configuration
+        case .rateLimited: self = .rateLimit
+        case .quota: self = .quota
+        case .emptyAnswer, .refused, .verdict: self = .invalidResponse
+        case .transport: self = .transport
+        default: self = .providerError
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .timeout: L("The outcome provider did not respond in time.")
+        case .offline: L("This Mac is offline. Reconnect before retrying.")
+        case .dns: L("The outcome provider’s address could not be found.")
+        case .tls: L("A secure connection to the outcome provider could not be established.")
+        case .connection: L("The connection to the outcome provider failed.")
+        case .transport: L("The network request to the outcome provider failed.")
+        case .interrupted: L("Outcome generation was interrupted.")
+        case .authentication: L("The outcome provider rejected authentication. Check the API key in Assistant settings.")
+        case .rateLimit: L("The outcome provider is limiting requests. Try again later.")
+        case .quota: L("The outcome provider has no remaining credit or quota.")
+        case .invalidResponse: L("The outcome provider returned an unusable response.")
+        case .providerError: L("The outcome provider could not generate a result.")
+        case .configuration: L("Check the outcome provider and permissions in Assistant settings.")
+        case .storage: L("The meeting library could not save the outcome.")
+        case .destinationChanged: L("Restore the original outcome provider and model in Assistant settings to retry.")
+        }
+    }
 }
 
 struct MeetingOutcomeContent: Equatable, Sendable {

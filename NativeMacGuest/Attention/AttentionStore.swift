@@ -451,6 +451,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         }
     }
 
+    func waitForMeetingLibrary() async { await libraryTask?.value }
+
     /// Runs `operation` as a tracked task: teardown cancels and drains tracked tasks
     /// before closing the library, so no write is ever in flight across a close.
     /// Completed tasks unregister themselves; everything runs on the main actor.
@@ -473,15 +475,15 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private func migrateLegacyOutcomesIfNeeded() async {
         let store = meetingLibrary.store
         do {
-            if try await store.legacyOutcomesMigrated {
-                assistant.markOutcomesExternal()
-                await meetingLibrary.refresh()
-                return
+            await assistant.waitForLoad()
+            if try await !store.legacyOutcomesMigrated {
+                let legacy = assistant.legacyOutcomesForMigration()
+                if !legacy.isEmpty { backupAssistantFile(name: "assistant.pre-meeting-library-backup.json") }
+                try await store.importLegacyOutcomes(legacy)
             }
-            let legacy = assistant.legacyOutcomesForMigration()
-            if !legacy.isEmpty { backupAssistantFile(name: "assistant.pre-meeting-library-backup.json") }
-            try await store.importLegacyOutcomes(legacy)
+            let saved = try await store.outcomes()
             assistant.markOutcomesExternal()
+            assistant.restorePersistedOutcomes(saved)
             await meetingLibrary.refresh()
         } catch {
             // The legacy file stays authoritative; dual writes stay off and the user sees why.

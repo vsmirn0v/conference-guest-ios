@@ -399,33 +399,81 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             contextTokens: store.outcomeContextTokens)
         guard !window.lines.isEmpty else { return }
         outcomeCaptures.insert(id)
-        let meetingID = id, title = model.title, invitation = model.invitation, series = model.calendarSeriesID
-        let provider = store.effectiveWriter, writer = makeOutcomeWriter(provider, store.apiKey(for: provider))
-        outcomeStatus[id] = L("Preparing the meeting outcome…")
-        // Persist the pending state before the (possibly remote) writer runs, so an
-        // interruption is recoverable and never restarts a paid call automatically.
-        let draft = MeetingOutcome(meetingID: meetingID, meetingTitle: title, invitation: invitation,
-            seriesID: series, endedAt: now(), summary: "", decisions: [], tasks: [], openQuestions: [])
-        Task { [weak self] in await self?.store.meetingLibrary.addOutcome(draft, state: .pending) }
+        let endedAt = now()
+        let draft = MeetingOutcome(meetingID: id, meetingTitle: model.title, invitation: model.invitation,
+            seriesID: model.calendarSeriesID, endedAt: endedAt, summary: "")
+        let input = MeetingOutcomeInput(request: .init(meetingTitle: model.title, endedAt: endedAt,
+            window: window, language: language), provider: store.effectiveWriter)
+        runOutcome(for: id) { library, owner in
+            try await library.startOutcome(draft, input: input, owner: owner)
+            return (draft, input)
+        }
+    }
+
+    func retryOutcome(for sessionID: UUID, outcomeID: UUID) {
+        runOutcome(for: sessionID) { [self] library, owner in
+            guard let input = try await library.outcomeInput(outcomeID) else { return nil }
+            try checkOutcomeProvider(input.provider)
+            guard let draft = try await library.claimOutcomeRetry(outcomeID, owner: owner) else { return nil }
+            return (draft, input)
+        }
+    }
+
+    private func checkOutcomeProvider(_ provider: AttentionProvider) throws {
+        guard store.shouldCaptureOutcome else { throw MeetingOutcomeFailure.configuration }
+        let current = store.effectiveWriter
+        guard provider.kind == current.kind, provider.endpoint == current.endpoint, provider.model == current.model else {
+            throw MeetingOutcomeFailure.destinationChanged
+        }
+    }
+
+    private func runOutcome(for sessionID: UUID, claim: @escaping @MainActor
+        (MeetingLibraryStore, String) async throws -> (MeetingOutcome, MeetingOutcomeInput)?) {
+        guard outcomeStatus[sessionID] == nil else { return }
+        outcomeStatus[sessionID] = L("Preparing the meeting outcome…")
+        outcomeError[sessionID] = nil
+        let owner = UUID().uuidString
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let library = store.meetingLibrary
+            defer { outcomeStatus[sessionID] = nil }
             do {
-                let ended = now()
-                let content = try await writer.outcome(.init(meetingTitle: title, endedAt: ended, window: window, language: language))
-                try Task.checkCancellation()
-                store.assistant.addOutcome(.init(id: draft.id, meetingID: meetingID, meetingTitle: title, invitation: invitation,
-                    seriesID: series, endedAt: ended, summary: content.summary, decisions: content.decisions,
-                    tasks: content.tasks, openQuestions: content.openQuestions))
-                outcomeStatus[id] = nil
-                outcomeError[id] = nil
-                probeLog("assistant-outcome", ["lines": window.lines.count, "decisions": content.decisions.count, "tasks": content.tasks.count])
-            } catch is CancellationError {
-                outcomeStatus[id] = nil
+                await store.waitForMeetingLibrary()
+                guard let (draft, input) = try await claim(library.store, owner) else { return }
+                await library.refresh()
+                let started = ProcessInfo.processInfo.systemUptime
+                var outcome = draft
+                var failure: MeetingOutcomeFailure?
+                do {
+                    try checkOutcomeProvider(input.provider)
+                    let writer = makeOutcomeWriter(input.provider, store.apiKey(for: input.provider))
+                    let content = try await writer.outcome(input.request)
+                    try Task.checkCancellation()
+                    outcome.summary = content.summary
+                    outcome.decisions = content.decisions
+                    outcome.tasks = content.tasks
+                    outcome.openQuestions = content.openQuestions
+                } catch {
+                    failure = MeetingOutcomeFailure(writerError: error)
+                    var fields: [String: Any] = [
+                        "error": failure?.rawValue ?? "unknown", "attempt": owner,
+                        "providerKind": input.provider.kind.rawValue,
+                        "elapsedMs": Int((ProcessInfo.processInfo.systemUptime - started) * 1000),
+                    ]
+                    if case .http(let status, _) = error as? AttentionJudgeError { fields["httpStatus"] = status }
+                    probeLog("assistant-outcome-failed", fields)
+                }
+                if try await library.store.finishOutcome(outcome, owner: owner, errorCode: failure?.rawValue),
+                   failure == nil {
+                    store.assistant.addOutcome(outcome, alreadyPersisted: true)
+                    probeLog("assistant-outcome", ["lines": input.request.window.lines.count,
+                        "decisions": outcome.decisions.count, "tasks": outcome.tasks.count])
+                }
+                await library.refresh()
             } catch {
-                outcomeStatus[id] = nil
-                outcomeError[id] = error.localizedDescription
-                store.meetingLibrary.setOutcomeState(draft.id, state: .failed, errorCode: "writer_failed")
-                probeLog("assistant-outcome-failed", ["error": String(describing: error)])
+                let failure = error as? MeetingOutcomeFailure ?? .storage
+                outcomeError[sessionID] = failure.localizedDescription
+                probeLog("assistant-outcome-failed", ["error": failure.rawValue, "attempt": owner])
             }
         }
     }

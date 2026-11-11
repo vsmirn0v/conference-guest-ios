@@ -452,11 +452,17 @@ private struct AssistantDataDocument: Codable {
         if suggestions.count > Self.suggestionLimit { suggestions.removeLast(suggestions.count - Self.suggestionLimit) }
     }
 
-    func addOutcome(_ outcome: MeetingOutcome) {
+    func restorePersistedOutcomes(_ saved: [MeetingOutcome]) {
+        let current = Set(outcomes.map(\.id))
+        outcomes.append(contentsOf: saved.filter { !current.contains($0.id) })
+        outcomes.sort { $0.endedAt > $1.endedAt }
+    }
+
+    func addOutcome(_ outcome: MeetingOutcome, alreadyPersisted: Bool = false) {
         outcomes.removeAll { $0.id == outcome.id || ($0.meetingID != nil && $0.meetingID == outcome.meetingID) }
         outcomes.insert(outcome, at: 0)
         absorbOutcome(outcome)
-        onPersistOutcome?(outcome)
+        if !alreadyPersisted { onPersistOutcome?(outcome) }
         prune(); persist()
     }
 

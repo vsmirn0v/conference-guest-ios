@@ -1,7 +1,7 @@
 import Foundation
 
 enum MeetingLibrarySchema {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     static let ddl: [String] = [
         """
@@ -56,6 +56,12 @@ enum MeetingLibrarySchema {
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_meeting_outcomes_updated ON meeting_outcomes(updated_at)",
+        """
+        CREATE TABLE IF NOT EXISTS meeting_outcome_inputs (
+            outcome_id TEXT PRIMARY KEY REFERENCES meeting_outcomes(outcome_id) ON DELETE CASCADE,
+            input_json BLOB NOT NULL
+        )
+        """,
         """
         CREATE TABLE IF NOT EXISTS export_destinations (
             destination_id TEXT PRIMARY KEY,

@@ -1486,6 +1486,48 @@ import XCTest
         XCTAssertTrue(store.assistant.outcomes.first?.shareText.contains("Update DNS") == true)
     }
 
+    func testOutcomeRetryAfterRestartSendsOneRequestForRepeatedClicks() async throws {
+        let original = store()
+        let provider = AttentionProvider(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        original.provider = provider
+        let (infra, _) = try await meeting("outcome")
+        infra.receiveLocalLineForTesting(.init(id: "retry-line", trackID: "a", text: "Anna will update DNS.",
+                                               start: Date(), end: Date()))
+        let first = AttentionCoordinator(store: original)
+        let failingWriter = FakeOutcomeWriter(failure: .timeout)
+        first.makeOutcomeWriter = { _, _ in failingWriter }
+        first.captureOutcome(for: infra)
+        try await spin { first.outcomeStatus[infra.sessionID] == nil }
+        let failed = try XCTUnwrap(original.meetingLibrary.cards.first { $0.sessionID == infra.sessionID })
+        XCTAssertEqual(failed.outcomeState, .failed)
+        XCTAssertEqual(failed.outcomeErrorCode, "timeout")
+        XCTAssertTrue(failed.hasOutcomeInput)
+        let outcomeID = try XCTUnwrap(failed.outcomeID)
+        await original.meetingLibrary.close()
+
+        let restarted = AttentionStore(root: original.root, defaults: UserDefaults(suiteName: "attention-\(UUID())")!,
+                                       keychain: AttentionKeychain(service: "attention-retry-test-\(UUID())"))
+        closeLibraryAtTeardown(restarted)
+        restarted.provider = provider
+        await restarted.waitForMeetingLibrary()
+        let writer = FakeOutcomeWriter()
+        let coordinator = AttentionCoordinator(store: restarted)
+        let otherCoordinator = AttentionCoordinator(store: restarted)
+        coordinator.makeOutcomeWriter = { _, _ in writer }
+        otherCoordinator.makeOutcomeWriter = { _, _ in writer }
+        for _ in 0..<10 { coordinator.retryOutcome(for: infra.sessionID, outcomeID: outcomeID) }
+        otherCoordinator.retryOutcome(for: infra.sessionID, outcomeID: outcomeID)
+        try await spin {
+            coordinator.outcomeStatus[infra.sessionID] == nil && otherCoordinator.outcomeStatus[infra.sessionID] == nil
+        }
+        XCTAssertEqual(writer.calls, 1)
+        XCTAssertEqual(writer.request?.window, failingWriter.request?.window)
+        let saved = try await restarted.meetingLibrary.store.outcome(outcomeID)
+        XCTAssertEqual(saved?.summary, "DNS migration reviewed.")
+        let input = try await restarted.meetingLibrary.store.outcomeInput(outcomeID)
+        XCTAssertNil(input)
+    }
+
     func testOutcomeReminderIsRecordedOnlyAfterScheduling() async throws {
         let store = store(); await store.assistant.waitForLoad()
         let outcome = MeetingOutcome(meetingTitle: "Infra", endedAt: Date(), summary: "Summary", tasks: [.init(text: "Check DNS")])
@@ -1985,9 +2027,12 @@ import XCTest
 private final class FakeOutcomeWriter: MeetingOutcomeWriter, @unchecked Sendable {
     var calls = 0
     var request: MeetingOutcomeRequest?
+    let failure: MeetingOutcomeFailure?
+    init(failure: MeetingOutcomeFailure? = nil) { self.failure = failure }
     func outcome(_ request: MeetingOutcomeRequest) async throws -> MeetingOutcomeContent {
         calls += 1; self.request = request
         try? await Task.sleep(for: .milliseconds(30))
+        if let failure { throw failure }
         return .init(summary: "DNS migration reviewed.", decisions: ["Migrate"], tasks: [.init(text: "Update DNS", owner: "Anna")], openQuestions: [])
     }
 }

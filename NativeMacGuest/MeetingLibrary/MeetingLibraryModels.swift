@@ -89,6 +89,8 @@ struct MeetingLibraryCard: Codable, Equatable, Identifiable, Sendable {
     var notePreview: String?
     var outcomeID: UUID?
     var outcomeState: MeetingOutcomePersistenceState
+    var outcomeErrorCode: String? = nil
+    var hasOutcomeInput: Bool = false
     var updatedAt: Date
 }
 

@@ -78,6 +78,7 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
     var session: URLSession = .shared
     var timeout: TimeInterval = 20
     var retryDelays: [TimeInterval] = [1, 3]
+    var diagnoseOutcomeTransport = false
 
     func judge(_ request: JudgeRequest) async throws -> JudgeResult {
         try await judge(messages: AttentionPrompt.messages(request), window: request.window)
@@ -109,7 +110,13 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
     }
 
     func outcome(_ request: MeetingOutcomeRequest) async throws -> MeetingOutcomeContent {
-        let (content, _) = try await complete(requestBody(messages: MeetingOutcomePrompt.messages(request),
+        // A timed-out generation may still be running upstream. Let the user decide
+        // whether to resend the meeting input.
+        var writer = self
+        writer.timeout = 120
+        writer.retryDelays = []
+        writer.diagnoseOutcomeTransport = true
+        let (content, _) = try await writer.complete(requestBody(messages: MeetingOutcomePrompt.messages(request),
             name: MeetingOutcomePrompt.schemaName, schema: MeetingOutcomePrompt.schema, hint: MeetingOutcomePrompt.hint))
         return try MeetingOutcomePrompt.parse(content)
     }
@@ -176,7 +183,14 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
         let data: Data, response: URLResponse
         do { (data, response) = try await session.data(for: urlRequest) }
         catch is CancellationError { throw CancellationError() }
-        catch { throw AttentionJudgeError.transport }
+        catch {
+            if diagnoseOutcomeTransport {
+                let code = (error as? URLError)?.code
+                probeLog("assistant-outcome-transport", ["urlErrorCode": code?.rawValue ?? 0])
+                throw MeetingOutcomeFailure(transportCode: code)
+            }
+            throw AttentionJudgeError.transport
+        }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw AttentionJudgeError.from(status: status, body: data) }
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

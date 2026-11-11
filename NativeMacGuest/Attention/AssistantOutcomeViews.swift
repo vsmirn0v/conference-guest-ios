@@ -5,7 +5,7 @@ struct AssistantOutcomesView: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject private var data: AssistantDataStore
     @ObservedObject private var library: MeetingLibraryController
-    @State private var selectedID: UUID?
+    @State private var selectedSessionID: UUID?
     @State private var pendingSend: (outcome: UUID, meeting: UUID)?
     @State private var selectedNote: UUID?
     @State private var noteText: String?
@@ -42,10 +42,16 @@ struct AssistantOutcomesView: View {
                 }
             }.frame(width: 330).background(Color(nsColor: .controlBackgroundColor))
             Divider()
-            if let sessionID = selectedNote {
-                noteDetail(sessionID)
-            } else if let id = selectedID, let outcome = data.outcomes.first(where: { $0.id == id }) {
+            if let sessionID = selectedSessionID,
+               let card = library.cards.first(where: { $0.sessionID == sessionID }),
+               card.outcomeState == .failed || card.outcomeState == .pending || attention.outcomeError[sessionID] != nil {
+                generationDetail(card)
+            } else if let sessionID = selectedSessionID,
+                      let outcomeID = library.cards.first(where: { $0.sessionID == sessionID })?.outcomeID,
+                      let outcome = data.outcomes.first(where: { $0.id == outcomeID }) {
                 detail(outcome)
+            } else if let sessionID = selectedNote {
+                noteDetail(sessionID)
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "checkmark.bubble").font(.largeTitle).foregroundStyle(.secondary)
@@ -55,18 +61,16 @@ struct AssistantOutcomesView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
             }
         }
-        .onAppear { if selectedID == nil, selectedNote == nil { select(library.cards.first) } }
+        .onAppear { if selectedSessionID == nil { select(library.cards.first) } }
         .onDisappear { data.flushOutcomeEdits() }
     }
 
     private func select(_ card: MeetingLibraryCard?) {
         selectedNote = nil
-        selectedID = nil
+        selectedSessionID = card?.sessionID
         noteText = nil
         guard let card else { return }
-        if let outcomeID = card.outcomeID {
-            selectedID = outcomeID
-        } else if card.hasNotes {
+        if card.hasNotes {
             selectedNote = card.sessionID
             Task { @MainActor in
                 noteText = await library.note(sessionID: card.sessionID)?.markdown
@@ -75,7 +79,7 @@ struct AssistantOutcomesView: View {
     }
 
     @ViewBuilder private func cardRow(_ card: MeetingLibraryCard) -> some View {
-        let isSelected = selectedNote == card.sessionID || selectedID == card.outcomeID
+        let isSelected = selectedSessionID == card.sessionID
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Text(card.title).fontWeight(.semibold).lineLimit(1)
@@ -107,6 +111,37 @@ struct AssistantOutcomesView: View {
         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
             .background(isSelected ? Color.accentColor.opacity(0.13) : .clear,
                 in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func generationDetail(_ card: MeetingLibraryCard) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(card.title).font(.title2).bold()
+                if let error = attention.outcomeError[card.sessionID] {
+                    Text(error).foregroundStyle(.red)
+                } else if card.outcomeState == .failed {
+                    let failure = card.outcomeErrorCode.flatMap(MeetingOutcomeFailure.init(rawValue:))
+                    Text(failure?.localizedDescription ?? L("The outcome could not be generated."))
+                        .foregroundStyle(.red)
+                } else {
+                    Text(L("Preparing outcome…")).foregroundStyle(.secondary)
+                }
+                if card.outcomeState == .failed {
+                    if card.hasOutcomeInput, let id = card.outcomeID {
+                        Button(L("Retry outcome")) { attention.retryOutcome(for: card.sessionID, outcomeID: id) }
+                            .accessibilityIdentifier("assistant.retry-outcome")
+                            .disabled(attention.outcomeStatus[card.sessionID] != nil)
+                    } else {
+                        Text(L("The original meeting input is unavailable for retry.")).foregroundStyle(.secondary)
+                    }
+                }
+                if card.hasNotes, let noteText {
+                    Divider()
+                    Text(noteText).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                }
+                exportButtons(sessionID: card.sessionID)
+            }.padding(24).frame(maxWidth: 760, alignment: .leading)
+        }
     }
 
     @ViewBuilder private func noteDetail(_ sessionID: UUID) -> some View {
@@ -234,7 +269,7 @@ struct AssistantOutcomesView: View {
                     GroupBox(L("Series history")) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(data.seriesOutcomes(invitation: outcome.invitation, series: outcome.seriesID)) { item in
-                                Button { selectedID = item.id } label: {
+                                Button { select(library.cards.first { $0.outcomeID == item.id }) } label: {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(item.endedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption.weight(.semibold))
                                         Text(item.summary).font(.callout).foregroundStyle(.secondary).lineLimit(3)

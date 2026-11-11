@@ -557,7 +557,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
 
     func outcomes() async throws -> [MeetingOutcome] {
         let db = try db()
-        return try db.rows("SELECT payload_json FROM meeting_outcomes ORDER BY updated_at DESC").compactMap { row in
+        return try db.rows("SELECT payload_json FROM meeting_outcomes WHERE state='ready' ORDER BY updated_at DESC").compactMap { row in
             guard case .blob(let data)? = row[0] ?? nil else { return nil }
             return try? JSONDecoder.attention.decode(MeetingOutcome.self, from: data)
         }
@@ -573,11 +573,63 @@ actor MeetingLibraryStore: @unchecked Sendable {
     @discardableResult
     func saveOutcome(_ outcome: MeetingOutcome, state: MeetingOutcomePersistenceState,
                      generationOwner: String? = nil, errorCode: String? = nil) async throws -> MeetingOutcomeCommit {
+        try commitOutcome(outcome, state: state, generationOwner: generationOwner, errorCode: errorCode)
+    }
+
+    func startOutcome(_ outcome: MeetingOutcome, input: MeetingOutcomeInput, owner: String) throws {
+        _ = try commitOutcome(outcome, state: .pending, generationOwner: owner, input: input)
+    }
+
+    func outcomeInput(_ id: UUID) throws -> MeetingOutcomeInput? {
+        let db = try db()
+        guard let row = try db.one("SELECT input_json FROM meeting_outcome_inputs WHERE outcome_id=?", bind: {
+            try Self.bindText($0, id.uuidString, at: 1)
+        }), case .blob(let payload)? = row[0] ?? nil else { return nil }
+        return try JSONDecoder().decode(MeetingOutcomeInput.self, from: payload)
+    }
+
+    func claimOutcomeRetry(_ id: UUID, owner: String) throws -> MeetingOutcome? {
+        let db = try db()
+        return try db.transaction {
+            let row = try db.one("""
+                UPDATE meeting_outcomes SET state='pending', generation_owner=?, error_code=NULL, updated_at=?
+                WHERE outcome_id=? AND state='failed'
+                  AND EXISTS(SELECT 1 FROM meeting_outcome_inputs WHERE outcome_id=meeting_outcomes.outcome_id)
+                RETURNING payload_json
+                """) {
+                try Self.bindText($0, owner, at: 1)
+                try Self.bindInt($0, Date().ms, at: 2)
+                try Self.bindText($0, id.uuidString, at: 3)
+            }
+            guard case .blob(let payload)? = row?[0] else { return nil }
+            return try JSONDecoder.attention.decode(MeetingOutcome.self, from: payload)
+        }
+    }
+
+    private struct OutcomeClaimLost: Error {}
+
+    func finishOutcome(_ outcome: MeetingOutcome, owner: String, errorCode: String?) throws -> Bool {
+        do {
+            _ = try commitOutcome(outcome, state: errorCode == nil ? .ready : .failed,
+                                  errorCode: errorCode, expectedOwner: owner)
+            return true
+        } catch is OutcomeClaimLost { return false }
+    }
+
+    private func commitOutcome(_ outcome: MeetingOutcome, state: MeetingOutcomePersistenceState,
+                               generationOwner: String? = nil, errorCode: String? = nil,
+                               input: MeetingOutcomeInput? = nil, expectedOwner: String? = nil) throws -> MeetingOutcomeCommit {
         let db = try db()
         let sessionID = outcome.meetingID ?? Self.legacySessionID(for: outcome.id)
         var outcome = outcome
         outcome.meetingID = sessionID
         return try db.transaction {
+            if let expectedOwner {
+                guard try db.one("SELECT outcome_id FROM meeting_outcomes WHERE outcome_id=? AND state='pending' AND generation_owner=?", bind: {
+                    try Self.bindText($0, outcome.id.uuidString, at: 1)
+                    try Self.bindText($0, expectedOwner, at: 2)
+                }) != nil else { throw OutcomeClaimLost() }
+            }
             if try db.one("SELECT session_id FROM meeting_sessions WHERE session_id=?", bind: { try Self.bindText($0, sessionID.uuidString, at: 1) }) == nil {
                 let now = Date()
                 try db.run("""
@@ -616,6 +668,17 @@ actor MeetingLibraryStore: @unchecked Sendable {
                 try Self.bindText($0, errorCode, at: 7)
                 try Self.bindInt($0, outcome.endedAt.ms, at: 8)
                 try Self.bindInt($0, now.ms, at: 9)
+            }
+            if let input {
+                let payload = try JSONEncoder().encode(input)
+                try db.run("INSERT INTO meeting_outcome_inputs(outcome_id,input_json) VALUES(?,?)") {
+                    try Self.bindText($0, outcome.id.uuidString, at: 1)
+                    try Self.bindBlob($0, payload, at: 2)
+                }
+            } else if state == .ready {
+                try db.run("DELETE FROM meeting_outcome_inputs WHERE outcome_id=?") {
+                    try Self.bindText($0, outcome.id.uuidString, at: 1)
+                }
             }
             let updatedSession = try db.one("SELECT export_revision FROM meeting_sessions WHERE session_id=?", bind: { try Self.bindText($0, sessionID.uuidString, at: 1) })
             let exportRevision = Int((updatedSession?.integer(0) ?? 0) + 1)
@@ -748,7 +811,8 @@ extension MeetingLibraryStore {
         let rows = try db.rows("""
         SELECT s.session_id, s.title, s.started_at, s.ended_at, s.state, s.updated_at,
                n.note_id, n.revision, substr(n.markdown, 1, 240),
-               o.outcome_id, o.state
+               o.outcome_id, o.state, o.error_code,
+               EXISTS(SELECT 1 FROM meeting_outcome_inputs i WHERE i.outcome_id=o.outcome_id)
         FROM meeting_sessions s
         LEFT JOIN meeting_notes n ON n.session_id = s.session_id
         LEFT JOIN meeting_outcomes o ON o.session_id = s.session_id
@@ -771,6 +835,8 @@ extension MeetingLibraryStore {
                 notePreview: row.text(8),
                 outcomeID: row.text(9).flatMap(UUID.init(uuidString:)),
                 outcomeState: MeetingOutcomePersistenceState(rawValue: row.text(10) ?? "") ?? .notStarted,
+                outcomeErrorCode: row.text(11),
+                hasOutcomeInput: row.bool(12),
                 updatedAt: Self.date(row.integer(5)) ?? .distantPast)
         }
     }
@@ -964,7 +1030,7 @@ extension MeetingLibraryStore {
     func failInterruptedGenerations() async throws -> Int {
         let db = try db()
         let before = try db.one("SELECT COUNT(*) FROM meeting_outcomes WHERE state IN ('pending','draft')")
-        try db.run("UPDATE meeting_outcomes SET state='failed', error_code='interrupted', updated_at=? WHERE state IN ('pending','draft')") {
+        try db.run("UPDATE meeting_outcomes SET state='failed', error_code='interrupted', generation_owner=NULL, updated_at=? WHERE state IN ('pending','draft')") {
             try Self.bindInt($0, Date().ms, at: 1)
         }
         return Int(before?.integer(0) ?? 0)
