@@ -1,0 +1,56 @@
+{
+  "version": "0.3.0",
+  "build": "95",
+  "channel": "beta",
+  "sourceCommit": "d04d8224cedea6aa4ecfd0e2f0857a5db6bd3564",
+  "changes": [
+    "Supervised cloned voice worker, persistent readiness and retry, targeted cache repair, and optimized Debug inference.",
+    "Autonomous meeting participation and native meeting notes, tasks, and Obsidian sync from commits 15fd3a2 and ce56e36."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "95",
+    "file": "RockNRoll-0.3.0-95-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-95-arm64.dmg",
+    "sha256": "a9314fa9219ab2be6fce586db4f46477564f966e6cd33bb6c7fde214959f348b",
+    "length": 28996500,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/.codex-worktrees/mac-cloned-voice-worker-20261111/.build/native-beta-95/package/RockNRoll-0.3.0-95-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-95-arm64.dmg",
+      "sha256": "a9314fa9219ab2be6fce586db4f46477564f966e6cd33bb6c7fde214959f348b",
+      "length": 28996500
+    },
+    "state": {
+      "appcastSHA256": "fb72c75d899c5665ffeed00f8a6494c0f5263c2bdb4f6f3a3345327639908486",
+      "inventorySHA256": "1a0bf8b094f452d2cba9472566e372ffdeb481df26b9b1bfed6a32329da512a4",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-95-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/6df6615029a34c02b48110f7aa9bbf44/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "Full native Mac suite: 626 executed, 37 skipped, zero failures, on the merged source.",
+    "The initial full run had one outdated historical outcome assertion; it was corrected to verify preservation with unknown date and the entire suite reran successfully.",
+    "ConferenceCore: 155 tests passed; Mac distribution tooling: 27 tests passed.",
+    "Signed direct archive, notarized and stapled app, strict signature and Gatekeeper checks, and embedded worker launch/cache scope passed.",
+    "Independent HTTPS readback of the immutable DMG and beta alias matched the local SHA-256; public appcast and inventory matched the signed local files.",
+    "The earlier development-signed speech candidate generated audible clear previews across app restarts and idle unloading; optimized warm preview was approximately 2 seconds."
+  ],
+  "notVerified": [
+    "Speech synthesis and audible playback inside the exact notarized Release artifact; installed Sparkle upgrade.",
+    "The other threads reported incomplete live meeting, signed vault restart, notification, accessibility and other acceptance scenarios; see the notes/tasks acceptance ledger.",
+    "Physical meeting transport and device continuity; separately notarized outer DMG."
+  ],
+  "publishedAt": "2026-11-12T01:24:21+03:00"
+}
