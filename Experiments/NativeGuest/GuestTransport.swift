@@ -1,5 +1,86 @@
 import Foundation
 
+/// A one-shot gate shared by the meeting owner and signaling writer. Holding
+/// the lock through the synchronous WebSocket send call makes revocation and
+/// the start of transmission mutually exclusive.
+final class GuestChatDispatchPermit: @unchecked Sendable {
+    private enum State { case ready, cancelled, dispatched }
+    private let lock = NSLock()
+    private var state = State.ready
+    private let deadline: Date
+    private var validate: (@Sendable () -> Bool)?
+    private var validated: Bool
+    private var invalidSource = false
+
+    init(deadline: Date, validate: (@Sendable () -> Bool)? = nil) {
+        self.deadline = deadline
+        self.validate = validate
+        validated = validate == nil
+    }
+
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        if state == .ready { state = .cancelled }
+        validate = nil
+    }
+
+    var didDispatch: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return state == .dispatched
+    }
+
+    var validationFailed: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return invalidSource
+    }
+
+    private func preflightInput() -> (ready: Bool, validator: (@Sendable () -> Bool)?) {
+        lock.lock(); defer { lock.unlock() }
+        return (state == .ready && Date() < deadline, validate)
+    }
+
+    func preflight() async -> Bool {
+        let input = preflightInput()
+        guard input.ready else { return false }
+        guard let validator = input.validator else { return true }
+        // A stalled local file read cannot hold the ordered signaling writer.
+        // Its eventual result cannot revive an expired or cancelled permit.
+        let (results, output) = AsyncStream.makeStream(of: Bool.self, bufferingPolicy: .bufferingOldest(1))
+        let work = Task.detached(priority: .utility) { _ = output.yield(validator()) }
+        let timeout = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            if !Task.isCancelled { output.yield(false) }
+        }
+        var reader = results.makeAsyncIterator()
+        let valid = await reader.next() ?? false
+        output.finish()
+        timeout.cancel()
+        work.cancel()
+        return finishValidation(valid)
+    }
+
+    private func finishValidation(_ valid: Bool) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard state == .ready, Date() < deadline else { return false }
+        if !valid {
+            state = .cancelled
+            invalidSource = true
+        }
+        validated = valid
+        validate = nil
+        return valid
+    }
+
+    func dispatch(_ start: () -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard state == .ready, validated, Date() < deadline else { return false }
+        state = .dispatched
+        validate = nil
+        start()
+        return true
+    }
+}
+
 public enum GuestTransportError: Error, LocalizedError {
     case invalidURL, notConnected, alreadyConnecting, closed, timedOut
     case invalidEnvelope, queueOverflow, frameTooLarge, networkFailure
@@ -66,7 +147,11 @@ public actor GuestTransport {
         let continuation: CheckedContinuation<[String: Any], Error>
         let timeout: Task<Void, Never>
     }
-    private struct Frame { let id: String; let text: String }
+    private struct Frame {
+        let id: String
+        let text: String
+        var chatPermit: GuestChatDispatchPermit?
+    }
     private struct Notification {
         let continuation: CheckedContinuation<Void, Error>
         let timeout: Task<Void, Never>
@@ -131,6 +216,11 @@ public actor GuestTransport {
     /// The returned dictionary is the full response envelope.
     public func request(event: String, payload: [String: Any] = [:],
                         timeout: TimeInterval = 15, requestID: String? = nil) async throws -> [String: Any] {
+        try await request(event: event, payload: payload, timeout: timeout, requestID: requestID, chatPermit: nil)
+    }
+
+    func request(event: String, payload: [String: Any], timeout: TimeInterval = 15,
+                 requestID: String?, chatPermit: GuestChatDispatchPermit?) async throws -> [String: Any] {
         try checkCapacity()
         guard timeout.isFinite, timeout > 0, timeout <= 300 else { throw GuestTransportError.timedOut }
         try Task.checkCancellation()
@@ -138,7 +228,8 @@ public actor GuestTransport {
         guard !id.isEmpty, id.utf8.count <= 1_024, pending[id] == nil, notifications[id] == nil else {
             throw GuestTransportError.invalidEnvelope
         }
-        let frame = try makeFrame(id: id, event: event, payload: payload)
+        var frame = try makeFrame(id: id, event: event, payload: payload)
+        frame.chatPermit = chatPermit
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 let timer = Task { [weak self] in
@@ -150,7 +241,10 @@ public actor GuestTransport {
                 outgoing.append(frame)
                 startWriter()
             }
-        }, onCancel: { [weak self] in Task { await self?.cancel(id) } })
+        }, onCancel: { [weak self] in
+            chatPermit?.cancel()
+            Task { await self?.cancel(id) }
+        })
     }
 
     public func request(_ event: String, payload: [String: Any] = [:],
@@ -259,6 +353,12 @@ public actor GuestTransport {
     private func writeLoop() async {
         while state == .open, !Task.isCancelled, let socket, !outgoing.isEmpty {
             let frame = outgoing.removeFirst()
+            if let permit = frame.chatPermit {
+                guard await permit.preflight(), state == .open, pending[frame.id] != nil else {
+                    cancel(frame.id)
+                    continue
+                }
+            }
             activeFrameID = frame.id
             // URLSession's WebSocket send has no independent completion deadline.
             // Bound even requests whose response timer expires during a stalled send.
@@ -267,7 +367,22 @@ public actor GuestTransport {
                 catch { return }
                 await self?.sendExpired(frame.id)
             }
-            do { try await socket.send(.string(frame.text)) }
+            do {
+                if let permit = frame.chatPermit {
+                    let sent = try await withCheckedThrowingContinuation { (result: CheckedContinuation<Bool, Error>) in
+                        let started = permit.dispatch {
+                            socket.send(.string(frame.text)) { error in
+                                if let error { result.resume(throwing: error) }
+                                else { result.resume(returning: true) }
+                            }
+                        }
+                        if !started { result.resume(returning: false) }
+                    }
+                    if !sent { cancel(frame.id) }
+                } else {
+                    try await socket.send(.string(frame.text))
+                }
+            }
             catch { fail(.networkFailure); return }
             sendTimeout?.cancel(); sendTimeout = nil; activeFrameID = nil
             if let notification = notifications.removeValue(forKey: frame.id) {

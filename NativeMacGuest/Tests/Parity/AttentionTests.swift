@@ -1529,8 +1529,14 @@ import XCTest
     }
 
     func testOutcomeReminderIsRecordedOnlyAfterScheduling() async throws {
-        let store = store(); await store.assistant.waitForLoad()
-        let outcome = MeetingOutcome(meetingTitle: "Infra", endedAt: Date(), summary: "Summary", tasks: [.init(text: "Check DNS")])
+        let store = store()
+        await store.waitForMeetingLibrary()
+        var profile = store.assistant.taskProfile
+        profile.aliases = ["Task Owner"]
+        try await store.meetingLibrary.store.saveTaskProfile(profile)
+        store.assistant.taskProfile = profile
+        let outcome = MeetingOutcome(meetingTitle: "Infra", endedAt: Date(), summary: "Summary",
+                                     tasks: [.init(text: "Check DNS", owner: "Task Owner")])
         store.assistant.addOutcome(outcome)
         let coordinator = AttentionCoordinator(store: store)
         var scheduled = false

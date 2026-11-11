@@ -199,12 +199,21 @@ extension AssistantTalkController {
                          microphoneOn: model.assistantMicrophoneOn, soundOn: true,
                          outcomeID: nil)
         }
-        let outcomes = attention.store.assistant.outcomes.map { outcome in
-            AssistantOutcomeRecord(id: outcome.id, meetingID: outcome.meetingID, title: outcome.meetingTitle,
+        let assistant = attention.store.assistant
+        let cards = attention.store.meetingLibrary.cards
+        let titles = Dictionary(uniqueKeysWithValues: cards.compactMap { card in
+            card.outcomeID.map { ($0, card.title) }
+        })
+        let outcomes = assistant.outcomes.map { outcome in
+            AssistantOutcomeRecord(id: outcome.id, meetingID: outcome.meetingID, title: titles[outcome.id] ?? outcome.meetingTitle,
                                    roomIdentity: outcome.invitation.flatMap { MeetingRoomIdentity($0)?.displayDetails } ?? "",
                                    seriesID: outcome.seriesID, endedAt: outcome.endedAt, summary: outcome.summary,
                                    decisions: outcome.decisions,
-                                   tasks: outcome.tasks.map { .init(text: $0.text, owner: $0.owner, dueAt: $0.dueAt, done: $0.done) },
+                                   tasks: outcome.tasks.map { task in
+                                       .init(text: task.text, owner: task.owner, dueAt: task.dueAt, done: task.done,
+                                             dueDay: task.dueDay, personal: assistant.taskProfile.owns(task),
+                                             archived: !assistant.isTaskOperational(task))
+                                   },
                                    openQuestions: outcome.openQuestions)
         }
         let notes = attention.store.meetingLibrary.cards.filter(\.hasNotes).map { card in

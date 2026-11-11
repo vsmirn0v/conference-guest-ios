@@ -148,8 +148,8 @@ import Foundation
 
     private func outcomeCard(_ outcome: MeetingOutcome) -> MCPJSON {
         [
-            "id": mcpOutcomeID(outcome.id), "kind": "outcome", "title": outcome.meetingTitle,
-            "summary": outcome.summary, "ended_at": mcpDate(outcome.endedAt) ?? "",
+            "id": mcpOutcomeID(outcome.id), "kind": "outcome", "title": effectiveTitle(outcome),
+            "summary": outcome.summary, "ended_at": mcpDate(outcome.knownEndedAt) ?? "",
             "related": [:], "coverage": "complete",
             "provenance": ["type": "outcome", "record_id": outcome.id.uuidString],
         ]
@@ -226,11 +226,14 @@ import Foundation
         return meeting
     }
 
-    private func outcome(_ id: String) throws -> MeetingOutcome {
-        guard let outcome = attention?.store.assistant.outcomes.first(where: { mcpOutcomeID($0.id) == id }) else {
-            throw MCPToolFailure("OUTCOME_NOT_FOUND", "The requested outcome is unavailable.")
+    private func outcome(_ id: String) async throws -> MeetingOutcome {
+        let prefix = "outcome:native:"
+        if let attention, id.hasPrefix(prefix), let uuid = UUID(uuidString: String(id.dropFirst(prefix.count))) {
+            if let cached = attention.store.assistant.outcomes.first(where: { $0.id == uuid }) { return cached }
+            await attention.store.waitForMeetingLibrary()
+            if let historical = try await attention.store.meetingLibrary.store.outcome(uuid) { return historical }
         }
-        return outcome
+        throw MCPToolFailure("OUTCOME_NOT_FOUND", "The requested outcome is unavailable.")
     }
 
     func getMeeting(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
@@ -250,7 +253,7 @@ import Foundation
             return envelope(card)
         }
         if id.hasPrefix("outcome:") {
-            let value = try outcome(id)
+            let value = try await outcome(id)
             var card = outcomeCard(value)
             card["decisions"] = value.decisions; card["open_questions"] = value.openQuestions
             card["task_ids"] = value.tasks.map { mcpTaskID(value.id, $0) }
@@ -295,19 +298,28 @@ import Foundation
         NativeDesktopMeetingModel.spokenAt(message)
     }
 
+    private func effectiveTitle(_ outcome: MeetingOutcome) -> String {
+        attention?.store.meetingLibrary.cards.first { $0.outcomeID == outcome.id }?.title ?? outcome.meetingTitle
+    }
+
+    private func taskItem(_ task: MeetingOutcomeTask, in outcome: MeetingOutcome) -> MCPJSON {
+        let archived = attention?.store.assistant.taskArchivedAt(task)
+        return [
+            "id": mcpTaskID(outcome.id, task), "text": task.text, "owner": task.owner, "done": task.done,
+            "due_at": mcpDate(task.dueAt) ?? NSNull(), "due_day": task.dueDay ?? NSNull(),
+            "reminder_at": mcpDate(task.reminderAt) ?? NSNull(), "completed_at": mcpDate(task.completedAt) ?? NSNull(),
+            "archived": archived != nil, "archived_at": mcpDate(archived) ?? NSNull(),
+            "meeting_id": mcpOutcomeID(outcome.id),
+        ]
+    }
+
     func getOutcome(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
         let id = try MCPValue.string(args["outcome_id"], key: "outcome_id")
-        let value = try outcome(id)
+        let value = try await outcome(id)
         return [
-            "id": id, "meeting_title": value.meetingTitle, "ended_at": mcpDate(value.endedAt) ?? "",
+            "id": id, "meeting_title": effectiveTitle(value), "ended_at": mcpDate(value.knownEndedAt) ?? "",
             "summary": value.summary, "decisions": value.decisions, "open_questions": value.openQuestions,
-            "tasks": value.tasks.map { task in
-                [
-                    "id": mcpTaskID(value.id, task), "text": task.text, "owner": task.owner, "done": task.done,
-                    "due_at": mcpDate(task.dueAt) ?? NSNull(), "reminder_at": mcpDate(task.reminderAt) ?? NSNull(),
-                    "meeting_id": id,
-                ] as MCPJSON
-            },
+            "tasks": value.tasks.map { taskItem($0, in: value) },
             "observed_at": mcpNow(), "coverage": "complete", "warnings": [],
         ]
     }
@@ -316,6 +328,10 @@ import Foundation
     private func noteSession(_ id: String) async throws -> (UUID, String) {
         if id.hasPrefix("session:"), let model = app?.meetings.first(where: { mcpSessionID($0.sessionID) == id }) {
             return (model.sessionID, model.title)
+        }
+        if id.hasPrefix("outcome:native:") {
+            let record = try await outcome(id)
+            if let sessionID = record.meetingID { return (sessionID, effectiveTitle(record)) }
         }
         let raw = id.split(separator: ":").last.map(String.init) ?? id
         guard let uuid = UUID(uuidString: raw) else {
@@ -359,20 +375,28 @@ import Foundation
         let meetingID = try MCPValue.optionalString(args["meeting_id"], key: "meeting_id")
         let done = try MCPValue.optionalBool(args["done"], key: "done")
         let owner = try MCPValue.optionalString(args["owner"], key: "owner")?.lowercased()
-        let outcomes = attention?.store.assistant.outcomes ?? []
+        let personalOnly = try MCPValue.optionalBool(args["personal_only"], key: "personal_only") ?? false
+        let includeArchived = try MCPValue.optionalBool(args["include_archived"], key: "include_archived") ?? false
+        let assistant = attention?.store.assistant
         var tasks: [MCPJSON] = []
-        for value in outcomes {
-            let oid = mcpOutcomeID(value.id)
-            if let meetingID, meetingID != oid { continue }
-            for task in value.tasks where (done == nil || task.done == done) && (owner == nil || task.owner.lowercased().contains(owner!)) {
-                tasks.append([
-                    "id": mcpTaskID(value.id, task), "text": task.text, "owner": task.owner, "done": task.done,
-                    "due_at": mcpDate(task.dueAt) ?? NSNull(), "reminder_at": mcpDate(task.reminderAt) ?? NSNull(),
-                    "meeting_id": oid,
-                ])
+        var source = assistant?.outcomes ?? []
+        if let meetingID, !source.contains(where: { mcpOutcomeID($0.id) == meetingID }),
+           let historical = try? await outcome(meetingID) {
+            source = [historical]
+        }
+        for value in source {
+            if let meetingID, meetingID != mcpOutcomeID(value.id) { continue }
+            for task in value.tasks {
+                if let done, task.done != done { continue }
+                if let owner, !task.owner.lowercased().contains(owner) { continue }
+                if personalOnly, assistant?.taskProfile.owns(task) != true { continue }
+                if !includeArchived, assistant?.isTaskOperational(task) == false { continue }
+                tasks.append(taskItem(task, in: value))
             }
         }
-        return try page(kind: "tasks", filters: ["meeting_id": meetingID as Any, "done": done as Any, "owner": owner as Any], args: args, items: tasks)
+        return try page(kind: "tasks", filters: ["meeting_id": meetingID as Any, "done": done as Any,
+                        "owner": owner as Any, "personal_only": personalOnly, "include_archived": includeArchived],
+                        args: args, items: tasks)
     }
 
     func search(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
@@ -382,6 +406,8 @@ import Foundation
             throw MCPToolFailure("INVALID_ARGUMENT", "query must not be empty.", details: ["field": "query", "reason": "empty"])
         }
         let needle = query.lowercased()
+        let includeArchived = try MCPValue.optionalBool(args["include_archived"], key: "include_archived") ?? false
+        let personalOnly = try MCPValue.optionalBool(args["personal_only"], key: "personal_only") ?? false
         let types = args["types"] as? [String] ?? ["meeting", "outcome", "task", "transcript", "note"]
         var results: [MCPJSON] = []
         if types.contains("meeting") {
@@ -397,10 +423,12 @@ import Foundation
                 if haystack.lowercased().contains(needle) { results.append(["type": "outcome", "meeting": item, "matched_field": "title_or_summary"]) }
             }
         }
-        if types.contains("task") {
-            for value in attention?.store.assistant.outcomes ?? [] {
+        if types.contains("task"), let assistant = attention?.store.assistant {
+            for value in assistant.outcomes {
                 for task in value.tasks where task.text.lowercased().contains(needle) {
-                    results.append(["type": "task", "task": ["id": mcpTaskID(value.id, task), "text": task.text, "owner": task.owner, "done": task.done, "meeting_id": mcpOutcomeID(value.id)], "matched_field": "text"])
+                    if personalOnly, !assistant.taskProfile.owns(task) { continue }
+                    if !includeArchived, !assistant.isTaskOperational(task) { continue }
+                    results.append(["type": "task", "task": taskItem(task, in: value), "matched_field": "text"])
                 }
             }
         }
@@ -421,7 +449,7 @@ import Foundation
                 }
             }
         }
-        return try page(kind: "search", filters: ["query": query, "types": types], args: args, items: results)
+        return try page(kind: "search", filters: ["query": query, "types": types, "personal_only": personalOnly, "include_archived": includeArchived], args: args, items: results)
     }
 
     // MARK: Settings and attention
@@ -554,26 +582,53 @@ import Foundation
     }
 
     func updateTask(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
-        guard let store = attention?.store else { throw MCPToolFailure("APP_NOT_RUNNING", "The native workspace is unavailable.") }
+        guard let attention else { throw MCPToolFailure("APP_NOT_RUNNING", "The native workspace is unavailable.") }
+        let store = attention.store
         let taskID = try MCPValue.string(args["task_id"], key: "task_id")
-        guard let parsed = taskID.split(separator: ":").last, let taskUUID = UUID(uuidString: String(parsed)) else { throw MCPToolFailure("TASK_NOT_FOUND", "The requested task is unavailable.") }
-        var found: (outcome: MeetingOutcome, task: MeetingOutcomeTask)? = nil
-        for outcome in store.assistant.outcomes {
-            if let task = outcome.tasks.first(where: { $0.id == taskUUID }) { found = (outcome, task); break }
+        let components = taskID.split(separator: ":")
+        guard components.count == 4, components[0] == "task", components[1] == "native",
+              let outcomeID = UUID(uuidString: String(components[2])),
+              let taskUUID = UUID(uuidString: String(components[3])) else {
+            throw MCPToolFailure("TASK_NOT_FOUND", "The requested task is unavailable.")
         }
-        guard let target = found else { throw MCPToolFailure("TASK_NOT_FOUND", "The requested task is unavailable.") }
-        // Validation precedes the action record; replays skip the revision check.
+        let text = try MCPValue.optionalString(args["text"], key: "text")
+        let owner = try MCPValue.optionalString(args["owner"], key: "owner")
+        let done = try MCPValue.optionalBool(args["done"], key: "done")
+        await store.waitForMeetingLibrary()
+        await store.waitForOutcomeWrites()
+        let library = store.meetingLibrary.store
         let actionID = try MCPValue.string(args["action_id"], key: "action_id")
-        if actions.recordedActions[actionID] == nil { try expectRevision(args["expected_revision"], actual: target.outcome.id.uuidString) }
-        let (id, replay) = try beginAction(args, client: client); if let replay { return replay }
-        var task = target.task
-        if let text = try MCPValue.optionalString(args["text"], key: "text") { task.text = text }
-        if let owner = try MCPValue.optionalString(args["owner"], key: "owner") { task.owner = owner }
-        if let done = try MCPValue.optionalBool(args["done"], key: "done") { task.done = done }
-        var outcome = target.outcome
-        if let index = outcome.tasks.firstIndex(where: { $0.id == task.id }) { outcome.tasks[index] = task }
-        store.assistant.updateOutcome(outcome)
-        return actions.finish(id, client: client, type: "task", target: taskID, status: "applied", result: ["action_id": id, "status": "applied", "observed_at": mcpNow(), "entity_id": taskID, "revision": outcome.id.uuidString, "warnings": []])
+        if actions.recordedActions[actionID] == nil {
+            guard let outcome = try await library.outcome(outcomeID), outcome.tasks.contains(where: { $0.id == taskUUID }) else {
+                throw MCPToolFailure("TASK_NOT_FOUND", "The requested task is unavailable.")
+            }
+            try expectRevision(args["expected_revision"], actual: outcomeID.uuidString)
+        }
+        let (id, replay) = try beginAction(args, client: client)
+        if let replay { return replay }
+        do {
+            if text != nil || owner != nil || done != nil {
+                guard try await store.publishOutcomeMutation({
+                    try await library.changeTask(outcomeID: outcomeID, taskID: taskUUID) { task in
+                        if let text { task.text = text }
+                        if let owner, owner != task.owner {
+                            task.owner = owner
+                            task.assigneeID = nil
+                            task.reminderAt = nil
+                        }
+                        if let done { task.setDone(done) }
+                    }
+                }) != nil else { throw MCPToolFailure("TASK_NOT_FOUND", "The requested task is unavailable.") }
+                await store.meetingLibrary.refresh()
+                await attention.reconcileTaskReminderCancellations()
+            }
+            return actions.finish(id, client: client, type: "task", target: taskID, status: "applied",
+                result: ["action_id": id, "status": "applied", "observed_at": mcpNow(), "entity_id": taskID,
+                         "revision": outcomeID.uuidString, "warnings": []])
+        } catch {
+            _ = actions.finish(id, client: client, type: "task", target: taskID, status: "failed", failure: "task_write_failed")
+            throw error
+        }
     }
 
     func updateSettings(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {

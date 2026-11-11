@@ -98,6 +98,11 @@ import UserNotifications
         self.library = library; self.detect = detect; self.makeHandoffActivity = makeHandoffActivity
         self.makeMeeting = makeMeeting ?? { NativeDesktopMeetingModel(destination: $0, name: $1, title: $2, quiet: $3) }
         super.init()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.attention.store.waitForMeetingLibrary()
+            self.obsidian.load()
+        }
         library.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         library.onOpenMeeting = { [weak self] url, engine, title, event in self?.join(url, engine: engine, title: title, eventID: event) }
         library.onScheduledMeeting = { [weak self] request in
@@ -410,17 +415,17 @@ import UserNotifications
         for (joinID, owner) in joinModels where owner == ObjectIdentifier(model) { joinTasks[joinID]?.cancel() }
         let task = Task { @MainActor () -> Bool in
             attention.noteLeave(model)
-            attention.captureOutcome(for: model)
+            let awaitingOutcome = attention.captureOutcome(for: model)
             // Local durable flushes are part of leaving; Obsidian export stays queued.
             await attention.store.notes.flush(sessionID: id)
             let clean = await model.leave()
             guard self.meetings.contains(where: { $0 === model }) else {
-                self.attention.store.meetingLibrary.endSession(id)
+                await self.attention.store.meetingLibrary.endSession(id, awaitingOutcome: awaitingOutcome)
                 self.attention.forgetLeave(id)
                 return clean
             }
             if clean {
-                self.attention.store.meetingLibrary.endSession(id)
+                await self.attention.store.meetingLibrary.endSession(id, awaitingOutcome: awaitingOutcome)
                 self.meetings.removeAll { $0 === model }
                 self.meetingWindows.removeValue(forKey: id)?.close()
                 self.meetingSubscriptions[id] = nil; self.renderedMeetingStates[id] = nil; self.continuationSessions[id] = nil

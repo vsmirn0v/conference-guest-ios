@@ -78,8 +78,22 @@ enum MeetingNoteSaveStatus: Equatable {
         Task { [store] in _ = try? await store.updateSession(id, state: .failed); await refresh() }
     }
 
-    func endSession(_ id: UUID, endedAt: Date = Date()) {
-        Task { [store] in _ = try? await store.updateSession(id, endedAt: endedAt, state: .ended); await refresh() }
+    func endSession(_ id: UUID, endedAt: Date = Date(), awaitingOutcome: Bool) async {
+        do {
+            try await store.endSession(id, at: endedAt, awaitingOutcome: awaitingOutcome)
+            await refresh()
+        } catch {
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func saveInObsidian(_ id: UUID) async throws {
+        try await store.saveInObsidian(id)
+    }
+
+    func renameSession(_ id: UUID, title: String) async throws {
+        try await store.renameSession(id, title: title)
+        await refresh()
     }
 
     // MARK: Notes

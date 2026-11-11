@@ -135,7 +135,7 @@
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Get one stored outcome by outcome ID.",
+      "description": "Get one stored historical outcome by outcome ID. Task items include the current profile’s archived flag.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -179,7 +179,7 @@
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "List tasks from native meeting outcomes.",
+      "description": "List tasks from native meeting outcomes. Tasks archived by the current profile are excluded by default.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -189,6 +189,10 @@
           },
           "done": {
             "description": "Filter by completion state.",
+            "type": "boolean"
+          },
+          "include_archived": {
+            "description": "Include tasks archived by the current profile; defaults to false.",
             "type": "boolean"
           },
           "limit": {
@@ -205,6 +209,10 @@
           "owner": {
             "description": "Case-insensitive substring match on the task owner.",
             "type": "string"
+          },
+          "personal_only": {
+            "description": "Only tasks assigned to the current profile by stable ID or confirmed full alias.",
+            "type": "boolean"
           }
         },
         "required": [],
@@ -225,12 +233,20 @@
             "description": "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
             "type": "string"
           },
+          "include_archived": {
+            "description": "Include task results archived by the current profile; defaults to false.",
+            "type": "boolean"
+          },
           "limit": {
             "default": 20,
             "description": "Maximum number of items to return; values outside 1...100 are rejected. Defaults to 20.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
+          },
+          "personal_only": {
+            "description": "Restrict task results to the current profile's assignments.",
+            "type": "boolean"
           },
           "query": {
             "description": "Case-insensitive search text, trimmed; must be non-empty after trimming.",

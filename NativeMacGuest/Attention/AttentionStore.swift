@@ -1,3 +1,4 @@
+import Combine
 import ConferenceCore
 import Foundation
 import Security
@@ -373,6 +374,12 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// alive past a fixture's teardown block, and the library connection outlives the
     /// directory that was just deleted ("vnode unlinked while in use").
     private var libraryTask: Task<Void, Never>?
+    private var titleObservation: AnyCancellable?
+    private var outcomeWriteTail: Task<Void, Never>?
+    private var pendingOutcomeEdits: [UUID: [MeetingOutcomeEdit]] = [:]
+    private var scheduledOutcomeWrites: Set<UUID> = []
+    private var latestOutcomeCommits: [UUID: MeetingOutcomeCommit] = [:]
+    private var removedOutcomeIDs: Set<UUID> = []
     /// Dual-writes into the meeting library spawned by the assistant persist/remove
     /// callbacks. Tracked so teardown can cancel and drain them before closing the
     /// SQLite handle — a `closeSync` racing one of these in-flight writes corrupts
@@ -435,12 +442,21 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// A failed migration keeps assistant.json authoritative and surfaces an error
     /// instead of silently dropping either copy.
     private func installMeetingLibrary() {
-        assistant.onPersistOutcome = { [weak self] outcome in
+        titleObservation = meetingLibrary.$cards.sink { [weak assistant] cards in
+            assistant?.applyEffectiveTitles(cards)
+        }
+        assistant.onPersistOutcome = { [weak self] outcome, baseline in
             guard let self else { return }
-            self.trackPersistTask { await self.meetingLibrary.addOutcome(outcome, state: .ready) }
+            if baseline == nil { self.removedOutcomeIDs.remove(outcome.id) }
+            self.pendingOutcomeEdits[outcome.id, default: []].append(.init(baseline: baseline, edited: outcome))
+            self.retryOutcomeEdits(outcome.id)
         }
         assistant.onRemoveOutcome = { [weak self] id in
             guard let self else { return }
+            self.removedOutcomeIDs.insert(id)
+            self.latestOutcomeCommits[id] = nil
+            self.pendingOutcomeEdits[id] = nil
+            self.assistant.setOutcomeWriteError(nil, for: id)
             self.trackPersistTask { await self.meetingLibrary.removeOutcome(id) }
         }
         libraryTask = Task { @MainActor [weak self] in
@@ -452,16 +468,78 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     }
 
     func waitForMeetingLibrary() async { await libraryTask?.value }
+    func waitForOutcomeWrites() async { await outcomeWriteTail?.value }
+
+    @discardableResult
+    func publishOutcomeMutation(_ mutation: () async throws -> MeetingOutcomeCommit?) async rethrows -> MeetingOutcomeCommit? {
+        guard let commit = try await mutation() else { return nil }
+        publishOutcomeCommit(commit)
+        return commit
+    }
+
+    func retryOutcomeEdits(_ id: UUID) {
+        guard pendingOutcomeEdits[id] != nil, scheduledOutcomeWrites.insert(id).inserted else { return }
+        assistant.setOutcomeWriteError(nil, for: id)
+        trackPersistTask {
+            defer { self.scheduledOutcomeWrites.remove(id) }
+            while !Task.isCancelled, let edits = self.pendingOutcomeEdits[id] {
+                do {
+                    guard let commit = try await self.meetingLibrary.store.saveOutcomeEdits(edits) else { return }
+                    let savedIDs = Set(edits.map(\.id))
+                    self.pendingOutcomeEdits[id]?.removeAll { savedIDs.contains($0.id) }
+                    if self.pendingOutcomeEdits[id]?.isEmpty == true { self.pendingOutcomeEdits[id] = nil }
+                    self.publishOutcomeCommit(commit)
+                    await self.meetingLibrary.refresh()
+                } catch {
+                    // Keep the failed batch in the projection until retry or explicit discard.
+                    guard let pending = self.pendingOutcomeEdits[id] else { return }
+                    if pending.count > edits.count { continue }
+                    self.assistant.setOutcomeWriteError(error, for: id)
+                    return
+                }
+            }
+        }
+    }
+
+    func discardOutcomeEdits(_ id: UUID) {
+        guard assistant.outcomeWriteErrors[id] != nil, !scheduledOutcomeWrites.contains(id),
+              let discarded = pendingOutcomeEdits.removeValue(forKey: id) else { return }
+        assistant.setOutcomeWriteError(nil, for: id)
+        if let saved = latestOutcomeCommits[id]?.outcome ?? discarded.first?.baseline {
+            assistant.restorePersistedOutcomes([saved])
+            assistant.applyEffectiveTitles(meetingLibrary.cards)
+        } else {
+            assistant.forgetUnpersistedOutcome(id)
+        }
+    }
+
+    private func publishOutcomeCommit(_ commit: MeetingOutcomeCommit) {
+        let id = commit.outcomeID
+        guard !removedOutcomeIDs.contains(id) else { return }
+        let latest = latestOutcomeCommits[id].flatMap { $0.revision > commit.revision ? $0 : nil } ?? commit
+        latestOutcomeCommits[id] = latest
+        // Apply newer optimistic edits in order over the canonical receipt, including
+        // when a mutation used a historical ID or an edit reverted an earlier value.
+        let projected = (pendingOutcomeEdits[id] ?? []).reduce(latest.outcome) { $1.apply(to: $0) }
+        assistant.restorePersistedOutcomes([projected])
+        assistant.applyEffectiveTitles(meetingLibrary.cards)
+    }
 
     /// Runs `operation` as a tracked task: teardown cancels and drains tracked tasks
     /// before closing the library, so no write is ever in flight across a close.
     /// Completed tasks unregister themselves; everything runs on the main actor.
     private func trackPersistTask(_ operation: @escaping @MainActor () async -> Void) {
         let key = UUID()
-        persistTasks[key] = Task { @MainActor [weak self] in
+        let previous = outcomeWriteTail
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            await self?.waitForMeetingLibrary()
+            defer { self?.persistTasks[key] = nil }
+            guard !Task.isCancelled else { return }
             await operation()
-            self?.persistTasks[key] = nil
         }
+        persistTasks[key] = task
+        outcomeWriteTail = task
     }
 
     deinit {
@@ -482,6 +560,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
                 try await store.importLegacyOutcomes(legacy)
             }
             let saved = try await store.outcomes()
+            assistant.taskProfile = try await store.taskProfile()
+            assistant.taskArchiveDates = try await store.taskArchiveDates(profileID: assistant.taskProfile.id)
             assistant.markOutcomesExternal()
             assistant.restorePersistedOutcomes(saved)
             await meetingLibrary.refresh()

@@ -1436,6 +1436,23 @@ final class NativeGuestEngine {
 extension NativeGuestEngine {
     private func emitMeetingChange() { onMeetingChange?(meetingSnapshot) }
 
+    var participationRoomScope: (room: String, group: String)? {
+        guard let room = meetingFeatures.roomID, let group = meetingFeatures.groupID else { return nil }
+        return (room, group)
+    }
+
+    /// Use the server's correlated acknowledgement and preserve the provided ID
+    /// for an independently observed live chat echo. No optimistic chat row is
+    /// created here, and this path never retries.
+    func sendAttributedChat(_ text: String, id: String, permit: GuestChatDispatchPermit) async throws {
+        try checkActive()
+        guard joined, meetingSnapshot.connected, meetingSnapshot.permissions.canViewChat,
+              meetingSnapshot.permissions.canSendChat, let transport else { throw GuestEngineError.admissionDenied }
+        guard !text.isEmpty, text.count <= 2_000, text.utf8.count <= 16_384 else { throw GuestEngineError.admissionDenied }
+        _ = try await transport.request(event: "send-chat-message", payload: ["messageText": text],
+                                        requestID: id, chatPermit: permit)
+    }
+
     /// Room participant identities, not RTC SIDs. The SFU remains subscribed to
     /// every audio track; a viewport only changes the bounded video demand.
     /// Without cameras only screen shares are subscribed or delivered.

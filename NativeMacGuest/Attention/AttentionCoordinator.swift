@@ -128,6 +128,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     @Published private(set) var judging: UUID?
     @Published private(set) var outcomeStatus: [UUID: String] = [:]
     @Published private(set) var outcomeError: [UUID: String] = [:]
+    @Published var requestedOutcomeSessionID: UUID?
 
     let store: AttentionStore
     var meetings: () -> [NativeDesktopMeetingModel] = { [] }
@@ -162,6 +163,12 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let request = UNNotificationRequest(identifier: "meeting-task-" + task.id.uuidString,
             content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, at.timeIntervalSinceNow), repeats: false))
         try await UNUserNotificationCenter.current().add(request)
+    }
+    var cancelTaskReminder: (UUID) -> Void = { id in
+        let center = UNUserNotificationCenter.current()
+        let identifier = "meeting-task-" + id.uuidString
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
     }
     var scheduleReminder: (AttentionMoment, Date) async throws -> Void = { moment, at in
         let content = UNMutableNotificationContent()
@@ -207,6 +214,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     private var outcomeCaptures: Set<UUID> = []
     private var overflowMeetingByMomentID: [UUID: UUID] = [:]
     private var remindingMoments: Set<UUID> = []
+    private var reminderCancellationTask: Task<Void, Never>?
     /// Situation at the moment leave started. Hangup turns sound off while the
     /// meeting is still on screen; that teardown is not the user silencing it.
     private var situationAtLeave: [UUID: AttentionSituation] = [:]
@@ -260,11 +268,15 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             while !Task.isCancelled {
                 guard let self else { return }
                 await tick()
+                await reconcileTaskReminderCancellations()
                 try? await Task.sleep(for: .seconds(2))
             }
         }
     }
-    func stop() { loop?.cancel(); loop = nil }
+    func stop() {
+        loop?.cancel(); loop = nil
+        for model in meetings() { model.participation.stop() }
+    }
     deinit { loop?.cancel() }
 
     // MARK: Sheets
@@ -313,6 +325,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     /// Your choice for this meeting, else its series' or room's mode, else the situation's.
     func resolvedMode(_ model: NativeDesktopMeetingModel) -> ResolvedMode {
+        if model.participation.status != .inactive {
+            return .init(mode: .watch, source: .meeting(until: nil))
+        }
         if let override = states[model.sessionID]?.override, (override.until ?? .distantFuture) > now() {
             return .init(mode: override.mode, source: .meeting(until: override.until))
         }
@@ -323,6 +338,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         return .init(mode: store.mode(for: situation), source: .situation(situation))
     }
     func setMode(_ mode: AttentionMode, for model: NativeDesktopMeetingModel, scope: ModeScope = .untilLeave) {
+        model.participation.stop()
         let id = model.sessionID
         switch scope {
         case .untilLeave: states[id, default: .init()].override = .init(mode: mode, until: nil)
@@ -340,6 +356,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     /// Drops your choice for this meeting (and its series' mode, when `series`), back to the defaults.
     func resetMode(for model: NativeDesktopMeetingModel, series: Bool = false) {
+        model.participation.stop()
         states[model.sessionID]?.override = nil
         if series, store.preset(room: model.invitation, series: model.calendarSeriesID)?.mode != nil {
             store.setMeetingMode(nil, room: model.invitation, series: model.calendarSeriesID, title: model.title)
@@ -351,6 +368,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     /// Off → Mentions → Watch → Off, for this meeting until you leave.
     func cycleMode(for model: NativeDesktopMeetingModel) {
+        if model.participation.status != .inactive {
+            setMode(.off, for: model)
+            return
+        }
         let all = AttentionMode.allCases, current = resolvedMode(model).mode
         setMode(all[((all.firstIndex(of: current) ?? 0) + 1) % all.count], for: model)
     }
@@ -388,16 +409,17 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     /// Snapshots the conversation synchronously, then writes the outcome after leave.
     /// No model call, file I/O or await is placed on the leave-critical path.
-    func captureOutcome(for model: NativeDesktopMeetingModel) {
+    @discardableResult func captureOutcome(for model: NativeDesktopMeetingModel) -> Bool {
         let id = model.sessionID
-        guard store.shouldCaptureOutcome, !outcomeCaptures.contains(id) else { return }
+        if outcomeCaptures.contains(id) { return true }
+        guard store.shouldCaptureOutcome else { return false }
         let window = MeetingOutcomePrompt.window(title: model.title, transcript: model.transcript,
             chat: model.chat.items, yourName: model.displayName, now: now(),
             // Only Apple's on-device model uses the compact window. Rapid-MLX and other writers use the remote window,
             // sized from the catalogued context length, or from a small default when that length was never stored.
             onDevice: store.effectiveWriter.kind == .apple,
             contextTokens: store.outcomeContextTokens)
-        guard !window.lines.isEmpty else { return }
+        guard !window.lines.isEmpty else { return false }
         outcomeCaptures.insert(id)
         let endedAt = now()
         let draft = MeetingOutcome(meetingID: id, meetingTitle: model.title, invitation: model.invitation,
@@ -405,9 +427,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let input = MeetingOutcomeInput(request: .init(meetingTitle: model.title, endedAt: endedAt,
             window: window, language: language), provider: store.effectiveWriter)
         runOutcome(for: id) { library, owner in
-            try await library.startOutcome(draft, input: input, owner: owner)
-            return (draft, input)
+            let persisted = try await library.startOutcome(draft, input: input, owner: owner)
+            return (persisted, input)
         }
+        return true
     }
 
     func retryOutcome(for sessionID: UUID, outcomeID: UUID) {
@@ -463,9 +486,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                     if case .http(let status, _) = error as? AttentionJudgeError { fields["httpStatus"] = status }
                     probeLog("assistant-outcome-failed", fields)
                 }
-                if try await library.store.finishOutcome(outcome, owner: owner, errorCode: failure?.rawValue),
-                   failure == nil {
-                    store.assistant.addOutcome(outcome, alreadyPersisted: true)
+                let ready = try await store.publishOutcomeMutation {
+                    let commit = try await library.store.finishOutcome(outcome, owner: owner, errorCode: failure?.rawValue)
+                    return failure == nil ? commit : nil
+                }
+                if ready != nil {
                     probeLog("assistant-outcome", ["lines": input.request.window.lines.count,
                         "decisions": outcome.decisions.count, "tasks": outcome.tasks.count])
                 }
@@ -479,18 +504,100 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
 
     func remind(_ task: MeetingOutcomeTask, in outcome: MeetingOutcome) {
-        let at = task.dueAt ?? now().addingTimeInterval(3600)
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await scheduleOutcomeReminder(outcome, task, at)
-                guard var current = store.assistant.outcomes.first(where: { $0.id == outcome.id }),
-                      let index = current.tasks.firstIndex(where: { $0.id == task.id }) else { return }
-                current.tasks[index].reminderAt = at
-                store.assistant.updateOutcome(current)
+                let due = task.deadline(calendar: .current)
+                let at = due.flatMap { $0 > now() ? $0 : nil } ?? now().addingTimeInterval(3600)
+                try await scheduleEligibleTaskReminder(outcomeID: outcome.id, taskID: task.id, at: at)
             } catch { outcomeError[outcome.id] = error.localizedDescription }
         }
     }
+
+    func setTaskDone(_ row: PersonalTaskRow, done: Bool) async throws {
+        await store.waitForOutcomeWrites()
+        let completedAt = now()
+        if try await store.publishOutcomeMutation({
+            try await store.meetingLibrary.store.changeTask(outcomeID: row.outcomeID, taskID: row.id) {
+                $0.setDone(done, at: completedAt)
+            }
+        }) != nil {
+            await store.meetingLibrary.refresh()
+        }
+        await reconcileTaskReminderCancellations()
+    }
+
+    func setTaskArchived(_ row: PersonalTaskRow, archived: Bool) async throws {
+        await store.waitForOutcomeWrites()
+        let assistant = store.assistant
+        assistant.taskArchiveDates[row.id] = try await store.meetingLibrary.store.setTaskArchived(
+            taskID: row.id, profile: assistant.taskProfile, archived: archived)
+        await reconcileTaskReminderCancellations()
+        if !archived,
+           let task = try await store.meetingLibrary.store.outcome(row.outcomeID)?.tasks.first(where: { $0.id == row.id }),
+           let at = task.reminderAt, at > now() {
+            try await scheduleEligibleTaskReminder(outcomeID: row.outcomeID, taskID: row.id, at: at)
+        }
+    }
+
+    func reviewTaskCandidate(_ candidate: MeetingOutcomeTask, in outcome: MeetingOutcome,
+                             accept: Bool, matchedTaskID: UUID? = nil) {
+        guard var current = store.assistant.outcomes.first(where: { $0.id == outcome.id }),
+              let index = current.taskReviewCandidates.firstIndex(where: { $0.id == candidate.id }) else { return }
+        if let matchedTaskID {
+            guard current.tasks.contains(where: { $0.id == matchedTaskID }) else { return }
+            current.taskReviewMatches[candidate.id] = matchedTaskID
+        }
+        current.taskReviewCandidates.remove(at: index)
+        if accept { current.tasks.append(candidate) }
+        store.assistant.updateOutcome(current)
+    }
+
+    private func scheduleEligibleTaskReminder(outcomeID: UUID, taskID: UUID, at: Date) async throws {
+        await store.waitForMeetingLibrary()
+        await store.waitForOutcomeWrites()
+        let library = store.meetingLibrary.store
+        guard let outcome = try await library.outcome(outcomeID),
+              let task = outcome.tasks.first(where: { $0.id == taskID }),
+              try await library.taskReminderAllowed(taskID, profile: store.assistant.taskProfile),
+              at > now() else { return }
+        try await scheduleOutcomeReminder(outcome, task, at)
+        do {
+            await store.waitForOutcomeWrites()
+            if try await store.publishOutcomeMutation({
+                try await library.recordTaskReminder(outcomeID: outcomeID, taskID: taskID,
+                                                     profile: store.assistant.taskProfile, at: at)
+            }) != nil {
+                return
+            }
+        } catch {
+            cancelTaskReminder(taskID)
+            throw error
+        }
+        cancelTaskReminder(taskID)
+    }
+
+    func reconcileTaskReminderCancellations() async {
+        if let reminderCancellationTask {
+            await reminderCancellationTask.value
+            return
+        }
+        let reconciliation = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { reminderCancellationTask = nil }
+            let library = store.meetingLibrary.store
+            while let ids = try? await library.taskReminderCancellations(), !ids.isEmpty {
+                for id in ids {
+                    cancelTaskReminder(id)
+                    do { try await library.acknowledgeTaskReminderCancellation(id) }
+                    catch { return }
+                }
+            }
+        }
+        reminderCancellationTask = reconciliation
+        await reconciliation.value
+    }
+
 
     func keepSuggestion(_ id: UUID, editedText: String? = nil) {
         guard let suggestion = store.assistant.suggestions.first(where: { $0.id == id }) else { return }

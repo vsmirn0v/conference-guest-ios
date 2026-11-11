@@ -11,7 +11,8 @@ actor ObsidianFileWriter {
         var sha256: String
 
         static func fingerprint(_ url: URL) throws -> FileIdentity? {
-            guard let data = try? Data(contentsOf: url) else { return nil }
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let data = try Data(contentsOf: url)
             let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
             return FileIdentity(
                 size: data.count,
@@ -31,6 +32,7 @@ actor ObsidianFileWriter {
 
     private let backupRoot: URL
     private var injectedFaults: Set<Fault> = []
+    private var beforeReplaceForTesting: ((URL) throws -> Void)?
     static let maxBackupsPerFile = 20
     static let backupRetention: TimeInterval = 30 * 24 * 3600
 
@@ -39,6 +41,7 @@ actor ObsidianFileWriter {
     }
 
     func injectFaults(_ faults: Set<Fault>) { injectedFaults = faults }
+    func injectBeforeReplace(_ action: ((URL) throws -> Void)?) { beforeReplaceForTesting = action }
 
     struct WriteOutcome {
         var identity: FileIdentity
@@ -47,8 +50,45 @@ actor ObsidianFileWriter {
 
     /// Writes `content` to `target` atomically. `expectedIdentity` nil means the file
     /// must not exist yet (creation); a mismatch means an external writer raced us and
-    /// the caller re-evaluates with fresh bytes — nothing is overwritten from a stale read.
-    func write(target: URL, content: String, expectedIdentity: FileIdentity?) throws -> WriteOutcome {
+    /// the caller re-evaluates with fresh bytes. Uncoordinated external writers can
+    /// still race the final filesystem replacement after the last identity check.
+    func write(target: URL, content: String, expectedIdentity: FileIdentity?, vaultRoot: URL? = nil,
+               relativePath: String? = nil) throws -> WriteOutcome {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var result: Result<WriteOutcome, Error>?
+        coordinator.coordinate(writingItemAt: target, options: .forReplacing, error: &coordinationError) { coordinatedURL in
+            result = Result {
+                guard coordinatedURL.standardizedFileURL == target.standardizedFileURL else {
+                    throw ObsidianExportError.destinationChanged
+                }
+                let validateTarget = {
+                    try self.validateVaultTarget(coordinatedURL, vaultRoot: vaultRoot, relativePath: relativePath)
+                }
+                try validateTarget()
+                try FileManager.default.createDirectory(at: coordinatedURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
+                try validateTarget()
+                return try writeCoordinated(target: coordinatedURL, content: content,
+                    expectedIdentity: expectedIdentity, validateTarget: validateTarget)
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let result else { throw ObsidianExportError.destinationChanged }
+        return try result.get()
+    }
+
+    private func validateVaultTarget(_ target: URL, vaultRoot: URL?, relativePath: String?) throws {
+        guard let vaultRoot, let relativePath else { return }
+        guard case .success(let verifiedURL) = ObsidianVaultAccess.validate(relativePath: relativePath, in: vaultRoot),
+              verifiedURL.standardizedFileURL == target.standardizedFileURL,
+              case .success = ObsidianVaultAccess.validateFileTarget(verifiedURL) else {
+            throw ObsidianExportError.pathEscapesVault(relativePath)
+        }
+    }
+
+    private func writeCoordinated(target: URL, content: String, expectedIdentity: FileIdentity?,
+                                  validateTarget: () throws -> Void) throws -> WriteOutcome {
         let existing = try FileIdentity.fingerprint(target)
         if let expectedIdentity, existing != expectedIdentity {
             throw ObsidianExportError.destinationChanged
@@ -58,7 +98,7 @@ actor ObsidianFileWriter {
         }
         let bytes = Data(content.utf8)
         var backup: URL? = nil
-        if let existing {
+        if existing != nil {
             try checkFault(.beforeBackup, target: target)
             backup = try makeBackup(of: target)
             try checkFault(.afterBackupBeforeReplace, target: target)
@@ -66,9 +106,13 @@ actor ObsidianFileWriter {
         let temp = target.deletingLastPathComponent().appendingPathComponent(
             ".\(target.lastPathComponent).rocknroll-\(UUID().uuidString).tmp")
         do {
-            try FileManager.default.createDirectory(at: temp.deletingLastPathComponent(), withIntermediateDirectories: true)
             try bytes.write(to: temp, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: temp.path)
+            try beforeReplaceForTesting?(target)
+            try validateTarget()
+            guard try FileIdentity.fingerprint(target) == existing else {
+                throw ObsidianExportError.destinationChanged
+            }
             try replace(temp: temp, target: target)
             try checkFault(.afterReplace, target: target)
         } catch {
@@ -85,7 +129,11 @@ actor ObsidianFileWriter {
     private func replace(temp: URL, target: URL) throws {
         // Atomic rename within one directory; a crash leaves either the old or the new
         // complete file, never a partial one.
-        _ = try FileManager.default.replaceItemAt(target, withItemAt: temp)
+        if FileManager.default.fileExists(atPath: target.path) {
+            _ = try FileManager.default.replaceItemAt(target, withItemAt: temp)
+        } else {
+            try FileManager.default.moveItem(at: temp, to: target)
+        }
     }
 
     private func makeBackup(of url: URL) throws -> URL {
@@ -93,7 +141,7 @@ actor ObsidianFileWriter {
         let folder = backupRoot.appendingPathComponent(Self.safeBackupName(for: url), isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let backup = folder.appendingPathComponent(stamp + ".md")
+        let backup = folder.appendingPathComponent(stamp + "-" + UUID().uuidString + ".md")
         try data.write(to: backup, options: .atomic)
         try pruneBackups(in: folder, keepingLatest: Self.maxBackupsPerFile)
         return backup
@@ -111,7 +159,7 @@ actor ObsidianFileWriter {
         for (index, entry) in dated.enumerated() {
             let beyondLimit = index >= limit
             let expired = entry.1 < cutoff
-            if (beyondLimit || expired), dated.count > 1 {
+            if (beyondLimit || expired), index > 0 {
                 try? FileManager.default.removeItem(at: entry.0)
             }
         }

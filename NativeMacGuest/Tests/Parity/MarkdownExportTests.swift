@@ -32,6 +32,32 @@ final class MarkdownExportTests: XCTestCase {
         XCTAssertNotNil(structure.markerAmbiguity)
     }
 
+    func testLongFenceDoesNotCloseOnShortFence() {
+        let marker = ManagedBlock.beginMarker(sessionID: sessionID, nonce: ManagedBlock.newNonce(), component: .meeting)
+        let text = "````\n```\n" + marker + "\n````\n"
+        let structure = MarkdownStructureScanner.scan(text)
+        XCTAssertNil(structure.markerAmbiguity)
+        XCTAssertTrue(structure.managedBlocks.isEmpty)
+    }
+
+    func testPatchPreservesCRLFOutsideManagedBlock() throws {
+        let nonce = ManagedBlock.newNonce()
+        let created = MarkdownFilePatcher.create(sessionID: sessionID, nonce: nonce,
+            frontmatter: "---\ntitle: T\n---", managedContent: "v1")
+        let existing = "Manual line\r\nSecond line\r\n" + created.text + "manual tail\r\n"
+        let result = try MarkdownFilePatcher.patch(existing: existing, sessionID: sessionID, nonce: nonce,
+            component: .meeting, managedContent: "v2", expectedBlockSHA256: created.blockSHA256)
+        XCTAssertTrue(result.text.hasPrefix("Manual line\r\nSecond line\r\n"))
+        XCTAssertTrue(result.text.hasSuffix("manual tail\r\n"))
+        XCTAssertEqual(MarkdownStructureScanner.scan(result.text).managedBlocks.count, 1)
+    }
+
+    func testMissingPreviouslyManagedBlockConflicts() {
+        XCTAssertThrowsError(try MarkdownFilePatcher.patch(existing: "manual text\n", sessionID: sessionID,
+            nonce: ManagedBlock.newNonce(), component: .meeting, managedContent: "replacement",
+            expectedBlockSHA256: MarkdownFilePatcher.sha256("original")))
+    }
+
     // MARK: Patcher
 
     func testPatchPreservesExternalEditsAndUpdatesBlock() throws {
@@ -106,15 +132,44 @@ final class MarkdownExportTests: XCTestCase {
         let session = MeetingSessionRecord(id: sessionID, title: "T", startedAt: Date())
         let empty = MeetingMarkdownTemplate.managedContent(session: session, note: nil, outcome: nil, outcomeState: .notStarted)
         XCTAssertTrue(empty.contains("_No notes for this meeting._"))
-        XCTAssertTrue(empty.contains("_The meeting outcome is being prepared…_"))
+        XCTAssertTrue(empty.contains("_No outcome for this meeting._"))
+        let pending = MeetingMarkdownTemplate.managedContent(session: session, note: nil, outcome: nil, outcomeState: .pending)
+        XCTAssertTrue(pending.contains("_The meeting outcome is being prepared…_"))
         let failed = MeetingMarkdownTemplate.managedContent(session: session, note: nil, outcome: nil, outcomeState: .failed)
         XCTAssertTrue(failed.contains("could not be generated"))
     }
 
+    func testExportKeepsUnfinishedNoteFenceVerbatimAndClosesItBeforeManagedMarkers() throws {
+        let meeting = MeetingSessionRecord(id: sessionID, title: "Unfinished code", startedAt: Date())
+        let nonce = ManagedBlock.newNonce()
+        let other = ManagedBlock.newNonce()
+        for fence in ["````swift", "~~~"] {
+            let raw = "Before\n\n" + fence + "\n" + ManagedBlock.endMarker(sessionID: sessionID, nonce: other, component: .meeting)
+            let note = MeetingNoteRecord(id: UUID(), sessionID: sessionID, markdown: raw, revision: 1,
+                createdAt: Date(), updatedAt: Date())
+            let content = MeetingMarkdownTemplate.managedContent(session: meeting, note: note,
+                outcome: nil, outcomeState: .notStarted)
+            XCTAssertTrue(content.contains(raw))
+            let original = MarkdownFilePatcher.create(sessionID: sessionID, nonce: nonce,
+                frontmatter: "---\nmeeting_id: \(sessionID)\n---", managedContent: content)
+            let structure = MarkdownStructureScanner.scan(original.text)
+            XCTAssertNil(structure.markerAmbiguity)
+            XCTAssertEqual(structure.managedBlocks.count, 1)
+            XCTAssertEqual(structure.managedBlocks.first?.markers.nonce, nonce)
+            let revised = try MarkdownFilePatcher.patch(existing: original.text, sessionID: sessionID, nonce: nonce,
+                component: .meeting, managedContent: content + "\n\nNext section",
+                expectedBlockSHA256: original.blockSHA256)
+            XCTAssertTrue(revised.text.contains(raw))
+            XCTAssertEqual(MarkdownStructureScanner.scan(revised.text).managedBlocks.count, 1)
+        }
+    }
+
     func testYamlValueQuotesUnsafeScalars() {
-        XCTAssertEqual(MeetingMarkdownTemplate.yamlValue("plain title-1"), "plain title-1")
+        XCTAssertEqual(MeetingMarkdownTemplate.yamlValue("plain title-1"), "\"plain title-1\"")
         XCTAssertEqual(MeetingMarkdownTemplate.yamlValue(" leading"), "\" leading\"")
         XCTAssertEqual(MeetingMarkdownTemplate.yamlValue("a\"b"), "\"a\\\"b\"")
         XCTAssertEqual(MeetingMarkdownTemplate.yamlValue(""), "\"\"")
+        XCTAssertEqual(MeetingMarkdownTemplate.yamlValue("Planning: next steps"), "\"Planning: next steps\"")
+        XCTAssertEqual(MeetingMarkdownTemplate.yamlValue("true"), "\"true\"")
     }
 }
