@@ -64,7 +64,7 @@ final class NativeGuestEngine {
     var scheduleTCPRelay: ((GuestPeerTarget) -> Bool)?
     var confirmTCPRelay: ((GuestPeerTarget) -> Void)?
     private var peerTransportObservers: [Task<Void, Never>] = []
-    private var verifiedTCPMedia: [GuestPeerTarget: TransportDemand] = [:]
+    private var tcpRelayEvidence: [GuestPeerTarget: (TransportDemand, GuestICETransportSample.RecoveryEvidence)] = [:]
     private var expectedVideoSubscriptions: Set<String> = []
     private let verifyReceivedPixels: Bool
     private let factory: LKRTCPeerConnectionFactory
@@ -818,7 +818,7 @@ final class NativeGuestEngine {
                 guard let self, let peer, owns(peer), failure == nil else { return }
                 guard peer.iceConnected, peer.transportConnected else {
                     previous = nil; priorDemand = nil; stalledStreams.removeAll()
-                    verifiedTCPMedia[peer.target] = nil
+                    tcpRelayEvidence[peer.target] = nil
                     continue
                 }
                 let demand = transportDemand(peer)
@@ -827,25 +827,34 @@ final class NativeGuestEngine {
                       peer.iceConnected, peer.transportConnected, demand == transportDemand(peer),
                       let sample = GuestICETransportSample(rows, target: peer.target, demandedTracks: demand.tracks) else {
                     previous = nil; priorDemand = nil; stalledStreams.removeAll()
-                    verifiedTCPMedia[peer.target] = nil
+                    tcpRelayEvidence[peer.target] = nil
                     continue
                 }
                 peer.observeSelectedRoute(sample.route)
                 let stablePath = previous.map { sample.samePath(as: $0) } == true
-                let delta = priorDemand == demand && stablePath ? previous.map { sample.mediaDelta(since: $0) } : nil
+                let stableDemand = stablePath && priorDemand == demand
+                let delta = stableDemand ? previous.map { sample.mediaDelta(since: $0) } : nil
                 previous = sample; priorDemand = demand
-                // Require every visible video to advance. Audio uses progress
-                // from an active source because silence/DTX is valid on a mic.
-                let progress = demand.expected && !demand.unboundVideo &&
-                    demand.tracks.isSubset(of: sample.reportedTracks) &&
-                    delta?.confirmsMedia(demand.kinds, videoTracks: demand.videoTracks) == true
-                if progress && sample.isTCPRelay {
-                    if verifiedTCPMedia.updateValue(demand, forKey: peer.target) != demand {
-                        probeLog("ice-relay-media-verified", ["target": peer.target.rawValue, "route": sample.route.rawValue])
-                        confirmTCPRelay?(peer.target)
+                if sample.isTCPRelay {
+                    let previousEvidence = stableDemand ? tcpRelayEvidence[peer.target]?.1 : nil
+                    // Audio DTX can leave the route healthy with zero RTP.
+                    // Keep transport recovery and media proof distinct.
+                    let audio = previousEvidence?.audioProgress == true || delta?.progressing.contains(.audio) == true
+                    let video = previousEvidence?.videoProgress == true ||
+                        (demand.kinds.contains(.video) && !demand.unboundVideo &&
+                         demand.videoTracks.isSubset(of: sample.reportedTracks) &&
+                         delta?.confirmsMedia([.video], videoTracks: demand.videoTracks) == true)
+                    let evidence = GuestICETransportSample.RecoveryEvidence(route: sample.route, audioProgress: audio, videoProgress: video)
+                    tcpRelayEvidence[peer.target] = (demand, evidence)
+                    if evidence.mediaVerified, evidence != previousEvidence {
+                        probeLog("ice-relay-media-verified", ["target": peer.target.rawValue, "route": sample.route.rawValue,
+                            "audioProgress": evidence.audioProgress, "videoProgress": evidence.videoProgress])
+                        if evidence.allowsRecovery(requiresVideo: demand.kinds.contains(.video)) {
+                            confirmTCPRelay?(peer.target)
+                        }
                     }
-                } else if !stablePath || verifiedTCPMedia[peer.target] != demand {
-                    verifiedTCPMedia[peer.target] = nil
+                } else {
+                    tcpRelayEvidence[peer.target] = nil
                 }
                 if peer.icePolicy == .automatic, peer.advertisesTCPRelay, sample.route == .udp,
                    let stalls = delta?.stalledStreams {
@@ -868,8 +877,10 @@ final class NativeGuestEngine {
             if let failure { throw failure }
             let waiting = [subscriber, publisher].compactMap { $0 }.contains { peer in
                 let demand = transportDemand(peer)
-                return tcpRelayTargets.contains(peer.target) && demand.expected &&
-                    (!peer.iceConnected || !peer.transportConnected || verifiedTCPMedia[peer.target] != demand)
+                guard tcpRelayTargets.contains(peer.target), demand.expected else { return false }
+                guard peer.iceConnected, peer.transportConnected, let (verifiedDemand, evidence) = tcpRelayEvidence[peer.target] else { return true }
+                let requiresVideo = demand.kinds.contains(.video)
+                return (requiresVideo && verifiedDemand != demand) || !evidence.allowsRecovery(requiresVideo: requiresVideo)
             }
             if !waiting { return }
             guard ProcessInfo.processInfo.systemUptime < deadline else { throw GuestRelayVerificationError() }

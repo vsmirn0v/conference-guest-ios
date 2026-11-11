@@ -58,6 +58,21 @@ final class AdaptiveICERecoveryTests: XCTestCase {
         XCTAssertTrue(incomplete.mediaDelta(since: old).progressing.isEmpty)
     }
 
+    func testQuietAudioMayRecoverOnTCPBeforeMediaProgress() throws {
+        let muted = inbound("a", track: "remote-audio", kind: "audio", progress: 5)
+        let before = try sample(report(time: 10, relayProtocol: "tls", streams: [muted]))
+        let after = try sample(report(time: 12, relayProtocol: "tls", streams: [muted]))
+        let delta = after.mediaDelta(since: before)
+        XCTAssertTrue(delta.progressing.isEmpty)
+        XCTAssertTrue(delta.stalledStreams.isEmpty)
+        let quiet = GuestICETransportSample.RecoveryEvidence(route: after.route, audioProgress: false, videoProgress: false)
+        XCTAssertTrue(quiet.allowsRecovery(requiresVideo: false))
+        XCTAssertFalse(quiet.mediaVerified)
+        XCTAssertFalse(quiet.allowsRecovery(requiresVideo: true))
+        let udp = GuestICETransportSample.RecoveryEvidence(route: .udp, audioProgress: true, videoProgress: true)
+        XCTAssertFalse(udp.allowsRecovery(requiresVideo: false))
+    }
+
     func testHealthyVideoCannotHideAnotherDemandedVideoStall() throws {
         let tracks: Set<String> = ["video-a", "video-b"]
         let oldA = inbound("a", track: "video-a", kind: "video", progress: 10)

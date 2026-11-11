@@ -238,6 +238,18 @@ struct GuestICETransportSample {
 
     var isTCPRelay: Bool { route == .tcp || route == .tls }
 
+    struct RecoveryEvidence: Equatable {
+        let route: Route
+        let audioProgress: Bool
+        let videoProgress: Bool
+
+        var mediaVerified: Bool { audioProgress || videoProgress }
+
+        func allowsRecovery(requiresVideo: Bool) -> Bool {
+            (route == .tcp || route == .tls) && (!requiresVideo || videoProgress)
+        }
+    }
+
     struct MediaDelta {
         var progressing: Set<MediaKind> = []
         var progressingVideoTracks: Set<String> = []
