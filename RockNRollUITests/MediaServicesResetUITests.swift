@@ -25,7 +25,11 @@ final class MediaServicesResetUITests: XCTestCase {
         baseline.name = "Before actual media-service reset"; baseline.lifetime = .keepAlways; add(baseline)
 
         guard resetMediaServices() else { return }
+        XCTAssertNotEqual(app.state, .notRunning, "The guest process must survive the media-services reset")
         app.activate()
+        // Resetting all daemons can transiently make the phone's accessibility
+        // server unavailable. Give recovery time before querying the meeting UI.
+        Thread.sleep(forTimeInterval: 20)
         guard app.buttons["Leave"].waitForExistence(timeout: 45) else {
             XCTFail("Meeting did not recover: \(app.debugDescription)"); return
         }
@@ -35,6 +39,7 @@ final class MediaServicesResetUITests: XCTestCase {
         let waiting = app.staticTexts["Waiting for video…"]
         XCTAssertFalse(waiting.exists, "Remote moving-video source must render again")
         XCTAssertTrue(moving, "Actual incoming picture must change after reset")
+        if moving { Thread.sleep(forTimeInterval: 10) }
         if environment["ROCKNROLL_TEST_RESET_PIP"] == "1" {
             Thread.sleep(forTimeInterval: 8)
             XCUIDevice.shared.press(.home)
@@ -50,6 +55,93 @@ final class MediaServicesResetUITests: XCTestCase {
         }
         // Shell trace inspection corroborates actual decoded/enqueued frames;
         // this UI assertion alone is not a speech or moving-pixel acceptance.
+    }
+
+    func testGuestSurvivesBackgroundHandoverAndMediaReset() throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("Requires a USB-connected iPhone with active cellular service.")
+#else
+        guard let invite = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_DEVICE_RECOVERY_INVITE"] else {
+            throw XCTSkip("Requires an authorized test room and a moving remote video source.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invite
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "iPhone Recovery QA"
+        app.launchEnvironment["CONFERENCE_TEST_MEDIA_TRACE"] = "1"
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
+                               "-experiments.backgroundAudioJoin", "NO",
+                               "-floatingVideoWhenMultitasking", "NO"]
+        app.launch()
+        defer { if app.buttons["Leave"].isHittable { app.buttons["Leave"].tap() } }
+        guard app.buttons["Leave"].waitForExistence(timeout: 45), movingVideo(app) else {
+            XCTFail("Require a working live meeting before altering device connectivity."); return
+        }
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        XCUIDevice.shared.press(.home)
+        settings.launch()
+        for _ in 0..<6 {
+            if settings.switches["Airplane Mode"].exists { break }
+            let back = settings.navigationBars.buttons.firstMatch
+            guard back.exists else { break }
+            back.tap()
+        }
+        guard settings.switches["Airplane Mode"].value as? String == "0" else {
+            throw XCTSkip("Start with Airplane Mode off.")
+        }
+        let wifi = settings.cells.containing(.staticText, identifier: "Wi-Fi").firstMatch
+        guard wifi.waitForExistence(timeout: 5) else { XCTFail("Wi-Fi Settings missing"); return }
+        wifi.tap()
+        let toggle = settings.switches["Wi-Fi"]
+        guard toggle.waitForExistence(timeout: 5), toggle.value as? String == "1" else {
+            throw XCTSkip("Start with Wi-Fi on.")
+        }
+        func setWiFi(_ enabled: Bool) -> Bool {
+            let value = enabled ? "1" : "0"
+            if toggle.value as? String != value {
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+            }
+            let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: toggle)
+            return XCTWaiter.wait(for: [changed], timeout: 8) == .completed
+        }
+        func verifyProcessAlive() -> Bool {
+            // XCTest can classify the call as foreground while Settings is visible.
+            // The separate on-device log records the app's actual lifecycle and PID.
+            let state = app.state
+            let alive = state != .notRunning && state != .unknown
+            XCTAssertTrue(alive, "Guest process must still be alive before activation: \(state)")
+            return alive
+        }
+
+        do {
+            defer { XCTAssertTrue(setWiFi(true), "Restore Wi-Fi after the test") }
+            guard verifyProcessAlive(), setWiFi(false) else {
+                XCTFail("Could not exercise a background Wi-Fi to cellular handover."); return
+            }
+            // Keep Settings foregrounded long enough for the app to observe the route.
+            Thread.sleep(forTimeInterval: 15)
+            guard verifyProcessAlive(), setWiFi(true) else {
+                XCTFail("Could not restore Wi-Fi while the meeting was backgrounded."); return
+            }
+        }
+        Thread.sleep(forTimeInterval: 10)
+        guard verifyProcessAlive() else { return }
+        app.activate()
+        guard movingVideo(app) else {
+            XCTFail("Fresh remote picture must resume after background handover."); return
+        }
+
+        XCUIDevice.shared.press(.home)
+        guard resetMediaServices(), verifyProcessAlive() else { return }
+        app.activate()
+        Thread.sleep(forTimeInterval: 20)
+        XCTAssertTrue(movingVideo(app), "Fresh remote picture must resume after a real media-services reset.")
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.buttons["Unmute microphone"].exists && !app.staticTexts["Reconnecting…"].exists
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 30), .completed)
+        Thread.sleep(forTimeInterval: 10)
+#endif
     }
 
     func testRendererProbeAfterActualReset() throws {
@@ -86,7 +178,10 @@ final class MediaServicesResetUITests: XCTestCase {
 
     private func resetMediaServices() -> Bool {
         let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
-        settings.activate()
+        settings.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        // Relaunch Settings to get a fresh accessibility session after the
+        // network handover. The meeting app remains backgrounded.
+        settings.launch()
         if settings.sheets.firstMatch.exists {
             let cancel = settings.sheets.buttons["Cancel"]
             guard cancel.exists else { XCTFail("Unexpected Settings sheet"); return false }
@@ -97,6 +192,12 @@ final class MediaServicesResetUITests: XCTestCase {
         if !reset.waitForExistence(timeout: 3) {
             let developer = settings.descendants(matching: .any).matching(NSPredicate(format:
                 "label IN %@", ["Developer", "Разработчик"])).firstMatch
+            for _ in 0..<5 {
+                if developer.exists || settings.switches["Airplane Mode"].exists { break }
+                let back = settings.navigationBars.buttons["BackButton"].firstMatch
+                guard back.exists && back.isHittable else { break }
+                back.tap()
+            }
             for _ in 0..<10 {
                 if developer.exists && developer.isHittable { break }
                 settings.swipeUp()
@@ -128,10 +229,11 @@ final class MediaServicesResetUITests: XCTestCase {
     }
 
     private func movingVideo(_ app: XCUIApplication) -> Bool {
-        let caption = app.staticTexts["Recovery speech source"]
-        guard caption.waitForExistence(timeout: 15) else { return false }
+        let captions = app.staticTexts.matching(identifier: "Recovery speech source")
+        guard captions.firstMatch.waitForExistence(timeout: 15) else { return false }
         func picture() -> Data? {
-            guard let image = app.screenshot().image.cgImage else { return nil }
+            guard let caption = captions.allElementsBoundByIndex.first(where: { $0.isHittable }),
+                  let image = app.screenshot().image.cgImage else { return nil }
             let scale = CGFloat(image.width) / app.frame.width, width = app.frame.width
             // Anchor to the source's caption, since local/remote tile order can change.
             let region = CGRect(x: width * 0.25, y: caption.frame.minY - width * 0.4,
