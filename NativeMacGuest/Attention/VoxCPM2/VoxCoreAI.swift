@@ -124,14 +124,30 @@ enum VoxCoreAI {
         return options
     }()
 
+    /// Application group shared by the sandboxed app and its helpers. An explicit app-group
+    /// cache keeps Neural Engine specializations under our own container instead of the
+    /// OS-managed purgeable `coreai-cache`, which macOS empties between launches when the
+    /// disk is nearly full (observed: cached entries gone with 5 GB free, forcing hour-long rebuilds).
+    static let appGroup = "group.dev.vsmirn0v.conferenceguest"
+
+    /// The one cache every specialize and delete path must use, so recovery does not mix scopes.
+    /// Falls back to the default cache when the app-group cache cannot be created.
+    static let cache: AIModelCache = AIModelCache(appGroup: appGroup) ?? .default
+
+    /// Never purge under storage pressure. `.persistent` and the default policy both include
+    /// `.storagePressure`, which turns "disk almost full" into "specializations disappear".
+    /// Only the source asset changing (a model update) justifies dropping an entry.
+    static let cachePolicy = AIModelCache.Policy(purgeConditions: [.sourceAssetChangedOrDeleted])
+
     /// This Mac's Neural Engine architecture, as named in bundle file names (for example "h16g").
     static var architecture: String { AIModel.deviceArchitectureName }
 
     static func load(_ url: URL) async throws -> AIModel {
         // Core AI rejects an asset directory that is itself a symbolic link.
         let resolved = url.resolvingSymlinksInPath()
+        probeCacheLookup(resolved)
         do {
-            return try await AIModel.specialize(contentsOf: resolved, options: options, cachePolicy: .persistent)
+            return try await AIModel.specialize(contentsOf: resolved, options: options, cache: cache, cachePolicy: cachePolicy)
         } catch {
             // An invalid persistent specialization fails with nilError: drop it once and rebuild.
             guard isUnusableCacheError(error) else { throw error }
@@ -139,19 +155,39 @@ enum VoxCoreAI {
         }
     }
 
+    /// Proves in the next diagnostics whether a specialization survived between launches:
+    /// a hit means the cache kept it, a miss means it was purged (or never durably written).
+    static func probeCacheLookup(_ resolved: URL) {
+        let hit = (try? cache.model(for: resolved, options: options)) != nil
+        probeLog("vox-cache-lookup", ["asset": resolved.lastPathComponent, "present": hit])
+    }
+
+    /// Free space on the volume holding the asset; rebuilds write large temporary data.
+    static func availableBytes(for url: URL) -> Int64? {
+        try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
+    }
+
     /// Drops a persistent specialization before compiling it again from the verified asset.
     /// The caller must release its AIModel and InferenceFunction references before this call.
     static func rebuild(_ url: URL, bookmark: Data? = nil) async throws -> AIModel {
         let resolved = url.resolvingSymlinksInPath()
+        // Core AI's bookmark is an opaque cache identifier, not a file-system bookmark; deleting
+        // every entry for this URL covers both scopes regardless of which cache wrote it.
+        _ = bookmark
+        if let available = availableBytes(for: resolved) {
+            let warning = available < 10 * 1024 * 1024 * 1024
+            probeLog("vox-cache-rebuild-disk", ["asset": resolved.lastPathComponent,
+                                                "availableMB": available / (1024 * 1024), "low": warning])
+        }
         probeLog("vox-cache-rebuild-started", ["asset": resolved.lastPathComponent])
-        // Core AI's bookmark is an opaque cache identifier, not a file-system bookmark.
-        if let bookmark {
-            try AIModelCache.deleteEntry(referencedBy: bookmark)
-        } else {
-            try AIModelCache.default.deleteEntries(for: resolved)
+        do {
+            try cache.deleteEntries(for: resolved)
+        } catch {
+            probeLog("vox-cache-rebuild-delete-failed", ["asset": resolved.lastPathComponent,
+                                                         "domain": (error as NSError).domain])
         }
         do {
-            let model = try await AIModel.specialize(contentsOf: resolved, options: options, cachePolicy: .persistent)
+            let model = try await AIModel.specialize(contentsOf: resolved, options: options, cache: cache, cachePolicy: cachePolicy)
             probeLog("vox-cache-rebuild-succeeded", ["asset": resolved.lastPathComponent])
             return model
         } catch {
@@ -270,7 +306,9 @@ final class VoxAsset {
     private func storedFunction(_ name: String) async throws -> InferenceFunction {
         if let function = functions[name] { return function }
         if model == nil {
-            model = try await AIModel.specialize(contentsOf: url.resolvingSymlinksInPath(), options: VoxCoreAI.options, cachePolicy: .persistent)
+            VoxCoreAI.probeCacheLookup(url.resolvingSymlinksInPath())
+            model = try await AIModel.specialize(contentsOf: url.resolvingSymlinksInPath(), options: VoxCoreAI.options,
+                                                 cache: VoxCoreAI.cache, cachePolicy: VoxCoreAI.cachePolicy)
         }
         guard let model else { throw VoxError.engine("model is being rebuilt") }
         guard let function = try model.loadFunction(named: name) else { throw VoxError.engine("missing function \(name)") }

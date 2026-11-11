@@ -1,3 +1,6 @@
+#if canImport(CoreAI)
+import CoreAI
+#endif
 import AVFoundation
 import XCTest
 @testable import RockNativeDesktop
@@ -281,6 +284,21 @@ import XCTest
         XCTAssertEqual(result, "spoken")
         XCTAssertEqual(attempts, 2)
         XCTAssertEqual(rebuilds, 1)
+    }
+
+    @available(macOS 27.0, *)
+    func testCachePolicySurvivesStoragePressure() throws {
+        // The beta-89 recurrence: with ~5 GB free, macOS purged the default purgeable
+        // cache between launches and every preview recompiled for an hour. Only a
+        // source-asset change may drop a specialization.
+        XCTAssertTrue(VoxCoreAI.cachePolicy.purgeConditions.contains(.sourceAssetChangedOrDeleted))
+        XCTAssertFalse(VoxCoreAI.cachePolicy.purgeConditions.contains(.storagePressure))
+        XCTAssertNotEqual(VoxCoreAI.cachePolicy, .default)
+    }
+
+    @available(macOS 27.0, *)
+    func testAppGroupCacheResolves() throws {
+        XCTAssertNotNil(AIModelCache(appGroup: VoxCoreAI.appGroup))
     }
 
     @available(macOS 27.0, *)
