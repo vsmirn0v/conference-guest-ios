@@ -640,6 +640,29 @@ import XCTest
         }
     }
 
+    /// Regression: an embedded meeting suppressed the in-stage header (the detached
+    /// window's Notes icon) and the main-window toolbar had no Notes button, so the
+    /// notes panel was unreachable in the default configuration.
+    func testEmbeddedMeetingToolbarOpensNotesPanel() async throws {
+        let model = try await meeting("Notes entry")
+        let workspace = NativeDesktopWorkspace(
+            detect: { .verified(.guest(endpoint: $0)) },
+            makeMeeting: { _, _, _, _ in model }
+        )
+        workspace.join(model.invitation, engine: .guest, title: model.title, nameOverride: "Vitalii")
+        try await wait { workspace.selectedMeeting === model && !workspace.preparing }
+        workspace.show()
+        await settle()
+        addTeardownBlock { _ = await workspace.leave() }
+
+        let app = AXUIElementCreateApplication(getpid())
+        let notesButton = try XCTUnwrap(children(app).flatMap(nodes).first {
+            (attribute($0, kAXIdentifierAttribute) as? String) == "meeting.notes"
+        }, "Main-window toolbar must expose a Notes button for the embedded meeting")
+        XCTAssertEqual(AXUIElementPerformAction(notesButton, kAXPressAction as CFString), .success)
+        try await wait { model.panel == .notes }
+    }
+
     /// The agent timeline shows the user message, one collapsed activity row, and the
     /// final answer; raw `rocknroll_*` names appear only behind Details.
     func testAgentTimelineCompactsToolNoiseBehindDetails() async throws {

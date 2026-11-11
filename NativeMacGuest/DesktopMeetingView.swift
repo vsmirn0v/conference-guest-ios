@@ -448,6 +448,7 @@ struct NativeDesktopMeetingView: View {
     @ViewBuilder private var moreMenuItems: some View {
         Button(L("Participants")) { togglePanel(.participants) }
         Button(L("Conversation")) { togglePanel(.conversation) }
+        Button(L("Notes")) { togglePanel(.notes) }
         Button(L("Mini meeting"), action: onMini)
         Button(L("Camera & sound")) { togglePanel(.studio) }
         Button(L("Presenter studio")) { togglePanel(.presenter) }

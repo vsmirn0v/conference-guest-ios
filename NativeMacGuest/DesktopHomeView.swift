@@ -227,6 +227,9 @@ struct NativeDesktopHomeView: View {
                     .help(L("Participants"))
                 Button { meeting.panel = meeting.panel == .conversation ? nil : .conversation } label: { Label(L("Conversation"), systemImage: "bubble.left") }
                     .help(L("Conversation"))
+                Button { meeting.panel = meeting.panel == .notes ? nil : .notes } label: { Label(L("Notes"), systemImage: "note.text") }
+                    .help(L("Notes"))
+                    .accessibilityIdentifier("meeting.notes")
                 Button { workspace.showMini(meeting) } label: { Label(L("Mini meeting"), systemImage: "pip.enter") }
                     .help(L("Mini meeting"))
                 Button { workspace.toggleWindow(meeting) } label: { Label(L("Open in New Window"), systemImage: "macwindow.on.rectangle") }
