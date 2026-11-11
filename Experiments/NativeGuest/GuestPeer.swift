@@ -44,7 +44,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     // one deadline across checking/failed transitions and demand churn.
     private var hasEstablishedConnection = false
     private var initialRequiredDeadline: TimeInterval?
-    private var initialExpiryReported = false
+    private var establishedICEOutageStartedAt: TimeInterval?
+    private var iceFailureReported = false
     var sendCandidate: (([String: Any]) async throws -> Void)?
     var onFailure: ((Error) -> Void)?
     private var remoteICE: [LKRTCIceCandidate] = []
@@ -587,8 +588,10 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     func setActiveIncomingMediaDemand(_ active: Bool) {
         guard target == .subscriber, !closed, activeIncomingMediaDemand != active else { return }
         activeIncomingMediaDemand = active
-        if active, !hasEstablishedConnection, initialRequiredDeadline == nil { initialRequiredDeadline = iceNow() + 10 }
-        if lastICEState == .checking || lastICEState == .failed { refreshICETimeout() }
+        if !hasEstablishedConnection {
+            if active, initialRequiredDeadline == nil { initialRequiredDeadline = iceNow() + 10 }
+            if lastICEState == .checking || lastICEState == .failed { refreshICETimeout() }
+        }
         probeLog("ice-incoming-demand", ["target": target.rawValue, "active": active])
     }
 
@@ -929,32 +932,47 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 #endif
         return ProcessInfo.processInfo.systemUptime
     }
-    private func reportInitialICEExpiry(_ state: LKRTCIceConnectionState) {
-        guard !initialExpiryReported else { return }
-        initialExpiryReported = true
-        probeLog("ice-timeout", ["target": target.rawValue, "state": state.rawValue])
+    private func reportICETimeout(initialSubscriber: Bool = false) {
+        var fields: [String: Any] = ["target": target.rawValue, "state": lastICEState.rawValue]
+        if let startedAt = establishedICEOutageStartedAt {
+            fields["phase"] = "established"
+            fields["outageMs"] = (iceNow() - startedAt) * 1_000
+        }
+        probeLog("ice-timeout", fields)
         logStallDiagnostics(reason: "deadline")
-        if target == .subscriber { onInitialStall?() }
+        reportICEFailure(initialStall: initialSubscriber)
+    }
+    private func reportICEFailure(initialStall: Bool = false) {
+        guard !iceFailureReported else { return }
+        iceFailureReported = true
+        iceTimeout?.cancel(); iceTimeout = nil
+        if initialStall { onInitialStall?() }
         onFailure?(GuestPeerError.iceFailed)
     }
     private func refreshICETimeout() {
+        guard !closed, !iceFailureReported else { return }
+        // Keep the original deadline while WebRTC is still rechecking the route.
+        if !iceConnected, establishedICEOutageStartedAt != nil { return }
+        establishedICEOutageStartedAt = nil
         iceTimeout?.cancel(); iceTimeout = nil
+        guard !iceConnected else { return }
+
         let state = lastICEState
-        guard !closed, !iceConnected else { return }
-        let establishmentDeadline: TimeInterval?
-        let delay: UInt64
-        if target == .subscriber, !hasEstablishedConnection, state == .checking || state == .failed {
-            guard activeIncomingMediaDemand, let deadline = initialRequiredDeadline, !initialExpiryReported else { return }
-            let remaining = deadline - iceNow()
-            guard remaining > 0 else { reportInitialICEExpiry(state); return }
-            establishmentDeadline = deadline
-            delay = UInt64(max(1, ceil(remaining * 1_000_000_000)))
+        if hasEstablishedConnection {
+            guard state == .checking || state == .disconnected else { return }
+            let startedAt = iceNow()
+            establishedICEOutageStartedAt = startedAt
+            scheduleICETimeout(deadline: startedAt + 10)
+        } else if target == .subscriber, state == .checking || state == .failed {
+            guard activeIncomingMediaDemand, let deadline = initialRequiredDeadline else { return }
+            scheduleICETimeout(deadline: deadline, initialSubscriber: true)
         } else {
             guard state == .checking || state == .disconnected else { return }
-            guard state != .checking || target != .subscriber || activeIncomingMediaDemand else { return }
-            establishmentDeadline = nil
-            delay = state == .checking ? 10_000_000_000 : 5_000_000_000
+            scheduleICETimeout(deadline: iceNow() + (state == .checking ? 10 : 5))
         }
+    }
+    private func scheduleICETimeout(deadline: TimeInterval, initialSubscriber: Bool = false) {
+        guard deadline > iceNow() else { reportICETimeout(initialSubscriber: initialSubscriber); return }
 #if DEBUG
         let testWait = iceWaitForTesting
 #endif
@@ -963,26 +981,18 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             defer { self?.iceTimerFinishedForTesting?() }
 #endif
             do {
+                while !Task.isCancelled, let now = self?.iceNow(), now < deadline {
+                    let delay = UInt64(max(1, ceil((deadline - now) * 1_000_000_000)))
 #if DEBUG
-                if let testWait { try await testWait(delay) }
-                else { try await Task.sleep(nanoseconds: delay) }
+                    if let testWait { try await testWait(delay) }
+                    else { try await Task.sleep(nanoseconds: delay) }
 #else
-                try await Task.sleep(nanoseconds: delay)
+                    try await Task.sleep(nanoseconds: delay)
 #endif
+                }
             } catch { return }
-            guard !Task.isCancelled, let self, !closed, !iceConnected else { return }
-            if let establishmentDeadline {
-                guard !hasEstablishedConnection, activeIncomingMediaDemand,
-                      initialRequiredDeadline == establishmentDeadline,
-                      lastICEState == .checking || lastICEState == .failed else { return }
-                guard iceNow() >= establishmentDeadline else { refreshICETimeout(); return }
-                reportInitialICEExpiry(lastICEState); return
-            }
-            guard lastICEState == state,
-                  state != .checking || target != .subscriber || activeIncomingMediaDemand else { return }
-            probeLog("ice-timeout", ["target": target.rawValue, "state": state.rawValue])
-            logStallDiagnostics(reason: "deadline")
-            onFailure?(GuestPeerError.iceFailed)
+            guard !Task.isCancelled, let self, !closed, !iceConnected, !iceFailureReported else { return }
+            reportICETimeout(initialSubscriber: initialSubscriber)
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange newState: LKRTCIceConnectionState) {
@@ -995,11 +1005,12 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             lastICEState = newState
             iceConnected = newState == .connected || newState == .completed
             if iceConnected { hasEstablishedConnection = true; initialRequiredDeadline = nil }
-            refreshICETimeout()
             probeLog("ice-state", ["target": target.rawValue, "state": newState.rawValue])
             if newState == .failed { logStallDiagnostics(reason: "native-failed") }
             if newState == .closed || (newState == .failed && (target != .subscriber || hasEstablishedConnection)) {
-                onFailure?(GuestPeerError.iceFailed)
+                reportICEFailure()
+            } else {
+                refreshICETimeout()
             }
         }
     }

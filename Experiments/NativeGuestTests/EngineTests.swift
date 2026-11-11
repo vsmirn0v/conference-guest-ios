@@ -78,6 +78,7 @@ import CoreMedia
                 try await signal(.checking); await drain { releases.count == 2 }
                 releases[0](); await drain { finished >= 1 }
                 precondition(failures == 0, "Retired timer must not fail a newer checking epoch")
+                clock = 110
                 releases[1](); await drain { finished == 2 }
                 precondition(failures == 1)
             } else {
@@ -162,13 +163,15 @@ import CoreMedia
         }
 
         for (target, state, expectedDelay) in [(GuestPeerTarget.publisher, LKRTCIceConnectionState.checking, UInt64(10_000_000_000)),
-                                               (.subscriber, .disconnected, 5_000_000_000), (.subscriber, .failed, 0)] {
+                                               (.subscriber, .disconnected, 10_000_000_000), (.subscriber, .failed, 0)] {
             let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
             let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
             let peer = try await GuestPeer(target: target, factory: factory); defer { peer.close() }
             var delays: [UInt64] = [], failures = 0
+            var clock: TimeInterval = 100
             let failed = Signal()
-            peer.iceWaitForTesting = { delays.append($0) }
+            peer.iceClockForTesting = { clock }
+            peer.iceWaitForTesting = { delays.append($0); clock += TimeInterval($0) / 1_000_000_000 }
             peer.onFailure = { _ in failures += 1; failed.fire() }
             if target == .subscriber {
                 try await guestAwait { done in
@@ -179,7 +182,7 @@ import CoreMedia
             peer.peerConnection(peer.connection, didChange: state)
             await failed.wait()
             precondition(failures == 1 && delays == (expectedDelay == 0 ? [] : [expectedDelay]),
-                         "Publisher checking, established disconnection and real ICE failure retain their existing recovery policy")
+                         "Publisher checking and established disconnection expire on schedule, and real ICE failure is immediate")
         }
     }
 

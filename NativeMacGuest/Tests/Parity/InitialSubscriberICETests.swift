@@ -38,6 +38,16 @@ import XCTest
             peer.peerConnection(peer.connection, didChange: state)
         }
     }
+    func gather(_ state: LKRTCIceGatheringState) async {
+        await withCheckedContinuation { done in
+            peer.iceDiagnosticForTesting = { [weak peer] event, fields in
+                guard event == "ice-gathering-state", fields["state"] as? Int == state.rawValue else { return }
+                peer?.iceDiagnosticForTesting = nil
+                done.resume()
+            }
+            peer.peerConnection(peer.connection, didChange: state)
+        }
+    }
     func transport(_ state: LKRTCPeerConnectionState) async {
         await withCheckedContinuation { done in
             peer.transportEventFinishedForTesting = { done.resume() }
@@ -230,7 +240,7 @@ final class InitialSubscriberICETests: XCTestCase {
         }
     }
 
-    @MainActor func testPublisherEstablishedDisconnectUnexpectedCloseAndCancellationRemainStrict() async throws {
+    @MainActor func testTerminalICEFailureAndInitialCancellationRemainStrict() async throws {
         try await exercise(.publisher) { h in
             await h.signal(.failed)
             XCTAssertEqual(h.failures, 1); XCTAssertTrue(h.waits.isEmpty)
@@ -239,13 +249,6 @@ final class InitialSubscriberICETests: XCTestCase {
             await h.transport(.connected)
             await h.signal(.failed)
             XCTAssertEqual(h.failures, 1, "Overall connected also establishes a subscriber")
-        }
-        try await exercise { h in
-            await h.signal(.connected); await h.signal(.disconnected)
-            try await h.until { h.waits.count == 1 }
-            XCTAssertEqual(h.waits[0].delay, 5_000_000_000)
-            h.waits[0].release(); try await h.until { h.finished == 1 }
-            XCTAssertEqual(h.failures, 1)
         }
         try await exercise { h in
             await h.signal(.closed)
@@ -258,6 +261,61 @@ final class InitialSubscriberICETests: XCTestCase {
             try await h.until { h.finished == 1 }
             h.peer.setActiveIncomingMediaDemand(false); h.peer.setActiveIncomingMediaDemand(true)
             XCTAssertEqual(h.failures, 0); XCTAssertEqual(h.waits.count, 1)
+        }
+    }
+
+    @MainActor func testEstablishedSubscriberUsesOneDeadlineAcrossICEAndDemandChanges() async throws {
+        try await exercise { h in
+            await h.signal(.connected)
+            await h.gather(.gathering); await h.gather(.complete)
+            XCTAssertTrue(h.waits.isEmpty, "Candidate gathering cannot start recovery on a healthy connection")
+            await h.signal(.disconnected); try await h.until { h.waits.count == 1 }
+            XCTAssertEqual(h.waits[0].delay, 10_000_000_000)
+
+            h.clock = 106; await h.signal(.checking)
+            await h.transport(.connected)
+            h.peer.setActiveIncomingMediaDemand(true)
+            h.peer.setActiveIncomingMediaDemand(false)
+            await h.signal(.new); await h.signal(.disconnected); await h.signal(.disconnected)
+            XCTAssertEqual(h.waits.count, 1)
+            XCTAssertEqual(h.failures, 0)
+
+            h.clock = 110; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 1)
+            await h.signal(.failed); await h.signal(.closed)
+            XCTAssertEqual(h.failures, 1, "Terminal callbacks after expiry cannot report another failure")
+        }
+    }
+
+    @MainActor func testEstablishedPublisherRecoveryCancelsOldWaitAndNativeFailureIsImmediate() async throws {
+        try await exercise(.publisher) { h in
+            await h.signal(.connected); await h.signal(.disconnected)
+            try await h.until { h.waits.count == 1 }
+            h.clock = 106; await h.signal(.completed)
+            XCTAssertEqual(h.failures, 0, "A six-second handover should retain the same peer")
+
+            h.clock = 107; await h.signal(.checking)
+            try await h.until { h.waits.count == 2 }
+            XCTAssertEqual(h.waits[1].delay, 10_000_000_000)
+            h.clock = 110; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 0, "The old wait cannot fail the next outage")
+
+            await h.signal(.failed)
+            XCTAssertEqual(h.failures, 1)
+            await h.signal(.connected); await h.signal(.disconnected); await h.signal(.closed)
+            h.clock = 117; h.waits[1].release(); try await h.until { h.finished == 2 }
+            XCTAssertEqual(h.failures, 1)
+            XCTAssertEqual(h.waits.count, 2, "A failed peer cannot arm another outage")
+        }
+    }
+
+    @MainActor func testClosingEstablishedPeerCancelsOutage() async throws {
+        try await exercise { h in
+            await h.signal(.connected); await h.signal(.disconnected)
+            try await h.until { h.waits.count == 1 }
+            h.peer.close()
+            h.clock = 110; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 0)
         }
     }
 }
