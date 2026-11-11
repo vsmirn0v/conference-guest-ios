@@ -127,6 +127,10 @@ struct NativeGuestApplication {
         #endif
         let show = NSMenuItem(title: L("Open Rock'N'Roll for Mac"), action: #selector(openHome), keyEquivalent: "n")
         show.target = self; appMenu.insertItem(show, at: 0)
+        let pause = NSMenuItem(title: L("Pause All Assistant Participation"),
+            action: #selector(pauseAllParticipation), keyEquivalent: "")
+        pause.target = self
+        appMenu.insertItem(pause, at: max(0, appMenu.numberOfItems - 1))
         #if DEBUG
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
         #endif
@@ -268,6 +272,9 @@ struct NativeGuestApplication {
         return true
     }
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { workspace?.dockMenu() }
+    @objc private func pauseAllParticipation() {
+        for meeting in workspace?.meetings ?? [] { meeting.participation.pause() }
+    }
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         if let workspace { workspace.populateWindowMenu(menu) } else { NativeDesktopWorkspace.addStandardWindowItems(menu) }

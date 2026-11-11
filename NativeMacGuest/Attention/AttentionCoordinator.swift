@@ -264,7 +264,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             }
         }
     }
-    func stop() { loop?.cancel(); loop = nil }
+    func stop() {
+        loop?.cancel(); loop = nil
+        for model in meetings() { model.participation.stop() }
+    }
     deinit { loop?.cancel() }
 
     // MARK: Sheets
@@ -313,6 +316,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     /// Your choice for this meeting, else its series' or room's mode, else the situation's.
     func resolvedMode(_ model: NativeDesktopMeetingModel) -> ResolvedMode {
+        if model.participation.status != .inactive {
+            return .init(mode: .watch, source: .meeting(until: nil))
+        }
         if let override = states[model.sessionID]?.override, (override.until ?? .distantFuture) > now() {
             return .init(mode: override.mode, source: .meeting(until: override.until))
         }
@@ -323,6 +329,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         return .init(mode: store.mode(for: situation), source: .situation(situation))
     }
     func setMode(_ mode: AttentionMode, for model: NativeDesktopMeetingModel, scope: ModeScope = .untilLeave) {
+        model.participation.stop()
         let id = model.sessionID
         switch scope {
         case .untilLeave: states[id, default: .init()].override = .init(mode: mode, until: nil)
@@ -340,6 +347,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     /// Drops your choice for this meeting (and its series' mode, when `series`), back to the defaults.
     func resetMode(for model: NativeDesktopMeetingModel, series: Bool = false) {
+        model.participation.stop()
         states[model.sessionID]?.override = nil
         if series, store.preset(room: model.invitation, series: model.calendarSeriesID)?.mode != nil {
             store.setMeetingMode(nil, room: model.invitation, series: model.calendarSeriesID, title: model.title)
@@ -351,6 +359,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     /// Off → Mentions → Watch → Off, for this meeting until you leave.
     func cycleMode(for model: NativeDesktopMeetingModel) {
+        if model.participation.status != .inactive {
+            setMode(.off, for: model)
+            return
+        }
         let all = AttentionMode.allCases, current = resolvedMode(model).mode
         setMode(all[((all.firstIndex(of: current) ?? 0) + 1) % all.count], for: model)
     }

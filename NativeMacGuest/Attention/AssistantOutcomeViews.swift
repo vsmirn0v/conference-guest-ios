@@ -42,23 +42,28 @@ struct AssistantOutcomesView: View {
                 }
             }.frame(width: 330).background(Color(nsColor: .controlBackgroundColor))
             Divider()
-            if let sessionID = selectedSessionID,
-               let card = library.cards.first(where: { $0.sessionID == sessionID }),
-               card.outcomeState == .failed || card.outcomeState == .pending || attention.outcomeError[sessionID] != nil {
-                generationDetail(card)
-            } else if let sessionID = selectedSessionID,
-                      let outcomeID = library.cards.first(where: { $0.sessionID == sessionID })?.outcomeID,
-                      let outcome = data.outcomes.first(where: { $0.id == outcomeID }) {
-                detail(outcome)
-            } else if let sessionID = selectedNote {
-                noteDetail(sessionID)
-            } else {
-                VStack(spacing: 10) {
-                    Image(systemName: "checkmark.bubble").font(.largeTitle).foregroundStyle(.secondary)
-                    Text(L("Choose a meeting")).font(.title3)
-                    Text(L("Notes, summaries, decisions, tasks and open questions stay on this Mac."))
-                        .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
+            VStack(spacing: 0) {
+                if let sessionID = selectedSessionID,
+                   let card = library.cards.first(where: { $0.sessionID == sessionID }),
+                   card.outcomeState == .failed || card.outcomeState == .pending || attention.outcomeError[sessionID] != nil {
+                    generationDetail(card)
+                } else if let sessionID = selectedSessionID,
+                          let outcomeID = library.cards.first(where: { $0.sessionID == sessionID })?.outcomeID,
+                          let outcome = data.outcomes.first(where: { $0.id == outcomeID }) {
+                    detail(outcome)
+                } else if let sessionID = selectedNote {
+                    noteDetail(sessionID)
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "checkmark.bubble").font(.largeTitle).foregroundStyle(.secondary)
+                        Text(L("Choose a meeting")).font(.title3)
+                        Text(L("Notes, summaries, decisions, tasks and open questions stay on this Mac."))
+                            .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
+                }
+                if let sessionID = selectedSessionID {
+                    ParticipationOutcomeActivity(sessionID: sessionID, root: attention.store.root)
+                }
             }
         }
         .onAppear { if selectedSessionID == nil { select(library.cards.first) } }

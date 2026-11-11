@@ -37,16 +37,26 @@ extension AttentionSituation {
 struct AttentionModeChip: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject var model: NativeDesktopMeetingModel
+    @ObservedObject private var participation: ParticipationCoordinator
     /// Icon only, for tight rows.
     var compact = true
     @State private var open = false
 
+    init(attention: AttentionCoordinator, model: NativeDesktopMeetingModel, compact: Bool = true) {
+        self.attention = attention
+        self.model = model
+        self.compact = compact
+        _participation = ObservedObject(wrappedValue: model.participation)
+    }
+
     var body: some View {
         let resolved = attention.resolvedMode(model)
+        let participating = participation.status != .inactive
+        let title = participating ? participation.status.title : resolved.mode.title
         Button { open.toggle() } label: {
             HStack(spacing: 3) {
-                Image(systemName: resolved.mode.symbol).font(.system(size: 10, weight: .semibold))
-                if !compact { Text(resolved.mode.title).font(.caption2.weight(.semibold)) }
+                Image(systemName: participating ? "bubble.left" : resolved.mode.symbol).font(.system(size: 10, weight: .semibold))
+                if !compact { Text(title).font(.caption2.weight(.semibold)) }
             }
             .foregroundStyle(resolved.mode.tint)
             .padding(.horizontal, compact ? 4 : 6).frame(minWidth: 20, minHeight: 18)
@@ -54,8 +64,13 @@ struct AttentionModeChip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(L("Attention: %@. %@", resolved.mode.title, AttentionModePicker.explanation(resolved)))
-        .accessibilityLabel(L("Attention: %@", resolved.mode.title))
+        .help(participating ? title : L("Attention: %@. %@", title, AttentionModePicker.explanation(resolved)))
+        .accessibilityLabel(L("Attention: %@", title))
+        .contextMenu {
+            if participation.status == .observing {
+                Button(L("Pause participation")) { participation.pause() }
+            }
+        }
         .popover(isPresented: $open, arrowEdge: .bottom) {
             AttentionModePicker(attention: attention, model: model) { open = false }
         }
@@ -67,6 +82,8 @@ struct AttentionModePicker: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject private var store: AttentionStore
     @ObservedObject var model: NativeDesktopMeetingModel
+    @ObservedObject private var participation: ParticipationCoordinator
+    @State private var showingParticipation = false
     var close: () -> Void = {}
 
     init(attention: AttentionCoordinator, model: NativeDesktopMeetingModel, close: @escaping () -> Void = {}) {
@@ -74,11 +91,21 @@ struct AttentionModePicker: View {
         self.model = model
         self.close = close
         _store = ObservedObject(wrappedValue: attention.store)
+        _participation = ObservedObject(wrappedValue: model.participation)
     }
 
     var body: some View {
+        if showingParticipation {
+            ParticipationSetupView(participation: participation, model: model, store: store,
+                back: { showingParticipation = false }, close: close)
+        } else {
+            modes
+        }
+    }
+
+    private var modes: some View {
         let resolved = attention.resolvedMode(model)
-        VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
             Text(L("Attention for “%@”", model.title)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             VStack(spacing: 2) {
                 ForEach(AttentionMode.allCases, id: \.self) { mode in
@@ -91,35 +118,56 @@ struct AttentionModePicker: View {
                                 Text(mode.detail).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 8)
-                            if mode == resolved.mode { Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(mode.tint) }
+                            if mode == resolved.mode, participation.status == .inactive {
+                                Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(mode.tint)
+                            }
                         }
                         .padding(.horizontal, 8).padding(.vertical, 6).contentShape(Rectangle())
-                        .background(mode == resolved.mode ? mode.tint.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                        .background(mode == resolved.mode && participation.status == .inactive ? mode.tint.opacity(0.08) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityAddTraits(mode == resolved.mode ? .isSelected : [])
+                    .accessibilityAddTraits(mode == resolved.mode && participation.status == .inactive ? .isSelected : [])
                 }
-            }
-            Divider()
-            VStack(alignment: .leading, spacing: 6) {
-                Text(L("Keep this")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                HStack(spacing: 6) {
-                    scopeButton(L("Until I leave"), .untilLeave, resolved)
-                    scopeButton(L("30 min"), .minutes(30), resolved)
-                    scopeButton(L("Every time"), .series, resolved)
-                        .help(model.calendarSeriesID == nil ? L("Every time you join this room") : L("Every meeting in this calendar series and room"))
+                Button { showingParticipation = true } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "bubble.left").font(.system(size: 13, weight: .semibold)).foregroundStyle(.teal)
+                            .frame(width: 26, height: 26).background(.teal.opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(participation.status.title).fontWeight(.semibold)
+                            Text(L("Contribute in meeting chat")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("participation.setup")
+                .accessibilityAddTraits(participation.status != .inactive ? .isSelected : [])
             }
-            HStack(alignment: .firstTextBaseline) {
-                Text(Self.explanation(resolved)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                if resolved.source != .situation(attention.situation(model)) {
-                    Button(L("Use default")) { attention.resetMode(for: model, series: resolved.source == .series) }
-                        .buttonStyle(.borderless).font(.caption)
+            if participation.status == .inactive {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(L("Keep this")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        scopeButton(L("Until I leave"), .untilLeave, resolved)
+                        scopeButton(L("30 min"), .minutes(30), resolved)
+                        scopeButton(L("Every time"), .series, resolved)
+                            .help(model.calendarSeriesID == nil ? L("Every time you join this room") : L("Every meeting in this calendar series and room"))
+                    }
                 }
-            }
-            if !store.enabled {
-                Text(L("Attention is off in Settings → Assistant.")).font(.caption).foregroundStyle(.orange)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(Self.explanation(resolved)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    if resolved.source != .situation(attention.situation(model)) {
+                        Button(L("Use default")) { attention.resetMode(for: model, series: resolved.source == .series) }
+                            .buttonStyle(.borderless).font(.caption)
+                    }
+                }
+                if !store.enabled {
+                    Text(L("Attention is off in Settings → Assistant.")).font(.caption).foregroundStyle(.orange)
+                }
             }
         }
         .padding(12).frame(width: 290)
@@ -167,14 +215,50 @@ struct AttentionModePicker: View {
 struct AttentionControlButton: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject var model: NativeDesktopMeetingModel
+    @ObservedObject private var participation: ParticipationCoordinator
     @State private var open = false
 
+    init(attention: AttentionCoordinator, model: NativeDesktopMeetingModel) {
+        self.attention = attention
+        self.model = model
+        _participation = ObservedObject(wrappedValue: model.participation)
+    }
+
     var body: some View {
+        HStack(spacing: 0) {
+            assistantButton
+            if participation.queuedText != nil {
+                Button { participation.cancelCandidate() } label: {
+                    Image(systemName: "xmark.circle").font(.title3)
+                        .frame(width: 32, height: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(L("Cancel queued assistant message"))
+                .accessibilityLabel(L("Cancel queued assistant message"))
+                .accessibilityIdentifier("participation.cancel.toolbar")
+            }
+            if participation.status == .observing {
+                Button { participation.pause() } label: {
+                    Label(L("Pause"), systemImage: "pause.circle").labelStyle(.iconOnly)
+                        .font(.title3).foregroundStyle(.teal)
+                        .frame(width: 32, height: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(L("Pause participation"))
+                .accessibilityLabel(L("Pause participation"))
+                .accessibilityIdentifier("participation.pause")
+            }
+        }
+    }
+
+    private var assistantButton: some View {
         let mode = attention.resolvedMode(model).mode
-        Button { open.toggle() } label: {
+        let participating = participation.status != .inactive
+        return Button { open.toggle() } label: {
             VStack(spacing: 5) {
-                Image(systemName: mode.symbol).font(.title3)
-                Text(L("Assistant")).font(.caption)
+                Image(systemName: participating ? "bubble.left" : mode.symbol).font(.title3)
+                Text(participating ? participation.status.title : L("Assistant"))
+                    .font(.caption).lineLimit(1).minimumScaleFactor(0.8)
             }
             .foregroundStyle(mode == .off ? Color.primary : mode.tint).frame(width: 66, height: 48).contentShape(Rectangle())
             .overlay(alignment: .topTrailing) {
@@ -185,8 +269,9 @@ struct AttentionControlButton: View {
         }
         .buttonStyle(.plain)
         .keyboardShortcut("a", modifiers: [.control, .option])
-        .help(L("Attention: %@. %@ (⌃⌥A)", mode.title, AttentionModePicker.explanation(attention.resolvedMode(model))))
-        .accessibilityLabel(L("Assistant")).accessibilityValue(mode.title)
+        .help(participating ? participation.status.title
+              : L("Attention: %@. %@ (⌃⌥A)", mode.title, AttentionModePicker.explanation(attention.resolvedMode(model))))
+        .accessibilityLabel(L("Assistant")).accessibilityValue(participating ? participation.status.title : mode.title)
         .popover(isPresented: $open, arrowEdge: .top) {
             AttentionModePicker(attention: attention, model: model) { open = false }
         }

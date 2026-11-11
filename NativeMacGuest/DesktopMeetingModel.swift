@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
     let kind: MeetingEngineKind
     let displayName: String
     let chat = ChatStore()
+    let participation = ParticipationCoordinator()
     let catchUp = CatchUpStore()
     let sessionID = UUID()
     @Published var title: String
@@ -568,11 +569,13 @@ import UniformTypeIdentifiers
             guest.onFeatures = { [weak self] features in self?.updateFeatures(features) }
             chat.onSend = { [weak self, weak guest] text in
                 guard let self, let native = guest?.currentNativeEngine else { return }
+                self.participation.yieldToUser()
                 if self.chat.draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { self.chat.draft = "" }
                 self.perform { _ in _ = try await native.sendChatMessage(text) }
             }
             chat.onRetry = { [weak self, weak guest] entry in
                 guard let self, let native = guest?.currentNativeEngine else { return }
+                self.participation.yieldToUser()
                 self.perform { _ in
                     do { _ = try await native.sendChatMessage(entry.text) }
                     catch { self.chat.setDelivery(.failed, for: entry.id); throw error }
@@ -586,6 +589,34 @@ import UniformTypeIdentifiers
         }
     }
     var connected: Bool { snapshot.phase == .connected }
+    var participationConnection: ObjectIdentifier? {
+        (engine as? NativeDesktopGuestEngine)?.currentNativeEngine.map(ObjectIdentifier.init)
+    }
+    var participationSomeoneSpeaking: Bool {
+        guestFeatures.participants.contains(where: \.isSpeaking) || snapshot.participants.contains { $0.speaking == true }
+    }
+    var participationAudience: ParticipationAudience? {
+        guard kind == .guest, !closed, connected, guestFeatures.connected, guestFeatures.permissions.canViewParticipants,
+              guestFeatures.permissions.canViewChat, guestFeatures.permissions.canSendChat,
+              let room = MeetingRoomIdentity(invitation, engine: kind),
+              let native = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine,
+              let provider = native.participationRoomScope,
+              let local = guestFeatures.localParticipantID,
+              guestFeatures.participants.contains(where: { $0.id == local && $0.isLocal }) else { return nil }
+        let participants = guestFeatures.participants
+        let members = Dictionary(participants.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        guard members.count == participants.count else { return nil }
+        return .init(sessionID: sessionID, room: room, providerRoom: provider.room, providerGroup: provider.group,
+                     localParticipant: local, members: members, connection: ObjectIdentifier(native))
+    }
+    func sendParticipationChat(_ text: String, id: String, audience: ParticipationAudience,
+                               permit: GuestChatDispatchPermit) async throws {
+        guard participationAudience == audience, text.hasPrefix(ParticipationCoordinator.attribution),
+              let native = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine else {
+            throw NativeDesktopGuestError.notConnected
+        }
+        try await native.sendAttributedChat(text, id: id, permit: permit)
+    }
     var canReact: Bool { connected && guestFeatures.permissions.canSendReaction }
     var transcript: [GuestMeetingMessage] {
         guard !localTranscript.isEmpty else { return guestFeatures.transcript }
@@ -808,6 +839,8 @@ import UniformTypeIdentifiers
     private func update(_ value: NativeDesktopExternalSnapshot) {
         guard !closed else { return }
         let previous = snapshot; snapshot = value
+        participation.updateAudience(participationAudience)
+        if participationSomeoneSpeaking { participation.cancelPendingDispatch() }
         if previous.phase != value.phase { updateLocalTranscription() }
         if previous.phase != .connected, value.phase == .connected { prewarmMicrophoneIfChosen() }
         else if previous.microphoneOn != value.microphoneOn { updateLocalMicrophoneCapture() }
@@ -1059,6 +1092,7 @@ import UniformTypeIdentifiers
         if persist { UserDefaults.standard.set(volume, forKey: meetingVolumeKey) }
     }
     func reconnect() {
+        participation.requireReview()
         cancelJoinCameraPrime()
         updateMicrophoneRecoveryReadiness()
         authorizedMicrophoneRequest = nil; _ = headset.requestIntent(muted: true)
@@ -1292,6 +1326,9 @@ import UniformTypeIdentifiers
         guard !closed else { return }
         let previousTranscription = guestFeatures.transcriptionStatus
         guestFeatures = features
+        participation.updateAudience(participationAudience)
+        if participationSomeoneSpeaking { participation.cancelPendingDispatch() }
+        participation.observe(features)
         noteTranscription(from: previousTranscription, to: features.transcriptionStatus)
         updateLocalTranscription()
         observeTranscript()
@@ -1443,6 +1480,7 @@ import UniformTypeIdentifiers
     }
     private func beginLeave() -> Task<Bool, Never> {
         if let leaveTask { return leaveTask }
+        participation.stop()
         cancelJoinCameraPrime(); power.stop()
         floatingSpeakerTask?.cancel(); floatingSpeakerTask = nil
         cameraMetadataTask?.cancel()
