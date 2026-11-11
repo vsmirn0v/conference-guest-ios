@@ -339,6 +339,27 @@ final class InitialSubscriberICETests: XCTestCase {
         }
     }
 
+    @MainActor func testManualTCPPeerKeepsServersOnPartialConfigAndRejectsWithdrawal() async throws {
+        let engine = NativeGuestEngine(label: "Manual relay configuration", icePolicy: .tcpRelay)
+        let peer = try await engine.prepareJoinForTesting()
+        do {
+            try await peer.configure(["iceServers": [["urls": ["turn:relay.example.test:443?transport=tcp"],
+                                                       "username": "fixture", "credential": "fixture"]]])
+            try await peer.configure([:])
+            let config = try await peer.currentConfiguration()
+            XCTAssertEqual(config.iceServers.flatMap(\.urlStrings), ["turn:relay.example.test:443?transport=tcp"])
+            do {
+                try await peer.configure(["iceServers": [] as [[String: Any]]])
+                XCTFail("Manual TCP may not use ordinary candidates when its relay is withdrawn")
+            } catch GuestICEPolicyError.noTCPRelay { }
+        } catch {
+            _ = await engine.leave(sendLeave: false)
+            throw error
+        }
+        let clean = await engine.leave(sendLeave: false)
+        XCTAssertTrue(clean)
+    }
+
     @MainActor func testReadOnlyGuestDoesNotWaitForAPublisherThatNeverOffered() async throws {
         try await exercise { h in
             h.engine.tcpRelayTargets = [.publisher]

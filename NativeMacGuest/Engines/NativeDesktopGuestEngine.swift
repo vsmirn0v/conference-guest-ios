@@ -182,7 +182,6 @@ enum NativeDesktopGuestError: LocalizedError {
             }
             if selectedPolicy == .automatic {
                 engine.tcpRelayTargets = relayRecovery.beginAttempt()
-                engine.verifyingTCPRelayTargets = relayRecovery.verifying
                 engine.scheduleTCPRelay = { [weak self, weak engine] target in
                     guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine,
                           relayRecovery.schedule(target) else { return false }
@@ -194,6 +193,10 @@ enum NativeDesktopGuestError: LocalizedError {
                           !useSubscriberUDPRelay else { return }
                     useSubscriberUDPRelay = true
                     probeLog("subscriber-relay-fallback", ["reason": "tcp-relay-unavailable"])
+                }
+                engine.discardTCPRelay = { [weak self, weak engine] target in
+                    guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine else { return false }
+                    return relayRecovery.discard(target)
                 }
                 engine.confirmTCPRelay = { [weak self, weak engine] target in
                     guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine else { return }

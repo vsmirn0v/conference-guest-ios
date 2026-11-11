@@ -159,6 +159,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 
     func configure(_ value: [String: Any]) async throws {
         guard !closed else { throw GuestPeerError.closed }
+        // A partial update cannot withdraw the previously configured relay list.
+        if icePolicy == .tcpRelay, relayOnlyConfigured, value["iceServers"] == nil { return }
         let advertised = value["iceServers"] as? [[String: Any]] ?? []
         if value["iceServers"] is [[String: Any]] || icePolicy != .automatic {
             advertisesTCPRelay = (try? GuestICEPolicy.tcpRelay.servers(advertised)) != nil
@@ -604,10 +606,13 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         video ? videoTrack?.trackId : audioTrack?.trackId
     }
 
-    func requestTCPFallback() {
-        guard !closed, icePolicy == .automatic, advertisesTCPRelay,
-              selectedRoute == .udp || (!hasEstablishedConnection && selectedRoute == nil) else { return }
-        onICEPathFailure?()
+    func reportICEPathFailure() {
+        guard !closed else { return }
+        if icePolicy == .tcpRelay ||
+            (icePolicy == .automatic && advertisesTCPRelay &&
+             (selectedRoute == .udp || (!hasEstablishedConnection && selectedRoute == nil))) {
+            onICEPathFailure?()
+        }
     }
 
     /// An idle subscriber may remain checking until the SFU has media to send.
@@ -974,7 +979,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         iceFailureReported = true
         iceTimeout?.cancel(); iceTimeout = nil
         if initialStall { onInitialStall?() }
-        if pathFailure { requestTCPFallback() }
+        if pathFailure { reportICEPathFailure() }
         onFailure?(GuestPeerError.iceFailed)
     }
     private func refreshICETimeout() {

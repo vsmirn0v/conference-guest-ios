@@ -60,9 +60,9 @@ final class NativeGuestEngine {
     var releaseSystemAudio: ((Bool) async -> Bool)?
     private let icePolicy: GuestICEPolicy
     var tcpRelayTargets: Set<GuestPeerTarget> = []
-    var verifyingTCPRelayTargets: Set<GuestPeerTarget> = []
     var scheduleTCPRelay: ((GuestPeerTarget) -> Bool)?
     var confirmTCPRelay: ((GuestPeerTarget) -> Void)?
+    var discardTCPRelay: ((GuestPeerTarget) -> Bool)?
     private var peerTransportObservers: [Task<Void, Never>] = []
     private var tcpRelayEvidence: [GuestPeerTarget: (TransportDemand, GuestICETransportSample.RecoveryEvidence)] = [:]
     private var expectedVideoSubscriptions: Set<String> = []
@@ -292,7 +292,8 @@ final class NativeGuestEngine {
         }
         peer.onICEPathFailure = { [weak self, weak peer] in
             guard let self, let peer, owns(peer), failure == nil else { return }
-            _ = scheduleTCPRelay?(peer.target)
+            if peer.icePolicy == .tcpRelay { _ = discardTCPRelay?(peer.target) }
+            else { _ = scheduleTCPRelay?(peer.target) }
         }
         peer.onFailure = { [weak self] in self?.recordFailure($0) }
         if target == .subscriber {
@@ -380,7 +381,8 @@ final class NativeGuestEngine {
             guard let config = payload["configuration"] as? [String: Any] else { throw GuestEngineError.malformed }
             for peer in [subscriber, publisher].compactMap({ $0 }) {
                 do { try await peer.configure(config) }
-                catch GuestICEPolicyError.noTCPRelay where verifyingTCPRelayTargets.contains(peer.target) {
+                catch GuestICEPolicyError.noTCPRelay {
+                    guard owns(peer), discardTCPRelay?(peer.target) == true else { throw GuestICEPolicyError.noTCPRelay }
                     throw GuestRelayVerificationError()
                 }
             }
@@ -875,15 +877,18 @@ final class NativeGuestEngine {
         while true {
             try checkActive()
             if let failure { throw failure }
-            let waiting = [subscriber, publisher].compactMap { $0 }.contains { peer in
+            let waiting = [subscriber, publisher].compactMap { $0 }.filter { peer in
                 let demand = transportDemand(peer)
                 guard tcpRelayTargets.contains(peer.target), demand.expected else { return false }
                 guard peer.iceConnected, peer.transportConnected, let (verifiedDemand, evidence) = tcpRelayEvidence[peer.target] else { return true }
                 let requiresVideo = demand.kinds.contains(.video)
                 return (requiresVideo && verifiedDemand != demand) || !evidence.allowsRecovery(requiresVideo: requiresVideo)
             }
-            if !waiting { return }
-            guard ProcessInfo.processInfo.systemUptime < deadline else { throw GuestRelayVerificationError() }
+            if waiting.isEmpty { return }
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                for peer in waiting { _ = discardTCPRelay?(peer.target) }
+                throw GuestRelayVerificationError()
+            }
             try await Task.sleep(for: .milliseconds(100))
         }
     }
@@ -993,7 +998,7 @@ final class NativeGuestEngine {
                     if receive.requiresTransport && !receive.transportConnected {
                         subscriber?.logStallDiagnostics(reason: "startup-audio")
                         reportSubscriberStartupStall()
-                        subscriber?.requestTCPFallback()
+                        subscriber?.reportICEPathFailure()
                     }
                     let observation = owner.startupAudioObservation
                     // Off this thread and bounded: the device lock this read needs is the one

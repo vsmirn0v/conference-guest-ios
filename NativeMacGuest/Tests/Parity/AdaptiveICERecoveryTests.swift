@@ -23,6 +23,19 @@ final class AdaptiveICERecoveryTests: XCTestCase {
         XCTAssertTrue(GuestRelayRecovery().confirmed.isEmpty, "TCP success is scoped to one meeting")
     }
 
+    func testWithdrawnTCPRelayClearsOnlyThatPeerAndDoesNotResetItsBudget() {
+        var recovery = GuestRelayRecovery()
+        XCTAssertTrue(recovery.schedule(.subscriber))
+        XCTAssertTrue(recovery.schedule(.publisher))
+        XCTAssertEqual(recovery.beginAttempt(), [.subscriber, .publisher])
+        XCTAssertTrue(recovery.verify(.subscriber))
+        XCTAssertTrue(recovery.verify(.publisher))
+        XCTAssertTrue(recovery.discard(.subscriber))
+        XCTAssertFalse(recovery.discard(.subscriber))
+        XCTAssertEqual(recovery.beginAttempt(), [.publisher])
+        XCTAssertFalse(recovery.schedule(.subscriber))
+    }
+
     func testOnlySelectedLocalRelayAndItsExplicitRelayProtocolCount() throws {
         let rows = report(time: 10, relayProtocol: "tls", streams: [])
         XCTAssertEqual(try sample(rows).route, .tls)

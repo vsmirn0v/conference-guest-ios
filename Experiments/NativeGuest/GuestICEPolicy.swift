@@ -149,6 +149,11 @@ struct GuestRelayRecovery {
         confirmed.insert(target)
         return true
     }
+
+    mutating func discard(_ target: GuestPeerTarget) -> Bool {
+        if verifying.remove(target) != nil { return true }
+        return confirmed.remove(target) != nil
+    }
 }
 
 struct GuestRelayVerificationError: GuestRecoverableError, LocalizedError {
