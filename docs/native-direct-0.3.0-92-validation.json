@@ -1,0 +1,33 @@
+{
+  "version": "0.3.0",
+  "build": "92",
+  "channel": "beta",
+  "sourceCommit": "af79be09b91f709d037b9f653696e25f0060f8b9",
+  "changes": [
+    "Durably save the bounded outcome input before sending a generation request.",
+    "Display specific failures and retry the same outcome after relaunch with the original provider.",
+    "Guard against duplicate retry requests and ignore completions from attempts that no longer own the outcome."
+  ],
+  "artifact": {
+    "file": "RockNRoll-0.3.0-92-arm64.dmg",
+    "sha256": "8172d669d72fde1ee6199133d2407666cd65119ce3f179041ba59c7331e7a883",
+    "length": 28039348,
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-92-arm64.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-92-arm64.dmg",
+  "httpsVerified": true,
+  "appcastSHA256": "c86320c608bb662876d9f4d919225b35bd22068b71182d447a2ea9a8d5421411",
+  "inventorySHA256": "9dbbf779240fb43e7c24f90cfbf2c70ae20c1d9234095ceeee6eaf6608e4bef0",
+  "measured": {
+    "repoTests": "89 passed, 3 skipped, 0 failed across Attention, Meeting Library, Assistant UI and Markdown Export. The restart fixture sent one request across repeated Retry calls and competing coordinators. 27 distribution tests passed.",
+    "archive": "Direct Release archive succeeded. Signed app-group I/O passed. Modified app sources and resources match the source commit manifest.",
+    "package": "Notarized Developer ID app stapled and accepted by Gatekeeper inside the mounted DMG.",
+    "publication": "Publisher verified the public immutable artifact, signed appcast, inventory and both aliases. An independent download matched the local DMG and both metadata files byte for byte."
+  },
+  "notVerified": [
+    "Installed Sparkle upgrade and live provider retry.",
+    "Separate notarization of the outer DMG."
+  ],
+  "publishedAt": "2026-11-11T13:04:34+03:00"
+}
