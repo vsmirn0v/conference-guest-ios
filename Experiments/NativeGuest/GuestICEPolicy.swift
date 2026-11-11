@@ -1,6 +1,15 @@
 import Foundation
 
-enum GuestICEPolicyError: Error { case noTCPRelay, noUDPRelay }
+enum GuestICEPolicyError: LocalizedError {
+    case noTCPRelay, noUDPRelay
+
+    var errorDescription: String? {
+        switch self {
+        case .noTCPRelay: return "This meeting did not provide a TCP/TLS relay."
+        case .noUDPRelay: return "This meeting did not provide a UDP relay."
+        }
+    }
+}
 
 /// Diagnostic transport selection; no endpoint invention, rewriting or OS changes.
 enum GuestICEPolicy: String {
@@ -113,4 +122,166 @@ enum GuestICEPolicy: String {
                 "transport": transport]
     }
 #endif
+}
+
+/// One automatic switch per peer for the lifetime of a meeting. Unverified
+/// attempts fall back to the regular recovery path on the next engine rebuild.
+struct GuestRelayRecovery {
+    private var tried: Set<GuestPeerTarget> = []
+    private var next: Set<GuestPeerTarget> = []
+    private(set) var verifying: Set<GuestPeerTarget> = []
+    private(set) var confirmed: Set<GuestPeerTarget> = []
+
+    mutating func schedule(_ target: GuestPeerTarget) -> Bool {
+        guard tried.insert(target).inserted else { return false }
+        next.insert(target)
+        return true
+    }
+
+    mutating func beginAttempt() -> Set<GuestPeerTarget> {
+        verifying = next
+        next.removeAll()
+        return confirmed.union(verifying)
+    }
+
+    mutating func verify(_ target: GuestPeerTarget) -> Bool {
+        guard verifying.remove(target) != nil else { return false }
+        confirmed.insert(target)
+        return true
+    }
+}
+
+struct GuestRelayVerificationError: GuestRecoverableError, LocalizedError {
+    var errorDescription: String? { "The TCP/TLS relay could not carry meeting media." }
+}
+
+/// A sample from a single peer's RTCStatisticsReport. Candidate `protocol`
+/// describes the relayed path to the SFU and can be UDP even for TURN/TLS.
+struct GuestICETransportSample {
+    enum Route: String { case udp, tcp, tls, other }
+    enum MediaKind: String { case audio, video }
+    struct Stream {
+        let kind: MediaKind
+        let progress: Double
+        let loss: Double?
+        let feedbackTime: Double?
+        let fractionLost: Double?
+    }
+    let route: Route
+    let reportedTracks: Set<String>
+    private let target: GuestPeerTarget
+    private let sampledAt: Double
+    private let nativeTime: Double
+    private let transportID: String
+    private let pairID: String
+    private let localCandidateID: String
+    private let remoteCandidateID: String
+    private let requests: Double?
+    private let responses: Double?
+    private let streams: [String: Stream]
+
+    init?(_ rows: [[String: Any]], target: GuestPeerTarget, demandedTracks: Set<String>) {
+        let transports = rows.filter { $0["type"] as? String == "transport" && $0["selectedCandidatePairId"] != nil }
+        guard transports.count == 1, let transport = transports.first,
+              transport["dtlsState"] as? String == "connected",
+              let sampledAt = Self.count(transport["sampleUptime"]),
+              let nativeTime = Self.count(transport["nativeTimestampUS"]),
+              let transportID = transport["id"] as? String,
+              let pairID = transport["selectedCandidatePairId"] as? String,
+              let pair = rows.first(where: { $0["id"] as? String == pairID && $0["type"] as? String == "candidate-pair" }),
+              pair["state"] as? String == "succeeded",
+              let localCandidateID = pair["localCandidateId"] as? String,
+              let remoteCandidateID = pair["remoteCandidateId"] as? String,
+              let local = rows.first(where: { $0["id"] as? String == localCandidateID && $0["type"] as? String == "local-candidate" }) else { return nil }
+        self.target = target; self.sampledAt = sampledAt; self.nativeTime = nativeTime
+        self.transportID = transportID; self.pairID = pairID
+        self.localCandidateID = localCandidateID; self.remoteCandidateID = remoteCandidateID
+        self.requests = Self.count(pair["requestsSent"])
+        self.responses = Self.count(pair["responsesReceived"])
+        let relay = local["candidateType"] as? String == "relay"
+        let proto = local[relay ? "relayProtocol" : "protocol"] as? String
+        switch (relay, proto) {
+        case (_, "udp"): route = .udp
+        case (true, "tcp"): route = .tcp
+        case (true, "tls"): route = .tls
+        default: route = .other
+        }
+        let outbound = target == .publisher
+        let sources = rows.filter { $0["type"] as? String == "media-source" }
+        var streams: [String: Stream] = [:]
+        var reportedTracks: Set<String> = []
+        for row in rows where row["type"] as? String == (outbound ? "outbound-rtp" : "inbound-rtp") {
+            guard row["transportId"] as? String == transportID,
+                  let id = row["id"] as? String, let kind = (row["kind"] as? String).flatMap(MediaKind.init(rawValue:)) else { continue }
+            let track: String?
+            if outbound, let sourceID = row["mediaSourceId"] as? String {
+                track = sources.first { $0["id"] as? String == sourceID }?["trackIdentifier"] as? String
+            } else {
+                track = row["trackIdentifier"] as? String
+            }
+            guard let track, demandedTracks.contains(track) else { continue }
+            let counter = kind == .video ? (outbound ? "framesSent" : "framesDecoded") : (outbound ? "packetsSent" : "packetsReceived")
+            guard let progress = Self.count(row[counter]) else { continue }
+            let feedback = outbound ? rows.first {
+                $0["type"] as? String == "remote-inbound-rtp" && $0["localId"] as? String == id &&
+                    $0["transportId"] as? String == transportID && $0["kind"] as? String == kind.rawValue
+            } : nil
+            reportedTracks.insert(track)
+            streams[id] = Stream(kind: kind, progress: progress,
+                                 loss: Self.count(outbound ? feedback?["packetsLost"] : row["packetsLost"]),
+                                 feedbackTime: Self.count(feedback?["nativeTimestampUS"]),
+                                 fractionLost: Self.count(feedback?["fractionLost"]))
+        }
+        self.streams = streams; self.reportedTracks = reportedTracks
+    }
+
+    var isTCPRelay: Bool { route == .tcp || route == .tls }
+
+    struct MediaDelta {
+        var progressing: Set<MediaKind> = []
+        var stalledStreams: Set<String> = []
+    }
+
+    func samePath(as previous: Self) -> Bool {
+        target == previous.target && transportID == previous.transportID && pairID == previous.pairID &&
+            localCandidateID == previous.localCandidateID && remoteCandidateID == previous.remoteCandidateID &&
+            route == previous.route
+    }
+
+    func mediaDelta(since previous: Self) -> MediaDelta {
+        var delta = MediaDelta()
+        guard samePath(as: previous), sampledAt > previous.sampledAt, sampledAt - previous.sampledAt <= 6,
+              nativeTime > previous.nativeTime, !streams.isEmpty,
+              Set(streams.keys) == Set(previous.streams.keys) else { return delta }
+        let missedProbes = Self.increased(requests, since: previous.requests) && responses != nil && responses == previous.responses
+        for (id, current) in streams {
+            guard let old = previous.streams[id], current.kind == old.kind else { continue }
+            let freshFeedback = current.feedbackTime.map {
+                $0 > (old.feedbackTime ?? 0) && $0 <= nativeTime && nativeTime - $0 <= 6_000_000
+            } == true
+            let severeLoss = freshFeedback && (current.fractionLost ?? 0) >= 0.95
+            if current.progress > old.progress,
+               target == .subscriber || (freshFeedback && current.fractionLost.map { $0 < 0.95 } == true) {
+                delta.progressing.insert(current.kind)
+            }
+            // Outbound RTP counters alone measure local sends. Only a fresh
+            // receiver report on that stream can show downstream packet loss.
+            if old.progress > 0, current.progress >= old.progress,
+               severeLoss || (current.progress == old.progress &&
+                    (missedProbes || (target == .subscriber && Self.increased(current.loss, since: old.loss)))) {
+                delta.stalledStreams.insert(id)
+            }
+        }
+        return delta
+    }
+
+    private static func increased(_ current: Double?, since previous: Double?) -> Bool {
+        guard let current, let previous else { return false }
+        return current > previous
+    }
+
+    private static func count(_ value: Any?) -> Double? {
+        guard let number = (value as? NSNumber)?.doubleValue, number.isFinite, number >= 0 else { return nil }
+        return number
+    }
 }

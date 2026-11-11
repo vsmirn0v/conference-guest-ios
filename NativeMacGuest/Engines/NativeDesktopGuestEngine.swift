@@ -77,9 +77,8 @@ enum NativeDesktopGuestError: LocalizedError {
     private var systemAudio: (any GuestMeetingAudio)?
     /// R4: with one engine for all meetings, this meeting's attachment replaces the room.
     private let sharedAudio: SharedAudioEngine?
-    /// Diagnostic transport selection for bounded experiments; `.automatic` keeps
-    /// the production path (including the subscriber-relay recovery).
-    private let icePolicy: GuestICEPolicy
+    static let forceTCPRelayKey = "nativeDesktop.forceTCPRelay"
+    private let icePolicy: GuestICEPolicy?
     private var sharedMeeting: SharedGuestMeetingAudio?
     private var meetingVolume = 1.0
     private var participantVolumes: [String: Double] = [:]
@@ -95,8 +94,8 @@ enum NativeDesktopGuestError: LocalizedError {
     private var microphoneReadinessAllowed = false
     private var leaving = false
     private var cleanupSucceeded = true
-    /// Set for the rest of this meeting once its receive path stalled (see onSubscriberStall).
-    private(set) var subscriberRelayFallback = false
+    private var relayRecovery = GuestRelayRecovery()
+    private var useSubscriberUDPRelay = false
     private var chatHistoryRequested = false
     private var transcriptHistoryRequested = false
     private var chatHistoryTask: Task<Void, Never>?
@@ -105,7 +104,7 @@ enum NativeDesktopGuestError: LocalizedError {
     init(media: NativeDesktopSharedMedia<GuestSystemAudio> = NativeDesktopMediaService.shared,
          sharedAudio: SharedAudioEngine? = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared : nil,
          microphoneAuthorized: (() -> Bool)? = nil,
-         icePolicy: GuestICEPolicy = .automatic) {
+         icePolicy: GuestICEPolicy? = nil) {
         self.media = media; self.sharedAudio = sharedAudio; self.icePolicy = icePolicy
         self.microphoneAuthorized = microphoneAuthorized ?? { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
     }
@@ -117,7 +116,12 @@ enum NativeDesktopGuestError: LocalizedError {
         let target = try GuestInvitation.parse(invitation)
         revision = UUID(); let token = revision
         leaving = false; quietJoin = quiet; outputIntent = !quiet; featureError = nil
-        subscriberRelayFallback = false
+        relayRecovery = GuestRelayRecovery(); useSubscriberUDPRelay = false
+        let forceTCPRelay = icePolicy == nil && UserDefaults.standard.bool(forKey: Self.forceTCPRelayKey)
+        var selectedPolicy = icePolicy ?? (forceTCPRelay ? .tcpRelay : .automatic)
+#if DEBUG
+        if diagnosticICEPolicyForTesting != .automatic { selectedPolicy = diagnosticICEPolicyForTesting }
+#endif
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         guestSnapshot = .init(); onFeatures?(guestSnapshot); emit()
         let profile = GuestAudioProfile.saved
@@ -171,16 +175,30 @@ enum NativeDesktopGuestError: LocalizedError {
             if !inputPermitted, !(await owner.setInputPermitted(false)) {
                 _ = await release(false); throw NativeDesktopGuestError.cleanupFailed
             }
-            // After the receive path stalled in this meeting, its subscriber uses the relay.
-            var icePolicy: GuestICEPolicy = self.icePolicy != .automatic ? self.icePolicy : (subscriberRelayFallback ? .subscriberRelay : .automatic)
-#if DEBUG
-            if diagnosticICEPolicyForTesting != .automatic { icePolicy = diagnosticICEPolicyForTesting }
-#endif
-            let engine = NativeGuestEngine(label: name, systemAudio: owner, icePolicy: icePolicy, verifyReceivedPixels: false)
-            engine.onSubscriberStall = { [weak self] in
-                guard let self, revision == token, !subscriberRelayFallback else { return }
-                subscriberRelayFallback = true
-                probeLog("subscriber-relay-fallback", ["reason": "receive-stalled"])
+            let effectivePolicy: GuestICEPolicy = selectedPolicy == .automatic && useSubscriberUDPRelay ? .subscriberRelay : selectedPolicy
+            let engine = NativeGuestEngine(label: name, systemAudio: owner, icePolicy: effectivePolicy, verifyReceivedPixels: false)
+            if forceTCPRelay && selectedPolicy == .tcpRelay {
+                engine.tcpRelayTargets = [.subscriber, .publisher]
+            }
+            if selectedPolicy == .automatic {
+                engine.tcpRelayTargets = relayRecovery.beginAttempt()
+                engine.verifyingTCPRelayTargets = relayRecovery.verifying
+                engine.scheduleTCPRelay = { [weak self, weak engine] target in
+                    guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine,
+                          relayRecovery.schedule(target) else { return false }
+                    probeLog("ice-tcp-relay-fallback", ["target": target.rawValue])
+                    return true
+                }
+                engine.onSubscriberUDPRelayOnly = { [weak self, weak engine] in
+                    guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine,
+                          !useSubscriberUDPRelay else { return }
+                    useSubscriberUDPRelay = true
+                    probeLog("subscriber-relay-fallback", ["reason": "tcp-relay-unavailable"])
+                }
+                engine.confirmTCPRelay = { [weak self, weak engine] target in
+                    guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine else { return }
+                    _ = relayRecovery.verify(target)
+                }
             }
             engine.releaseSystemAudio = release
             sharedMeeting?.onLevelChange = { [weak engine] in engine?.reconcilePlaybackLevels() }

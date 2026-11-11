@@ -2135,3 +2135,6 @@
 "Check the outcome provider and permissions in Assistant settings." = "Проверьте провайдера и разрешения в настройках Ассистента.";
 "The meeting library could not save the outcome." = "Не удалось сохранить итог в библиотеке встреч.";
 "Restore the original outcome provider and model in Assistant settings to retry." = "Чтобы повторить попытку, выберите прежнего провайдера и модель в настройках Ассистента.";
+"Guest meeting connection" = "Подключение к гостевым встречам";
+"Use TCP/TLS relay only" = "Использовать только ретрансляцию TCP/TLS";
+"Applies when you join your next guest meeting. Automatic mode can switch to a TCP/TLS relay if UDP fails." = "Настройка применяется при следующем входе в гостевую встречу. В автоматическом режиме при сбое UDP приложение может переключиться на ретрансляцию TCP/TLS.";

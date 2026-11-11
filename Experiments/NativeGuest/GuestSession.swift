@@ -80,6 +80,7 @@ protocol GuestSessionEngine: AnyObject {
     func activateMicrophone() async throws
     func setPlayoutEnabled(_ enabled: Bool) async throws
     func waitForStartupAudio() async throws
+    func waitForTransportRecovery() async throws
     func releaseStartupAudio() -> Bool
     func join(_ invitation: GuestInvitation, sessionID: String?) async throws
     func publishPattern(codec: String, camera: Bool, audioMuted: Bool, videoMuted: Bool) async throws
@@ -96,6 +97,7 @@ extension GuestSessionEngine {
     func activateMicrophone() async throws {}
     func setPlayoutEnabled(_ enabled: Bool) async throws {}
     func waitForStartupAudio() async throws {}
+    func waitForTransportRecovery() async throws {}
     func releaseStartupAudio() -> Bool { true }
 }
 
@@ -375,6 +377,8 @@ final class GuestSession {
                 // any newer intent before completing the shared control job.
                 if desiredIntent?.publish == true, desiredIntent != appliedIntent { continue }
                 if connectedAttemptID != attempt {
+                    try await current.waitForTransportRecovery()
+                    try check(expected, attempt: attempt)
                     try await current.waitForStartupAudio()
                     try check(expected, attempt: attempt)
                     if desiredIntent?.publish == true, desiredIntent != appliedIntent { continue }

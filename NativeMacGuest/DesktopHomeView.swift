@@ -461,6 +461,7 @@ struct NativeDesktopSettingsView: View {
     var obsidian: ObsidianExportCoordinator? = nil
     @FocusState private var editingName: Bool
     @AppStorage("nativeDesktop.multipleMeetings") private var multipleMeetings = true
+    @AppStorage(NativeDesktopGuestEngine.forceTCPRelayKey) private var forceTCPRelay = false
     @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
     @AppStorage(GuestSystemAudio.voiceRepliesKey) private var voiceReplies = false
     @AppStorage(SharedAudioEngine.flagKey) private var sharedAudioEngine = false
@@ -475,6 +476,11 @@ struct NativeDesktopSettingsView: View {
                     Text(L("Used for guest invitations that contain a room code without a website.")).font(.caption).foregroundStyle(.secondary)
                 }
                 RoomSyncSettingsView(sync: library.sync, continuation: library.continuation)
+                Section(L("Guest meeting connection")) {
+                    Toggle(L("Use TCP/TLS relay only"), isOn: $forceTCPRelay)
+                    Text(L("Applies when you join your next guest meeting. Automatic mode can switch to a TCP/TLS relay if UDP fails."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section(L("Meetings")) {
                     Toggle(L("Allow multiple meetings"), isOn: $multipleMeetings)
                     Text(L("Stay connected to several meetings. Your microphone and camera work in one meeting at a time; the others keep playing unless you silence them."))

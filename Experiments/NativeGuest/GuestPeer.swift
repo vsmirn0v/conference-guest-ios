@@ -31,7 +31,11 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     let renderer: GuestFrameCounter
     let pcmMeter = GuestPCMMeter()
     private let physicalAudio: Bool
-    private let icePolicy: GuestICEPolicy
+    let icePolicy: GuestICEPolicy
+    private(set) var advertisesTCPRelay = false
+    private(set) var advertisesUDPRelay = false
+    private(set) var selectedRoute: GuestICETransportSample.Route?
+    var onICEPathFailure: (() -> Void)?
     private var incomingAudio: [(track: LKRTCAudioTrack, source: GuestStartupPlaybackGain.Source)] = []
     nonisolated private let startupPlaybackGain: GuestStartupPlaybackGain?
     var onIncomingAudioChange: (() -> Void)?
@@ -128,7 +132,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 
     init(target: GuestPeerTarget, factory: LKRTCPeerConnectionFactory, physicalAudio: Bool = false, icePolicy: GuestICEPolicy = .automatic, verifyReceivedPixels: Bool = true,
          startupPlaybackGain: GuestStartupPlaybackGain? = nil) async throws {
-        self.target = target; self.factory = factory; self.physicalAudio = physicalAudio; self.icePolicy = icePolicy
+        self.target = target; self.factory = factory; self.physicalAudio = physicalAudio; self.icePolicy = icePolicy.forTarget(target)
         self.startupPlaybackGain = startupPlaybackGain
         renderer = GuestFrameCounter(verifyPixels: verifyReceivedPixels)
         native = GuestNativeCalls(label: target.rawValue.lowercased())
@@ -155,8 +159,11 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 
     func configure(_ value: [String: Any]) async throws {
         guard !closed else { throw GuestPeerError.closed }
-        let icePolicy = self.icePolicy.forTarget(target)
         let advertised = value["iceServers"] as? [[String: Any]] ?? []
+        if value["iceServers"] is [[String: Any]] || icePolicy != .automatic {
+            advertisesTCPRelay = (try? GuestICEPolicy.tcpRelay.servers(advertised)) != nil
+            advertisesUDPRelay = (try? GuestICEPolicy.udpRelay.servers(advertised)) != nil
+        }
         let servers = try icePolicy.servers(advertised)
         let replaceServers = value["iceServers"] is [[String: Any]] || icePolicy != .automatic
         let relay = icePolicy.relayOnly(advertised) || value["iceTransportPolicy"] as? String == "relay"
@@ -185,6 +192,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     }
 
     func answer(_ description: [String: Any]) async throws -> [String: Any] {
+        guard icePolicy != .tcpRelay || relayOnlyConfigured else { throw GuestICEPolicyError.noTCPRelay }
         guard let sdp = description["sdp"] as? String, sdp.utf8.count < 1_000_000 else { throw GuestPeerError.malformed }
         localSDPSent = false
         remoteDescriptionCandidates = Self.candidateKinds(sdp)
@@ -206,6 +214,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 
     func makeOffer() async throws -> [String: Any] {
         guard !closed else { throw GuestPeerError.closed }
+        guard icePolicy != .tcpRelay || relayOnlyConfigured else { throw GuestICEPolicyError.noTCPRelay }
         localSDPSent = false
         let offer = try await descriptionForOffer(true)
         try await setLocal(offer)
@@ -546,24 +555,26 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             "roundTripTime", "fractionLost", "currentRoundTripTime", "availableOutgoingBitrate",
             "dtlsState", "iceState", "selectedCandidatePairId", "localCandidateId", "remoteCandidateId", "protocol", "candidateType", "relayProtocol", "totalAudioEnergy", "mimeType", "codecId", "frameWidth", "frameHeight",
             "keyFramesEncoded", "keyFramesDecoded", "framesReceived", "pliCount", "nackCount",
+            "transportId", "mediaSourceId", "trackIdentifier", "localId", "state", "requestsSent", "responsesReceived",
             "packetsLost", "jitter", "framesDropped", "totalDecodeTime", "freezeCount", "totalFreezesDuration",
             "retransmittedPacketsSent", "retransmittedPacketsReceived",
             "audioLevel", "totalSamplesDuration", "totalSamplesReceived", "framesPerSecond", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder"]
 #if DEBUG
         // RTCP report progress distinguishes a fresh downstream observation from
         // an old cumulative loss value. Unsupported fields remain absent.
-        keys += ["localId", "remoteId", "ssrc", "reportsReceived", "roundTripTimeMeasurements",
-            "state", "nominated", "writable", "requestsSent", "responsesReceived", "totalRoundTripTime"]
+        keys += ["remoteId", "ssrc", "reportsReceived", "roundTripTimeMeasurements",
+            "nominated", "writable", "totalRoundTripTime"]
 #endif
         let selectedPairs = Set(report.statistics.values.filter { $0.type == "transport" }
             .compactMap { $0.values["selectedCandidatePairId"] as? String })
         let candidateIDs = Set(report.statistics.values.filter { selectedPairs.contains($0.id) }
             .flatMap { [$0.values["localCandidateId"] as? String, $0.values["remoteCandidateId"] as? String].compactMap { $0 } })
+        let sampledAt = ProcessInfo.processInfo.systemUptime
         return report.statistics.values.filter {
             ["inbound-rtp", "outbound-rtp", "remote-inbound-rtp", "codec", "media-source", "transport"].contains($0.type) ||
             selectedPairs.contains($0.id) || candidateIDs.contains($0.id)
         }.map { stat in
-            var value: [String: Any] = ["target": target.rawValue, "type": stat.type, "id": stat.id, "sampleUptime": ProcessInfo.processInfo.systemUptime, "nativeTimestampUS": stat.timestamp_us]
+            var value: [String: Any] = ["target": target.rawValue, "type": stat.type, "id": stat.id, "sampleUptime": sampledAt, "nativeTimestampUS": stat.timestamp_us]
 #if DEBUG
             value["peerID"] = diagnosticID
             if stat.values["candidateType"] as? String == "relay" {
@@ -581,6 +592,22 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             for key in keys { if let item = stat.values[key] { value[key] = item } }
             return value
         }
+    }
+
+    func observeSelectedRoute(_ route: GuestICETransportSample.Route) {
+        guard selectedRoute != route else { return }
+        selectedRoute = route
+        probeLog("ice-selected-route", ["target": target.rawValue, "route": route.rawValue, "policy": icePolicy.rawValue])
+    }
+
+    func outboundTransportTracks(audio: Bool, video: Bool) -> Set<String> {
+        Set([audio ? audioTrack?.trackId : nil, video ? videoTrack?.trackId : nil].compactMap { $0 })
+    }
+
+    func requestTCPFallback() {
+        guard !closed, icePolicy == .automatic, advertisesTCPRelay,
+              selectedRoute == .udp || (!hasEstablishedConnection && selectedRoute == nil) else { return }
+        onICEPathFailure?()
     }
 
     /// An idle subscriber may remain checking until the SFU has media to send.
@@ -942,11 +969,12 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         logStallDiagnostics(reason: "deadline")
         reportICEFailure(initialStall: initialSubscriber)
     }
-    private func reportICEFailure(initialStall: Bool = false) {
+    private func reportICEFailure(initialStall: Bool = false, pathFailure: Bool = true) {
         guard !iceFailureReported else { return }
         iceFailureReported = true
         iceTimeout?.cancel(); iceTimeout = nil
         if initialStall { onInitialStall?() }
+        if pathFailure { requestTCPFallback() }
         onFailure?(GuestPeerError.iceFailed)
     }
     private func refreshICETimeout() {
@@ -1008,7 +1036,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             probeLog("ice-state", ["target": target.rawValue, "state": newState.rawValue])
             if newState == .failed { logStallDiagnostics(reason: "native-failed") }
             if newState == .closed || (newState == .failed && (target != .subscriber || hasEstablishedConnection)) {
-                reportICEFailure()
+                reportICEFailure(pathFailure: newState != .closed)
             } else {
                 refreshICETimeout()
             }

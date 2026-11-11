@@ -309,6 +309,43 @@ final class InitialSubscriberICETests: XCTestCase {
         }
     }
 
+    @MainActor func testUDPFailureSchedulesFallbackOnlyAfterAnUnrecoveredOutage() async throws {
+        try await exercise(.publisher) { h in
+            try await h.peer.configure(["iceServers": [["urls": ["turn:relay.example.test:443?transport=tcp"],
+                                                        "username": "fixture", "credential": "fixture"]]])
+            h.peer.observeSelectedRoute(.udp)
+            var fallbacks = 0
+            h.peer.onICEPathFailure = { fallbacks += 1 }
+            await h.signal(.connected)
+            await h.signal(.disconnected)
+            try await h.until { h.waits.count == 1 }
+            h.clock = 106
+            await h.signal(.connected)
+            h.waits[0].release()
+            try await h.until { h.finished == 1 }
+            XCTAssertEqual(fallbacks, 0)
+            await h.signal(.failed)
+            await h.signal(.closed)
+            XCTAssertEqual(fallbacks, 1)
+            XCTAssertEqual(h.failures, 1)
+        }
+        try await exercise(.publisher) { h in
+            h.peer.observeSelectedRoute(.udp)
+            var fallbacks = 0
+            h.peer.onICEPathFailure = { fallbacks += 1 }
+            await h.signal(.connected); await h.signal(.failed)
+            XCTAssertEqual(fallbacks, 0, "Without a server-advertised endpoint retain ordinary recovery")
+            XCTAssertEqual(h.failures, 1)
+        }
+    }
+
+    @MainActor func testReadOnlyGuestDoesNotWaitForAPublisherThatNeverOffered() async throws {
+        try await exercise { h in
+            h.engine.tcpRelayTargets = [.publisher]
+            try await h.engine.waitForTransportRecovery()
+        }
+    }
+
     @MainActor func testClosingEstablishedPeerCancelsOutage() async throws {
         try await exercise { h in
             await h.signal(.connected); await h.signal(.disconnected)

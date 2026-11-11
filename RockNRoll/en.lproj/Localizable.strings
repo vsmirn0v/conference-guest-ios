@@ -2117,3 +2117,6 @@
 "Loading model…" = "Loading model…";
 "Unloading…" = "Unloading…";
 "Readiness and memory of the speech and voice models that run on this Mac. A model can be ready while not loaded; it loads when a meeting needs it." = "Readiness and memory of the speech and voice models that run on this Mac. A model can be ready while not loaded; it loads when a meeting needs it.";
+"Guest meeting connection" = "Guest meeting connection";
+"Use TCP/TLS relay only" = "Use TCP/TLS relay only";
+"Applies when you join your next guest meeting. Automatic mode can switch to a TCP/TLS relay if UDP fails." = "Applies when you join your next guest meeting. Automatic mode can switch to a TCP/TLS relay if UDP fails.";
