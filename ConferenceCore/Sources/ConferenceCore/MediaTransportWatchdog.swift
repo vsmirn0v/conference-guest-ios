@@ -28,6 +28,7 @@ public struct MediaTransportWatchdog {
     }
     private struct PeerProgress {
         var disconnectedSince: TimeInterval?
+        var missingSelectionSince: TimeInterval?
         var pairs: [String: PairProgress] = [:]
     }
 
@@ -64,6 +65,13 @@ public struct MediaTransportWatchdog {
                 if now - since >= disconnectLimit { return report(.iceDisconnected) }
             } else {
                 peer.disconnectedSince = nil
+            }
+            if sample.ice == .checking || (sample.ice == .connected && sample.selectedPairs.isEmpty) {
+                let since = peer.missingSelectionSince ?? now
+                peer.missingSelectionSince = since
+                if now - since >= silenceLimit { return report(.noInbound) }
+            } else {
+                peer.missingSelectionSince = nil
             }
             var currentPairs: [String: PairProgress] = [:]
             if sample.ice == .connected {

@@ -81,6 +81,18 @@ final class MediaTransportWatchdogTests: XCTestCase {
         XCTAssertNil(watchdog.observe(sample(8, peer: UUID(), pair: "new"), at: 20))
     }
 
+    func testEstablishedPeerCannotStayInCheckingOrWithoutASelectedPair() {
+        for ice in [MediaTransportWatchdog.ICE.checking, .connected] {
+            var watchdog = MediaTransportWatchdog()
+            let missing = [MediaTransportWatchdog.Sample(peer: primaryPeer, ice: ice, selectedPairs: [:])]
+            XCTAssertNil(watchdog.observe(sample(8), at: 0))
+            XCTAssertNil(watchdog.observe(missing, at: 2))
+            XCTAssertNil(watchdog.observe(missing, at: 6))
+            XCTAssertNil(watchdog.observe(missing, at: 10))
+            XCTAssertEqual(watchdog.observe(missing, at: 12), .noInbound)
+        }
+    }
+
     func testFailedICEReportsImmediately() {
         var watchdog = MediaTransportWatchdog()
         XCTAssertNil(watchdog.observe(sample(1), at: 0))
