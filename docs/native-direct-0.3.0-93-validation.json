@@ -1,0 +1,51 @@
+{
+  "version": "0.3.0",
+  "build": "93",
+  "channel": "beta",
+  "sourceCommit": "b4c78b4",
+  "changes": [
+    "Bound established ICE recovery to one ten-second interval; prevent repeated or stale failure callbacks."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "93",
+    "file": "RockNRoll-0.3.0-93-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-93-arm64.dmg",
+    "sha256": "21db7ef0c7bbcccc3ecbc74a2e49062b15e8e42e78924d14a19571309355fecd",
+    "length": 28038871,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/package-93/RockNRoll-0.3.0-93-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-93-arm64.dmg",
+      "sha256": "21db7ef0c7bbcccc3ecbc74a2e49062b15e8e42e78924d14a19571309355fecd",
+      "length": 28038871
+    },
+    "state": {
+      "appcastSHA256": "94402231fbcf561b4f2d8a8015fb42d99b930168ed70e9152f2d3262abb73173",
+      "inventorySHA256": "fcb8d355b3027e7085a3f76085bd6af270920e6bcaa16b4b7e0d8ee142141bb6",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-93-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/ba195b9c5a924f8dbb033de121899fac/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "12 Mac ICE parity tests passed; standalone native engine suite, 31 session scenarios and 112 transport admission checks passed.",
+    "Release compile and archive succeeded; notarized app stapled and Gatekeeper accepted within DMG.",
+    "Public artifact, aliases, signed feed and inventory verified by publisher over HTTPS."
+  ],
+  "notVerified": [
+    "Installed Sparkle update and real Wi-Fi or cellular handover.",
+    "Outer DMG is not separately notarized."
+  ],
+  "publishedAt": "2026-11-11T13:34:55+03:00"
+}
