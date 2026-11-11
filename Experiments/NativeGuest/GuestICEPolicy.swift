@@ -162,6 +162,7 @@ struct GuestICETransportSample {
     enum MediaKind: String { case audio, video }
     struct Stream {
         let kind: MediaKind
+        let track: String
         let progress: Double
         let loss: Double?
         let feedbackTime: Double?
@@ -227,7 +228,7 @@ struct GuestICETransportSample {
                     $0["transportId"] as? String == transportID && $0["kind"] as? String == kind.rawValue
             } : nil
             reportedTracks.insert(track)
-            streams[id] = Stream(kind: kind, progress: progress,
+            streams[id] = Stream(kind: kind, track: track, progress: progress,
                                  loss: Self.count(outbound ? feedback?["packetsLost"] : row["packetsLost"]),
                                  feedbackTime: Self.count(feedback?["nativeTimestampUS"]),
                                  fractionLost: Self.count(feedback?["fractionLost"]))
@@ -239,7 +240,12 @@ struct GuestICETransportSample {
 
     struct MediaDelta {
         var progressing: Set<MediaKind> = []
+        var progressingVideoTracks: Set<String> = []
         var stalledStreams: Set<String> = []
+
+        func confirmsMedia(_ kinds: Set<MediaKind>, videoTracks: Set<String>) -> Bool {
+            kinds.isSubset(of: progressing) && videoTracks.isSubset(of: progressingVideoTracks)
+        }
     }
 
     func samePath(as previous: Self) -> Bool {
@@ -255,7 +261,7 @@ struct GuestICETransportSample {
               Set(streams.keys) == Set(previous.streams.keys) else { return delta }
         let missedProbes = Self.increased(requests, since: previous.requests) && responses != nil && responses == previous.responses
         for (id, current) in streams {
-            guard let old = previous.streams[id], current.kind == old.kind else { continue }
+            guard let old = previous.streams[id], current.kind == old.kind, current.track == old.track else { continue }
             let freshFeedback = current.feedbackTime.map {
                 $0 > (old.feedbackTime ?? 0) && $0 <= nativeTime && nativeTime - $0 <= 6_000_000
             } == true
@@ -263,6 +269,7 @@ struct GuestICETransportSample {
             if current.progress > old.progress,
                target == .subscriber || (freshFeedback && current.fractionLost.map { $0 < 0.95 } == true) {
                 delta.progressing.insert(current.kind)
+                if current.kind == .video { delta.progressingVideoTracks.insert(current.track) }
             }
             // Outbound RTP counters alone measure local sends. Only a fresh
             // receiver report on that stream can show downstream packet loss.

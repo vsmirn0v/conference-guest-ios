@@ -600,8 +600,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         probeLog("ice-selected-route", ["target": target.rawValue, "route": route.rawValue, "policy": icePolicy.rawValue])
     }
 
-    func outboundTransportTracks(audio: Bool, video: Bool) -> Set<String> {
-        Set([audio ? audioTrack?.trackId : nil, video ? videoTrack?.trackId : nil].compactMap { $0 })
+    func outboundTransportTrack(video: Bool) -> String? {
+        video ? videoTrack?.trackId : audioTrack?.trackId
     }
 
     func requestTCPFallback() {

@@ -759,15 +759,17 @@ final class NativeGuestEngine {
     }
 
     var onRemoteAudioChange: (() -> Void)?
-    /// The receive path never connected (subscriber ICE deadline or startup audio waiting
-    /// only on it). The app can route the next attempt's subscriber through a relay.
     private struct TransportDemand: Equatable {
         let kinds: Set<GuestICETransportSample.MediaKind>
         let tracks: Set<String>
+        let videoTracks: Set<String>
+        let unboundVideo: Bool
         var expected: Bool { !kinds.isEmpty }
 
-        init(audio: Bool, video: Bool, tracks: Set<String>) {
-            self.tracks = tracks
+        init(audio: Bool, video: Bool, audioTracks: [String], videoTracks: [String], unboundVideo: Bool) {
+            self.videoTracks = Set(videoTracks)
+            self.unboundVideo = unboundVideo
+            tracks = Set(audioTracks + videoTracks)
             kinds = Set([audio ? .audio : nil, video ? .video : nil].compactMap { $0 })
         }
     }
@@ -780,20 +782,30 @@ final class NativeGuestEngine {
         if peer.target == .publisher {
             let audio = localMuteIntent[false] == false && published["audio"].flatMap { serverMute[$0] } == false
             let video = localMuteIntent[true] == false && published["video"].flatMap { serverMute[$0] } == false
-            return .init(audio: audio, video: video, tracks: peer.outboundTransportTracks(audio: audio, video: video))
+            let audioTrack = audio ? peer.outboundTransportTrack(video: false) : nil
+            let videoTrack = video ? peer.outboundTransportTrack(video: true) : nil
+            return .init(audio: audio, video: video, audioTracks: [audioTrack].compactMap { $0 },
+                         videoTracks: [videoTrack].compactMap { $0 }, unboundVideo: video && videoTrack == nil)
         }
-        let audioEnabled = startupPlaybackGain?.soundEnabled != false
+        let audioEnabled = startupPlaybackGain?.soundEnabled != false && (systemAudio?.meetingLevel ?? 1) > 0
+        func audible(_ publication: GuestRemoteTrackState) -> Bool {
+            !publication.muted && (remoteParticipantIdentities[publication.participant].flatMap { participantVolumes[$0] } ?? 1) > 0
+        }
         let audio = audioEnabled ? peer.incomingAudioTracks.compactMap { item -> String? in
-            guard let publication = knownPublication(item.source, type: "AUDIO"), !publication.muted else { return nil }
+            guard let publication = knownPublication(item.source, type: "AUDIO"), audible(publication) else { return nil }
             return item.track.trackId
         } : []
-        let video = peer.receivedVideo.compactMap { item -> String? in
-            guard let reference = item.streamIDs.compactMap(GuestRemotePublication.init(streamID:)).first,
-                  expectedVideoSubscriptions.contains(reference.track) else { return nil }
-            return item.track.trackId
+        let video = peer.receivedVideo.compactMap { item -> (publication: String, track: String)? in
+            let references = Set(item.streamIDs.compactMap(GuestRemotePublication.init(streamID:)))
+            guard references.count == 1, let reference = references.first,
+                  expectedVideoSubscriptions.contains(reference.track),
+                  remoteTracks[reference.track]?.participant == reference.participant else { return nil }
+            return (reference.track, item.track.trackId)
         }
-        let expectedAudio = audioEnabled && remoteTracks.values.contains { $0.type == "AUDIO" && !$0.muted }
-        return .init(audio: expectedAudio, video: !expectedVideoSubscriptions.isEmpty, tracks: Set(audio + video))
+        let expectedAudio = audioEnabled && remoteTracks.values.contains { $0.type == "AUDIO" && audible($0) }
+        let unboundVideo = !expectedVideoSubscriptions.isSubset(of: Set(video.map(\.publication)))
+        return .init(audio: expectedAudio, video: !expectedVideoSubscriptions.isEmpty, audioTracks: audio,
+                     videoTracks: video.map(\.track), unboundVideo: unboundVideo)
     }
 
     private func observeTransport(_ peer: GuestPeer) -> Task<Void, Never> {
@@ -822,8 +834,11 @@ final class NativeGuestEngine {
                 let stablePath = previous.map { sample.samePath(as: $0) } == true
                 let delta = priorDemand == demand && stablePath ? previous.map { sample.mediaDelta(since: $0) } : nil
                 previous = sample; priorDemand = demand
-                let progress = demand.expected && demand.tracks.isSubset(of: sample.reportedTracks) &&
-                    delta.map { demand.kinds.isSubset(of: $0.progressing) } == true
+                // Require every visible video to advance. Audio uses progress
+                // from an active source because silence/DTX is valid on a mic.
+                let progress = demand.expected && !demand.unboundVideo &&
+                    demand.tracks.isSubset(of: sample.reportedTracks) &&
+                    delta?.confirmsMedia(demand.kinds, videoTracks: demand.videoTracks) == true
                 if progress && sample.isTCPRelay {
                     if verifiedTCPMedia.updateValue(demand, forKey: peer.target) != demand {
                         probeLog("ice-relay-media-verified", ["target": peer.target.rawValue, "route": sample.route.rawValue])
@@ -862,6 +877,7 @@ final class NativeGuestEngine {
         }
     }
 
+    /// Startup receive diagnostics are also used by the native probe.
     var onSubscriberStall: (() -> Void)?
     var onSubscriberUDPRelayOnly: (() -> Void)?
 

@@ -58,6 +58,24 @@ final class AdaptiveICERecoveryTests: XCTestCase {
         XCTAssertTrue(incomplete.mediaDelta(since: old).progressing.isEmpty)
     }
 
+    func testHealthyVideoCannotHideAnotherDemandedVideoStall() throws {
+        let tracks: Set<String> = ["video-a", "video-b"]
+        let oldA = inbound("a", track: "video-a", kind: "video", progress: 10)
+        let oldB = inbound("b", track: "video-b", kind: "video", progress: 10)
+        let previous = try sample(report(time: 10, relayProtocol: "tcp", streams: [oldA, oldB]), tracks: tracks)
+        let advancingA = inbound("a", track: "video-a", kind: "video", progress: 20)
+        let stalledB = inbound("b", track: "video-b", kind: "video", progress: 10, lost: 15)
+        let mixed = try sample(report(time: 12, relayProtocol: "tcp", streams: [advancingA, stalledB]), tracks: tracks)
+        let delta = mixed.mediaDelta(since: previous)
+        XCTAssertEqual(delta.stalledStreams, ["b"])
+        XCTAssertFalse(delta.confirmsMedia([.video], videoTracks: tracks))
+        let missing = try sample(report(time: 12, relayProtocol: "tcp", streams: [advancingA]), tracks: tracks)
+        XCTAssertFalse(missing.mediaDelta(since: previous).confirmsMedia([.video], videoTracks: tracks))
+        let advancingB = inbound("b", track: "video-b", kind: "video", progress: 25)
+        let healthy = try sample(report(time: 12, relayProtocol: "tcp", streams: [advancingA, advancingB]), tracks: tracks)
+        XCTAssertTrue(healthy.mediaDelta(since: previous).confirmsMedia([.video], videoTracks: tracks))
+    }
+
     func testLossCorroboratesDemandedMediaStarvationButSilenceDoesNot() throws {
         let frames = inbound("v", track: "remote-video", kind: "video", progress: 6, lost: 4)
         let old = try sample(report(time: 10, relayProtocol: "udp", streams: [frames]))
