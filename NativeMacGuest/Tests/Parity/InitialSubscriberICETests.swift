@@ -341,7 +341,8 @@ final class InitialSubscriberICETests: XCTestCase {
 
     @MainActor func testManualTCPPeerKeepsServersOnPartialConfigAndRejectsWithdrawal() async throws {
         let engine = NativeGuestEngine(label: "Manual relay configuration", icePolicy: .tcpRelay)
-        let peer = try await engine.prepareJoinForTesting()
+        let peer = try await engine.prepareSubscriberForTesting()
+        XCTAssertEqual(peer.icePolicy, .tcpRelay)
         do {
             try await peer.configure(["iceServers": [["urls": ["turn:relay.example.test:443?transport=tcp"],
                                                        "username": "fixture", "credential": "fixture"]]])
