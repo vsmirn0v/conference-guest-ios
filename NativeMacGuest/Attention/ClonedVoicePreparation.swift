@@ -7,7 +7,7 @@ struct ClonedVoicePreparation: Codable, Equatable {
     enum State: String, Codable { case preparing, ready, failed }
 
     /// Advance when changing the loader, specialization options or smoke probe.
-    private static let runtime = "voxcpm2-coreai-ane-v1"
+    private static let runtime = "voxcpm2-coreai-worker-default-v2"
     static let retryLimit = 3
     static let retryInterval: TimeInterval = 60 * 60
 

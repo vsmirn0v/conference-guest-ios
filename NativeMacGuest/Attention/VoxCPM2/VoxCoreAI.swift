@@ -5,6 +5,7 @@ import Foundation
 struct VoxAssetFailure: LocalizedError {
     var asset: String
     var cause: Error
+    var cachedFunctionLoad = false
 
     var errorDescription: String? {
         let underlying = cause as NSError
@@ -12,6 +13,12 @@ struct VoxAssetFailure: LocalizedError {
     }
 
     var missingSpecialization: Bool {
+        let error = cause as NSError
+        // MPSGraph can hide an ANE model-load failure behind this opaque error.
+        // Offer a single explicit repair only for function loading from a cache hit.
+        if cachedFunctionLoad && error.domain == "Foundation._GenericObjCError" && error.code == 0 {
+            return true
+        }
         var next: NSError? = cause as NSError
         for _ in 0..<8 {
             guard let error = next else { return false }
@@ -37,15 +44,10 @@ enum VoxCoreAI {
         return options
     }()
 
-    /// Application group shared by the sandboxed app and its helpers. An explicit app-group
-    /// cache keeps Neural Engine specializations under our own container instead of the
-    /// OS-managed purgeable `coreai-cache`, which macOS empties between launches when the
-    /// disk is nearly full (observed: cached entries gone with 5 GB free, forcing hour-long rebuilds).
-    static let appGroup = "group.dev.vsmirn0v.conferenceguest"
-
-    static let groupCache: AIModelCache? = AIModelCache(appGroup: appGroup)
-    // Standalone model parity tools can run without a signed app group.
-    static let cache: AIModelCache = groupCache ?? .default
+    /// The sandbox-inheriting worker has no app-group signing entitlement of its own.
+    /// ANE rejects coalescing newly compiled assets into a group cache for this child.
+    /// Use its own default cache with the explicit non-storage-pressure purge policy below.
+    static let cache: AIModelCache = .default
 
     /// Never purge under storage pressure. `.persistent` and the default policy both include
     /// `.storagePressure`, which turns "disk almost full" into "specializations disappear".
@@ -173,11 +175,13 @@ enum VoxCoreAI {
 final class VoxAsset {
     private let model: AIModel
     private let asset: String
+    private let hadCachedModel: Bool
     private var functions: [String: InferenceFunction] = [:]
     private(set) var seconds = 0.0
 
     init(url: URL) async throws {
         asset = url.lastPathComponent
+        hadCachedModel = (try? VoxCoreAI.cache.model(for: url.resolvingSymlinksInPath(), options: VoxCoreAI.options)) != nil
         model = try await VoxCoreAI.load(url)
     }
 
@@ -188,7 +192,7 @@ final class VoxAsset {
             functions[name] = function
             return function
         } catch {
-            throw VoxAssetFailure(asset: asset, cause: error)
+            throw VoxAssetFailure(asset: asset, cause: error, cachedFunctionLoad: hadCachedModel)
         }
     }
 

@@ -233,6 +233,10 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         let wrapped = NSError(domain: generic.domain, code: generic.code, userInfo: [NSUnderlyingErrorKey: missing])
         XCTAssertTrue(VoxAssetFailure(asset: asset, cause: wrapped).missingSpecialization)
         XCTAssertFalse(VoxAssetFailure(asset: asset, cause: generic).missingSpecialization)
+        let hiddenLoadFailure = NSError(domain: "Foundation._GenericObjCError", code: 0)
+        XCTAssertFalse(VoxAssetFailure(asset: asset, cause: hiddenLoadFailure).missingSpecialization)
+        XCTAssertTrue(VoxAssetFailure(asset: asset, cause: hiddenLoadFailure, cachedFunctionLoad: true).missingSpecialization)
+        XCTAssertFalse(VoxAssetFailure(asset: asset, cause: NSError(domain: hiddenLoadFailure.domain, code: 1), cachedFunctionLoad: true).missingSpecialization)
     }
 
     private func temporaryFolder() throws -> URL {

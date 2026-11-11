@@ -52,8 +52,7 @@ private final class ClonedVoiceWorkerRuntime {
             if request.operation == .ping { return (.init(), nil) }
             #if canImport(CoreAI)
             if #available(macOS 27.0, *) {
-                guard VoxCoreAI.groupCache != nil else { throw VoxError.engine("app-group specialization cache unavailable") }
-                if request.operation == .cacheScope { return (.init(message: "app-group"), nil) }
+                if request.operation == .cacheScope { return (.init(message: "worker-default"), nil) }
                 if let folder = request.folder {
                     let samples = try await generate(request, folder: folder, progress: progress)
                     return (.init(pcm: samples != nil, memoryBytes: measuredMemory), samples)
