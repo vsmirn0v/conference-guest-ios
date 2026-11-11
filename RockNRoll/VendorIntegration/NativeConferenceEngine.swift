@@ -41,6 +41,7 @@ final class NativeConferenceEngine: CallEngine {
     private var networkRecoveryTask: Task<Void, Never>?
     private var transportWatchTask: Task<Void, Never>?
     private var transportWatchdog = MediaTransportWatchdog()
+    private var reconnectConfirmation = MediaTransportRecoveryConfirmation()
     private var lastNetworkPath: NWPath?
     private var reconnectingForNetwork = false
     private var mediaConnectionConfirmed = false
@@ -375,6 +376,7 @@ final class NativeConferenceEngine: CallEngine {
                 // system owner's deferred deactivation can reach the main queue.
                 self.needsMediaReconnect = true
                 self.isAudioInterrupted = true
+                self.reconnectConfirmation = MediaTransportRecoveryConfirmation()
                 self.audioGate.markInterrupted()
                 self.screenPresenter?.beginRecovery()
             }
@@ -444,7 +446,6 @@ final class NativeConferenceEngine: CallEngine {
                     self.traceMediaRecovery("signaling-active")
                     self.hasBecomeActive = true
                     self.networkRecovery.connected()
-                    self.completeMediaReconnectIfReady()
                     self.updateConnectionGap()
                     if self.isSystemHeld { self.catchUp.begin(.anotherCall) }
                     if self.isAudioInterrupted { self.catchUp.begin(.audioInterruption) }
@@ -554,7 +555,6 @@ final class NativeConferenceEngine: CallEngine {
                 self.activeControls?.setAudioRouteName(self.audio.outputName)
                 self.systemCall.resumeIfPossible()
                 self.startMediaAfterActivation()
-                self.completeMediaReconnectIfReady()
                 self.recoverAudioIfReady()
             }
         }
@@ -562,6 +562,7 @@ final class NativeConferenceEngine: CallEngine {
             Task { @MainActor [weak self] in
                 guard let self, self.sessionEpoch == epoch, self.hasJoinStarted else { return }
                 self.audioGate.deactivate()
+                self.reconnectConfirmation = MediaTransportRecoveryConfirmation()
                 self.updateMediaRecoveryBudget()
                 self.traceMediaRecovery("audio-deactivated")
                 self.isAudioInterrupted = true
@@ -596,6 +597,7 @@ final class NativeConferenceEngine: CallEngine {
                 self.isSystemHeld = held
                 self.prepareToFloat()
                 self.audioGate.setHeld(held)
+                if held { self.reconnectConfirmation = MediaTransportRecoveryConfirmation() }
                 self.updateMediaRecoveryBudget()
                 self.traceMediaRecovery(held ? "hold" : "unhold")
                 if self.hasBecomeActive {
@@ -613,7 +615,6 @@ final class NativeConferenceEngine: CallEngine {
                 self.onMediaStatus?(held ? L("Jam on hold") : L("Resuming jam audio…"))
                 if !held {
                     self.startMediaAfterActivation()
-                    self.completeMediaReconnectIfReady()
                     self.recoverAudioIfReady()
                     self.scheduleUnpairedInterruptionRecovery()
                 }
@@ -661,6 +662,7 @@ final class NativeConferenceEngine: CallEngine {
         updateMediaRecoveryBudget()
         isSDKActive = false
         mediaConnectionConfirmed = false
+        reconnectConfirmation = MediaTransportRecoveryConfirmation()
         updatePiPMicrophoneStatus()
         hasScheduledMediaRestart = false
         mediaReconnectGeneration &+= 1
@@ -705,12 +707,18 @@ final class NativeConferenceEngine: CallEngine {
         }
     }
 
-    private func completeMediaReconnectIfReady() {
-        guard isMediaReconnecting, isNetworkAvailable, activeCoordinator != nil, isCallAudioReady,
-              audioGate.isReadyForMedia(signalingActive: isSDKActive,
-                                       transportConnected: mediaConnectionConfirmed) else { return }
+    private var canVerifyRecoveryTransport: Bool {
+        (isMediaReconnecting || networkRecovery.awaitingTransport) &&
+            isNetworkAvailable && activeCoordinator != nil && isCallAudioReady &&
+            !leaveRequested && finishing == nil &&
+            audioGate.isReadyForMedia(signalingActive: isSDKActive, transportConnected: mediaConnectionConfirmed)
+    }
+
+    private func completeMediaReconnect() {
         if reconnectingForNetwork {
             networkRecovery.attemptFinished(succeeded: true, at: ProcessInfo.processInfo.systemUptime)
+        } else {
+            networkRecovery.transportRestored()
         }
         isMediaReconnecting = false
         reconnectingForNetwork = false
@@ -786,23 +794,45 @@ final class NativeConferenceEngine: CallEngine {
             guard let self, self.sessionEpoch == epoch, self.isMediaReconnecting, !self.leaveRequested,
                   self.mediaReconnectGeneration == generation else { return }
             if self.reconnectingForNetwork {
-                self.networkRecovery.attemptFinished(succeeded: false, at: ProcessInfo.processInfo.systemUptime)
-                self.mediaReconnectGeneration &+= 1
-                let stoppedGeneration = self.mediaReconnectGeneration
-                self.pendingRoom = nil
-                await self.stopCameraCapture()
-                guard self.sessionEpoch == epoch, !self.leaveRequested, self.finishing == nil,
-                      self.mediaReconnectGeneration == stoppedGeneration else { return }
-                self.isMediaReconnecting = false
-                self.reconnectingForNetwork = false
-                self.hasScheduledMediaRestart = false
-                JazzSession.shared.terminateActiveConference()
-                self.updateNetworkRecoveryStatus()
+                self.failMediaReconnect()
                 return
             }
             self.mediaReconnectTimedOut = true
             self.traceMediaRecovery("reconnect-timeout")
             self.systemCall.end()
+        }
+    }
+
+    private func failMediaReconnect() {
+        guard isMediaReconnecting, !leaveRequested, finishing == nil else { return }
+        traceMediaRecovery("reconnect-attempt-failed")
+        let now = ProcessInfo.processInfo.systemUptime
+        if reconnectingForNetwork {
+            networkRecovery.attemptFinished(succeeded: false, at: now)
+        } else {
+            networkRecovery.mediaStalled(at: now)
+        }
+        mediaReconnectGeneration &+= 1
+        GuestPeerRegistry.endScope(.init(generation: sessionEpoch, attempt: mediaAttemptEpoch))
+        mediaAttemptEpoch = UUID()
+        terminalEventTask?.cancel(); terminalEventTask = nil
+        connectionSubscription?.cancel(); connectionSubscription = nil
+        pendingRoom = nil
+        hasMediaJoinStarted = false
+        mediaConnectionConfirmed = false
+        isSDKActive = false
+        let epoch = sessionEpoch, generation = mediaReconnectGeneration
+        Task { @MainActor [weak self] in
+            guard let self, self.sessionEpoch == epoch, self.mediaReconnectGeneration == generation,
+                  !self.leaveRequested, self.finishing == nil else { return }
+            await self.stopCameraCapture()
+            guard self.sessionEpoch == epoch, self.mediaReconnectGeneration == generation,
+                  !self.leaveRequested, self.finishing == nil else { return }
+            JazzSession.shared.terminateActiveConference()
+            self.isMediaReconnecting = false
+            self.reconnectingForNetwork = false
+            self.hasScheduledMediaRestart = false
+            self.startNetworkRecoveryIfNeeded()
         }
     }
 
@@ -1052,6 +1082,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func startMediaAfterActivation() {
         guard hasJoinStarted, !leaveRequested, audioGate.canUseMedia, isCallAudioReady,
+              !isMediaReconnecting || isNetworkAvailable,
               let room = pendingRoom else { return }
         pendingRoom = nil
         screenPresenter?.beginJoin()
@@ -1260,11 +1291,12 @@ final class NativeConferenceEngine: CallEngine {
 
     private func applyNetworkUpdate(available: Bool, routeChanged: Bool) {
         isNetworkAvailable = available
-        networkRecovery.pathChanged(available: available, changed: routeChanged,
-                                    at: ProcessInfo.processInfo.systemUptime)
+        if !available { reconnectConfirmation = MediaTransportRecoveryConfirmation() }
+        networkRecovery.pathChanged(available: available, at: ProcessInfo.processInfo.systemUptime)
+        updateMediaRecoveryBudget()
+        if isMediaReconnecting && available { startMediaAfterActivation() }
         traceMediaRecovery(routeChanged ? "network-route-changed" : "network-path-updated")
         updateConnectionGap()
-        completeMediaReconnectIfReady()
         startNetworkRecoveryIfNeeded()
     }
 
@@ -1338,20 +1370,43 @@ final class NativeConferenceEngine: CallEngine {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
                 guard let self, self.sessionEpoch == epoch, self.hasJoinStarted else { return }
-                guard self.isTransportWatchEligible else { self.transportWatchdog.reset(); continue }
+                guard self.canVerifyRecoveryTransport || self.isTransportWatchEligible else {
+                    self.reconnectConfirmation = MediaTransportRecoveryConfirmation()
+                    self.transportWatchdog.reset()
+                    continue
+                }
                 let scope = GuestPeerRegistry.Scope(generation: epoch, attempt: self.mediaAttemptEpoch)
                 let health = await GuestTransportHealth.sample(scope: scope)
                 guard !Task.isCancelled, self.sessionEpoch == epoch else { return }
-                guard self.isTransportWatchEligible, self.mediaAttemptEpoch == scope.attempt else {
-                    self.transportWatchdog.reset(); continue
+                guard self.mediaAttemptEpoch == scope.attempt else { continue }
+                let now = ProcessInfo.processInfo.systemUptime
+                if self.canVerifyRecoveryTransport {
+                    if self.reconnectConfirmation.observe(health.connectedPairs, at: now) {
+                        if self.isMediaReconnecting {
+                            self.traceMediaRecovery("reconnect-transport-verified", details: ["peers": health.summary])
+                            self.completeMediaReconnect()
+                        } else {
+                            self.networkRecovery.transportRestored()
+                            self.traceMediaRecovery("existing-transport-restored", details: ["peers": health.summary])
+                            self.updateConnectionGap()
+                            self.recoverAudioIfReady()
+                            if !self.isMediaReconnecting && !self.isSystemHeld && !self.isAudioInterrupted {
+                                self.onMediaStatus?(nil)
+                                self.onEvent?(.active)
+                            }
+                        }
+                    }
+                    continue
                 }
+                self.reconnectConfirmation = MediaTransportRecoveryConfirmation()
+                guard self.isTransportWatchEligible else { self.transportWatchdog.reset(); continue }
                 if samples % 15 == 0 {
                     AppDiagnostics.log("guest-transport", ["peers": health.summary, "ice": "\(health.sample.ice)"])
                 }
                 samples += 1
-                guard let stall = self.transportWatchdog.observe(health.sample, at: ProcessInfo.processInfo.systemUptime) else { continue }
+                guard let stall = self.transportWatchdog.observe(health.sample, at: now) else { continue }
                 self.traceMediaRecovery("media-transport-stalled", details: ["stall": stall.rawValue, "peers": health.summary])
-                self.networkRecovery.mediaStalled(at: ProcessInfo.processInfo.systemUptime)
+                self.networkRecovery.mediaStalled(at: now)
                 self.updateConnectionGap()
                 self.startNetworkRecoveryIfNeeded()
             }
@@ -1359,7 +1414,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private var isNetworkRecoveryBlocked: Bool {
-        isSystemHeld || isMediaReconnecting || !isCallAudioReady
+        isSystemHeld || isMediaReconnecting || !audioGate.canUseMedia || !isCallAudioReady
     }
 
     private var isCallAudioReady: Bool {
@@ -1371,7 +1426,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func updateMediaRecoveryBudget() {
         guard isMediaReconnecting else { return }
-        mediaRecoveryBudget.setAvailable(audioGate.canUseMedia && isCallAudioReady,
+        mediaRecoveryBudget.setAvailable(audioGate.canUseMedia && isCallAudioReady && isNetworkAvailable,
                                         at: ProcessInfo.processInfo.systemUptime)
     }
 
@@ -1476,7 +1531,7 @@ final class NativeConferenceEngine: CallEngine {
             try? await Task.sleep(for: .seconds(20))
             guard let self, self.sessionEpoch == epoch, !self.leaveRequested else { return }
             if mode == "stalled" {
-                self.networkRecovery.sdkReconnecting(at: ProcessInfo.processInfo.systemUptime)
+                self.networkRecovery.mediaStalled(at: ProcessInfo.processInfo.systemUptime)
                 self.startNetworkRecoveryIfNeeded()
             } else {
                 self.applyNetworkUpdate(available: mode == "handover", routeChanged: true)
@@ -1843,7 +1898,6 @@ final class NativeConferenceEngine: CallEngine {
             streams.refreshSelection()
             controls.setFloatingVideoAvailable(self.floatingVideo?.canShow == true)
             controls.setAudioRouteName(self.audio.outputName)
-            self.completeMediaReconnectIfReady()
             self.updateNetworkRecoveryStatus()
             return controls
         }
@@ -1972,6 +2026,12 @@ final class NativeConferenceEngine: CallEngine {
                     if case .terminated(let reason) = stage {
                         self.traceMediaRecovery("connection-terminated", details: ["reason": String(describing: reason)])
                         // Use the delivered value: @Published emits before its backing field changes.
+                        // Keep a delivered provider failure if SDK teardown emits cancellation next.
+                        if case .userCanceled = reason {
+                            if self.connectionTerminationReason == nil { self.connectionTerminationReason = reason }
+                        } else {
+                            self.connectionTerminationReason = reason
+                        }
                         if case .finish(let event) = self.terminationContext.resolve(.left, reason: reason) {
                             // A real host end/kick must not be overwritten by the
                             // later cancellation from our own transport teardown.
@@ -1981,7 +2041,6 @@ final class NativeConferenceEngine: CallEngine {
                             // terminal screen. Close it synchronously, before that
                             // route can replace our recovery view with an end sheet.
                             representation?.canOpenNextScreen = false
-                            self.connectionTerminationReason = reason
                             self.traceMediaRecovery("connection-terminated-recovering", details: ["reason": String(describing: reason)])
                             self.scheduleTerminalEvent(.left)
                         }
@@ -1997,7 +2056,8 @@ final class NativeConferenceEngine: CallEngine {
 
     private var terminationContext: GuestTerminationContext {
         GuestTerminationContext(established: hasBecomeActive, leaving: leaveRequested,
-            rebuilding: isMediaReconnecting, recoveringNetwork: networkRecovery.requiresRecovery,
+            rebuilding: isMediaReconnecting, replacementStarted: isMediaReconnecting && hasScheduledMediaRestart && hasMediaJoinStarted,
+            recoveringNetwork: networkRecovery.requiresRecovery,
             recoveringAudio: isSystemHeld || isAudioInterrupted || needsMediaReconnect ||
                 systemCall.isAwaitingAudioRecovery)
     }
@@ -2019,9 +2079,13 @@ final class NativeConferenceEngine: CallEngine {
             self.terminalEventTask = nil
             switch self.terminationContext.resolve(event, reason: self.connectionTerminationReason) {
             case .ignore: break
+            case .retryAttempt: self.failMediaReconnect()
             case .finish(let result): self.finishSession(userEnded: self.leaveRequested, event: result)
             case .recover:
                 self.traceMediaRecovery("transport-ended-during-recovery")
+                if case .network(.rejectedDueToConnectionProblem) = self.connectionTerminationReason {
+                    self.networkRecovery.sdkReconnecting(at: ProcessInfo.processInfo.systemUptime)
+                }
                 self.needsMediaReconnect = true
                 self.audioGate.markInterrupted()
                 self.updateConnectionGap()
@@ -2053,8 +2117,6 @@ final class NativeConferenceEngine: CallEngine {
             #if DEBUG
             print("Guest media connection established")
             #endif
-            if !self.isMediaReconnecting { self.networkRecovery.sdkMediaRestored() }
-            self.completeMediaReconnectIfReady()
             self.updateConnectionGap()
             self.recoverAudioIfReady()
             if self.isSDKActive && !self.isMediaReconnecting && !self.networkRecovery.requiresRecovery &&
@@ -2120,7 +2182,7 @@ final class NativeConferenceEngine: CallEngine {
         refreshSpeakerInput = nil
         studioSubscription?.cancel(); studioSubscription = nil
         let epoch = sessionEpoch
-        let hadMediaJoin = hasMediaJoinStarted
+        let hadMediaJoin = hasMediaJoinStarted || isMediaReconnecting
         let destination = onEvent
         events.onEvent = nil
         events.onMediaConnected = nil

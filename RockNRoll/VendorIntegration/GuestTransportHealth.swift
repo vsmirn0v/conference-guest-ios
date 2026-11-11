@@ -9,27 +9,35 @@ enum GuestTransportHealth {
     struct Result {
         var sample: MediaTransportWatchdog.Sample
         var summary: [[String: Any]]
+        var connectedPairs: [MediaTransportRecoveryConfirmation.Pair: Int64] = [:]
     }
 
     static func sample(scope: GuestPeerRegistry.Scope) async -> Result {
         var result = Result(sample: .init(transports: 0, ice: .other, inbound: 0), summary: [])
         var states: [MediaTransportWatchdog.ICE] = []
-        for peer in GuestPeerRegistry.peers(in: scope) {
+        var connectedPeerCount = 0
+        for (peerID, peer) in GuestPeerRegistry.peers(in: scope) {
             let report: RTCStatisticsReport = await withCheckedContinuation { completion in
                 peer.statistics { completion.resume(returning: $0) }
             }
             guard peer.connectionState != .closed else { continue }
             let ice = map(peer.iceConnectionState)
             states.append(ice)
+            var hasConnectedPair = false
             var inbound: Int64 = 0
             var row: [String: Any] = ["ice": name(peer.iceConnectionState), "connection": peer.connectionState.rawValue]
             for entry in report.statistics.values {
                 switch entry.type {
                 case "candidate-pair":
-                    inbound += number(entry, "bytesReceived") + number(entry, "responsesReceived") + number(entry, "requestsReceived")
+                    inbound += receivedProgress(entry)
                 case "transport":
                     guard let pairID = entry.values["selectedCandidatePairId"] as? String,
-                          let pair = report.statistics[pairID] else { continue }
+                          let pair = report.statistics[pairID], pair.type == "candidate-pair" else { continue }
+                    if ice == .connected, peer.connectionState == .connected,
+                       pair.values["state"] as? String == "succeeded" {
+                        result.connectedPairs[.init(peer: peerID, pair: pairID)] = receivedProgress(pair)
+                        hasConnectedPair = true
+                    }
                     row["rttMs"] = Int(((pair.values["currentRoundTripTime"] as? NSNumber)?.doubleValue ?? 0) * 1000)
                     row["pairReceivedBytes"] = number(pair, "bytesReceived")
                     row["consentResponses"] = number(pair, "responsesReceived")
@@ -51,11 +59,17 @@ enum GuestTransportHealth {
             row["inbound"] = inbound
             result.sample.inbound += inbound
             result.summary.append(row)
+            if hasConnectedPair { connectedPeerCount += 1 }
         }
         result.sample.transports = states.count
         result.sample.ice = states.contains(.failed) ? .failed : states.contains(.disconnected) ? .disconnected :
             states.contains(.checking) ? .checking : states.contains(.connected) ? .connected : .other
+        if connectedPeerCount != states.count { result.connectedPairs.removeAll() }
         return result
+    }
+
+    private static func receivedProgress(_ pair: RTCStatistics) -> Int64 {
+        number(pair, "bytesReceived") + number(pair, "responsesReceived") + number(pair, "requestsReceived")
     }
 
     private static func number(_ entry: RTCStatistics, _ key: String) -> Int64 {

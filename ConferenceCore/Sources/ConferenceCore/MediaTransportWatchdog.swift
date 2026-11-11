@@ -65,3 +65,48 @@ public struct MediaTransportWatchdog {
 
     private mutating func report(_ stall: Stall) -> Stall { reported = true; return stall }
 }
+
+/// A join callback can arrive while ICE is still checking. Confirm a continuous
+/// run of connected samples and fresh traffic before resetting the retry budget.
+public struct MediaTransportRecoveryConfirmation {
+    public struct Pair: Hashable {
+        public let peer: UUID
+        public let pair: String
+
+        public init(peer: UUID, pair: String) {
+            self.peer = peer
+            self.pair = pair
+        }
+    }
+
+    private var connectedSince: TimeInterval?
+    private var lastSampleAt: TimeInterval?
+    private var baseline: [Pair: Int64]?
+    private var previous: [Pair: Int64] = [:]
+
+    public init() {}
+
+    /// Empty input means at least one open peer lacks a connected, selected pair.
+    public mutating func observe(_ selectedPairs: [Pair: Int64], at now: TimeInterval) -> Bool {
+        guard !selectedPairs.isEmpty else {
+            self = Self()
+            return false
+        }
+        if let lastSampleAt, now < lastSampleAt || now - lastSampleAt > 6 ||
+            previous.count != selectedPairs.count || selectedPairs.contains(where: { pair, inbound in
+                previous[pair].map { inbound < $0 } ?? true
+            }) {
+            self = Self()
+        }
+        lastSampleAt = now
+        previous = selectedPairs
+        guard let connectedSince, let baseline else {
+            self.connectedSince = now
+            self.baseline = selectedPairs
+            return false
+        }
+        return now - connectedSince >= 4 && selectedPairs.allSatisfy { pair, inbound in
+            baseline[pair].map { inbound > $0 } ?? false
+        }
+    }
+}

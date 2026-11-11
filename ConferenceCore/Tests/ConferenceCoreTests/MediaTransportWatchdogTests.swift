@@ -6,6 +6,31 @@ final class MediaTransportWatchdogTests: XCTestCase {
         .init(transports: transports, ice: ice, inbound: inbound)
     }
 
+    func testReconnectRequiresSustainedConnectedTransportAndCounterProgress() {
+        let pair = MediaTransportRecoveryConfirmation.Pair(peer: UUID(), pair: "pair")
+        var confirmation = MediaTransportRecoveryConfirmation()
+        XCTAssertFalse(confirmation.observe([pair: 4], at: 2))
+        XCTAssertFalse(confirmation.observe([pair: 4], at: 6))
+        XCTAssertFalse(confirmation.observe([pair: 7], at: 20))
+        XCTAssertFalse(confirmation.observe([:], at: 22))
+        XCTAssertFalse(confirmation.observe([pair: 10], at: 24))
+        XCTAssertFalse(confirmation.observe([pair: 12], at: 26))
+        XCTAssertTrue(confirmation.observe([pair: 13], at: 28))
+    }
+
+    func testReconnectRequiresProgressOnEachPeerAndRebaselinesAfterPairChanges() {
+        let sender = MediaTransportRecoveryConfirmation.Pair(peer: UUID(), pair: "sender")
+        let receiver = MediaTransportRecoveryConfirmation.Pair(peer: UUID(), pair: "receiver")
+        let replacement = MediaTransportRecoveryConfirmation.Pair(peer: receiver.peer, pair: "replacement")
+        var confirmation = MediaTransportRecoveryConfirmation()
+        XCTAssertFalse(confirmation.observe([sender: 1, receiver: 1], at: 0))
+        XCTAssertFalse(confirmation.observe([sender: 100, receiver: 1], at: 4))
+        XCTAssertFalse(confirmation.observe([sender: 101, replacement: 500], at: 6))
+        XCTAssertFalse(confirmation.observe([sender: 102, replacement: 501], at: 8))
+        XCTAssertFalse(confirmation.observe([sender: 103, replacement: 5], at: 10))
+        XCTAssertTrue(confirmation.observe([sender: 105, replacement: 7], at: 14))
+    }
+
     func testAdvancingTransportStaysHealthy() {
         var watchdog = MediaTransportWatchdog()
         for step in 0..<30 { XCTAssertNil(watchdog.observe(sample(Int64(step * 100)), at: Double(step * 2))) }
@@ -64,7 +89,7 @@ final class MediaTransportWatchdogTests: XCTestCase {
         XCTAssertFalse(fresh.requiresRecovery)
 
         var recovery = CallNetworkRecovery()
-        recovery.pathChanged(available: true, changed: false, at: 0)
+        recovery.pathChanged(available: true, at: 0)
         recovery.connected()
         recovery.mediaStalled(at: 5)
         XCTAssertTrue(recovery.requiresRecovery)

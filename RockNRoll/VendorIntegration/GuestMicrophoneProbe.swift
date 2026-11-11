@@ -10,6 +10,7 @@ enum GuestPeerRegistry {
     struct Scope: Equatable, Sendable { let generation: UUID; let attempt: UUID }
     private final class ScopeBox {
         let value: Scope
+        let peerID = UUID()
         init(_ value: Scope) { self.value = value }
     }
     private static let lock = NSLock()
@@ -63,9 +64,14 @@ enum GuestPeerRegistry {
         lock.lock(); defer { lock.unlock() }; return peers.allObjects
     }
     /// Open peer connections created for one media attempt.
-    static func peers(in scope: Scope) -> [RTCPeerConnection] {
-        lock.lock(); defer { lock.unlock() }
-        return peers.allObjects.filter { scopes.object(forKey: $0)?.value == scope && $0.connectionState != .closed }
+    static func peers(in scope: Scope) -> [(id: UUID, connection: RTCPeerConnection)] {
+        lock.lock()
+        let scoped = peers.allObjects.compactMap { peer -> (id: UUID, connection: RTCPeerConnection)? in
+            guard let record = scopes.object(forKey: peer), record.value == scope else { return nil }
+            return (record.peerID, peer)
+        }
+        lock.unlock()
+        return scoped.filter { $0.connection.connectionState != .closed }
     }
     @MainActor static func receiverCandidates() -> [GuestPresenterCameraReceiver.Candidate] {
         lock.lock()

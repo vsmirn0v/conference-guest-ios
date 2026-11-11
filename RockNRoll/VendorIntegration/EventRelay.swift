@@ -7,10 +7,11 @@ struct GuestTerminationContext {
     var established: Bool
     var leaving: Bool
     var rebuilding: Bool
+    var replacementStarted = false
     var recoveringNetwork: Bool
     var recoveringAudio: Bool
 
-    enum Resolution: Equatable { case recover, ignore, finish(CallEvent) }
+    enum Resolution: Equatable { case recover, ignore, retryAttempt, finish(CallEvent) }
 
     func resolve(_ event: CallEvent,
                  reason: JazzConferenceConnectionStage.TerminationReason? = nil) -> Resolution {
@@ -20,7 +21,8 @@ struct GuestTerminationContext {
             case .kickedFromConference(.callEnded), .network(.roomClosed): return .finish(.left)
             case .kickedFromConference: return .finish(.evicted)
             case .network(.rejectedDueToConnectionProblem):
-                return rebuilding ? .ignore : (established ? .recover : .finish(.failed))
+                if rebuilding { return replacementStarted ? .retryAttempt : .ignore }
+                return established ? .recover : .finish(.failed)
             case .userCanceled:
                 // terminateActiveConference() is also used by our media rebuild.
                 break
@@ -28,7 +30,7 @@ struct GuestTerminationContext {
             }
         }
         if event == .evicted { return .finish(.evicted) }
-        if rebuilding { return .ignore }
+        if rebuilding { return replacementStarted && event == .failed && reason == nil ? .retryAttempt : .ignore }
         if established && (recoveringAudio || recoveringNetwork) { return .recover }
         return .finish(event)
     }

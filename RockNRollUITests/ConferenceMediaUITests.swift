@@ -1426,7 +1426,7 @@ final class ConferenceMediaUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Network Recovery QA"
         app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
-        // Inject transport observations, but terminate and rejoin the real SDK room.
+        // Exercise the real SDK room with a synthetic path update or confirmed stall.
         app.launchEnvironment["CONFERENCE_TEST_NETWORK_RECOVERY"] = mode
         app.launch()
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
@@ -1441,7 +1441,13 @@ final class ConferenceMediaUITests: XCTestCase {
         }
         verifyRemoteVideo(timeout: 10)
         let status = app.staticTexts[mode == "offline" ? "Waiting for network…" : "Reconnecting…"]
-        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        if mode == "handover" {
+            let reconnect = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in status.exists }, object: nil)
+            reconnect.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [reconnect], timeout: 25), .completed)
+        } else {
+            XCTAssertTrue(status.waitForExistence(timeout: 30))
+        }
         let recovered = NSPredicate { _, _ in
             app.buttons["Unmute microphone"].exists &&
                 !app.staticTexts["Waiting for network…"].exists &&

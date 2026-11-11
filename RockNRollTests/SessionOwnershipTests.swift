@@ -319,6 +319,11 @@ final class SessionOwnershipTests: XCTestCase {
         context.rebuilding = true
         XCTAssertEqual(context.resolve(.inactive), .ignore)
         XCTAssertEqual(context.resolve(.canceled, reason: .userCanceled), .ignore)
+        XCTAssertEqual(context.resolve(.failed, reason: .network(.rejectedDueToConnectionProblem)), .ignore)
+        context.replacementStarted = true
+        XCTAssertEqual(context.resolve(.failed, reason: .network(.rejectedDueToConnectionProblem)), .retryAttempt)
+        XCTAssertEqual(context.resolve(.failed), .retryAttempt)
+        XCTAssertEqual(context.resolve(.canceled, reason: .userCanceled), .ignore)
         context.leaving = true
         XCTAssertEqual(context.resolve(.left, reason: .network(.rejectedDueToConnectionProblem)), .finish(.left))
         context.leaving = false; context.rebuilding = false; context.recoveringAudio = false
