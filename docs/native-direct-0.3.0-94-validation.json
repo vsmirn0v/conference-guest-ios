@@ -1,0 +1,52 @@
+{
+  "version": "0.3.0",
+  "build": "94",
+  "channel": "beta",
+  "sourceCommit": "40ab113e71e53806875c3720c0e759b132d64bb1",
+  "changes": [
+    "Adaptive per-peer TURN TCP/TLS fallback and next-join transport preference."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "94",
+    "file": "RockNRoll-0.3.0-94-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-94-arm64.dmg",
+    "sha256": "924167814c04bc8bc2170046003bc30915cd2dd986f75ec4426ed7acb9bba3ee",
+    "length": 28060290,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/package-94/RockNRoll-0.3.0-94-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-94-arm64.dmg",
+      "sha256": "924167814c04bc8bc2170046003bc30915cd2dd986f75ec4426ed7acb9bba3ee",
+      "length": 28060290
+    },
+    "state": {
+      "appcastSHA256": "d2ddcb1718b6e88360f7dddcdd3c68cbd8550a484c00b4bb741d116ef7c22f6d",
+      "inventorySHA256": "7fadbcea4fa9373bf423ac2a47b076472658ac82fbff49cc8c38a238bc9e409c",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-94-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/3df99bc180b842fe82d3d52ef3e2c2a1/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "25 focused native Mac parity tests passed.",
+    "Production adapter UDP-to-TCP recovery and decoded video verified with local TURN and DEBUG-only substituted signaling; evidence retained in isolated mac-adaptive worktree .build/mac-adaptive/loopback-turn/adapter-observed-route.log and Overlay/source-and-diff.txt.",
+    "Release archive and notarized app passed packaging validation; publisher verified immutable artifact, aliases and metadata via HTTPS."
+  ],
+  "notVerified": [
+    "Production SFU, TURN/TLS, physical handover, audio and camera continuity.",
+    "Connected screen-share-only quality degradation fallback.",
+    "Installed Sparkle upgrade and separately notarized outer DMG."
+  ],
+  "publishedAt": "2026-11-11T16:00:12+03:00"
+}
