@@ -71,6 +71,18 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        let taskPrefix = "meeting-task-"
+        let id = notification.request.identifier
+        if id.hasPrefix(taskPrefix), let taskID = UUID(uuidString: String(id.dropFirst(taskPrefix.count))) {
+            Task { @MainActor in
+                let store = AttentionStore.shared
+                await store.waitForMeetingLibrary()
+                let eligible = (try? await store.meetingLibrary.store.taskReminderAllowed(
+                    taskID, profile: store.assistant.taskProfile)) == true
+                completionHandler(eligible ? [.banner, .list, .sound] : [])
+            }
+            return
+        }
         guard notification.request.content.categoryIdentifier == Self.category else {
             completionHandler([.banner, .list, .sound]); return
         }

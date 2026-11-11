@@ -17,6 +17,7 @@ enum MarkdownStructureScanner {
         var hasFrontmatter: Bool
         /// Line ranges (inclusive) inside fenced or indented code where markers are not structural.
         var codeRanges: [ClosedRange<Int>]
+        var unterminatedFence: String?
         /// Recognized managed-marker lines paired by begin/end.
         var managedBlocks: [ManagedBlock.Block]
         /// Marker grammar appeared somewhere it cannot be trusted (nested, duplicated
@@ -30,7 +31,7 @@ enum MarkdownStructureScanner {
         for raw in text.components(separatedBy: "\n") {
             var line = raw
             while line.hasSuffix("\r") { line.removeLast() }
-            let bytes = line.utf8.count
+            let bytes = raw.utf8.count
             lines.append(Line(text: line, byteStart: byteOffset, byteEnd: byteOffset + bytes))
             byteOffset += bytes + 1
         }
@@ -48,13 +49,18 @@ enum MarkdownStructureScanner {
         // Fenced code: toggle on ```/~~~ fences (at least three, allowing the rest of the line).
         var codeRanges: [ClosedRange<Int>] = []
         var fenceStart: Int? = nil
-        var fenceToken = ""
+        var fenceCharacter: Character?
+        var fenceLength = 0
         for (index, line) in lines.enumerated() {
             let trimmed = line.text.trimmingCharacters(in: .whitespaces)
-            let isFence = trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~")
+            let first = trimmed.first
+            let isFenceCharacter = first == "`" || first == "~"
+            let run = isFenceCharacter ? trimmed.prefix(while: { $0 == first }).count : 0
+            let isFence = run >= 3
             if fenceStart == nil {
                 if isFence, hasFrontmatter ? index > 0 : true {
-                    fenceToken = String(trimmed.prefix(3))
+                    fenceCharacter = first
+                    fenceLength = run
                     fenceStart = index
                 } else if !trimmed.isEmpty && !trimmed.hasPrefix(">") && !trimmed.hasPrefix("#") &&
                             !trimmed.hasPrefix("-") && !trimmed.hasPrefix("*") && !trimmed.hasPrefix("|") {
@@ -63,17 +69,26 @@ enum MarkdownStructureScanner {
                     if leading >= 4 { codeRanges.append(index...index) }
                 }
             } else {
-                if trimmed.hasPrefix(fenceToken) {
+                if first == fenceCharacter && run >= fenceLength && trimmed.dropFirst(run).trimmingCharacters(in: .whitespaces).isEmpty {
                     codeRanges.append(fenceStart!...index)
                     fenceStart = nil
                 }
             }
         }
-        if let open = fenceStart { codeRanges.append(open...(lines.count - 1)) }
+        let unterminatedFence: String?
+        if let open = fenceStart, let fenceCharacter {
+            codeRanges.append(open...(lines.count - 1))
+            unterminatedFence = String(repeating: String(fenceCharacter), count: fenceLength)
+        } else {
+            unterminatedFence = nil
+        }
 
         // Managed markers outside code only; anything else is content.
         var markerLines: [(line: Int, markers: ManagedBlock.Markers, isBegin: Bool)] = []
-        for (index, line) in lines.enumerated() where !codeRanges.contains(where: { $0.contains(index) }) {
+        var codeIndex = 0
+        for (index, line) in lines.enumerated() {
+            while codeIndex < codeRanges.count, codeRanges[codeIndex].upperBound < index { codeIndex += 1 }
+            if codeIndex < codeRanges.count, codeRanges[codeIndex].contains(index) { continue }
             if let markers = ManagedBlock.parse(line.text) {
                 markerLines.append((index, markers, line.text.contains(":begin ")))
             }
@@ -100,7 +115,16 @@ enum MarkdownStructureScanner {
         if ambiguity == nil, open != nil { ambiguity = "unclosed begin marker" }
 
         return Structure(lines: lines, hasFrontmatter: hasFrontmatter, codeRanges: codeRanges,
-            managedBlocks: managedBlocks, markerAmbiguity: ambiguity)
+            unterminatedFence: unterminatedFence, managedBlocks: managedBlocks, markerAmbiguity: ambiguity)
+    }
+
+    /// The exported Markdown can be followed by app-owned sections or markers.
+    /// Close a trailing source fence outside the original bytes so those lines
+    /// remain structural while a literal marker inside the fence stays literal.
+    static func closingTrailingFence(in markdown: String) -> String {
+        guard markdown.contains("```") || markdown.contains("~~~"),
+              let fence = scan(markdown).unterminatedFence else { return markdown }
+        return markdown + (markdown.hasSuffix("\n") ? "" : "\n") + fence
     }
 
     /// True when the marker text appears on a line the scanner treats as content

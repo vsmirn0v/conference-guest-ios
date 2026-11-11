@@ -1,5 +1,20 @@
 import Foundation
 
+enum MeetingStartProvenance: String, Codable, Equatable, Sendable {
+    case recorded, outcomeOnly, unknown
+}
+
+struct MeetingEffectiveDate: Equatable, Sendable {
+    var date: Date
+    var fromEnd: Bool
+
+    static func resolve(start: Date?, end: Date?) -> Self? {
+        if let start, start != .distantPast { return Self(date: start, fromEnd: false) }
+        if let end, end != .distantPast { return Self(date: end, fromEnd: true) }
+        return nil
+    }
+}
+
 /// Durable identity for one occurrence of a meeting. A room may host many sessions;
 /// a title change never changes the session ID or an existing export binding.
 struct MeetingSessionRecord: Codable, Equatable, Identifiable, Sendable {
@@ -20,15 +35,23 @@ struct MeetingSessionRecord: Codable, Equatable, Identifiable, Sendable {
     var exportRevision: Int
     var createdAt: Date
     var updatedAt: Date
+    var startProvenance: MeetingStartProvenance?
+    var outcomeEndFallback: Date?
+
+    var recordedStart: Date? { startProvenance == .recorded && startedAt != .distantPast ? startedAt : nil }
+    var knownEnd: Date? { [endedAt, outcomeEndFallback].compactMap { $0 }.first { $0 != .distantPast } }
+    var effectiveDate: MeetingEffectiveDate? { .resolve(start: recordedStart, end: knownEnd) }
 
     init(id: UUID = UUID(), title: String, invitation: URL? = nil, roomIdentity: String = "",
          calendarSeriesID: String? = nil, continuationID: String? = nil, startedAt: Date,
          endedAt: Date? = nil, timeZoneID: String = TimeZone.current.identifier, state: State = .active,
-         exportRevision: Int = 0, createdAt: Date = Date(), updatedAt: Date = Date()) {
+         exportRevision: Int = 0, createdAt: Date = Date(), updatedAt: Date = Date(),
+         startProvenance: MeetingStartProvenance? = .recorded, outcomeEndFallback: Date? = nil) {
         self.id = id; self.title = title; self.invitation = invitation; self.roomIdentity = roomIdentity
         self.calendarSeriesID = calendarSeriesID; self.continuationID = continuationID
         self.startedAt = startedAt; self.endedAt = endedAt; self.timeZoneID = timeZoneID
         self.state = state; self.exportRevision = exportRevision; self.createdAt = createdAt; self.updatedAt = updatedAt
+        self.startProvenance = startProvenance; self.outcomeEndFallback = outcomeEndFallback
     }
 }
 
@@ -55,6 +78,14 @@ struct MeetingOutcomeCommit: Codable, Equatable, Sendable {
     var revision: Int
     var exportRevision: Int
     var updatedAt: Date
+}
+
+struct MeetingOutcomeVersion: Identifiable, Equatable, Sendable {
+    var id: String { "\(outcome.id.uuidString)/\(revision)" }
+    var outcome: MeetingOutcome
+    var revision: Int
+    var savedAt: Date?
+    var isCurrent: Bool
 }
 
 struct MeetingLibrarySnapshot: Codable, Equatable, Sendable {
@@ -92,6 +123,12 @@ struct MeetingLibraryCard: Codable, Equatable, Identifiable, Sendable {
     var outcomeErrorCode: String? = nil
     var hasOutcomeInput: Bool = false
     var updatedAt: Date
+    var startProvenance: MeetingStartProvenance?
+    var outcomeEndFallback: Date?
+
+    var effectiveDate: MeetingEffectiveDate? {
+        .resolve(start: startProvenance == .recorded ? startedAt : nil, end: endedAt ?? outcomeEndFallback)
+    }
 }
 
 struct MeetingNoteChunk: Codable, Equatable, Identifiable, Sendable {
@@ -134,29 +171,64 @@ enum MeetingLibraryError: LocalizedError, Equatable {
 
 // MARK: - Obsidian export (Stage 4+)
 
-/// Export granularity. Mode A (separate meeting files) is the only selectable mode
-/// in this stage; worklog/index components exist in the schema for later stages and
-/// must not be offered in UI until their convergence tests pass.
 enum ObsidianExportMode: String, Codable, CaseIterable, Sendable {
-    case separateFiles = "separateFiles"
+    case separateFiles, worklog, filesAndIndex
+
+    var requiredComponents: [ObsidianExportComponent] {
+        switch self {
+        case .separateFiles: [.meeting]
+        case .worklog: [.worklog]
+        case .filesAndIndex: [.meeting, .index]
+        }
+    }
+}
+
+struct ObsidianExportLayout: Codable, Equatable, Sendable {
+    var documentPath = "Meeting worklog.md"
+    var monthly = false
+    var sections: MeetingMarkdownSections = .all
+    var groupByDay = false
+    var newestDaysFirst = true
+    var insertAtBeginning = false
+    var withinDayAtBeginning = false
+    var timeZoneID = TimeZone.current.identifier
+    var runtimeStyle = false
+    /// Path-scoped confirmations from the placement preview, keyed by the original section.
+    var legacyRuntimeYears: [String: [String: Int]]?
+    var startAfter: String?
+    var endBefore: String?
+
+    mutating func applyRuntimePreset() {
+        monthly = false
+        groupByDay = true
+        newestDaysFirst = true
+        withinDayAtBeginning = false
+        runtimeStyle = true
+    }
 }
 
 struct ObsidianDestinationRecord: Codable, Equatable, Identifiable, Sendable {
     var id: UUID
     var enabled: Bool
+    var saveAfterMeeting: Bool
+    var syncChanges: Bool
     var mode: ObsidianExportMode
     /// Vault-relative folder for meeting files; validated to stay inside the vault.
     var meetingFolder: String
+    var layout: ObsidianExportLayout
     var configRevision: Int
     /// Security-scoped bookmark data for the vault root.
     var vaultBookmark: Data?
     var createdAt: Date
     var updatedAt: Date
 
-    init(id: UUID = UUID(), enabled: Bool = false, mode: ObsidianExportMode = .separateFiles,
-         meetingFolder: String = "Meetings", configRevision: Int = 0, vaultBookmark: Data? = nil,
+    init(id: UUID = UUID(), enabled: Bool = false, saveAfterMeeting: Bool = false,
+         syncChanges: Bool = false, mode: ObsidianExportMode = .separateFiles,
+         meetingFolder: String = "Meetings", layout: ObsidianExportLayout = .init(),
+         configRevision: Int = 0, vaultBookmark: Data? = nil,
          createdAt: Date = Date(), updatedAt: Date = Date()) {
-        self.id = id; self.enabled = enabled; self.mode = mode; self.meetingFolder = meetingFolder
+        self.id = id; self.enabled = enabled; self.saveAfterMeeting = saveAfterMeeting; self.syncChanges = syncChanges
+        self.mode = mode; self.meetingFolder = meetingFolder; self.layout = layout
         self.configRevision = configRevision; self.vaultBookmark = vaultBookmark
         self.createdAt = createdAt; self.updatedAt = updatedAt
     }
@@ -182,6 +254,28 @@ struct ObsidianExportBindingRecord: Codable, Equatable, Sendable {
     var state: ObsidianBindingState
     var errorCode: String?
     var updatedAt: Date
+    var lastMetadataSHA256: String?
+    var metadataOwnershipEvaluated: Bool?
+}
+
+enum ObsidianExportIntent: String, Codable, Sendable {
+    case initialEnd, initialFirstReady, linkedUpdate, manualSave, legacy
+
+    func permitted(by destination: ObsidianDestinationRecord) -> Bool {
+        switch self {
+        case .manualSave: return true
+        case .initialEnd, .initialFirstReady: return destination.enabled && destination.saveAfterMeeting
+        case .linkedUpdate: return destination.enabled && destination.syncChanges
+        case .legacy: return false
+        }
+    }
+}
+
+struct ObsidianExportSnapshot: Codable, Equatable, Sendable {
+    var session: MeetingSessionRecord
+    var note: MeetingNoteRecord?
+    var outcome: MeetingOutcome?
+    var outcomeState: MeetingOutcomePersistenceState
 }
 
 struct ObsidianOutboxRecord: Codable, Equatable, Identifiable, Sendable {
@@ -195,6 +289,9 @@ struct ObsidianOutboxRecord: Codable, Equatable, Identifiable, Sendable {
     var paused: Bool
     var lastErrorCode: String?
     var updatedAt: Date
+    var intent: ObsidianExportIntent = .legacy
+    var snapshot: ObsidianExportSnapshot?
+    var policyHeld = false
 }
 
 enum ObsidianExportError: LocalizedError, Equatable {
@@ -207,6 +304,7 @@ enum ObsidianExportError: LocalizedError, Equatable {
     case verifyFailed(String)
     case destinationChanged
     case staleRevision
+    case placementConflict(String)
 
     var errorDescription: String? {
         switch self {
@@ -219,6 +317,7 @@ enum ObsidianExportError: LocalizedError, Equatable {
         case .verifyFailed(let detail): L("The exported file could not be verified: %@", detail)
         case .destinationChanged: L("The export destination changed while writing.")
         case .staleRevision: L("A newer local revision exists; the export will be retried.")
+        case .placementConflict(let detail): L("The worklog placement is ambiguous. %@", detail)
         }
     }
 
@@ -226,7 +325,7 @@ enum ObsidianExportError: LocalizedError, Equatable {
     var isTransient: Bool {
         switch self {
         case .vaultUnavailable, .backupFailed, .verifyFailed, .destinationChanged, .staleRevision: true
-        case .pathEscapesVault, .notARegularFile, .managedBlockConflict, .markerDamage: false
+        case .pathEscapesVault, .notARegularFile, .managedBlockConflict, .markerDamage, .placementConflict: false
         }
     }
 }

@@ -382,6 +382,89 @@ import XCTest
         coordinator.stop()
     }
 
+    func testHistoricalOutcomeAddressesResolveThroughMCPAndWriteCanonicalTask() {
+        runAsyncTest { @MainActor in
+            let store = self.store()
+            await store.waitForMeetingLibrary()
+            let coordinator = AttentionCoordinator(store: store)
+            defer { coordinator.stop() }
+            let backend = NativeDesktopMCPBackend(defaults: self.defaults(), attention: { [weak coordinator] in coordinator })
+            let server = MCPJSONRPCServer(backend: backend)
+            let library = store.meetingLibrary.store
+            let end = Date(timeIntervalSince1970: 1_700_000_000)
+            let session = MeetingSessionRecord(title: "Renamed session", startedAt: end.addingTimeInterval(-600),
+                endedAt: end, state: .ended)
+            let task = MeetingOutcomeTask(text: "Shared commitment", owner: "Fixture Owner", done: true)
+            let head = MeetingOutcome(meetingID: session.id, meetingTitle: session.title, endedAt: end,
+                summary: "Latest summary", tasks: [task])
+            let historical = MeetingOutcome(meetingID: session.id, meetingTitle: "Historical title", endedAt: end,
+                summary: "Earlier summary", decisions: ["Historical decision"], tasks: [task])
+            try await library.upsertSession(session)
+            let note = try await library.saveNote(sessionID: session.id, markdown: "# Preserved historical notes")
+            try await library.importLegacyOutcomes([head, historical])
+            var profile = try await library.taskProfile()
+            profile.aliases = ["Fixture Owner"]
+            try await library.saveTaskProfile(profile)
+            _ = try await library.setTaskArchived(taskID: task.id, profile: profile, archived: true)
+            store.assistant.taskProfile = profile
+            store.assistant.taskArchiveDates = try await library.taskArchiveDates(profileID: profile.id)
+            store.assistant.restorePersistedOutcomes(try await library.outcomes())
+            await store.meetingLibrary.refresh()
+
+            let read = self.client(["meetings:read"])
+            let write = self.client(["meetings:read", "tasks:write"])
+            let oldID = mcpOutcomeID(historical.id)
+            let oldTaskID = mcpTaskID(historical.id, task)
+            func call(_ tool: String, _ args: MCPJSON, as client: MCPClientIdentity,
+                      expectError: Bool = false) async throws -> MCPJSON {
+                let reply = await server.handle(["jsonrpc": "2.0", "id": UUID().uuidString, "method": "tools/call",
+                    "params": ["name": tool, "arguments": args]], client: client)
+                let result = try XCTUnwrap(reply?["result"] as? MCPJSON)
+                XCTAssertEqual(result["isError"] as? Bool, expectError, tool)
+                let content = try XCTUnwrap(result["content"] as? [MCPJSON])
+                let text = try XCTUnwrap(content.first?["text"] as? String)
+                return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? MCPJSON)
+            }
+
+            let outcome = try await call("rocknroll_get_outcome", ["outcome_id": oldID], as: read)
+            XCTAssertEqual(outcome["id"] as? String, oldID)
+            XCTAssertEqual(outcome["meeting_title"] as? String, session.title)
+            XCTAssertEqual(outcome["summary"] as? String, "Earlier summary")
+            let fullTask = try XCTUnwrap((outcome["tasks"] as? [MCPJSON])?.first)
+            XCTAssertEqual(fullTask["id"] as? String, oldTaskID)
+            XCTAssertEqual(fullTask["archived"] as? Bool, true)
+
+            let meeting = try await call("rocknroll_get_meeting", ["meeting_id": oldID], as: read)
+            XCTAssertEqual(meeting["id"] as? String, oldID)
+            XCTAssertEqual(meeting["decisions"] as? [String], ["Historical decision"])
+            XCTAssertEqual(meeting["task_ids"] as? [String], [oldTaskID])
+            let notes = try await call("rocknroll_get_notes", ["meeting_id": oldID], as: read)
+            XCTAssertEqual(notes["meeting_id"] as? String, mcpSessionID(session.id))
+            XCTAssertEqual(notes["note_id"] as? String, mcpNoteID(session.id, note.noteID))
+            XCTAssertEqual(notes["markdown"] as? String, "# Preserved historical notes")
+
+            let hidden = try await call("rocknroll_list_tasks", ["meeting_id": oldID, "personal_only": true], as: read)
+            XCTAssertEqual((hidden["items"] as? [MCPJSON])?.count, 0)
+            let explicit = try await call("rocknroll_list_tasks",
+                ["meeting_id": oldID, "personal_only": true, "include_archived": true], as: read)
+            XCTAssertEqual((explicit["items"] as? [MCPJSON])?.first?["id"] as? String, oldTaskID)
+
+            let patch: MCPJSON = ["action_id": UUID().uuidString, "task_id": oldTaskID,
+                                  "expected_revision": historical.id.uuidString, "done": false]
+            let denied = try await call("rocknroll_update_task", patch, as: read, expectError: true)
+            XCTAssertEqual((denied["error"] as? MCPJSON)?["code"] as? String, "SCOPE_DENIED")
+            let applied = try await call("rocknroll_update_task", patch, as: write)
+            XCTAssertEqual(applied["entity_id"] as? String, oldTaskID)
+            XCTAssertEqual(applied["status"] as? String, "applied")
+            let current = try await library.outcome(head.id)
+            XCTAssertEqual(current?.tasks.first?.done, false)
+            let reread = try await call("rocknroll_get_outcome", ["outcome_id": oldID], as: read)
+            let reopened = try XCTUnwrap((reread["tasks"] as? [MCPJSON])?.first)
+            XCTAssertEqual(reopened["done"] as? Bool, false)
+            XCTAssertEqual(reopened["archived"] as? Bool, true)
+        }
+    }
+
     func testSettingsReadExposesNoAPIKey() {
         runAsyncTest { @MainActor in
             let fixtures = self.makeSettingsBackend()

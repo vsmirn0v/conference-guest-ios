@@ -6,12 +6,18 @@ struct MeetingOutcomeTask: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var text: String
     var owner = ""
+    var assigneeID: String?
     var dueAt: Date?
+    var dueDay: String?
     var reminderAt: Date?
     var done = false
+    var completedAt: Date?
 
-    init(id: UUID = UUID(), text: String, owner: String = "", dueAt: Date? = nil, reminderAt: Date? = nil, done: Bool = false) {
-        self.id = id; self.text = text; self.owner = owner; self.dueAt = dueAt; self.reminderAt = reminderAt; self.done = done
+    init(id: UUID = UUID(), text: String, owner: String = "", assigneeID: String? = nil, dueAt: Date? = nil,
+         dueDay: String? = nil, reminderAt: Date? = nil, done: Bool = false, completedAt: Date? = nil) {
+        self.id = id; self.text = text; self.owner = owner; self.assigneeID = assigneeID
+        self.dueAt = dueAt; self.dueDay = dueDay; self.reminderAt = reminderAt
+        self.done = done; self.completedAt = completedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -19,9 +25,19 @@ struct MeetingOutcomeTask: Codable, Identifiable, Equatable, Sendable {
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         text = try c.decode(String.self, forKey: .text)
         owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
+        assigneeID = try c.decodeIfPresent(String.self, forKey: .assigneeID)
         dueAt = try c.decodeIfPresent(Date.self, forKey: .dueAt)
+        dueDay = try c.decodeIfPresent(String.self, forKey: .dueDay)
         reminderAt = try c.decodeIfPresent(Date.self, forKey: .reminderAt)
         done = try c.decodeIfPresent(Bool.self, forKey: .done) ?? false
+        completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+    }
+
+    mutating func setDone(_ value: Bool, at date: Date = Date()) {
+        guard done != value else { return }
+        done = value
+        completedAt = value ? date : nil
+        if value { reminderAt = nil }
     }
 }
 
@@ -35,7 +51,11 @@ struct MeetingOutcome: Codable, Identifiable, Equatable, Sendable {
     var summary: String
     var decisions: [String] = []
     var tasks: [MeetingOutcomeTask] = []
+    var taskReviewCandidates: [MeetingOutcomeTask] = []
+    var taskReviewMatches: [UUID: UUID] = [:]
     var openQuestions: [String] = []
+
+    var knownEndedAt: Date? { endedAt == .distantPast ? nil : endedAt }
 
     init(id: UUID = UUID(), meetingID: UUID? = nil, meetingTitle: String, invitation: URL? = nil, seriesID: String? = nil,
          endedAt: Date, summary: String, decisions: [String] = [], tasks: [MeetingOutcomeTask] = [], openQuestions: [String] = []) {
@@ -51,11 +71,12 @@ struct MeetingOutcome: Codable, Identifiable, Equatable, Sendable {
         meetingTitle = try c.decodeIfPresent(String.self, forKey: .meetingTitle) ?? ""
         invitation = try c.decodeIfPresent(URL.self, forKey: .invitation)
         seriesID = try c.decodeIfPresent(String.self, forKey: .seriesID)
-        // A missing end time used to become distantPast, and the next prune deleted the outcome.
-        endedAt = try c.decode(Date.self, forKey: .endedAt)
+        endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt) ?? .distantPast
         summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
         decisions = try c.decodeIfPresent([String].self, forKey: .decisions) ?? []
         tasks = try c.decodeIfPresent([MeetingOutcomeTask].self, forKey: .tasks) ?? []
+        taskReviewCandidates = try c.decodeIfPresent([MeetingOutcomeTask].self, forKey: .taskReviewCandidates) ?? []
+        taskReviewMatches = try c.decodeIfPresent([UUID: UUID].self, forKey: .taskReviewMatches) ?? [:]
         openQuestions = try c.decodeIfPresent([String].self, forKey: .openQuestions) ?? []
     }
 
@@ -254,17 +275,30 @@ private struct AssistantDataDocument: Codable {
     /// cap and outcome encoding stop, and writes route to the meeting repository.
     private(set) var outcomesExternal = false
     /// Routes an outcome write to the durable repository; installed by AttentionStore.
-    var onPersistOutcome: ((MeetingOutcome) -> Void)?
+    var onPersistOutcome: ((MeetingOutcome, MeetingOutcome?) -> Void)?
     var onRemoveOutcome: ((UUID) -> Void)?
     /// Read by the one-time migration before `outcomesExternal` turns on.
-    func legacyOutcomesForMigration() -> [MeetingOutcome] { outcomes }
-    func markOutcomesExternal() { outcomesExternal = true }
+    func legacyOutcomesForMigration() -> [MeetingOutcome] { legacyMigrationOutcomes ?? outcomes }
+    func markOutcomesExternal() { outcomesExternal = true; legacyMigrationOutcomes = nil }
     /// Migration failed: outcomes keep their legacy persistence and the user sees why.
     func setExternalMigrationFailed(_ detail: String) {
         saveWarning = L("Meeting outcomes could not move to the durable library. The original file was kept. %@", detail)
     }
 
     @Published private(set) var outcomes: [MeetingOutcome] = []
+    @Published private(set) var outcomeWriteErrors: [UUID: String] = [:]
+    @Published var taskProfile = PersonalTaskProfile(id: "")
+    @Published var taskArchiveDates: [UUID: Date] = [:]
+
+    func taskArchivedAt(_ task: MeetingOutcomeTask) -> Date? {
+        PersonalTaskQuery.archived(task, profile: taskProfile, dates: taskArchiveDates)
+    }
+
+    func isTaskOperational(_ task: MeetingOutcomeTask) -> Bool { taskArchivedAt(task) == nil }
+
+    func setOutcomeWriteError(_ error: Error?, for id: UUID) {
+        outcomeWriteErrors[id] = error?.localizedDescription
+    }
     @Published private(set) var memories: [AssistantMemoryItem] = []
     @Published private(set) var suggestions: [AssistantSuggestion] = []
     @Published private(set) var loaded = false
@@ -286,6 +320,7 @@ private struct AssistantDataDocument: Codable {
     private let url: URL
     private let readData: @Sendable (URL) async throws -> Data
     private var document = AssistantDataDocument()
+    private var legacyMigrationOutcomes: [MeetingOutcome]?
     private var loading = false
     private var loadTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
@@ -360,6 +395,14 @@ private struct AssistantDataDocument: Codable {
             document.modeChanges = Array((restored.modeChanges + document.modeChanges).suffix(100))
             for (stance, count) in restored.variantPicks { document.variantPicks[stance, default: 0] += count }
             if !retentionChangedDuringLoad { retentionDays = restored.retentionDays }
+        }
+        if !outcomesExternal, let restored, !clearedDuringLoad {
+            if mutatedDuringLoad {
+                let current = Set(outcomes.map(\.id)).union(deletedOutcomeIDs)
+                legacyMigrationOutcomes = outcomes + restored.outcomes.filter { !current.contains($0.id) }
+            } else {
+                legacyMigrationOutcomes = restored.outcomes
+            }
         }
         deletedOutcomeIDs.removeAll(); deletedMemoryIDs.removeAll(); deletedSuggestionIDs.removeAll()
         loading = false
@@ -442,7 +485,7 @@ private struct AssistantDataDocument: Codable {
         // After the durable-library migration, outcomes are permanent: neither the
         // retention window nor the 200-item cap applies to them anymore.
         if !outcomesExternal {
-            outcomes = outcomes.filter { $0.endedAt >= cutoff }.sorted { $0.endedAt > $1.endedAt }
+            outcomes = outcomes.filter { $0.knownEndedAt == nil || $0.endedAt >= cutoff }.sorted { $0.endedAt > $1.endedAt }
         }
         memories = memories.filter { $0.updatedAt >= cutoff }.sorted { $0.updatedAt > $1.updatedAt }
         suggestions = suggestions.filter { $0.createdAt >= cutoff }
@@ -453,23 +496,38 @@ private struct AssistantDataDocument: Codable {
     }
 
     func restorePersistedOutcomes(_ saved: [MeetingOutcome]) {
-        let current = Set(outcomes.map(\.id))
-        outcomes.append(contentsOf: saved.filter { !current.contains($0.id) })
+        let persisted = Set(saved.map(\.id))
+        let knownSessions = Set(saved.compactMap(\.meetingID))
+        outcomes = outcomes.filter {
+            !persisted.contains($0.id) && !($0.meetingID.map(knownSessions.contains) ?? false)
+        } + saved
         outcomes.sort { $0.endedAt > $1.endedAt }
+    }
+
+    func applyEffectiveTitles(_ cards: [MeetingLibraryCard]) {
+        let titles = Dictionary(uniqueKeysWithValues: cards.compactMap { card in
+            card.outcomeID.map { ($0, card.title) }
+        })
+        let projected = outcomes.map { outcome in
+            var updated = outcome
+            updated.meetingTitle = titles[outcome.id] ?? outcome.meetingTitle
+            return updated
+        }
+        if projected != outcomes { outcomes = projected }
     }
 
     func addOutcome(_ outcome: MeetingOutcome, alreadyPersisted: Bool = false) {
         outcomes.removeAll { $0.id == outcome.id || ($0.meetingID != nil && $0.meetingID == outcome.meetingID) }
         outcomes.insert(outcome, at: 0)
-        absorbOutcome(outcome)
-        if !alreadyPersisted { onPersistOutcome?(outcome) }
+        if !alreadyPersisted { onPersistOutcome?(outcome, nil) }
         prune(); persist()
     }
 
     func updateOutcome(_ outcome: MeetingOutcome) {
         guard let index = outcomes.firstIndex(where: { $0.id == outcome.id }) else { return }
+        let baseline = outcomes[index]
         outcomes[index] = outcome
-        onPersistOutcome?(outcome)
+        onPersistOutcome?(outcome, baseline)
         // A write during the initial load has to be recorded before that load merges disk state.
         if !loaded { persist() } else { scheduleOutcomePersist() }
     }
@@ -480,6 +538,8 @@ private struct AssistantDataDocument: Codable {
         onRemoveOutcome?(id)
         persist()
     }
+
+    func forgetUnpersistedOutcome(_ id: UUID) { outcomes.removeAll { $0.id == id } }
 
     func latestOutcome(invitation: URL? = nil, series: String? = nil, before: Date = .distantFuture) -> MeetingOutcome? {
         outcomes.first { outcome in
@@ -539,7 +599,7 @@ private struct AssistantDataDocument: Codable {
             var score = 0
             if let series, outcome.seriesID == series { score += 12 }
             if let invitation, outcome.invitation == invitation { score += 8 }
-            let excerpts = [outcome.summary] + outcome.decisions + outcome.tasks.map { $0.text }
+            let excerpts = [outcome.summary] + outcome.decisions + outcome.tasks.filter(isTaskOperational).map(\.text)
             for (index, text) in excerpts.enumerated() where !text.trimmed.isEmpty {
                 let tokenScore = Self.tokens(text).intersection(words).count
                 guard score + tokenScore > 0 else { continue }
@@ -621,19 +681,6 @@ private struct AssistantDataDocument: Codable {
         persist()
     }
 
-    private func absorbOutcome(_ outcome: MeetingOutcome) {
-        // Outcomes themselves are retrieved as meeting memory. Do not silently copy
-        // their claims into editable memory: only explicit Keep or Remember does that.
-        let ownTasks = outcome.tasks.filter { !$0.done && $0.owner.trimmed.isEmpty }
-        if !ownTasks.isEmpty {
-            let text = ownTasks.prefix(2).map(\.text).joined(separator: "; ")
-            if !text.isEmpty, !suggestions.contains(where: { $0.kind == .memory && $0.proposedText == text }) {
-                suggestions.insert(.init(createdAt: Date(), text: L("Keep your commitments from “%@” in memory?", outcome.meetingTitle),
-                    kind: .memory, proposedText: String(text.prefix(400)), memoryKind: .you,
-                    invitation: outcome.invitation, seriesID: outcome.seriesID), at: 0)
-            }
-        }
-    }
 }
 
 private func writeAssistantDocument(_ snapshot: AssistantDataDocument, to url: URL) throws {

@@ -133,8 +133,9 @@ enum MeetingOutcomePrompt {
         let tasks = (raw.tasks ?? []).prefix(20).compactMap { raw -> MeetingOutcomeTask? in
             let text = String((raw.text ?? "").trimmed.prefix(500)); guard !text.isEmpty else { return nil }
             let due = raw.due_at?.trimmed ?? ""
+            let dueDay = AssistantTime.calendarDay(due)
             return .init(text: text, owner: String((raw.owner ?? "").trimmed.prefix(120)),
-                dueAt: due.isEmpty ? nil : AssistantTime.parse(due))
+                dueAt: dueDay == nil && !due.isEmpty ? AssistantTime.parse(due) : nil, dueDay: dueDay)
         }
         return .init(summary: String(summary.prefix(1600)), decisions: clean(raw.decisions ?? []),
             tasks: tasks, openQuestions: clean(raw.open_questions ?? []))

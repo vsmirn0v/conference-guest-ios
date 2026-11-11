@@ -176,7 +176,7 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
                 "from": timeRange["from"]!, "to": timeRange["to"]!,
                 "limit": pagination["limit"]!, "cursor": pagination["cursor"]!,
               ], required: ["meeting_id"])),
-        .init(name: "rocknroll_get_outcome", description: "Get one stored outcome by outcome ID.",
+        .init(name: "rocknroll_get_outcome", description: "Get one stored historical outcome by outcome ID. Task items include the current profile’s archived flag.",
               readOnly: true, scope: "meetings:read",
               schema: .init(properties: [
                 "outcome_id": .string("Opaque outcome identifier: the id of a kind:outcome item from rocknroll_list_meetings or rocknroll_search, or the meeting_id field of task items. This is not a meeting_id.", minLength: 1),
@@ -186,12 +186,14 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
               schema: .init(properties: [
                 "meeting_id": .string("Opaque meeting identifier: an id returned by rocknroll_list_meetings or rocknroll_search. Must identify a persisted session (id starts with session:) or an outcome-backed historical session.", minLength: 1),
               ], required: ["meeting_id"])),
-        .init(name: "rocknroll_list_tasks", description: "List tasks from native meeting outcomes.",
+        .init(name: "rocknroll_list_tasks", description: "List tasks from native meeting outcomes. Tasks archived by the current profile are excluded by default.",
               readOnly: true, scope: "meetings:read",
               schema: .init(properties: [
                 "meeting_id": .string("Filter by outcome id (outcome:…), matching the meeting_id field of task items."),
                 "done": .boolean("Filter by completion state."),
                 "owner": .string("Case-insensitive substring match on the task owner."),
+                "personal_only": .boolean("Only tasks assigned to the current profile by stable ID or confirmed full alias."),
+                "include_archived": .boolean("Include tasks archived by the current profile; defaults to false."),
                 "limit": pagination["limit"]!, "cursor": pagination["cursor"]!,
               ])),
         .init(name: "rocknroll_search", description: "Search native meetings, outcomes, tasks and transcripts.",
@@ -200,6 +202,8 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
                 "query": .string("Case-insensitive search text, trimmed; must be non-empty after trimming.", minLength: 1),
                 "types": .array("Result types to search; defaults to all five. Unknown values are rejected.",
                                 items: .string("Result type.", enumValues: ["meeting", "outcome", "task", "transcript", "note"])),
+                "personal_only": .boolean("Restrict task results to the current profile's assignments."),
+                "include_archived": .boolean("Include task results archived by the current profile; defaults to false."),
                 "limit": pagination["limit"]!, "cursor": pagination["cursor"]!,
               ], required: ["query"])),
         .init(name: "rocknroll_get_settings", description: "Read allowlisted native settings and resolved attention configuration.",

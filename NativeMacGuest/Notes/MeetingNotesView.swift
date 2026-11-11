@@ -1,114 +1,235 @@
+import AppKit
 import SwiftUI
 
-/// Notes panel for one meeting: raw Markdown editor, formatting actions, and an
-/// honest local-save status. Saved is shown only after the SQLite commit succeeds.
+/// The meeting panel, Outcome detail and detached window all open this editor by session ID.
 struct MeetingNotesView: View {
-    let model: NativeDesktopMeetingModel
-    @ObservedObject private var notes: MeetingNotesController
-    @ObservedObject private var library: MeetingLibraryController
-    @State private var text: String = ""
-    @State private var selection: NSRange = NSRange(location: 0, length: 0)
-    @State private var hydratedSession: UUID?
+    let sessionID: UUID
+    @ObservedObject var notes: MeetingNotesController
+    let title: String
+    var ended = false
+    var openWindow: (() -> Void)?
+    var returnToMain: (() -> Void)?
+    @State private var editorID = UUID()
+    @State private var formatted = true
+    @State private var command: NoteFormattingCommand?
+    @State private var commandID = UUID()
+    @State private var leaseBlocked = false
 
-    init(model: NativeDesktopMeetingModel) {
-        self.model = model
-        let notes = model.notes ?? MeetingNotesController(library: model.meetingLibrary ?? MeetingLibraryController(root: FileManager.default.temporaryDirectory))
-        let library = model.meetingLibrary ?? notes.library
-        self.notes = notes
-        self.library = library
-    }
+    private var draft: MeetingNotesController.Draft? { notes.draft(sessionID: sessionID) }
+    private var owner: UUID? { notes.editorOwner(sessionID: sessionID) }
+    private var editing: Bool { owner == editorID }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                Text(model.title).font(.headline).lineLimit(1)
-                Spacer()
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline).lineLimit(1)
+                    if ended { Text(L("Meeting ended")).font(.caption).foregroundStyle(.secondary) }
+                }
+                Spacer(minLength: 0)
+                Button {
+                    formatted.toggle()
+                } label: {
+                    Image(systemName: formatted ? "chevron.left.forwardslash.chevron.right" : "text.alignleft")
+                }
+                .accessibilityLabel(formatted ? L("Show Markdown source") : L("Show formatted view"))
+                .help(formatted ? L("Show Markdown source") : L("Show formatted view"))
                 Menu {
-                    ForEach(NoteFormattingCommand.allCases, id: \.self) { command in
-                        Button(command.title) { apply(command) }
+                    ForEach(NoteFormattingCommand.allCases, id: \.self) { item in
+                        Button { command = item; commandID = UUID() } label: {
+                            Label(item.title, systemImage: item.symbol)
+                        }
                     }
-                } label: { Image(systemName: "textformat").help(L("Format")) }
+                } label: {
+                    Image(systemName: "textformat").help(L("Format"))
+                }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .disabled(!editing)
+                if let openWindow {
+                    Button(action: openWindow) { Image(systemName: "macwindow.badge.plus") }
+                        .accessibilityLabel(L("Open notes in a separate window"))
+                        .help(L("Open notes in a separate window"))
+                }
+                if let returnToMain {
+                    Button(action: returnToMain) { Image(systemName: "arrow.up.left.square") }
+                        .accessibilityLabel(L("Show in main window"))
+                        .help(L("Show in main window"))
+                }
             }
+            .buttonStyle(.borderless)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
-            MeetingNotesEditor(text: text, onChange: { newText in
-                text = newText
-                notes.update(sessionID: model.sessionID, text: newText)
-            }, onSelectionChange: { range in
-                selection = range
-            })
-            .frame(minWidth: 320, minHeight: 240)
+            if draft?.savedText != nil, !editing {
+                HStack(spacing: 8) {
+                    if owner != nil {
+                        Button(L("Go to active editor")) { notes.focusEditor(sessionID: sessionID) }
+                    }
+                    Button(L("Edit here")) { activateEditor() }
+                    Spacer()
+                }
+                .buttonStyle(.link)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+            }
+            MeetingNotesEditor(notes: notes, sessionID: sessionID, editorID: editorID,
+                               formatted: formatted, command: command, commandID: commandID)
+                .overlay(alignment: .topLeading) {
+                    if draft?.text.isEmpty == true, editing {
+                        Text(L("Add notes")).foregroundStyle(.tertiary)
+                            .padding(.leading, 17).padding(.top, 12).allowsHitTesting(false)
+                    }
+                }
+                .frame(minHeight: 220)
+                .accessibilityIdentifier("meeting.notes.editor")
             Divider()
             statusBar.padding(.horizontal, 12).padding(.vertical, 6)
         }
-        .onAppear { hydrateIfNeeded() }
-        .onChange(of: model.sessionID) { _ in hydrateIfNeeded() }
-        .id(model.sessionID)
-    }
-
-    @ViewBuilder private var statusBar: some View {
-        HStack(spacing: 6) {
-            switch notes.draft(sessionID: model.sessionID)?.saveError {
-            case .some(let error):
-                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
-                Text(L("Couldn’t save. Your text is kept in memory.")).foregroundColor(.red)
-                Button(L("Copy")) {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                }
-                Button(L("Retry")) {
-                    notes.update(sessionID: model.sessionID, text: text)
-                    Task { await notes.flush(sessionID: model.sessionID) }
-                }
-            case .none:
-                switch library.noteStatus[model.sessionID] {
-                case .some(.saving):
-                    Image(systemName: "arrow.triangle.2.circlepath").foregroundColor(.secondary)
-                    Text(L("Saving…")).foregroundColor(.secondary)
-                case .some(.saved(let date)):
-                    Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                    Text(L("Saved on device at %@", Self.time.string(from: date))).foregroundColor(.secondary)
-                case .some(.failed(let error)):
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
-                    Text(error).foregroundColor(.red).lineLimit(1)
-                case .none:
-                    Image(systemName: "circle").foregroundColor(.secondary)
-                    Text(L("No notes yet")).foregroundColor(.secondary)
+        .onDisappear {
+            guard let openWindow, notes.draft(sessionID: sessionID)?.isDirty == true else { return }
+            Task {
+                await Task.yield()
+                let saved = await notes.flush(sessionID: sessionID)
+                guard !saved, !notes.hasEditor(sessionID: sessionID) else { return }
+                if !MeetingNotesDraftRecovery.confirmClose(notes: notes, sessionID: sessionID, title: title) {
+                    openWindow()
                 }
             }
-            Spacer()
+        }
+        .task(id: sessionID) {
+            await notes.load(sessionID: sessionID)
+            if !Task.isCancelled { claimUnownedDocument() }
+        }
+        .onChange(of: owner) { current in
+            if current == nil { claimUnownedDocument() }
+        }
+    }
+
+    private func claimUnownedDocument() {
+        if notes.editorOwner(sessionID: sessionID) == nil {
+            notes.claimEditor(editorID, sessionID: sessionID)
+        }
+    }
+
+    private func activateEditor() {
+        leaseBlocked = !notes.claimEditor(editorID, sessionID: sessionID)
+        if !leaseBlocked { notes.focusEditor(sessionID: sessionID) }
+    }
+
+    private var statusBar: some View {
+        HStack(spacing: 6) {
+            if let error = draft?.saveError {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                Text(L("Couldn’t save notes")).foregroundStyle(.red).help(error)
+                Button(L("Retry")) {
+                    Task {
+                        if draft?.savedText == nil && draft?.isDirty != true {
+                            await notes.load(sessionID: sessionID)
+                            if owner == nil { notes.claimEditor(editorID, sessionID: sessionID) }
+                        } else {
+                            await notes.flush(sessionID: sessionID)
+                        }
+                    }
+                }
+                if draft?.isDirty == true {
+                    Button(L("Export draft…")) {
+                        _ = MeetingNotesDraftRecovery.export(notes.buffer(sessionID: sessionID), title: title)
+                    }
+                }
+            } else if leaseBlocked, !editing {
+                Text(L("Finish composing text in the active editor before switching."))
+            } else if draft?.isDirty == true {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                Text(L("Saving locally…"))
+            } else if draft?.savedText?.isEmpty == false || draft?.revision ?? 0 > 0 {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text(L("Saved on this Mac"))
+            } else if draft?.savedText != nil {
+                Text(L("No notes yet"))
+            } else {
+                Text(L("Loading notes…"))
+            }
+            Spacer(minLength: 0)
         }
         .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
     }
+}
 
-    private func apply(_ command: NoteFormattingCommand) {
-        let result = command.apply(to: text, selection: selection)
-        text = result.text
-        selection = result.selection
-        notes.update(sessionID: model.sessionID, text: result.text)
-    }
-
-    private func hydrateIfNeeded() {
-        guard hydratedSession != model.sessionID else { return }
-        hydratedSession = model.sessionID
-        text = notes.buffer(sessionID: model.sessionID)
-        if notes.draft(sessionID: model.sessionID) == nil {
-            Task { @MainActor in
-                if let record = await library.note(sessionID: model.sessionID) {
-                    notes.hydrate(sessionID: model.sessionID, text: record.markdown)
-                    text = record.markdown
-                }
-            }
+@MainActor enum MeetingNotesDraftRecovery {
+    static func export(_ markdown: String, title: String) -> Bool {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = (title.isEmpty ? L("Meeting notes") : title.replacingOccurrences(of: "/", with: "-")) + ".md"
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        do {
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            NSAlert(error: error).runModal()
+            return false
         }
     }
 
-    private static let time: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        formatter.dateStyle = .none
-        return formatter
-    }()
+    static func confirmClose(notes: MeetingNotesController, sessionID: UUID, title: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = L("Couldn’t save notes")
+        alert.informativeText = L("Export the current draft to another location or keep the editor open to retry.")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("Keep editing"))
+        alert.addButton(withTitle: L("Export draft and close…"))
+        alert.addButton(withTitle: L("Close and keep draft in memory"))
+        switch alert.runModal() {
+        case .alertSecondButtonReturn: return export(notes.buffer(sessionID: sessionID), title: title)
+        case .alertThirdButtonReturn: return true
+        default: return false
+        }
+    }
+}
+
+/// Adapts the in-call panel to the session editor without giving the editor control of media.
+struct LiveMeetingNotes: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    var workspace: NativeDesktopWorkspace?
+
+    var body: some View {
+        if let notes = model.notes {
+            LiveContent(model: model, notes: notes, library: notes.library, workspace: workspace)
+                .id(model.sessionID)
+        } else {
+            Text(L("Meeting notes are unavailable.")).padding()
+        }
+    }
+
+    private struct LiveContent: View {
+        @ObservedObject var model: NativeDesktopMeetingModel
+        @ObservedObject var notes: MeetingNotesController
+        @ObservedObject var library: MeetingLibraryController
+        var workspace: NativeDesktopWorkspace?
+
+        var body: some View {
+            let card = library.cards.first { $0.sessionID == model.sessionID }
+            let title = card?.title ?? model.title
+            let id = model.sessionID
+            MeetingNotesView(sessionID: id, notes: notes, title: title, ended: card?.endedAt != nil, openWindow: {
+                let originalWindow = NSApp.keyWindow
+                notes.windows.open(sessionID: id, title: title, date: card?.startedAt ?? Date(),
+                    isEnded: { [weak model] in model?.isClosed ?? true },
+                    showInMain: { [weak workspace, weak model, weak originalWindow] in
+                    guard let workspace else {
+                        originalWindow?.deminiaturize(nil)
+                        originalWindow?.makeKeyAndOrderFront(nil)
+                        return
+                    }
+                    if let model, !model.isClosed, !workspace.isDetached(model) {
+                        model.panel = .notes
+                        workspace.presentEmbedded(model)
+                    } else {
+                        workspace.attention.requestedOutcomeSessionID = id
+                        workspace.show(section: .assistant)
+                    }
+                })
+            })
+        }
+    }
 }

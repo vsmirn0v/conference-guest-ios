@@ -663,6 +663,339 @@ import XCTest
         try await wait { model.panel == .notes }
     }
 
+    func testHistoricalOutcomeDisplaysEndTimeFallbackLabel() async throws {
+        let store = store()
+        await store.waitForMeetingLibrary()
+        let outcome = MeetingOutcome(meetingTitle: "Imported meeting", endedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            summary: "Imported historical outcome")
+        try await store.meetingLibrary.store.importLegacyOutcomes([outcome])
+        await store.meetingLibrary.refresh()
+        let card = try XCTUnwrap(store.meetingLibrary.cards.first { $0.outcomeID == outcome.id })
+        let attention = AttentionCoordinator(store: store)
+        attention.requestedOutcomeSessionID = card.sessionID
+        let rendered = await present(AssistantOutcomesView(attention: attention),
+            size: NSSize(width: 1100, height: 700), name: "legacy-outcome-end-time")
+        XCTAssertTrue(containsText(rendered, "Imported meeting"))
+        XCTAssertTrue(containsText(rendered, L("By end time")))
+        XCTAssertNotNil(element(rendered, identifier: "assistant.date-end-fallback"))
+    }
+
+    func testRenameSheetCancelAndBlankSubmissionPreserveStoredTitle() async throws {
+        let store = store()
+        await store.waitForMeetingLibrary()
+        let library = store.meetingLibrary
+        let title = "Original occurrence title"
+        let session = MeetingSessionRecord(title: title, startedAt: Date())
+        try await library.store.upsertSession(session)
+        await library.refresh()
+        let attention = AttentionCoordinator(store: store)
+        attention.requestedOutcomeSessionID = session.id
+        let rendered = await present(AssistantOutcomesView(attention: attention),
+            size: NSSize(width: 1100, height: 700), name: "rename-cancel-validation")
+        rendered.window.makeKeyAndOrderFront(nil)
+        let errorMessage = L("Enter a meeting title.")
+
+        func sheet() -> AXUIElement? {
+            nodes(rendered).first { (attribute($0, kAXRoleAttribute) as? String) == kAXSheetRole }
+        }
+        func replaceTitle(with value: String) async throws {
+            let form = try XCTUnwrap(sheet(), "Rename must present a native sheet")
+            let field = try XCTUnwrap(nodes(form).first {
+                (attribute($0, kAXRoleAttribute) as? String) == kAXTextFieldRole
+            })
+            XCTAssertEqual(attribute(field, kAXValueAttribute) as? String, title)
+            XCTAssertEqual(AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, value as CFTypeRef), .success)
+            await settle()
+            XCTAssertEqual(attribute(field, kAXValueAttribute) as? String, value)
+        }
+        func assertOriginalTitle() async throws {
+            let persisted = try await library.store.session(session.id)
+            XCTAssertEqual(persisted?.title, title)
+            XCTAssertEqual(persisted?.exportRevision, session.exportRevision)
+            XCTAssertEqual(library.cards.first { $0.sessionID == session.id }?.title, title)
+        }
+
+        try await press(rendered, L("Rename meeting"))
+        try await replaceTitle(with: "Discard this title")
+        try await press(rendered, L("Cancel"))
+        try await wait { sheet() == nil }
+        try await assertOriginalTitle()
+        XCTAssertFalse(containsText(rendered, "Discard this title"))
+
+        for invalidTitle in ["", "   "] {
+            try await press(rendered, L("Rename meeting"))
+            try await replaceTitle(with: invalidTitle)
+            try await press(rendered, L("Save"))
+            let form = try XCTUnwrap(sheet(), "The sheet must stay open for correction")
+            XCTAssertTrue(nodes(form).contains { strings($0).contains(errorMessage) },
+                          "The rename form must explain the invalid title inline")
+            try await assertOriginalTitle()
+            try await press(rendered, L("Cancel"))
+            try await wait { sheet() == nil }
+        }
+        XCTAssertTrue(containsText(rendered, title))
+    }
+
+    func testOccurrenceRenameSurvivesCalendarRefreshAndOutcomeRegeneration() async throws {
+        let store = store()
+        await store.waitForMeetingLibrary()
+        let library = store.meetingLibrary
+        let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        let room = try XCTUnwrap(URL(string: "https://example.test/calls/shared-room"))
+        let series = "weekly-planning"
+        let earlier = MeetingSessionRecord(title: "Planning", invitation: room, roomIdentity: "shared-room",
+            calendarSeriesID: series, startedAt: now - 86_400, endedAt: now - 84_600, state: .ended)
+        var chosen = MeetingSessionRecord(title: "Planning", invitation: room, roomIdentity: "shared-room",
+            calendarSeriesID: series, startedAt: now - 3_600, endedAt: now - 1_800, state: .ended)
+        try await library.store.upsertSession(earlier)
+        try await library.store.upsertSession(chosen)
+        let original = MeetingOutcome(meetingID: chosen.id, meetingTitle: chosen.title, invitation: room,
+            seriesID: series, endedAt: now - 1_800, summary: "First published outcome")
+        let sibling = MeetingOutcome(meetingID: earlier.id, meetingTitle: earlier.title, invitation: room,
+            seriesID: series, endedAt: now - 84_600, summary: "Other occurrence outcome")
+        try await library.store.saveOutcome(original, state: .ready)
+        try await library.store.saveOutcome(sibling, state: .ready)
+        try await library.store.saveNote(sessionID: chosen.id, markdown: "Occurrence-specific notes")
+        let preferencesName = "outcome-calendar-fixture-\(UUID().uuidString)"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: preferencesName))
+        defer { preferences.removePersistentDomain(forName: preferencesName) }
+        preferences.set(true, forKey: "calendarMeetings.enabled")
+        preferences.set(["fixture"], forKey: "calendarMeetings.selected")
+        let reader = OutcomeFixtureCalendar()
+        let calendar = CalendarMeetingStore(reader: reader,
+            detector: MeetingEngineDetector(serviceName: "fixture"), preferences: preferences,
+            storage: OutcomeFixtureCalendarStorage())
+        func event(_ title: String) -> CalendarMeeting {
+            CalendarMeeting(id: "current-event", seriesID: series, calendarID: "fixture",
+                calendarTitle: "Work", title: title, start: chosen.startedAt, end: now - 1_800)
+        }
+        await reader.replace(with: event("Calendar planning"))
+        calendar.refresh()
+        try await wait { !calendar.loading && calendar.meetings.first?.title == "Calendar planning" }
+
+        try await library.renameSession(chosen.id, title: "  Session-only title  ")
+        XCTAssertEqual(calendar.meetings.first?.title, "Calendar planning")
+        await reader.replace(with: event("Calendar updated planning"))
+        calendar.refresh()
+        try await wait { !calendar.loading && calendar.meetings.first?.title == "Calendar updated planning" }
+        chosen.title = "Provider updated planning"
+        try await library.store.upsertSession(chosen)
+        let draft = try await startFixtureOutcome(store, session: chosen, endedAt: now - 1_800)
+        XCTAssertEqual(draft.id, original.id)
+        var generated = draft
+        generated.meetingTitle = chosen.title
+        generated.summary = "Regenerated fixture outcome"
+        let commit = try await library.store.finishOutcome(generated, owner: "fixture-writer", errorCode: nil)
+        XCTAssertEqual(commit?.outcome.meetingTitle, "Session-only title")
+        XCTAssertEqual(commit?.outcome.meetingID, chosen.id)
+        XCTAssertEqual(commit?.outcome.seriesID, series)
+        XCTAssertEqual(commit?.outcome.invitation, room)
+        let unchanged = try await library.store.outcomeBySession(earlier.id)
+        XCTAssertEqual(unchanged, sibling)
+        let calendarItem = try XCTUnwrap(calendar.meetings.first)
+        XCTAssertEqual(calendarItem.id, "current-event")
+        XCTAssertEqual(calendarItem.seriesID, series)
+        XCTAssertEqual(calendarItem.title, "Calendar updated planning")
+        let note = try await library.store.note(chosen.id)
+        XCTAssertEqual(note?.markdown, "Occurrence-specific notes")
+        await library.refresh()
+        store.assistant.restorePersistedOutcomes(try await library.store.outcomes())
+        let attention = AttentionCoordinator(store: store)
+        attention.requestedOutcomeSessionID = chosen.id
+        let rendered = await present(AssistantOutcomesView(attention: attention),
+            size: NSSize(width: 1100, height: 700), name: "renamed-occurrence")
+        XCTAssertTrue(containsText(rendered, "Session-only title"))
+        XCTAssertTrue(containsText(rendered, "Regenerated fixture outcome"))
+        XCTAssertTrue(containsText(rendered, "Other occurrence outcome"))
+        XCTAssertFalse(containsText(rendered, "Provider updated planning"))
+    }
+
+    func testOutcomeDaysRenderNewestFirstAndCountEachRepeatedRoomOccurrence() async throws {
+        let store = store()
+        await store.waitForMeetingLibrary()
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: Date())
+        let previousDay = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: day))
+        let room = try XCTUnwrap(URL(string: "https://example.test/calls/shared-room"))
+        let starts = [previousDay + 11 * 3_600, day + 9 * 3_600, day + 14 * 3_600]
+        let summaries = ["Older day occurrence", "Morning occurrence", "Afternoon occurrence"]
+        for (start, summary) in zip(starts, summaries) {
+            let session = MeetingSessionRecord(title: "Repeated room title", invitation: room, roomIdentity: "shared-room",
+                calendarSeriesID: "shared-series", startedAt: start, endedAt: start + 900, state: .ended)
+            try await store.meetingLibrary.store.upsertSession(session)
+            try await store.meetingLibrary.store.saveOutcome(.init(meetingID: session.id,
+                meetingTitle: session.title, endedAt: start + 900, summary: summary), state: .ready)
+        }
+        await store.meetingLibrary.refresh()
+        store.assistant.restorePersistedOutcomes(try await store.meetingLibrary.store.outcomes())
+        let rendered = await present(AssistantOutcomesView(attention: AttentionCoordinator(store: store)),
+            size: NSSize(width: 1100, height: 700), name: "repeated-room-day-order")
+        try assertOutcomeDayOrder(rendered, expected: [
+            (day, ["Afternoon occurrence", "Morning occurrence"]),
+            (previousDay, ["Older day occurrence"])
+        ])
+    }
+
+    func testOutcomeHistorySearchTemporarilyRevealsCollapsedDayAndPreservesSelectionOnRefresh() async throws {
+        let store = store()
+        await store.waitForMeetingLibrary()
+        let library = store.meetingLibrary
+        let day = Calendar.current.startOfDay(for: Date())
+        let previousDay = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -1, to: day))
+        let selectedTitle = "Selected history occurrence"
+        let selected = MeetingSessionRecord(title: selectedTitle, startedAt: day + 14 * 3_600)
+        let match = MeetingSessionRecord(title: "Matching release planning", startedAt: day + 9 * 3_600)
+        let earlier = MeetingSessionRecord(title: "Previous day occurrence", startedAt: previousDay + 13 * 3_600)
+        for session in [selected, match, earlier] { try await library.store.upsertSession(session) }
+        await library.refresh()
+        let attention = AttentionCoordinator(store: store)
+        attention.requestedOutcomeSessionID = selected.id
+        let rendered = await present(AssistantOutcomesView(attention: attention),
+            size: NSSize(width: 1100, height: 700), name: "outcome-history-search")
+        rendered.window.makeKeyAndOrderFront(nil)
+        await settle()
+        try assertOutcomeDayOrder(rendered, expected: [
+            (day, [selectedTitle, match.title]), (previousDay, [earlier.title])
+        ])
+        let dayLabel = day.formatted(.dateTime.day().month(.wide).year().locale(.current))
+        let disclosure = try XCTUnwrap(nodes(rendered).first {
+            (attribute($0, kAXRoleAttribute) as? String) == kAXDisclosureTriangleRole &&
+                strings($0).contains { $0.contains(dayLabel) }
+        })
+        XCTAssertEqual(AXUIElementPerformAction(disclosure, kAXPressAction as CFString), .success)
+        await settle()
+        try assertOutcomeDayOrder(rendered, expected: [(day, []), (previousDay, [earlier.title])],
+                                  collapsedCounts: [day: 2])
+        XCTAssertTrue(containsText(rendered, selectedTitle), "Collapsing a day must keep the selected detail open")
+
+        let search = try XCTUnwrap(nodes(rendered).first {
+            (attribute($0, kAXRoleAttribute) as? String) == kAXTextFieldRole &&
+                strings($0).contains(L("Search meetings"))
+        })
+        XCTAssertEqual(AXUIElementSetAttributeValue(search, kAXFocusedAttribute as CFString, kCFBooleanTrue), .success)
+        await settle()
+        let fieldEditor = try XCTUnwrap(rendered.window.firstResponder as? NSTextView, "Search field should have an AppKit field editor")
+        fieldEditor.insertText("release", replacementRange: fieldEditor.selectedRange())
+        await settle()
+        try assertOutcomeDayOrder(rendered, expected: [(day, [match.title])])
+        XCTAssertTrue(containsText(rendered, selectedTitle), "Search must keep the selected detail open")
+
+        let incoming = MeetingSessionRecord(title: "New release meeting", startedAt: day + 17 * 3_600,
+            endedAt: day + 18 * 3_600, state: .ended)
+        try await library.store.upsertSession(incoming)
+        try await library.store.saveOutcome(.init(meetingID: incoming.id, meetingTitle: incoming.title,
+            endedAt: day + 18 * 3_600, summary: "Newly published outcome"), state: .ready)
+        await library.refresh()
+        await settle()
+        try assertOutcomeDayOrder(rendered, expected: [(day, [incoming.title, match.title])])
+        XCTAssertTrue(containsText(rendered, selectedTitle), "Catalog refresh must keep the selected detail open")
+
+        fieldEditor.selectAll(nil)
+        fieldEditor.deleteBackward(nil)
+        await settle()
+        try assertOutcomeDayOrder(rendered, expected: [(day, []), (previousDay, [earlier.title])],
+                                  collapsedCounts: [day: 3])
+        XCTAssertTrue(containsText(rendered, selectedTitle), "Clearing search must restore collapse and keep the selected detail open")
+    }
+
+    func testMidnightOutcomeStaysInStartDayAfterLateGenerationRenameAndEdit() async throws {
+        let store = store()
+        await store.waitForMeetingLibrary()
+        let library = store.meetingLibrary
+        let midnight = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -2,
+            to: Calendar.current.startOfDay(for: Date())))
+        let dayBefore = Calendar.current.startOfDay(for: midnight - 300)
+        let overnight = MeetingSessionRecord(title: "Overnight occurrence", startedAt: midnight - 300)
+        let nextDay = MeetingSessionRecord(title: "Next-day meeting", startedAt: midnight + 600,
+            endedAt: midnight + 1200, state: .ended)
+        try await library.store.upsertSession(overnight)
+        try await library.store.upsertSession(nextDay)
+        try await library.store.saveNote(sessionID: overnight.id, markdown: "Before midnight")
+        try await library.store.saveOutcome(.init(meetingID: nextDay.id,
+            meetingTitle: nextDay.title, endedAt: midnight + 1200, summary: "Next-day summary"), state: .ready)
+        await library.endSession(overnight.id, endedAt: midnight + 300, awaitingOutcome: true)
+        store.assistant.restorePersistedOutcomes(try await library.store.outcomes())
+        let attention = AttentionCoordinator(store: store)
+        attention.requestedOutcomeSessionID = overnight.id
+        let rendered = await present(AssistantOutcomesView(attention: attention),
+            size: NSSize(width: 1100, height: 700), name: "overnight-outcome-day")
+        try assertOutcomeDayOrder(rendered, expected: [
+            (midnight, ["Next-day meeting"]), (dayBefore, ["Overnight occurrence"])
+        ])
+
+        var generated = try await startFixtureOutcome(store, session: overnight, endedAt: midnight + 300)
+        generated.summary = "Late generation"
+        let publication = try await library.store.finishOutcome(generated, owner: "fixture-writer", errorCode: nil)
+        var edited = try XCTUnwrap(publication?.outcome)
+        store.assistant.restorePersistedOutcomes([edited])
+        try await library.renameSession(overnight.id, title: "Renamed overnight")
+        edited.summary = "Edited after generation"
+        store.assistant.updateOutcome(edited)
+        await store.waitForOutcomeWrites()
+        let editedOutcome = try await library.store.outcomeBySession(overnight.id)
+        XCTAssertEqual(editedOutcome?.summary, "Edited after generation")
+        XCTAssertEqual(editedOutcome?.meetingTitle, "Renamed overnight")
+        try await library.store.saveNote(sessionID: overnight.id, markdown: "Edited days later")
+        await library.refresh()
+        await settle()
+        let card = try XCTUnwrap(library.cards.first { $0.sessionID == overnight.id })
+        XCTAssertEqual(card.effectiveDate, .init(date: midnight - 300, fromEnd: false))
+        XCTAssertEqual(card.endedAt, midnight + 300)
+        XCTAssertGreaterThan(card.updatedAt, midnight + 86_400)
+        try assertOutcomeDayOrder(rendered, expected: [
+            (midnight, ["Next-day meeting"]), (dayBefore, ["Renamed overnight"])
+        ])
+        XCTAssertTrue(containsText(rendered, "Edited after generation"))
+    }
+
+    private func startFixtureOutcome(_ store: AttentionStore, session: MeetingSessionRecord, endedAt: Date) async throws -> MeetingOutcome {
+        let request = MeetingOutcomeRequest(meetingTitle: session.title, endedAt: endedAt,
+            window: MeetingOutcomePrompt.window(title: session.title, transcript: [], chat: [],
+                yourName: "Fixture", now: Date()), language: "en")
+        return try await store.meetingLibrary.store.startOutcome(.init(meetingID: session.id,
+            meetingTitle: session.title, invitation: session.invitation, seriesID: session.calendarSeriesID,
+            endedAt: endedAt, summary: ""),
+            input: .init(request: request, provider: store.effectiveWriter), owner: "fixture-writer")
+    }
+
+    private func assertOutcomeDayOrder(_ rendered: Rendered, expected: [(Date, [String])],
+                                       collapsedCounts: [Date: Int] = [:],
+                                       file: StaticString = #filePath, line: UInt = #line) throws {
+        func isCard(_ node: AXUIElement) -> Bool {
+            (attribute(node, kAXIdentifierAttribute) as? String) == "assistant.meeting-card"
+        }
+        let sidebar = try XCTUnwrap(nodes(rendered).first {
+            (attribute($0, kAXRoleAttribute) as? String) == kAXScrollAreaRole && nodes($0).contains(where: isCard)
+        }, "Missing meeting history sidebar", file: file, line: line)
+        let list = try nodes(sidebar).compactMap { node -> (y: CGFloat, labels: [String], day: Bool)? in
+            let isDay = (attribute(node, kAXRoleAttribute) as? String) == kAXDisclosureTriangleRole
+            guard isDay || isCard(node) else { return nil }
+            let position = try XCTUnwrap(attribute(node, kAXPositionAttribute), file: file, line: line)
+            var point = CGPoint.zero
+            XCTAssertTrue(AXValueGetValue(position as! AXValue, .cgPoint, &point), file: file, line: line)
+            return (point.y, strings(node) + children(node).flatMap(strings), isDay)
+        }.sorted { $0.y < $1.y }
+        let values = list.map(\.labels)
+        let expectedCount = expected.reduce(0) { $0 + $1.1.count + 1 }
+        guard list.count == expectedCount else {
+            return XCTFail("Expected \(expectedCount) rendered days and cards, got \(list.count): \(values)", file: file, line: line)
+        }
+        var index = 0
+        for (day, titles) in expected {
+            let label = day.formatted(.dateTime.day().month(.wide).year().locale(.current))
+            XCTAssertTrue(list[index].day, "\(values)", file: file, line: line)
+            XCTAssertTrue(list[index].labels.contains { $0.contains(label) }, "\(values)", file: file, line: line)
+            let count = collapsedCounts[day] ?? titles.count
+            XCTAssertTrue(list[index].labels.contains(count.formatted()), "\(values)", file: file, line: line)
+            index += 1
+            for title in titles {
+                XCTAssertFalse(list[index].day, "\(values)", file: file, line: line)
+                XCTAssertTrue(list[index].labels.contains { $0.contains(title) }, "\(values)", file: file, line: line)
+                index += 1
+            }
+        }
+    }
+
     /// The agent timeline shows the user message, one collapsed activity row, and the
     /// final answer; raw `rocknroll_*` names appear only behind Details.
     func testAgentTimelineCompactsToolNoiseBehindDetails() async throws {
@@ -688,6 +1021,24 @@ import XCTest
         XCTAssertTrue(containsText(rendered, "read_chat"))
         try capture(rendered)
     }
+}
+
+private actor OutcomeFixtureCalendar: CalendarReading {
+    private var event: CalendarMeeting?
+
+    func replace(with event: CalendarMeeting) { self.event = event }
+    func access() -> CalendarAccess { .allowed }
+    func requestAccess() -> Bool { true }
+    func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) -> CalendarSnapshot {
+        .init(calendars: [.init(id: "fixture", name: "Work", source: "Fixture")],
+              meetings: event.map { [$0] } ?? [])
+    }
+}
+
+private final class OutcomeFixtureCalendarStorage: RoomHistoryStorage {
+    private var data: Data?
+    func read() -> Data? { data }
+    func write(_ data: Data) throws { self.data = data }
 }
 
 private final class AssistantUIJudge: AttentionJudge, @unchecked Sendable {

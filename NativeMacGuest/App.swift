@@ -242,12 +242,44 @@ struct NativeGuestApplication {
         }
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminating else { return .terminateLater }
         #if NATIVE_DIRECT_UPDATES
         if updates?.safety.installationReserved == true && busyForUpdate { return .terminateCancel }
         #endif
         terminating = true
         Task { @MainActor in
-            await workspace?.attention.store.notes.flushAll()
+            if let notes = workspace?.attention.store.notes {
+                var failures = await notes.flushAll()
+                while !failures.isEmpty {
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = L("Some notes could not be saved")
+                    alert.informativeText = L("Your unsaved text is still in memory. Export a draft or keep editing before quitting.")
+                    alert.addButton(withTitle: L("Keep editing"))
+                    alert.addButton(withTitle: L("Retry"))
+                    alert.addButton(withTitle: L("Export drafts…"))
+                    alert.addButton(withTitle: L("Discard unsaved changes"))
+                    switch alert.runModal() {
+                    case .alertFirstButtonReturn:
+                        terminating = false
+                        sender.reply(toApplicationShouldTerminate: false)
+                        return
+                    case .alertSecondButtonReturn:
+                        failures = await notes.flushAll()
+                    case .alertThirdButtonReturn:
+                        for id in failures {
+                            let title = workspace?.attention.store.meetingLibrary.cards.first { $0.sessionID == id }?.title ?? L("Meeting notes")
+                            _ = MeetingNotesDraftRecovery.export(notes.buffer(sessionID: id), title: title)
+                        }
+                    case NSApplication.ModalResponse(rawValue: NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 3):
+                        failures.removeAll()
+                    default:
+                        terminating = false
+                        sender.reply(toApplicationShouldTerminate: false)
+                        return
+                    }
+                }
+            }
             _ = await workspace?.leave()
             if let controller, !controller.finished { await controller.finish() }
             let clean = await NativeDesktopForegroundMedia.shared.shutdown()

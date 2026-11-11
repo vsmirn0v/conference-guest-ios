@@ -1,7 +1,7 @@
 import Foundation
 
 enum MeetingLibrarySchema {
-    static let currentVersion = 2
+    static let currentVersion = 6
 
     static let ddl: [String] = [
         """
@@ -32,6 +32,13 @@ enum MeetingLibrarySchema {
         "CREATE INDEX IF NOT EXISTS idx_meeting_sessions_series ON meeting_sessions(calendar_series_id)",
         "CREATE INDEX IF NOT EXISTS idx_meeting_sessions_room ON meeting_sessions(room_identity)",
         """
+        CREATE TABLE IF NOT EXISTS meeting_title_overrides (
+            session_id TEXT PRIMARY KEY REFERENCES meeting_sessions(session_id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            original_title TEXT NOT NULL
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS meeting_notes (
             note_id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL UNIQUE REFERENCES meeting_sessions(session_id) ON DELETE CASCADE,
@@ -56,6 +63,48 @@ enum MeetingLibrarySchema {
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_meeting_outcomes_updated ON meeting_outcomes(updated_at)",
+        """
+        CREATE TABLE IF NOT EXISTS meeting_outcome_versions (
+            outcome_id TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            session_id TEXT NOT NULL REFERENCES meeting_sessions(session_id) ON DELETE CASCADE,
+            payload_json BLOB NOT NULL,
+            saved_at INTEGER,
+            PRIMARY KEY(outcome_id, revision)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_outcome_versions_session ON meeting_outcome_versions(session_id,saved_at,outcome_id)",
+        """
+        CREATE TABLE IF NOT EXISTS meeting_tasks (
+            task_id TEXT PRIMARY KEY,
+            outcome_id TEXT NOT NULL REFERENCES meeting_outcomes(outcome_id) ON DELETE CASCADE,
+            ordinal INTEGER NOT NULL,
+            payload_json BLOB NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_meeting_tasks_outcome ON meeting_tasks(outcome_id, ordinal)",
+        """
+        CREATE TABLE IF NOT EXISTS meeting_outcome_task_links (
+            outcome_id TEXT NOT NULL,
+            historical_task_id TEXT NOT NULL,
+            session_id TEXT NOT NULL REFERENCES meeting_sessions(session_id) ON DELETE CASCADE,
+            canonical_task_id TEXT REFERENCES meeting_tasks(task_id) ON DELETE SET NULL,
+            PRIMARY KEY(outcome_id, historical_task_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS personal_task_archive (
+            profile_id TEXT NOT NULL,
+            task_id TEXT NOT NULL REFERENCES meeting_tasks(task_id) ON DELETE CASCADE,
+            archived_at INTEGER NOT NULL,
+            PRIMARY KEY(profile_id, task_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS task_reminder_cancellations (
+            task_id TEXT PRIMARY KEY
+        )
+        """,
         """
         CREATE TABLE IF NOT EXISTS meeting_outcome_inputs (
             outcome_id TEXT PRIMARY KEY REFERENCES meeting_outcomes(outcome_id) ON DELETE CASCADE,
@@ -108,6 +157,43 @@ enum MeetingLibrarySchema {
             paused INTEGER NOT NULL DEFAULT 0,
             last_error_code TEXT,
             updated_at INTEGER NOT NULL,
+            PRIMARY KEY(destination_id, session_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS export_initial_state (
+            destination_id TEXT NOT NULL REFERENCES export_destinations(destination_id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES meeting_sessions(session_id) ON DELETE CASCADE,
+            stage TEXT NOT NULL CHECK(stage IN ('waiting','held','complete')),
+            PRIMARY KEY(destination_id, session_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS export_deferred (
+            destination_id TEXT NOT NULL REFERENCES export_destinations(destination_id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES meeting_sessions(session_id) ON DELETE CASCADE,
+            intent TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            snapshot_json BLOB NOT NULL,
+            policy_held INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(destination_id, session_id, intent)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS export_prepared_writes (
+            destination_id TEXT NOT NULL REFERENCES export_destinations(destination_id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES meeting_sessions(session_id) ON DELETE CASCADE,
+            component TEXT NOT NULL,
+            receipt_json BLOB NOT NULL,
+            PRIMARY KEY(destination_id, session_id, component)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS export_completed_deliveries (
+            destination_id TEXT NOT NULL REFERENCES export_destinations(destination_id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES meeting_sessions(session_id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL,
+            completed_at INTEGER NOT NULL,
             PRIMARY KEY(destination_id, session_id)
         )
         """,

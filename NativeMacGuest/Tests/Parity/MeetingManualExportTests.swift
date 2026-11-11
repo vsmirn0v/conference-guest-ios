@@ -60,6 +60,80 @@ final class MeetingManualExportTests: XCTestCase {
         XCTAssertEqual(MeetingManualExport.uniqueURL(directory: temp, fileName: "Sync.md").lastPathComponent, "Sync 3.md")
     }
 
+    func testExclusiveWritePreservesAnExistingFileAndDanglingSymlink() throws {
+        let first = temp.appendingPathComponent("Sync.md")
+        try Data("original".utf8).write(to: first)
+        let second = temp.appendingPathComponent("Sync 2.md")
+        try FileManager.default.createSymbolicLink(at: second, withDestinationURL: temp.appendingPathComponent("missing"))
+
+        let saved = try MeetingManualExport.writeUnique("new document", name: "Sync.md", directory: temp)
+        XCTAssertEqual(saved.lastPathComponent, "Sync 3.md")
+        XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "original")
+        XCTAssertEqual(try String(contentsOf: saved, encoding: .utf8), "new document")
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: second.path), temp.appendingPathComponent("missing").path)
+    }
+
+    func testBatchIndexLinksToActualCollisionSafeNamesAndRespectsContentSelection() throws {
+        let firstID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000011"))
+        let secondID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000012"))
+        var first = item(title: "Sync", markdown: "first draft", unsaved: true)
+        var second = item(title: "Sync", markdown: "second draft")
+        first.session.id = firstID
+        second.session.id = secondID
+        let options = MeetingManualExportOptions(format: .filesWithIndex, sections: [.notes])
+
+        let result = MeetingManualExport.write(items: [first, second], directory: temp, options: options)
+        XCTAssertEqual(result.map(\.name), ["Sync 00000000.md", "Sync 00000000 2.md", "Meeting index.md"])
+        let firstText = try String(contentsOf: XCTUnwrap(result[0].url), encoding: .utf8)
+        XCTAssertTrue(firstText.contains("first draft"))
+        XCTAssertTrue(firstText.contains("Unsaved draft"))
+        XCTAssertFalse(firstText.contains("## Outcome"))
+        let index = try String(contentsOf: XCTUnwrap(result[2].url), encoding: .utf8)
+        XCTAssertTrue(index.contains("(Sync%2000000000.md)"))
+        XCTAssertTrue(index.contains("(Sync%2000000000%202.md)"))
+    }
+
+    func testPeriodIncludesBothEndpointsAcrossDaylightSavingChange() throws {
+        let formatter = ISO8601DateFormatter()
+        func date(_ value: String) throws -> Date { try XCTUnwrap(formatter.date(from: value)) }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let from = try date("2026-03-08T21:00:00Z")
+        let through = try date("2026-03-08T22:00:00Z")
+        XCTAssertTrue(MeetingManualExport.periodIncludes(try date("2026-03-08T08:00:00Z"), from: from, through: through, calendar: calendar))
+        XCTAssertTrue(MeetingManualExport.periodIncludes(try date("2026-03-09T06:59:59Z"), from: from, through: through, calendar: calendar))
+        XCTAssertFalse(MeetingManualExport.periodIncludes(try date("2026-03-09T07:00:00Z"), from: from, through: through, calendar: calendar))
+        XCTAssertFalse(MeetingManualExport.periodIncludes(nil, from: from, through: through, calendar: calendar))
+    }
+
+    @MainActor func testManualExportRecoversCurrentDraftWhenStoreCannotCommit() async throws {
+        let library = MeetingLibraryController(root: temp)
+        await library.prepare()
+        _ = await library.createSession(id: sessionID, title: "Sync", invitation: nil,
+            roomIdentity: "", calendarSeriesID: nil)
+        _ = await library.saveNote(sessionID: sessionID, markdown: "Original note")
+        await library.refresh()
+        let card = try XCTUnwrap(library.cards.first { $0.sessionID == sessionID })
+        let notes = MeetingNotesController(library: library)
+        await notes.load(sessionID: sessionID)
+        await library.close()
+        notes.update(sessionID: sessionID, text: "Current unsaved **draft**")
+
+        let controller = MeetingManualExportController(library: library, notes: notes, flushOutcomeWrites: {})
+        let (items, failures) = await controller.makeItems(cards: [card])
+        XCTAssertTrue(failures.isEmpty)
+        let recovered = try XCTUnwrap(items.first)
+        XCTAssertTrue(recovered.isUnsavedDraft)
+        XCTAssertTrue(MeetingManualExport.render(item: recovered).contains("Current unsaved **draft**"))
+        XCTAssertEqual(notes.buffer(sessionID: sessionID), "Current unsaved **draft**")
+        XCTAssertNotNil(notes.draft(sessionID: sessionID)?.saveError)
+
+        try await library.store.prepare()
+        let original = try await library.store.note(sessionID)
+        XCTAssertEqual(original?.markdown, "Original note")
+        await library.close()
+    }
+
     func testWorklogOrdersByStartTimeWithSessionTieBreak() {
         let later = item(title: "Later", startedAt: Date(timeIntervalSince1970: 2_000))
         let earlier = item(title: "Earlier", startedAt: Date(timeIntervalSince1970: 1_000))

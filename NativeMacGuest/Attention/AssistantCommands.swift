@@ -177,6 +177,12 @@ enum AssistantCommandPrompt {
 
 /// ISO 8601 instants, including values the stock formatter rejects: no seconds, no time zone.
 enum AssistantTime {
+    static func calendarDay(_ text: String) -> String? {
+        guard let value = fields(in: text.trimmed), value.hour == nil,
+              let date = dateOnly(value.normalized), matches(date, value) else { return nil }
+        return value.normalized
+    }
+
     static func parse(_ text: String) -> Date? {
         let raw = text.trimmed
         guard !raw.isEmpty, let fields = fields(in: raw) else { return nil }

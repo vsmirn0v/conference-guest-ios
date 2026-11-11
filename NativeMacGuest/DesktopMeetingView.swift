@@ -662,7 +662,7 @@ struct NativeDesktopMeetingView: View {
                 stopLiveAudioCheck: { try await model.engine.stopPrivateAudioCheck() },
                 liveAudioLevel: { model.engine.privateAudioLevel })
             case .presenter: NativeDesktopPresenterView(model: model)
-            case .notes: MeetingNotesView(model: model)
+            case .notes: LiveMeetingNotes(model: model, workspace: workspace)
             }
         }
     }

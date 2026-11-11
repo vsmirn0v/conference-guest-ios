@@ -12,6 +12,7 @@ enum MarkdownFilePatcher {
         var blockSHA256: String
         /// SHA-256 of the whole resulting file.
         var fileSHA256: String
+        var metadataSHA256: String?
     }
 
     static func sha256(_ text: String) -> String {
@@ -25,7 +26,8 @@ enum MarkdownFilePatcher {
     /// - The previous managed content differing from `expectedBlockSHA256`: conflict.
     static func patch(existing: String, sessionID: UUID, nonce: String,
                       component: ObsidianExportComponent, managedContent: String,
-                      expectedBlockSHA256: String?) throws -> PatchResult {
+                      expectedBlockSHA256: String?, insertionByteOffset: Int? = nil,
+                      insertionHeader: String? = nil) throws -> PatchResult {
         let structure = MarkdownStructureScanner.scan(existing)
         if let ambiguity = structure.markerAmbiguity {
             throw ObsidianExportError.markerDamage(ambiguity)
@@ -34,9 +36,14 @@ enum MarkdownFilePatcher {
         let end = ManagedBlock.endMarker(sessionID: sessionID, nonce: nonce, component: component)
         let blockText = begin + "\n" + managedContent + "\n" + end
 
-        if let owned = structure.managedBlocks.first(where: {
-            $0.markers.sessionID == sessionID && $0.markers.nonce == nonce && $0.markers.component == component
-        }) {
+        let matches = structure.managedBlocks.filter {
+            $0.markers.sessionID == sessionID && $0.markers.component == component
+        }
+        if matches.count > 1 { throw ObsidianExportError.markerDamage("The same meeting appears more than once.") }
+        if let owned = matches.first {
+            guard owned.markers.nonce == nonce else {
+                throw ObsidianExportError.markerDamage("The managed block has an unexpected identity.")
+            }
             // Managed content = lines strictly between the markers.
             let innerStart = structure.lines[owned.beginLine].byteEnd + 1
             let innerEnd = structure.lines[owned.endLine].byteStart
@@ -49,7 +56,7 @@ enum MarkdownFilePatcher {
                 throw ObsidianExportError.managedBlockConflict
             }
             let bytes = Data(existing.utf8)
-            let updated = bytes.prefix(innerStart) + Data(blockText.utf8) + bytes.suffix(bytes.count - innerEnd)
+            let updated = bytes.prefix(innerStart) + Data((managedContent + "\n").utf8) + bytes.suffix(bytes.count - innerEnd)
             guard let text = String(data: updated, encoding: .utf8) else {
                 throw ObsidianExportError.markerDamage("patched file is not valid UTF-8")
             }
@@ -58,12 +65,42 @@ enum MarkdownFilePatcher {
 
         // No owned block: refuse to create one next to an unclaimed marker pair that
         // would be ambiguous, then append at the end.
-        if structure.managedBlocks.contains(where: { $0.markers.component == component }) {
+        if expectedBlockSHA256 != nil {
+            throw ObsidianExportError.markerDamage("The previously exported managed block is missing.")
+        }
+        if component == .meeting, structure.managedBlocks.contains(where: { $0.markers.component == component }) {
             throw ObsidianExportError.markerDamage("another unmanaged \(component.rawValue) marker pair exists")
         }
-        let base = existing.hasSuffix("\n") || existing.isEmpty ? existing : existing + "\n"
-        let text = base + "\n" + blockText + "\n"
+        let bytes = Data(existing.utf8)
+        let offset = insertionByteOffset ?? bytes.count
+        guard (0...bytes.count).contains(offset),
+              let prefix = String(data: bytes.prefix(offset), encoding: .utf8),
+              let suffix = String(data: bytes.suffix(from: offset), encoding: .utf8) else {
+            throw ObsidianExportError.markerDamage("the insertion offset is invalid")
+        }
+        let separator = prefix.isEmpty ? "" : prefix.hasSuffix("\n") ? "\n" : "\n\n"
+        let text = prefix + separator + (insertionHeader.map { $0 + "\n\n" } ?? "") + blockText + "\n" +
+            (suffix.isEmpty ? "" : "\n" + suffix)
         return PatchResult(text: text, blockSHA256: sha256(managedContent), fileSHA256: sha256(text))
+    }
+
+    static func managedBlockHash(in text: String, sessionID: UUID, nonce: String,
+                                 component: ObsidianExportComponent) -> String? {
+        managedBlockContent(in: text, sessionID: sessionID, nonce: nonce, component: component).map(sha256)
+    }
+
+    static func managedBlockContent(in text: String, sessionID: UUID, nonce: String,
+                                    component: ObsidianExportComponent) -> String? {
+        let structure = MarkdownStructureScanner.scan(text)
+        guard structure.markerAmbiguity == nil else { return nil }
+        let matching = structure.managedBlocks.filter {
+            $0.markers.sessionID == sessionID && $0.markers.component == component
+        }
+        guard matching.count == 1, let block = matching.first, block.markers.nonce == nonce else { return nil }
+        let start = structure.lines[block.beginLine].byteEnd + 1
+        let end = structure.lines[block.endLine].byteStart
+        guard start <= end, let inner = substring(of: text, bytes: start..<end) else { return nil }
+        return inner.hasSuffix("\n") ? String(inner.dropLast()) : inner
     }
 
     /// Full-file creation for a separate meeting file: frontmatter + managed block.
