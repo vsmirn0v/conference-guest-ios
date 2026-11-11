@@ -89,30 +89,28 @@ struct StoredClonedVoice: Codable, Equatable {
     @Published private(set) var preparation: Preparation = .idle
     @Published private(set) var preparingSince: Date?
     private let voiceURL: URL
-    private let build: String
+    private let identity: String?
+    private let engine: ClonedVoiceEngine
     private var observation: AnyCancellable?
-    private var recoveryObservation: AnyCancellable?
-    private var recoveringAssets = Set<URL>()
-    private var recoveryFailure: String?
+    private var prepareTask: Task<Void, Never>?
+    private var waitingForOwner: Task<Void, Never>?
+    private var deleting = false
 
     init(model: ListenModelCatalog.Model? = VoiceCloneSupport.model, listen: ListenModelStore = .shared, folder: URL? = nil,
-         build: String = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0") + " " + ProcessInfo.processInfo.operatingSystemVersionString) {
+         engine: ClonedVoiceEngine = .shared, osBuild: String = ClonedVoicePreparation.systemBuild) {
         self.model = model
         self.listen = listen
-        self.build = build
+        self.engine = engine
+        identity = model.map { ClonedVoicePreparation.identity(for: $0, osBuild: osBuild) }
         voiceURL = (folder ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
             FileManager.default.temporaryDirectory).appendingPathComponent("Voices", isDirectory: true))
             .appendingPathComponent("voxcpm2-voice.json")
         stored = (try? Data(contentsOf: voiceURL)).flatMap { try? JSONDecoder().decode(StoredClonedVoice.self, from: $0) }
             .flatMap { $0.voice.revision == VoxVoice.revision ? $0 : nil }
-        if installed && preparedMarker == build { preparation = .ready }
-        // Prepare as soon as a download finishes.
+        restorePreparation()
         observation = listen.$states.receive(on: DispatchQueue.main).sink { [weak self] states in
-            guard let self, let model = self.model, states[model.id] == .installed, self.preparation == .idle else { return }
+            guard let self, let model = self.model, states[model.id] == .installed else { return }
             self.prepareIfNeeded()
-        }
-        recoveryObservation = VoxRecoveryEvents.publisher.receive(on: DispatchQueue.main).sink { [weak self] event in
-            self?.recoveryDidChange(event)
         }
     }
 
@@ -120,81 +118,149 @@ struct StoredClonedVoice: Codable, Equatable {
     var installed: Bool { model.map { listen.state($0).installed } ?? false }
     var bundleFolder: URL? { model.map(listen.folder) }
     var voice: VoxVoice? { stored?.voice }
-    /// Replies can be spoken now, without a long first preparation.
-    var ready: Bool { installed && stored != nil && preparation == .ready }
+    var ready: Bool { installed && stored != nil && preparation == .ready && !deleting }
 
-    private var markerURL: URL? { bundleFolder?.appendingPathComponent(".prepared") }
-    private var preparedMarker: String? { markerURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } }
-
-    /// A cached model can fail only when inference first touches it. Keep readiness
-    /// honest throughout that later rebuild, including across an app relaunch.
-    func recoveryDidChange(_ event: VoxRecoveryEvent) {
-        guard let folder = bundleFolder,
-              event.asset.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL else { return }
-        switch event.phase {
-        case .started:
-            recoveringAssets.insert(event.asset)
-            recoveryFailure = nil
-            preparation = .preparing
-            if preparingSince == nil { preparingSince = Date() }
-            if let markerURL { try? FileManager.default.removeItem(at: markerURL) }
-        case .succeeded:
-            recoveringAssets.remove(event.asset)
-            finishRecoveryIfNeeded(folder: folder)
-        case .failed:
-            recoveringAssets.remove(event.asset)
-            recoveryFailure = event.error ?? VoiceSynthesisError.clonePreparing.localizedDescription
-            preparation = .failed(recoveryFailure!)
-            preparingSince = recoveringAssets.isEmpty ? nil : preparingSince
+    private func display(_ record: ClonedVoicePreparation?) {
+        preparingSince = record?.state == .preparing ? record?.startedAt : nil
+        switch record?.state {
+        case .preparing: preparation = .preparing
+        case .ready: preparation = .ready
+        case .failed: preparation = .failed(record?.message ?? VoiceSynthesisError.clonePreparationFailed.localizedDescription)
+        case nil: preparation = .idle
         }
     }
 
-    private func finishRecoveryIfNeeded(folder: URL) {
-        guard recoveringAssets.isEmpty else { return }
-        preparingSince = nil
-        if let recoveryFailure {
-            preparation = .failed(recoveryFailure)
-        } else {
-            try? build.write(to: folder.appendingPathComponent(".prepared"), atomically: true, encoding: .utf8)
-            preparation = .ready
+    private func restorePreparation() {
+        guard !deleting, prepareTask == nil, installed, let folder = bundleFolder, let identity else { return }
+        let record = ClonedVoicePreparation.read(folder, identity: identity)
+        guard record?.state == .preparing else { display(record); return }
+        do {
+            let lease = try ClonedVoiceLease(folder: folder, purpose: "preparation")
+            try withExtendedLifetime(lease) {
+                // The old owner may have finished between the first read and acquisition.
+                guard var latest = ClonedVoicePreparation.read(folder, identity: identity), latest.state == .preparing else {
+                    display(ClonedVoicePreparation.read(folder, identity: identity))
+                    return
+                }
+                latest.state = .failed
+                latest.message = L("Voice preparation was interrupted. Choose Try Again to continue.")
+                try latest.write(folder)
+                display(latest)
+            }
+        } catch ClonedVoiceWorkerError.busy {
+            display(record)
+            watchPreparationOwner()
+        } catch {
+            displayFailure(error)
         }
+    }
+
+    private func watchPreparationOwner() {
+        guard waitingForOwner == nil else { return }
+        waitingForOwner = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+                guard let self else { return }
+                self.restorePreparation()
+                if self.preparation != .preparing || self.prepareTask != nil || self.deleting {
+                    self.waitingForOwner = nil
+                    return
+                }
+            }
+        }
+    }
+
+    private func displayFailure(_ error: Error) {
+        preparation = .failed(error.localizedDescription)
+        preparingSince = nil
     }
 
     func download() { if let model { listen.download(model) } }
     func cancelDownload() { if let model { listen.cancel(model) } }
 
     func deleteModel() {
-        guard let model else { return }
-        Task { await ClonedVoiceEngine.shared.unload() }
-        listen.delete(model)
-        preparation = .idle
-        preparingSince = nil
-    }
-
-    /// Loads the model once in the background so Core AI compiles it for this Mac's Neural Engine.
-    /// It happens after the download and again after an app or macOS update changes the build.
-    func prepareIfNeeded() {
-        guard installed, preparation != .preparing, preparation != .ready || preparedMarker != build else { return }
-        prepare()
-    }
-
-    func prepare() {
-        guard installed, preparation != .preparing, let folder = bundleFolder else { return }
-        preparation = .preparing
-        preparingSince = Date()
-        recoveryFailure = nil
-        let started = ProcessInfo.processInfo.systemUptime
-        probeLog("voice-clone-prepare-started", ["architecture": VoiceCloneSupport.architecture ?? ""])
-        Task { [weak self] in
+        guard !deleting, let model, let folder = bundleFolder else { return }
+        deleting = true
+        prepareTask?.cancel()
+        Task {
+            await engine.unload()
+            await prepareTask?.value
+            defer { deleting = false }
             do {
-                try await ClonedVoiceEngine.shared.load(folder)
-                self?.finishRecoveryIfNeeded(folder: folder)
-                probeLog("voice-clone-prepared", ["seconds": Int(ProcessInfo.processInfo.systemUptime - started)])
+                let preparationLease = try ClonedVoiceLease(folder: folder, purpose: "preparation")
+                let workerLease = try ClonedVoiceLease(folder: folder, purpose: "worker")
+                withExtendedLifetime((preparationLease, workerLease)) { listen.delete(model) }
+                display(nil)
             } catch {
-                self?.preparation = .failed(error.localizedDescription)
-                probeLog("voice-clone-prepare-failed", ["error": String(describing: type(of: error))])
+                displayFailure(error)
             }
-            if self?.recoveringAssets.isEmpty != false { self?.preparingSince = nil }
+        }
+    }
+
+    /// Fresh downloads and runtime changes start one preparation. An interrupted or
+    /// failed attempt remains visible after relaunch until the user retries.
+    func prepareIfNeeded() {
+        guard !deleting, prepareTask == nil, installed else { return }
+        restorePreparation()
+        if preparation == .idle { startPreparation(explicitRetry: false) }
+    }
+
+    func prepare() { startPreparation(explicitRetry: true) }
+
+    private func startPreparation(explicitRetry: Bool) {
+        guard !deleting, prepareTask == nil, installed, let folder = bundleFolder, let identity else { return }
+        do {
+            let lease = try ClonedVoiceLease(folder: folder, purpose: "preparation")
+            let previous = ClonedVoicePreparation.read(folder, identity: identity)
+            if previous?.state == .ready { display(previous); return }
+            let now = Date()
+            let recent = (previous?.recentStarts ?? []).filter { $0 > now.addingTimeInterval(-ClonedVoicePreparation.retryInterval) }
+            guard recent.count < ClonedVoicePreparation.retryLimit else {
+                preparation = .failed(L("The voice model reached its preparation retry limit. Try again in an hour."))
+                preparingSince = nil
+                return
+            }
+            let repaired = previous?.repairedAssets ?? []
+            let repair = explicitRetry ? previous?.repairAsset.flatMap { repaired.contains($0) ? nil : $0 } : nil
+            let record = ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .preparing,
+                                                startedAt: now, recentStarts: recent + [now],
+                                                repairedAssets: repaired + (repair.map { [$0] } ?? []))
+            try record.write(folder)
+            display(record)
+            let started = ProcessInfo.processInfo.systemUptime
+            probeLog("voice-clone-prepare-started", ["architecture": model?.config["architecture"] ?? ""])
+            prepareTask = Task {
+                defer {
+                    withExtendedLifetime(lease) {}
+                    prepareTask = nil
+                }
+                var outcome = record
+                do {
+                    try Task.checkCancellation()
+                    try await engine.prepare(folder, repairAsset: repair)
+                    outcome.state = .ready
+                } catch ClonedVoiceWorkerError.busy {
+                    outcome.state = .failed
+                    outcome.message = ClonedVoiceWorkerError.busy.localizedDescription
+                    outcome.recentStarts = recent
+                    outcome.repairedAssets = repaired
+                    outcome.repairAsset = previous?.repairAsset
+                } catch {
+                    outcome.state = .failed
+                    outcome.message = error.localizedDescription
+                    if case ClonedVoiceWorkerError.runtime(_, let asset) = error { outcome.repairAsset = asset }
+                }
+                guard installed, !deleting else { return }
+                do { try outcome.write(folder); display(outcome) }
+                catch { displayFailure(error) }
+                probeLog(outcome.state == .ready && preparation == .ready ? "voice-clone-prepared" : "voice-clone-prepare-failed",
+                         ["seconds": Int(ProcessInfo.processInfo.systemUptime - started)])
+            }
+        } catch ClonedVoiceWorkerError.busy {
+            restorePreparation()
+            watchPreparationOwner()
+        } catch {
+            displayFailure(error)
         }
     }
 
@@ -229,188 +295,50 @@ struct StoredClonedVoice: Codable, Equatable {
     /// The voice and model folder for a reply, or why a reply cannot be spoken yet.
     func synthesisInputs() throws -> (voice: VoxVoice, folder: URL) {
         guard available else { throw VoiceSynthesisError.cloneUnsupported }
-        guard installed, let folder = bundleFolder else { throw VoiceSynthesisError.cloneModelMissing }
+        guard !deleting, installed, let folder = bundleFolder else { throw VoiceSynthesisError.cloneModelMissing }
+        restorePreparation()
         guard let voice else { throw VoiceSynthesisError.cloneVoiceMissing }
         switch preparation {
         case .ready: return (voice, folder)
         case .preparing: throw VoiceSynthesisError.clonePreparing
-        case .idle, .failed:
-            prepare()
+        case .idle:
+            prepareIfNeeded()
             throw VoiceSynthesisError.clonePreparing
+        case .failed:
+            throw VoiceSynthesisError.clonePreparationFailed
         }
     }
-}
 
-enum ClonedVoiceEnginePhase: Equatable, Sendable {
-    case unloaded, loading, loaded, unloading, failed
-}
-
-/// Runtime residency for the cloned voice model. Preparation state remains in
-/// VoiceCloneStore; this snapshot describes what the engine currently holds.
-struct ClonedVoiceRuntimeSnapshot: Equatable, Sendable {
-    var folder: URL?
-    var phase: ClonedVoiceEnginePhase = .unloaded
-    var generation = 0
-    var activeSpeeches = 0
-    var queuedSpeeches = 0
-    var idleDeadline: Date?
-    var error: String?
-}
-
-/// Runs the voice model: one reply at a time, kept loaded for a while after the last one.
-actor ClonedVoiceEngine {
-    static let shared = ClonedVoiceEngine()
-    static let idleNanoseconds: UInt64 = 10 * 60 * 1_000_000_000
-
-    nonisolated let runtime = CurrentValueSubject<ClonedVoiceRuntimeSnapshot, Never>(.init())
-    private var model: AnyObject?
-    private var folder: URL?
-    private var loading: (folder: URL, task: Task<AnyObject, Error>)?
-    private var tail: Task<Void, Never>?
-    private var idle: Task<Void, Never>?
-    private var runtimeState = ClonedVoiceRuntimeSnapshot()
-
-    func load(_ folder: URL) async throws { _ = try await loaded(folder) }
-
-    func unload() {
-        generation += 1
-        idle?.cancel()
-        idle = nil
-        loading?.task.cancel()
-        loading = nil
-        model = nil
-        self.folder = nil
-        loading = nil
-        runtimeState.queuedSpeeches = 0
-        runtimeState.phase = .unloading
-        publishRuntime()
-        LocalModelMemoryTracker.shared.clear(.voice)
-        runtimeState.folder = nil
-        runtimeState.phase = .unloaded
-        runtimeState.idleDeadline = nil
-        runtimeState.error = nil
-        publishRuntime()
-    }
-
-    /// 48 kHz mono samples of `text` in `voice`. Requests wait for the one before them.
-    func speak(_ text: String, voice: VoxVoice, folder: URL) async throws -> [Float] {
-        let previous = tail
-        let startedGeneration = generation
-        runtimeState.queuedSpeeches += 1
-        publishRuntime()
-        let work = Task { () async throws -> [Float] in
-            await previous?.value
-            return try await self.generate(text, voice: voice, folder: folder)
-        }
-        tail = Task { [weak self] in
-            _ = try? await work.value
-            await self?.speechQueuedFinished(generation: startedGeneration)
-        }
-        return try await work.value
-    }
-
-    var runtimeSnapshot: ClonedVoiceRuntimeSnapshot { runtimeState }
-
-    private var generation = 0 {
-        didSet { runtimeState.generation = generation }
-    }
-
-    private func speechQueuedFinished(generation: Int) {
-        guard generation == self.generation else { return }
-        runtimeState.queuedSpeeches = max(0, runtimeState.queuedSpeeches - 1)
-        publishRuntime()
-    }
-
-    private func loaded(_ folder: URL) async throws -> AnyObject {
-        if let model, self.folder == folder {
-            runtimeState.folder = folder
-            runtimeState.error = nil
-            publishRuntime()
-            return model
-        }
-        if let loading, loading.folder == folder { return try await loading.task.value }
-
-        generation += 1
-        let startedGeneration = generation
-        let token = LocalModelMemoryTracker.shared.begin(.voice)
-        runtimeState.folder = folder
-        runtimeState.phase = .loading
-        runtimeState.idleDeadline = nil
-        runtimeState.error = nil
-        publishRuntime()
-
-        let task = Task.detached(priority: .utility) { () async throws -> AnyObject in
-            #if canImport(CoreAI)
-            if #available(macOS 27.0, *) { return try await VoxCPM2(bundle: folder) }
-            #endif
-            throw VoiceSynthesisError.cloneUnsupported
-        }
-        loading = (folder, task)
-        defer { loading = nil }
+    func speak(_ text: String) async throws -> [Float] {
+        try Task.checkCancellation()
+        let inputs = try synthesisInputs()
+        let receipt = identity.flatMap { ClonedVoicePreparation.read(inputs.folder, identity: $0) }
         do {
-            let value = try await task.value
-            guard startedGeneration == generation else { throw VoiceSynthesisError.cloneModelMissing }
-            model = value
-            self.folder = folder
-            runtimeState.phase = .loaded
-            publishRuntime()
-            LocalModelMemoryTracker.shared.complete(.voice, token: token, success: true)
-            return value
+            return try await engine.speak(text, voice: inputs.voice, folder: inputs.folder)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
-            if startedGeneration == generation {
-                runtimeState.phase = .failed
-                runtimeState.error = String(describing: error)
-                publishRuntime()
-                LocalModelMemoryTracker.shared.complete(.voice, token: token, success: false)
+            switch error as? ClonedVoiceWorkerError {
+            case .busy, .context: break
+            default: recordInferenceFailure(error, folder: inputs.folder, receipt: receipt)
             }
             throw error
         }
     }
 
-    private func generate(_ text: String, voice: VoxVoice, folder: URL) async throws -> [Float] {
-        idle?.cancel()
-        idle = nil
-        runtimeState.idleDeadline = nil
-        let startedGeneration = generation
-        runtimeState.activeSpeeches += 1
-        publishRuntime()
-        defer {
-            runtimeState.activeSpeeches = max(0, runtimeState.activeSpeeches - 1)
-            publishRuntime()
-            if startedGeneration == generation { scheduleIdleUnload(folder: folder, generation: startedGeneration) }
-        }
-        let model = try await loaded(folder)
-        guard startedGeneration == generation else { throw VoiceSynthesisError.cloneModelMissing }
-        #if canImport(CoreAI)
-        if #available(macOS 27.0, *), let model = model as? VoxCPM2 {
-            let samples = try await model.generate(text, voice: voice, seed: UInt64.random(in: 0...UInt64.max))
-            LocalModelMemoryTracker.shared.refine(.voice)
-            return samples
-        }
-        #endif
-        throw VoiceSynthesisError.cloneUnsupported
-    }
-
-    private func scheduleIdleUnload(folder: URL, generation: Int) {
-        guard runtimeState.activeSpeeches == 0, runtimeState.phase == .loaded else { return }
-        let deadline = Date().addingTimeInterval(TimeInterval(Self.idleNanoseconds) / 1_000_000_000)
-        runtimeState.idleDeadline = deadline
-        publishRuntime()
-        idle = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.idleNanoseconds)
-            guard !Task.isCancelled, let self else { return }
-            await self.unloadIfStillIdle(folder: folder, generation: generation)
+    private func recordInferenceFailure(_ error: Error, folder: URL, receipt: ClonedVoicePreparation?) {
+        guard !deleting, let receipt, let lease = try? ClonedVoiceLease(folder: folder, purpose: "preparation") else { return }
+        withExtendedLifetime(lease) {
+            guard var current = ClonedVoicePreparation.read(folder, identity: receipt.identity),
+                  current.attempt == receipt.attempt, current.state == .ready else { return }
+            current.state = .failed
+            current.message = error.localizedDescription
+            if case ClonedVoiceWorkerError.runtime(_, let asset) = error { current.repairAsset = asset }
+            do { try current.write(folder); display(current) }
+            catch { displayFailure(error) }
         }
     }
 
-    /// On the actor: the idle deadline passed with no new speech on the same load.
-    private func unloadIfStillIdle(folder: URL, generation: Int) {
-        guard generation == self.generation, self.folder == folder,
-              runtimeState.activeSpeeches == 0, runtimeState.phase == .loaded else { return }
-        unload()
-    }
-
-    private func publishRuntime() { runtime.send(runtimeState) }
 }
 
 /// Reading, resampling and trimming voice recordings.

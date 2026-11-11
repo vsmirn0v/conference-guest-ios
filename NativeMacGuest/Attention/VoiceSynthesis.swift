@@ -16,7 +16,7 @@ enum VoiceEngine: String, Codable, CaseIterable, Sendable {
 
 enum VoiceSynthesisError: LocalizedError, Equatable {
     case empty, system, server(Int, String?), transport, audio, personalUnsupported, personalDenied, personalMissing
-    case cloneUnsupported, cloneModelMissing, cloneVoiceMissing, clonePreparing, cloneTranscriptMissing
+    case cloneUnsupported, cloneModelMissing, cloneVoiceMissing, clonePreparing, clonePreparationFailed, clonePreviewWaiting, cloneTranscriptMissing
     case cloneSampleTooShort, cloneSampleTooLong, microphoneDenied
     var errorDescription: String? {
         switch self {
@@ -33,6 +33,8 @@ enum VoiceSynthesisError: LocalizedError, Equatable {
         case .cloneModelMissing: L("Download the voice model in Settings → Assistant → Voice first.")
         case .cloneVoiceMissing: L("Record your voice in Settings → Assistant → Voice first.")
         case .clonePreparing: L("The voice model is still being prepared for this Mac's Neural Engine. Try again when Settings shows it is ready.")
+        case .clonePreparationFailed: L("Voice preparation failed. Choose Try Again in Settings → Assistant → Voice.")
+        case .clonePreviewWaiting: L("The cloned voice is still working. Try the preview again in a moment.")
         case .cloneTranscriptMissing: L("Enter the words you read in the recording.")
         case .cloneSampleTooShort: L("The recording is too short. Read for at least %ld seconds.", Int(VoiceSampleAudio.minimumSeconds))
         case .cloneSampleTooLong: L("The recording is too long. Keep it under %ld seconds.", Int(VoiceSampleAudio.maximumSeconds))
@@ -141,8 +143,7 @@ enum VoiceSynthesis {
     static func cloned(_ text: String) async throws -> AVAudioPCMBuffer {
         let clean = text.trimmed
         guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
-        let inputs = try await MainActor.run { try VoiceCloneStore.shared.synthesisInputs() }
-        let samples = try await ClonedVoiceEngine.shared.speak(clean, voice: inputs.voice, folder: inputs.folder)
+        let samples = try await VoiceCloneStore.shared.speak(clean)
         return try VoiceSampleAudio.buffer(samples, rate: 48_000)
     }
 

@@ -63,6 +63,11 @@ import XCTest
         return store
     }
 
+    private func writeVoiceReceipt(_ model: ListenModelCatalog.Model, folder: URL) throws {
+        try ClonedVoicePreparation(identity: ClonedVoicePreparation.identity(for: model), attempt: UUID(),
+                                   state: .ready, startedAt: Date(), recentStarts: []).write(folder)
+    }
+
     private func voiceFixtures(stored: Bool = true, preparationReady: Bool = true) throws -> (ListenModelStore, VoiceCloneStore) {
         let model = catalogModel(id: "voxcpm2-test", role: VoiceCloneSupport.role, kind: VoiceCloneSupport.kind,
                                  config: ["architecture": "h16g"])
@@ -70,7 +75,7 @@ import XCTest
         if preparationReady {
             let prepared = listen.folder(model)
             try FileManager.default.createDirectory(at: prepared, withIntermediateDirectories: true)
-            try "1".write(to: prepared.appendingPathComponent(".prepared"), atomically: true, encoding: .utf8)
+            try writeVoiceReceipt(model, folder: prepared)
         }
         if stored {
             let voice = StoredClonedVoice(voice: .init(mode: .cloneContinuation, transcript: "Привет",
@@ -80,10 +85,10 @@ import XCTest
             let url = folder.appendingPathComponent("Voices-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             try JSONEncoder().encode(voice).write(to: url.appendingPathComponent("voxcpm2-voice.json"))
-            return (listen, VoiceCloneStore(model: model, listen: listen, folder: url, build: "1"))
+            return (listen, VoiceCloneStore(model: model, listen: listen, folder: url))
         }
         return (listen, VoiceCloneStore(model: model, listen: listen,
-                                        folder: folder.appendingPathComponent("Voices-\(UUID().uuidString)"), build: "1"))
+                                        folder: folder.appendingPathComponent("Voices-\(UUID().uuidString)")))
     }
 
     /// Production shapes the status store's `listenStore` and the voice store's
@@ -95,10 +100,10 @@ import XCTest
         let listen = listenStore(models: [vox], enabled: false)
         let prepared = listen.folder(vox)
         try FileManager.default.createDirectory(at: prepared, withIntermediateDirectories: true)
-        try "1".write(to: prepared.appendingPathComponent(".prepared"), atomically: true, encoding: .utf8)
+        try writeVoiceReceipt(vox, folder: prepared)
         let url = folder.appendingPathComponent("Voices-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        let voice = VoiceCloneStore(model: vox, listen: listen, folder: url, build: "1")
+        let voice = VoiceCloneStore(model: vox, listen: listen, folder: url)
         return (listen, voice)
     }
 
@@ -226,54 +231,6 @@ import XCTest
         XCTAssertEqual(readyStore.voiceStatus.readiness, .ready)
         XCTAssertEqual(readyStore.voiceStatus.residency, .unloaded)
         XCTAssertEqual(readyStore.overallSummary, L("Ready"))
-    }
-
-    func testDeepVoiceCacheRebuildChangesReadinessAndPreparedMarker() throws {
-        let listen = listenStore(models: [])
-        let (_, voice) = try voiceFixtures()
-        let store = statusStore(listen: listen, voice: voice, attention: attentionStore())
-        let folder = try XCTUnwrap(voice.bundleFolder)
-        let marker = folder.appendingPathComponent(".prepared")
-        let encoder = folder.appendingPathComponent("encoder.h16g.aimodelc")
-        let residual = folder.appendingPathComponent("residual.h16g.aimodelc")
-        XCTAssertEqual(voice.preparation, .ready)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
-
-        voice.recoveryDidChange(.init(phase: .started, asset: encoder, error: nil))
-        voice.recoveryDidChange(.init(phase: .started, asset: residual, error: nil))
-        store.refreshForTesting()
-        XCTAssertEqual(voice.preparation, .preparing)
-        XCTAssertEqual(store.voiceStatus.readiness, .preparing)
-        XCTAssertEqual(store.overallSummary, L("Preparing"))
-        XCTAssertNotNil(voice.preparingSince)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path),
-                       "a relaunch must not inherit readiness from the unusable cache")
-
-        voice.recoveryDidChange(.init(phase: .succeeded, asset: encoder, error: nil))
-        store.refreshForTesting()
-        XCTAssertEqual(store.voiceStatus.readiness, .preparing, "another asset is still rebuilding")
-        voice.recoveryDidChange(.init(phase: .succeeded, asset: residual, error: nil))
-        store.refreshForTesting()
-        XCTAssertEqual(voice.preparation, .ready)
-        XCTAssertEqual(store.voiceStatus.readiness, .ready)
-        XCTAssertNil(voice.preparingSince)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
-
-        voice.recoveryDidChange(.init(phase: .started, asset: encoder, error: nil))
-        voice.recoveryDidChange(.init(phase: .failed, asset: encoder, error: "specialization failed"))
-        store.refreshForTesting()
-        XCTAssertEqual(voice.preparation, .failed("specialization failed"))
-        XCTAssertEqual(store.voiceStatus.readiness, .failed("specialization failed"))
-        XCTAssertEqual(store.overallSummary, L("Model issue"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
-    }
-
-    func testRecoveryEventsForAnotherBundleDoNotChangeReadiness() throws {
-        let listen = listenStore(models: [])
-        let (_, voice) = try voiceFixtures()
-        let other = folder.appendingPathComponent("other/encoder.h16g.aimodelc")
-        voice.recoveryDidChange(.init(phase: .started, asset: other, error: nil))
-        XCTAssertEqual(voice.preparation, .ready)
     }
 
     func testVoiceLoadedResidencyAndMemory() throws {

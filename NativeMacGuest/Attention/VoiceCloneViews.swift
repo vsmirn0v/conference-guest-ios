@@ -55,8 +55,11 @@ struct VoiceCloneSettingsView: View {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L("Preparing for this Mac's Neural Engine…"))
-                    Text(L("This happens once after a download or an update and can take half an hour. You can keep working; meetings are not affected."))
+                    Text(L("The voice worker specializes the model and checks that it can synthesize speech. This can take several minutes."))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if let started = clone.preparingSince {
+                        Text(started, style: .timer).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
                 }
             }
         case .ready:

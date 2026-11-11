@@ -26,7 +26,7 @@ targets:
         # no production code references either harness.
         excludes: ['*.yml', '*.py', '*.md', '*.sh', Tests, __pycache__, NativeGuest.entitlements, Info.plist',
                    MicrophoneActivationExperiment.swift, AcousticValidationExperiment.swift,
-                   StartupCaptureReceiver.swift]
+                   StartupCaptureReceiver.swift, VoiceWorker]
       - path: ../Experiments/NativeGuest
         excludes: [Main.swift, GuestCompanionPeer.swift, '*.py', '*.md', '*.sh', '*.patch', __pycache__]
       - path: ../Shared/NativeGuestCompanionProtocol.swift
@@ -88,6 +88,12 @@ targets:
       - package: NativeWebRTC
         product: LiveKitWebRTC
       - package: SherpaOnnxKit
+      - target: RockClonedVoiceWorker
+        embed: true
+        codeSign: true
+        link: false
+        copy:
+          destination: executables
     settings:
       configs:
         Debug:
@@ -121,6 +127,32 @@ targets:
         OTHER_LDFLAGS: ['$(inherited)', '-weak_framework', 'FoundationModels', '-weak_framework', 'Translation', '-weak_framework', 'CoreAI']
         ONLY_ACTIVE_ARCH: YES
         ARCHS: arm64
+  RockClonedVoiceWorker:
+    type: tool
+    platform: macOS
+    sources:
+      - path: VoiceWorker/Main.swift
+      - path: Attention/VoxCPM2
+      - path: Attention/ClonedVoiceWire.swift
+      - path: Attention/ProcessMemoryProbe.swift
+      - path: ../Experiments/NativeGuest/ProbeLog.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.nativeguest.voice-worker
+        DEVELOPMENT_TEAM: 5V64BP2H3P
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        OTHER_CODE_SIGN_FLAGS: '$(inherited) -i $(PRODUCT_BUNDLE_IDENTIFIER)'
+        SKIP_INSTALL: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_VERSION: '5.0'
+        OTHER_LDFLAGS: ['$(inherited)', '-weak_framework', 'CoreAI']
+        ARCHS: arm64
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: VoiceWorker/Worker.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: VoiceWorker/Worker.entitlements
   NativeDesktopTests:
     type: bundle.unit-test
     platform: macOS

@@ -11,8 +11,8 @@ import CoreAI
 // the CPU. Output is 48 kHz mono.
 
 /// A cloned voice: AudioVAE latents of a reference recording, in 4-frame patches (P × 4 × 64).
-struct VoxVoice: Codable, Equatable {
-    enum Mode: String, Codable {
+struct VoxVoice: Codable, Equatable, Sendable {
+    enum Mode: String, Codable, Sendable {
         /// Imitate the reference's timbre; the reference is not continued.
         case clone
         /// Continue the reference recording; needs its transcript.

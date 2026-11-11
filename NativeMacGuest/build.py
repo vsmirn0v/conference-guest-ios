@@ -83,6 +83,9 @@ try:
 finally:
     generated_spec.unlink(missing_ok=True)
 app = build/'Xcode/Build/Products'/a.configuration/APP_BUNDLE_NAME
+voice_worker_path = pathlib.Path('Contents/MacOS/RockClonedVoiceWorker')
+if not (app / voice_worker_path).is_file():
+    raise SystemExit('The cloned voice worker is missing from the application')
 if a.compile_only:
     print('Unsigned compile check passed: ' + str(app))
     raise SystemExit(0)
@@ -97,6 +100,7 @@ if 'TeamIdentifier=5V64BP2H3P' not in signature.stderr:
 # This gate catches signatures that look valid but lack a provisioned app group.
 executable = application_executable(app)
 subprocess.run([str(executable),'--check-container'],check=True)
+subprocess.run([str(executable),'--check-voice-worker'],check=True,timeout=20)
 sources = sorted(x for x in (ROOT/'Experiments/NativeGuest').glob('*.swift') if x.name not in {'Main.swift', 'GuestCompanionPeer.swift'})
 sources += sorted(x for x in (ROOT/'NativeMacGuest').rglob('*.swift') if 'Tests' not in x.parts)
 sources += [ROOT/'Shared/NativeGuestCompanionProtocol.swift', ROOT/'RockNRoll/NativeVideoPixelBuffer.swift']
@@ -106,6 +110,7 @@ for source in re.findall(r'(?m)^      - path: (\.\./.+)$', (ROOT/'NativeMacGuest
     elif path.is_dir(): sources += sorted(x for x in path.rglob('*') if x.is_file() and '__pycache__' not in x.parts)
 sources += sorted((ROOT/'ConferenceCore/Sources').rglob('*.swift'))+[ROOT/'ConferenceCore/Package.swift']
 sources = sorted(set(sources))
+sources += [ROOT/'NativeMacGuest/VoiceWorker/Worker.entitlements']
 sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
 sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-livekit.json']
 sources += sorted((ROOT/'Dependencies/native-macos/livekit-patches').glob('*.patch'))
@@ -120,7 +125,7 @@ sources += sorted(x for x in (ROOT/'NativeMacGuest/distribution').rglob('*')
                   if x.is_file() and x.suffix in {'.py', '.txt'} and '__pycache__' not in x.parts) + distribution_inputs
 sources += sorted(x for x in (ROOT/'NativeMacGuest/Assets.xcassets').rglob('*') if x.is_file())
 sources += sorted(x for x in (ROOT/'RockNRoll/Assets.xcassets/AdditionalRootCA.dataset').rglob('*') if x.is_file())
-artifacts = [executable, app/'Contents/MacOS'/(EXECUTABLE_NAME+'.debug.dylib'), app/'Contents/Info.plist']
+artifacts = [executable, app / voice_worker_path, app/'Contents/MacOS'/(EXECUTABLE_NAME+'.debug.dylib'), app/'Contents/Info.plist']
 artifacts += [app/'Contents/Resources/Assets.car', app/'Contents/Resources/AppIcon.icns']
 artifacts += [x for x in (app/'Contents/Frameworks').rglob('LiveKitWebRTC') if x.is_file() and not x.is_symlink()]
 if sparkle_evidence:
@@ -140,7 +145,7 @@ if archive is not None:
         archived_info.get('LSApplicationCategoryType') != 'public.app-category.video' or
         any(archived_info.get(key) != APP_NAME for key in ('CFBundleName', 'CFBundleDisplayName'))):
         raise SystemExit('Archived app identity or Mac category differs from the requested build')
-    archived_files = [str(application_executable(archived_app).relative_to(archived_app)), 'Contents/Info.plist',
+    archived_files = [str(voice_worker_path), str(application_executable(archived_app).relative_to(archived_app)), 'Contents/Info.plist',
         'Contents/Resources/AppIcon.icns', 'Contents/Resources/Assets.car',
         'Contents/Frameworks/LiveKitWebRTC.framework/LiveKitWebRTC']
     subprocess.run(['codesign','--verify','--deep','--strict',str(archived_app)],check=True)

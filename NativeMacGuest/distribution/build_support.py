@@ -89,7 +89,8 @@ def resolve_source_paths(root, spec):
                              lambda match: match[1] + str((source / match[2]).resolve()), spec)
         if count != 1:
             raise ValueError(f'Expected one application {key} setting')
-    return spec
+    return re.sub(r'(?m)^(          CODE_SIGN_ENTITLEMENTS: )(.+)$',
+                  lambda match: match[1] + str((source / match[2]).resolve()), spec)
 
 
 def sha256(path):

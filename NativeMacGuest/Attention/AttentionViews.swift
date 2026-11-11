@@ -915,12 +915,12 @@ struct NativeDesktopIntelligenceSettings: View {
                 let text = L("I'm in another meeting right now, I'll answer in a couple of minutes.")
                 let buffer: AVAudioPCMBuffer
                 if store.voiceEngine == .cloned {
-                    // Do not cancel this task on timeout: it owns the one shared Core AI rebuild.
-                    // A late result is deliberately discarded rather than played after another preview.
+                    // The worker keeps its operation after this preview deadline.
+                    // A late result is discarded, so it cannot play over another preview.
                     let synthesis = Task { try await attention.synthesize(text) }
                     guard let result = await VoicePreviewWait.result(of: synthesis, timeoutNanoseconds: 30_000_000_000) else {
-                        probeLog("voice-preview-still-preparing", ["seconds": 30])
-                        throw VoiceSynthesisError.clonePreparing
+                        probeLog("voice-preview-deadline", ["seconds": 30])
+                        throw VoiceSynthesisError.clonePreviewWaiting
                     }
                     buffer = try result.get()
                 } else {

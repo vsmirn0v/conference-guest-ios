@@ -73,12 +73,12 @@ import XCTest
     func testStoreErrorsBeforeTheModelAndVoiceExist() throws {
         let listen = ListenModelStore(catalog: .empty, root: folder.appendingPathComponent("Models"),
                                       defaults: UserDefaults(suiteName: "voice-clone-\(UUID().uuidString)")!)
-        let unsupported = VoiceCloneStore(model: nil, listen: listen, folder: folder, build: "1")
+        let unsupported = VoiceCloneStore(model: nil, listen: listen, folder: folder)
         XCTAssertThrowsError(try unsupported.synthesisInputs()) { XCTAssertEqual($0 as? VoiceSynthesisError, .cloneUnsupported) }
 
         let hash = String(repeating: "b", count: 64)
         let model = try XCTUnwrap(try catalog(files: [["name": "model.json", "size": 10, "sha256": hash]]).model(for: "h16g"))
-        let store = VoiceCloneStore(model: model, listen: listen, folder: folder, build: "1")
+        let store = VoiceCloneStore(model: model, listen: listen, folder: folder)
         XCTAssertFalse(store.installed)
         XCTAssertThrowsError(try store.synthesisInputs()) { XCTAssertEqual($0 as? VoiceSynthesisError, .cloneModelMissing) }
         XCTAssertFalse(store.ready)
@@ -92,14 +92,14 @@ import XCTest
         try JSONEncoder().encode(stored).write(to: url)
         let listen = ListenModelStore(catalog: .empty, root: folder.appendingPathComponent("Models"),
                                       defaults: UserDefaults(suiteName: "voice-clone-\(UUID().uuidString)")!)
-        XCTAssertEqual(VoiceCloneStore(model: nil, listen: listen, folder: folder, build: "1").stored, stored)
+        XCTAssertEqual(VoiceCloneStore(model: nil, listen: listen, folder: folder).stored, stored)
 
         var old = stored
         old.voice.revision = "older"
         try JSONEncoder().encode(old).write(to: url)
-        XCTAssertNil(VoiceCloneStore(model: nil, listen: listen, folder: folder, build: "1").stored)
+        XCTAssertNil(VoiceCloneStore(model: nil, listen: listen, folder: folder).stored)
 
-        let store = VoiceCloneStore(model: nil, listen: listen, folder: folder, build: "1")
+        let store = VoiceCloneStore(model: nil, listen: listen, folder: folder)
         store.deleteVoice()
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
@@ -166,126 +166,7 @@ import XCTest
         XCTAssertEqual(try late?.get(), 7, "a completed result remains consumable exactly once per waiter")
     }
 
-    func testSharedCacheRebuildPublishesOneStartAndOneSuccess() async throws {
-        let asset = folder.appendingPathComponent("encoder.h16g.aimodelc")
-        var events: [VoxRecoveryEvent] = []
-        let session = VoxRecoverySession(asset: asset) { events.append($0) }
-        let failure = NSError(domain: "CoreAIDelegates.AIModelError", code: 1)
-        let rebuilding = expectation(description: "shared rebuild started")
-        var release: CheckedContinuation<Void, Never>?
-        var attempts = 0, rebuilds = 0
-        let operation: () async throws -> Int = {
-            attempts += 1
-            if attempts <= 2 { throw failure }
-            return attempts
-        }
-        let rebuild: () async throws -> Void = {
-            rebuilds += 1
-            rebuilding.fulfill()
-            await withCheckedContinuation { release = $0 }
-        }
-        let first = Task { try await session.perform(operation: operation, rebuild: rebuild) }
-        await fulfillment(of: [rebuilding], timeout: 1)
-        let second = Task { try await session.perform(operation: operation, rebuild: rebuild) }
-        try await Task.sleep(nanoseconds: 20_000_000)
-        XCTAssertEqual(rebuilds, 1, "concurrent inference failures share one compilation")
-        XCTAssertEqual(events.map(\.phase), [.started])
-        release?.resume()
-        _ = try await (first.value, second.value)
-        XCTAssertEqual(attempts, 4)
-        XCTAssertEqual(events.map(\.phase), [.started, .succeeded])
-        XCTAssertEqual(events.map(\.asset), [asset, asset])
-    }
-
 #if canImport(CoreAI)
-    private enum _GenericObjCError: Error { case failed }
-    private enum __GenericObjCError: Error { case error }
-
-    @available(macOS 27.0, *)
-    func testFoundationGenericObjCErrorTriggersCacheRecovery() async throws {
-        var attempts = 0, rebuilds = 0
-        let result = try await VoxCoreAI.withCacheRecovery(rebuild: {
-            rebuilds += 1
-        }, operation: {
-            attempts += 1
-            if attempts == 1 { throw __GenericObjCError.error }
-            return "spoken"
-        })
-        XCTAssertEqual(result, "spoken")
-        XCTAssertEqual(attempts, 2)
-        XCTAssertEqual(rebuilds, 1)
-    }
-
-    @available(macOS 27.0, *)
-    func testUnusableInferenceCacheIsRebuiltAndRetried() async throws {
-        var attempts = 0, rebuilds = 0
-        let result = try await VoxCoreAI.withCacheRecovery(rebuild: {
-            rebuilds += 1
-        }, operation: {
-            attempts += 1
-            if attempts == 1 { throw _GenericObjCError.failed }
-            return "spoken"
-        })
-        XCTAssertEqual(result, "spoken")
-        XCTAssertEqual(attempts, 2)
-        XCTAssertEqual(rebuilds, 1)
-    }
-
-    @available(macOS 27.0, *)
-    func testInferenceCacheRecoveryRetriesOnlyOnce() async {
-        var attempts = 0, rebuilds = 0
-        do {
-            _ = try await VoxCoreAI.withCacheRecovery(rebuild: {
-                rebuilds += 1
-            }, operation: {
-                attempts += 1
-                throw _GenericObjCError.failed
-            }) as Int
-            XCTFail("The second inference failure must be reported")
-        } catch {
-            XCTAssertTrue(error is _GenericObjCError)
-        }
-        XCTAssertEqual(attempts, 2)
-        XCTAssertEqual(rebuilds, 1)
-    }
-
-    @available(macOS 27.0, *)
-    func testUnrelatedInferenceErrorDoesNotRebuildCache() async {
-        var attempts = 0, rebuilds = 0
-        do {
-            _ = try await VoxCoreAI.withCacheRecovery(rebuild: {
-                rebuilds += 1
-            }, operation: {
-                attempts += 1
-                throw VoxError.engine("invalid input")
-            }) as Int
-            XCTFail("The inference error must be preserved")
-        } catch {
-            XCTAssertEqual(error as? VoxError, .engine("invalid input"))
-        }
-        XCTAssertEqual(attempts, 1)
-        XCTAssertEqual(rebuilds, 0)
-    }
-    @available(macOS 27.0, *)
-    func testCoreAIModelErrorTriggersCacheRecovery() async throws {
-        // The beta-86 preview failure: Core AI's generic AIModelError must be
-        // treated like the MPSGraph cache errors — drop the persistent
-        // specialization and retry once instead of surfacing "error 1".
-        let failure = NSError(domain: "CoreAIDelegates.AIModelError", code: 1)
-        XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(failure))
-        var attempts = 0, rebuilds = 0
-        let result = try await VoxCoreAI.withCacheRecovery(rebuild: {
-            rebuilds += 1
-        }, operation: {
-            attempts += 1
-            if attempts == 1 { throw failure }
-            return "spoken"
-        })
-        XCTAssertEqual(result, "spoken")
-        XCTAssertEqual(attempts, 2)
-        XCTAssertEqual(rebuilds, 1)
-    }
-
     @available(macOS 27.0, *)
     func testCachePolicySurvivesStoragePressure() throws {
         // The beta-89 recurrence: with ~5 GB free, macOS purged the default purgeable
@@ -294,11 +175,6 @@ import XCTest
         XCTAssertTrue(VoxCoreAI.cachePolicy.purgeConditions.contains(.sourceAssetChangedOrDeleted))
         XCTAssertFalse(VoxCoreAI.cachePolicy.purgeConditions.contains(.storagePressure))
         XCTAssertNotEqual(VoxCoreAI.cachePolicy, .default)
-    }
-
-    @available(macOS 27.0, *)
-    func testAppGroupCacheResolves() throws {
-        XCTAssertNotNil(AIModelCache(appGroup: VoxCoreAI.appGroup))
     }
 
     @available(macOS 27.0, *)

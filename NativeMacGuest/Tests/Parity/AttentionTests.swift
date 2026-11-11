@@ -1966,17 +1966,6 @@ import XCTest
         let suggestion = try XCTUnwrap(fresh.assistant.suggestions.first { $0.kind == .meetingMode })
         coordinator.keepSuggestion(suggestion.id)
         XCTAssertEqual(fresh.preset(room: first.invitation)?.title, "Infra sync")
-        struct NotTheCacheError: Error {}
-        XCTAssertFalse(VoxCacheRecovery.isUnusableCacheError(NotTheCacheError()))
-        enum CacheProbe: Error { case nilError }
-        XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(CacheProbe.nilError))
-        // Core AI's generic model error (the beta-86 preview failure) is recoverable.
-        XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(NSError(domain: "CoreAIDelegates.AIModelError", code: 1)))
-        // An unrelated Cocoa error is not.
-        XCTAssertFalse(VoxCacheRecovery.isUnusableCacheError(NSError(domain: NSCocoaErrorDomain, code: 256)))
-        let recovered = await VoxModelRecovery.recover { () async throws -> Int in throw NotTheCacheError() }
-        XCTAssertNil(recovered)
-
         let journal = store(); await journal.waitForMoments()
         journal.log(.init(at: Date(), meetingTitle: "Day", presetID: nil, window: nil, verdict: verdict, provider: "local", model: "m", outcome: .shown))
         journal.log(.init(at: Date(), meetingTitle: "Day", presetID: nil, window: nil, verdict: nil, provider: "local", model: "m", outcome: .belowThreshold))

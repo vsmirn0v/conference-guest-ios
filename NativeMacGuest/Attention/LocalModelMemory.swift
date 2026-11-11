@@ -134,6 +134,14 @@ final class LocalModelMemoryTracker: @unchecked Sendable {
         }
     }
 
+    /// The speech helper measures its own baseline and post-inference footprint.
+    func recordVoiceWorker(bytes: UInt64) {
+        queue.sync {
+            state.estimates[.voice] = .init(bytes: bytes, measuredAt: Date(), afterInference: true)
+            publish()
+        }
+    }
+
     /// Releases an estimate and any in-flight attribution for a model.
     func clear(_ role: LocalModelMemoryRole) {
         queue.sync {
@@ -157,19 +165,6 @@ final class LocalModelMemoryTracker: @unchecked Sendable {
     }
 
     private func publish() { runtime.send(state) }
-}
-
-enum ProcessMemoryProbe {
-    static func footprint() -> UInt64? {
-        var usage = rusage_info_v6()
-        let result = withUnsafeMutablePointer(to: &usage) { pointer in
-            pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
-                proc_pid_rusage(getpid(), RUSAGE_INFO_V6, $0)
-            }
-        }
-        guard result == 0 else { return nil }
-        return UInt64(usage.ri_phys_footprint)
-    }
 }
 
 enum LocalModelSystemMemoryProbe {

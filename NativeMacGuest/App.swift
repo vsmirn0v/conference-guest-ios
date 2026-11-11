@@ -6,6 +6,27 @@ import UniformTypeIdentifiers
 @main
 struct NativeGuestApplication {
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--check-voice-worker") {
+            Task.detached {
+                do {
+                    let child = try ClonedVoiceWorkerProcess()
+                    let cache: ClonedVoiceWorkerOutput
+                    do {
+                        cache = try await child.execute(.init(operation: .cacheScope), timeout: 5)
+                    } catch {
+                        await child.stop()
+                        throw error
+                    }
+                    await child.stop()
+                    print("PASS: embedded cloned voice worker launched and exited; cache: \(cache.message ?? "unknown")")
+                    exit(0)
+                } catch {
+                    print("FAIL: embedded cloned voice worker (\(error.localizedDescription))")
+                    exit(1)
+                }
+            }
+            dispatchMain()
+        }
         NativeScreenEncoderQuality.prepare()
         if CommandLine.arguments.contains("--check-container") {
             do {
