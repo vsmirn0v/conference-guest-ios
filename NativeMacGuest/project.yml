@@ -151,6 +151,10 @@ targets:
       configs:
         Debug:
           CODE_SIGN_ENTITLEMENTS: VoiceWorker/Worker.entitlements
+          # The codec and tensor operations are CPU-heavy even when inference uses
+          # the Neural Engine. Keep Debug worker latency representative of Release.
+          SWIFT_OPTIMIZATION_LEVEL: '-O'
+          SWIFT_COMPILATION_MODE: wholemodule
         Release:
           CODE_SIGN_ENTITLEMENTS: VoiceWorker/Worker.entitlements
   NativeDesktopTests:
