@@ -19,6 +19,11 @@ struct ClonedVoicePreparation: Codable, Equatable {
     var message: String?
     var repairAsset: String?
     var repairedAssets: [String]?
+    /// Backwards-compatible diagnosis. Disk measurements are deliberately omitted.
+    var failureInfo: ClonedVoiceFailure?
+    /// User-initiated storage rechecks/repairs have a short separate cooldown so
+    /// an exhausted normal retry budget does not prevent recovery after cleanup.
+    var recoveryStarts: [Date]?
 
     static func identity(for model: ListenModelCatalog.Model, osBuild: String = systemBuild) -> String {
         let pinnedFiles = model.files.sorted { $0.name < $1.name }.map {
@@ -36,7 +41,9 @@ struct ClonedVoicePreparation: Codable, Equatable {
     }
 
     func write(_ folder: URL) throws {
-        try JSONEncoder().encode(self).write(to: Self.recordURL(folder), options: .atomic)
+        var safe = self
+        safe.failureInfo = failureInfo?.withoutStorageMeasurement
+        try JSONEncoder().encode(safe).write(to: Self.recordURL(folder), options: .atomic)
     }
 
     private static func recordURL(_ folder: URL) -> URL {

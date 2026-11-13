@@ -20,6 +20,7 @@ struct ClonedVoiceWorkerOutput: Sendable {
     var samples: [Float]?
     var memoryBytes: UInt64?
     var message: String?
+    var repairedAsset: String?
 }
 
 protocol ClonedVoiceWorkerConnection: Sendable {
@@ -50,8 +51,13 @@ actor ClonedVoiceEngine {
 
     var runtimeSnapshot: ClonedVoiceRuntimeSnapshot { runtimeState }
 
-    func prepare(_ folder: URL, repairAsset: String? = nil) async throws {
-        _ = try await execute(.init(operation: .prepare, folder: folder.standardizedFileURL, repairAsset: repairAsset))
+    @discardableResult func prepare(_ folder: URL, repairAsset: String? = nil) async throws -> String? {
+        if repairAsset != nil {
+            // Never evict a cache entry while this process is using its model.
+            guard operation == nil, stopping == nil else { throw ClonedVoiceWorkerError.busy }
+            if worker != nil { await unload() }
+        }
+        return try await execute(.init(operation: .prepare, folder: folder.standardizedFileURL, repairAsset: repairAsset)).repairedAsset
     }
 
     func speak(_ text: String, voice: VoxVoice, folder: URL) async throws -> [Float] {
@@ -247,7 +253,11 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
             switch response.failure {
             case .busy: throw ClonedVoiceWorkerError.busy
             case .context: throw ClonedVoiceWorkerError.context(response.message ?? "")
-            case .runtime: throw ClonedVoiceWorkerError.runtime(response.message ?? "", repairAsset: response.repairAsset)
+            case .runtime:
+                if let failure = response.failureInfo {
+                    throw ClonedVoiceWorkerError.diagnosed(failure, repairedAsset: response.repairedAsset)
+                }
+                throw ClonedVoiceWorkerError.runtime(response.message ?? "", repairAsset: response.repairAsset)
             case nil: break
             }
             guard response.pcm == (request.operation == .speak) else { throw ClonedVoiceWorkerError.protocolFailure }
@@ -260,7 +270,8 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
             } else {
                 samples = nil
             }
-            return .init(samples: samples, memoryBytes: response.memoryBytes, message: response.message)
+            return .init(samples: samples, memoryBytes: response.memoryBytes, message: response.message,
+                         repairedAsset: response.repairedAsset)
         } catch let error as ClonedVoiceWorkerError {
             throw error
         } catch {

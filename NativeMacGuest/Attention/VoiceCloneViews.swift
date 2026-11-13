@@ -1,19 +1,28 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Settings → Intelligence → Voice, when replies speak in your cloned voice.
 struct VoiceCloneSettingsView: View {
     @ObservedObject var clone: VoiceCloneStore
     @ObservedObject var listen: ListenModelStore
+    var onPreparationAction: () -> Void = {}
     @State private var enrolling = false
 
     var body: some View {
-        if let model = clone.model {
-            modelRow(model)
-            voiceRow
-            Text(L("VoxCPM2 (OpenBMB, Apache-2.0) speaks in your voice from a short recording. It runs on this Mac's Neural Engine; the model and your voice never leave this Mac."))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                .sheet(isPresented: $enrolling) { VoiceEnrollmentView(clone: clone) }
+        Group {
+            if let model = clone.model {
+                modelRow(model)
+                voiceRow
+                Text(L("VoxCPM2 (OpenBMB, Apache-2.0) speaks in your voice from a short recording. It runs on this Mac's Neural Engine; the model and your voice never leave this Mac."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .sheet(isPresented: $enrolling) { VoiceEnrollmentView(clone: clone) }
+            }
+        }
+        .onAppear { refreshStorage() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // A user can free space in System Settings while this view stays open.
+            refreshStorage()
         }
     }
 
@@ -31,11 +40,20 @@ struct VoiceCloneSettingsView: View {
                 ProgressView(value: progress) { Text(L("Downloading the voice model…")).font(.caption) }
                 Button(L("Cancel")) { clone.cancelDownload() }
             }
-        case .failed(let message):
-            HStack {
-                Label(message, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
-                Spacer()
-                Button(L("Try Again")) { clone.download() }
+        case .failed:
+            VStack(alignment: .leading, spacing: 6) {
+                if let storage = listen.storageFailure(model) {
+                    Label(L("Not enough disk space to download the voice model."), systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    storageDetails(storage)
+                    storageActions { clone.download() }
+                } else {
+                    Label(L("The voice model could not be downloaded."), systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    Text(L("Try again. If the problem continues, collect diagnostics."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button(L("Try Again")) { clone.download() }
+                }
             }
         case .installed:
             HStack(alignment: .firstTextBaseline) {
@@ -49,7 +67,7 @@ struct VoiceCloneSettingsView: View {
     @ViewBuilder private var preparationStatus: some View {
         switch clone.preparation {
         case .idle:
-            Button(L("Prepare for the Neural Engine")) { clone.prepare() }
+            Button(L("Prepare for the Neural Engine")) { retryPreparation() }
         case .preparing:
             HStack(alignment: .top, spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -64,11 +82,147 @@ struct VoiceCloneSettingsView: View {
             }
         case .ready:
             Label(L("Voice model ready on the Neural Engine"), systemImage: "checkmark.circle").foregroundStyle(.green)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 4) {
-                Label(message, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
-                Button(L("Try Again")) { clone.prepare() }
+        case .failed:
+            preparationFailure
+        }
+    }
+
+    @ViewBuilder private var preparationFailure: some View {
+        let failure = clone.failure
+        VStack(alignment: .leading, spacing: 6) {
+            switch failure?.kind {
+            case .storage:
+                Label(L("Not enough disk space to prepare the voice model."), systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                if let storage = failure?.storage { storageDetails(storage) }
+                else { Text(L("macOS did not report how much more space is needed.")).font(.caption).foregroundStyle(.secondary) }
+                storageActions { retryPreparation() }
+            case .rateLimited:
+                Label(L("The voice model has been tried too many times."), systemImage: "clock")
+                    .foregroundStyle(.orange)
+                if let retryAfter = failure?.retryAfter {
+                    Text(failure?.rateLimitedRepair == true
+                         ? L("Repair available after %@.", retryAfter.formatted(date: .abbreviated, time: .shortened))
+                         : L("Try again after %@.", retryAfter.formatted(date: .abbreviated, time: .shortened)))
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(L("Try again later.")).font(.caption).foregroundStyle(.secondary)
+                }
+                if failure?.repairAvailable == true {
+                    Text(L("The cause is not clear. Repairing the cached model may help. Your downloaded model and saved voice will be kept."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                TimelineView(.periodic(from: .now, by: 15)) { context in
+                    if failure?.repairAvailable == true {
+                        Button(L("Repair Voice Model")) { onPreparationAction(); clone.repair() }
+                            .accessibilityIdentifier("voiceModel.repair")
+                            .disabled(failure?.rateLimitedRepair == true && (failure?.retryAfter.map { $0 > context.date } ?? false))
+                    }
+                    Button(L("Try Again")) { retryPreparation() }
+                        .disabled(failure?.rateLimitedRepair != true && (failure?.retryAfter.map { $0 > context.date } ?? false))
+                }
+            case .busy:
+                Label(L("The voice model is being used by another process."), systemImage: "clock")
+                    .foregroundStyle(.orange)
+                Text(L("Try again when the other operation finishes.")).font(.caption).foregroundStyle(.secondary)
+                repairActionIfAvailable(failure)
+                Button(L("Try Again")) { retryPreparation() }
+            case .interrupted:
+                Label(L("Voice model preparation was interrupted."), systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                repairActionIfAvailable(failure)
+                Button(L("Try Again")) { retryPreparation() }
+            case .cache, .unknown, nil:
+                Label(L("The voice model could not start."), systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                if failure?.repairAvailable == true {
+                    Text(L("The cause is not clear. Repairing the cached model may help. Your downloaded model and saved voice will be kept."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button(L("Repair Voice Model")) { onPreparationAction(); clone.repair() }
+                            .accessibilityIdentifier("voiceModel.repair")
+                        Button(L("Try Again")) { retryPreparation() }
+                    }
+                } else {
+                    Text(L("The cause is not clear. Try again; if the problem continues, collect diagnostics."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button(L("Try Again")) { retryPreparation() }
+                }
             }
+            if let date = failure?.failedAt {
+                Text(L("Last attempt: %@", date.formatted(date: .abbreviated, time: .shortened)))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.accessibilityIdentifier("voiceModel.preparationFailure")
+    }
+
+    @ViewBuilder private func repairActionIfAvailable(_ failure: ClonedVoiceFailure?) -> some View {
+        if failure?.repairAvailable == true {
+            Text(L("The cause is not clear. Repairing the cached model may help. Your downloaded model and saved voice will be kept."))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button(L("Repair Voice Model")) { onPreparationAction(); clone.repair() }
+                .accessibilityIdentifier("voiceModel.repair")
+        }
+    }
+
+    /// The requirement is an estimate for the relevant operation, never a guess
+    /// based on the downloaded model's size when Core AI cannot report a need.
+    @ViewBuilder private func storageDetails(_ storage: VoiceStorageSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let available = storage.availableBytes, available >= 0 {
+                let amount = ByteCountFormatter.string(fromByteCount: available, countStyle: .file)
+                switch storage.location {
+                case .model: Text(L("Available on the model disk: %@.", amount))
+                case .temporary: Text(L("Available for temporary downloads: %@.", amount))
+                case nil: Text(L("Available disk space: %@.", amount))
+                }
+                if let required = storage.requiredBytes, required >= 0 {
+                    let needed = ByteCountFormatter.string(fromByteCount: required, countStyle: .file)
+                    if required > available {
+                        let shortfall = ByteCountFormatter.string(fromByteCount: required - available, countStyle: .file)
+                        Text(L("Estimated minimum space needed: %@. Free at least %@; additional working space may be needed.", needed, shortfall))
+                    } else {
+                        Text(L("Estimated minimum space needed: %@. Additional working space may be needed.", needed))
+                    }
+                } else {
+                    Text(L("macOS did not report how much more space is needed."))
+                }
+            } else {
+                if let required = storage.requiredBytes, required >= 0 {
+                    Text(L("Estimated minimum space needed: %@. Additional working space may be needed.", ByteCountFormatter.string(fromByteCount: required, countStyle: .file)))
+                }
+                Text(L("The available space could not be checked. Open Storage Settings and try again."))
+            }
+        }.font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func storageActions(_ retry: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Button(L("Open Storage Settings")) { openStorageSettings() }
+                    .accessibilityIdentifier("voiceModel.openStorage")
+                Button(L("Check Again")) { refreshStorage(); retry() }
+                    .accessibilityIdentifier("voiceModel.checkStorage")
+            }
+            Text(L("System Settings → General → Storage"))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func refreshStorage() {
+        clone.refreshStorage()
+        if let model = clone.model { listen.refreshStorageFailure(model) }
+    }
+
+    private func retryPreparation() {
+        onPreparationAction()
+        clone.prepare()
+    }
+
+    private func openStorageSettings() {
+        let settings = URL(string: "x-apple.systempreferences:com.apple.settings.Storage")!
+        if !NSWorkspace.shared.open(settings) {
+            _ = NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
         }
     }
 

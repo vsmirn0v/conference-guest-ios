@@ -119,6 +119,58 @@ import XCTest
         return try await body()
     }
 
+    func testRussianVoiceRecoveryOffersRepairWithoutRemovingVoiceOrModel() async throws {
+        try await withRussianBundle {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("voice-ui-\(UUID())", isDirectory: true)
+            let suite = "voice-ui-\(UUID())"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            addTeardownBlock {
+                defaults.removePersistentDomain(forName: suite)
+                try? FileManager.default.removeItem(at: root)
+            }
+            let file = ListenModelCatalog.File(name: "model.json", size: 2, url: URL(fileURLWithPath: "/fixture"),
+                                               sha256: String(repeating: "a", count: 64))
+            let model = ListenModelCatalog.Model(id: "voice-ui-fixture", role: VoiceCloneSupport.role, title: "Fixture",
+                kind: VoiceCloneSupport.kind, featureDim: nil, languages: ["ru"], licence: "",
+                source: URL(fileURLWithPath: "/fixture"), files: [file], config: ["architecture": "test"])
+            let catalog = ListenModelCatalog(schemaVersion: 1, runtime: "fixture", models: [model])
+            let listen = ListenModelStore(catalog: catalog, root: root, defaults: defaults)
+            let folder = listen.folder(model)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let modelURL = folder.appendingPathComponent(file.name)
+            let modelData = Data("{}".utf8)
+            try modelData.write(to: modelURL)
+            try "\(file.name) \(file.sha256)".write(to: folder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+            listen.refresh()
+            let asset = "encoder.h16g.aimodelc"
+            let message = "The Neural Engine could not run \(asset) (Foundation._GenericObjCError 0)."
+            let identity = ClonedVoicePreparation.identity(for: model, osBuild: "fixture")
+            try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .failed, startedAt: Date(),
+                recentStarts: [], message: message).write(folder)
+            let voice = VoxVoice(mode: .clone, transcript: "", reference: nil, continuation: nil, patches: 0)
+            let voiceURL = root.appendingPathComponent("voxcpm2-voice.json")
+            let voiceData = try JSONEncoder().encode(StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5))
+            try voiceData.write(to: voiceURL)
+            let worker = AssistantVoiceUIWorker()
+            let engine = ClonedVoiceEngine(connect: { worker })
+            let clone = VoiceCloneStore(model: model, listen: listen, folder: root, engine: engine, osBuild: "fixture")
+            let rendered = await present(VoiceCloneSettingsView(clone: clone, listen: listen),
+                                         size: NSSize(width: 1000, height: 600), name: "voice-recovery")
+            XCTAssertTrue(containsText(rendered, "Причина неизвестна"))
+            XCTAssertNotNil(button(rendered, "Восстановить голосовую модель"))
+            XCTAssertFalse(containsText(rendered, "Foundation._GenericObjCError"))
+            // SwiftUI exposes this button's localized title to AX, but does not
+            // consistently surface its identifier through the macOS AX tree.
+            try await press(rendered, "Восстановить голосовую модель")
+            try await wait { clone.preparation == .ready }
+            let requests = await worker.requests
+            XCTAssertEqual(requests.first?.repairAsset, asset)
+            XCTAssertEqual(try Data(contentsOf: modelURL), modelData)
+            XCTAssertEqual(try Data(contentsOf: voiceURL), voiceData)
+            await engine.unload()
+        }
+    }
+
     private func requiredWidth(of control: NSSegmentedControl) -> CGFloat {
         let labels = (0..<control.segmentCount).compactMap { control.label(forSegment: $0) }
         let measuring = NSSegmentedControl(labels: labels, trackingMode: control.trackingMode,
@@ -1210,6 +1262,15 @@ private final class OutcomeFixtureCalendarStorage: RoomHistoryStorage {
     private var data: Data?
     func read() -> Data? { data }
     func write(_ data: Data) throws { self.data = data }
+}
+
+private actor AssistantVoiceUIWorker: ClonedVoiceWorkerConnection {
+    private(set) var requests: [ClonedVoiceWire.Request] = []
+    func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval) async throws -> ClonedVoiceWorkerOutput {
+        requests.append(request)
+        return .init(samples: nil, repairedAsset: request.repairAsset)
+    }
+    func stop() {}
 }
 
 private actor WorkspaceFixtureWriter: ReplyWriter {

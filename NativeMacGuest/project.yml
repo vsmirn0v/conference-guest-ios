@@ -134,6 +134,7 @@ targets:
       - path: VoiceWorker/Main.swift
       - path: Attention/VoxCPM2
       - path: Attention/ClonedVoiceWire.swift
+      - path: Attention/VoiceStorage.swift
       - path: Attention/ProcessMemoryProbe.swift
       - path: ../Experiments/NativeGuest/ProbeLog.swift
     settings:

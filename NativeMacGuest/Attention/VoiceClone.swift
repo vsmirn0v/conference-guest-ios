@@ -88,19 +88,24 @@ struct StoredClonedVoice: Codable, Equatable {
     @Published private(set) var stored: StoredClonedVoice?
     @Published private(set) var preparation: Preparation = .idle
     @Published private(set) var preparingSince: Date?
+    /// Disk capacity is queried only for local presentation, never persisted.
+    @Published private(set) var failure: ClonedVoiceFailure?
     private let voiceURL: URL
     private let identity: String?
     private let engine: ClonedVoiceEngine
+    private let currentTime: () -> Date
     private var observation: AnyCancellable?
     private var prepareTask: Task<Void, Never>?
     private var waitingForOwner: Task<Void, Never>?
     private var deleting = false
 
     init(model: ListenModelCatalog.Model? = VoiceCloneSupport.model, listen: ListenModelStore = .shared, folder: URL? = nil,
-         engine: ClonedVoiceEngine = .shared, osBuild: String = ClonedVoicePreparation.systemBuild) {
+         engine: ClonedVoiceEngine = .shared, osBuild: String = ClonedVoicePreparation.systemBuild,
+         now: @escaping () -> Date = Date.init) {
         self.model = model
         self.listen = listen
         self.engine = engine
+        self.currentTime = now
         identity = model.map { ClonedVoicePreparation.identity(for: $0, osBuild: osBuild) }
         voiceURL = (folder ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
             FileManager.default.temporaryDirectory).appendingPathComponent("Voices", isDirectory: true))
@@ -123,11 +128,58 @@ struct StoredClonedVoice: Codable, Equatable {
     private func display(_ record: ClonedVoicePreparation?) {
         preparingSince = record?.state == .preparing ? record?.startedAt : nil
         switch record?.state {
-        case .preparing: preparation = .preparing
-        case .ready: preparation = .ready
-        case .failed: preparation = .failed(record?.message ?? VoiceSynthesisError.clonePreparationFailed.localizedDescription)
-        case nil: preparation = .idle
+        case .preparing: failure = nil; preparation = .preparing
+        case .ready: failure = nil; preparation = .ready
+        case .failed:
+            let message = record?.message ?? VoiceSynthesisError.clonePreparationFailed.localizedDescription
+            var diagnosis = record?.failureInfo ?? Self.legacyFailure(message: message, repairAsset: record?.repairAsset)
+            diagnosis.failedAt = diagnosis.failedAt ?? record?.startedAt
+            failure = diagnosis
+            preparation = .failed(message)
+            refreshStorage()
+        case nil: failure = nil; preparation = .idle
         }
+    }
+
+    /// Historical releases saved only a display string. An exact known opaque
+    /// Core AI failure can offer a user-requested repair, never an automatic one.
+    /// The worker independently validates the final asset against model.json.
+    static func legacyFailure(message: String, repairAsset: String?) -> ClonedVoiceFailure {
+        let prefix = "The Neural Engine could not run "
+        let suffix = " (Foundation._GenericObjCError 0)."
+        var asset = repairAsset
+        if asset == nil, message.hasPrefix(prefix), message.hasSuffix(suffix) {
+            asset = String(message.dropFirst(prefix.count).dropLast(suffix.count))
+        }
+        if let value = asset,
+           !value.isEmpty, value.hasSuffix(".aimodelc"),
+           value.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-").contains($0) }),
+           value != ".", value != ".." {
+            return .init(kind: .cache, technicalDetails: message, repairAsset: value)
+        }
+        return .init(kind: .unknown, technicalDetails: message)
+    }
+
+    /// Recheck locally; no capacity value is put into the receipt or probe logs.
+    func refreshStorage() {
+        guard var current = failure, let folder = bundleFolder else { return }
+        current.storage = .init(availableBytes: VoiceStorage.capacity(at: folder), location: .model)
+        failure = current
+    }
+
+    private func diagnose(_ error: Error) -> ClonedVoiceFailure {
+        if case ClonedVoiceWorkerError.diagnosed(let diagnosis, _) = error {
+            return diagnosis.withoutStorageMeasurement
+        }
+        if case ClonedVoiceWorkerError.runtime(let message, let asset) = error {
+            return Self.legacyFailure(message: message, repairAsset: asset)
+        }
+        let kind: ClonedVoiceFailure.Kind
+        if VoiceStorage.isOutOfSpace(error) { kind = .storage }
+        else if case ClonedVoiceWorkerError.busy = error { kind = .busy }
+        else if case ClonedVoiceWorkerError.stopped = error { kind = .interrupted }
+        else { kind = .unknown }
+        return .init(kind: kind, technicalDetails: error.localizedDescription, failedAt: Date())
     }
 
     private func restorePreparation() {
@@ -144,6 +196,8 @@ struct StoredClonedVoice: Codable, Equatable {
                 }
                 latest.state = .failed
                 latest.message = L("Voice preparation was interrupted. Choose Try Again to continue.")
+                latest.failureInfo = .init(kind: .interrupted, technicalDetails: latest.message,
+                                           repairAsset: latest.repairAsset, failedAt: Date())
                 try latest.write(folder)
                 display(latest)
             }
@@ -171,8 +225,12 @@ struct StoredClonedVoice: Codable, Equatable {
     }
 
     private func displayFailure(_ error: Error) {
+        var diagnosis = diagnose(error)
+        diagnosis.failedAt = diagnosis.failedAt ?? Date()
+        failure = diagnosis
         preparation = .failed(error.localizedDescription)
         preparingSince = nil
+        refreshStorage()
     }
 
     func download() { if let model { listen.download(model) } }
@@ -202,29 +260,63 @@ struct StoredClonedVoice: Codable, Equatable {
     func prepareIfNeeded() {
         guard !deleting, prepareTask == nil, installed else { return }
         restorePreparation()
-        if preparation == .idle { startPreparation(explicitRetry: false) }
+        if preparation == .idle { startPreparation(explicitRetry: false, requestedRepair: false) }
     }
 
-    func prepare() { startPreparation(explicitRetry: true) }
+    /// A retry never deletes a cache. Repair is a separate deliberate action.
+    func prepare() { startPreparation(explicitRetry: true, requestedRepair: false) }
 
-    private func startPreparation(explicitRetry: Bool) {
+    func repair() { startPreparation(explicitRetry: true, requestedRepair: true) }
+
+    private func startPreparation(explicitRetry: Bool, requestedRepair: Bool) {
         guard !deleting, prepareTask == nil, installed, let folder = bundleFolder, let identity else { return }
         do {
             let lease = try ClonedVoiceLease(folder: folder, purpose: "preparation")
             let previous = ClonedVoicePreparation.read(folder, identity: identity)
-            if previous?.state == .ready { display(previous); return }
-            let now = Date()
+            // A newer receipt write may have failed with ENOSPC while the
+            // previously durable receipt still says ready.
+            if previous?.state == .ready, failure?.kind != .storage, failure?.rateLimitedStorage != true {
+                display(previous); return
+            }
+            let now = currentTime()
             let recent = (previous?.recentStarts ?? []).filter { $0 > now.addingTimeInterval(-ClonedVoicePreparation.retryInterval) }
-            guard recent.count < ClonedVoicePreparation.retryLimit else {
-                preparation = .failed(L("The voice model reached its preparation retry limit. Try again in an hour."))
-                preparingSince = nil
-                return
+            let persistedFailure = previous?.failureInfo ?? previous.map {
+                Self.legacyFailure(message: $0.message ?? "", repairAsset: $0.repairAsset)
+            }
+            // A receipt write can itself fail because the disk is full. That
+            // transient diagnosis is newer than the last durable receipt.
+            let previousFailure = failure?.kind == .storage ? failure : persistedFailure
+            let storageRecovery = failure?.kind == .storage || failure?.rateLimitedStorage == true || persistedFailure?.kind == .storage
+            let validRepair = previousFailure.flatMap { diagnosis -> String? in
+                guard diagnosis.repairAvailable else { return nil }
+                return Self.legacyFailure(message: diagnosis.technicalDetails ?? "", repairAsset: diagnosis.repairAsset).repairAsset
+            }
+            if requestedRepair, validRepair == nil { return }
+
+            // A deliberate recheck after confirmed storage failure or a manual
+            // repair remains possible even when the normal hourly budget is full.
+            // Its separate short cooldown prevents rapid repeated preparations.
+            let recovery = explicitRetry && (requestedRepair || storageRecovery)
+            let recoveryInterval: TimeInterval = 60
+            let recoveryStarts = (previous?.recoveryStarts ?? []).filter { $0 > now.addingTimeInterval(-recoveryInterval) }
+            let blockedUntil: Date?
+            if recovery, let last = recoveryStarts.max() { blockedUntil = last.addingTimeInterval(recoveryInterval) }
+            else if !recovery, recent.count >= ClonedVoicePreparation.retryLimit {
+                blockedUntil = recent.min()?.addingTimeInterval(ClonedVoicePreparation.retryInterval)
+            } else { blockedUntil = nil }
+            if let blockedUntil {
+                let message = L("The voice model reached its preparation retry limit. Try again in an hour.")
+                failure = .init(kind: .rateLimited, technicalDetails: message, repairAsset: validRepair,
+                                failedAt: now, retryAfter: blockedUntil, rateLimitedRepair: requestedRepair,
+                                rateLimitedStorage: storageRecovery)
+                preparation = .failed(message); preparingSince = nil; refreshStorage(); return
             }
             let repaired = previous?.repairedAssets ?? []
-            let repair = explicitRetry ? previous?.repairAsset.flatMap { repaired.contains($0) ? nil : $0 } : nil
+            let repair = requestedRepair ? validRepair : nil
             let record = ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .preparing,
                                                 startedAt: now, recentStarts: recent + [now],
-                                                repairedAssets: repaired + (repair.map { [$0] } ?? []))
+                                                repairAsset: repair ?? previous?.repairAsset, repairedAssets: repaired,
+                                                recoveryStarts: recovery ? recoveryStarts + [now] : previous?.recoveryStarts)
             try record.write(folder)
             display(record)
             let started = ProcessInfo.processInfo.systemUptime
@@ -237,7 +329,10 @@ struct StoredClonedVoice: Codable, Equatable {
                 var outcome = record
                 do {
                     try Task.checkCancellation()
-                    try await engine.prepare(folder, repairAsset: repair)
+                    let completed = try await engine.prepare(folder, repairAsset: repair)
+                    if let completed, completed == repair, !repaired.contains(completed) {
+                        outcome.repairedAssets = repaired + [completed]
+                    }
                     outcome.state = .ready
                 } catch ClonedVoiceWorkerError.busy {
                     outcome.state = .failed
@@ -245,10 +340,19 @@ struct StoredClonedVoice: Codable, Equatable {
                     outcome.recentStarts = recent
                     outcome.repairedAssets = repaired
                     outcome.repairAsset = previous?.repairAsset
+                    outcome.failureInfo = .init(kind: .busy, technicalDetails: outcome.message,
+                                                repairAsset: previous?.repairAsset ?? validRepair, failedAt: Date())
+                    outcome.recoveryStarts = previous?.recoveryStarts
                 } catch {
                     outcome.state = .failed
                     outcome.message = error.localizedDescription
-                    if case ClonedVoiceWorkerError.runtime(_, let asset) = error { outcome.repairAsset = asset }
+                    let diagnosis = diagnose(error)
+                    outcome.failureInfo = diagnosis.withoutStorageMeasurement
+                    outcome.repairAsset = diagnosis.repairAsset ?? repair ?? previous?.repairAsset
+                    if case ClonedVoiceWorkerError.diagnosed(_, let completed) = error,
+                       let completed, completed == repair, !repaired.contains(completed) {
+                        outcome.repairedAssets = repaired + [completed]
+                    }
                 }
                 guard installed, !deleting else { return }
                 do { try outcome.write(folder); display(outcome) }
@@ -334,7 +438,9 @@ struct StoredClonedVoice: Codable, Equatable {
                   current.attempt == receipt.attempt, current.state == .ready else { return }
             current.state = .failed
             current.message = error.localizedDescription
-            if case ClonedVoiceWorkerError.runtime(_, let asset) = error { current.repairAsset = asset }
+            let diagnosis = diagnose(error)
+            current.failureInfo = diagnosis.withoutStorageMeasurement
+            current.repairAsset = diagnosis.repairAsset
             do { try current.write(folder); display(current) }
             catch { displayFailure(error) }
         }

@@ -2751,3 +2751,31 @@
 "The meeting's audio/video connection failed. Check your network and reconnect." = "The meeting's audio/video connection failed. Check your network and reconnect.";
 "Finish the companion meeting before joining another meeting." = "Finish the companion meeting before joining another meeting.";
 "The companion meeting did not stop cleanly. Quit and reopen the app before joining another meeting." = "The companion meeting did not stop cleanly. Quit and reopen the app before joining another meeting.";
+
+/* Voice model recovery and storage */
+"Not enough disk space to download the voice model." = "Not enough disk space to download the voice model.";
+"The voice model could not be downloaded." = "The voice model could not be downloaded.";
+"Try again. If the problem continues, collect diagnostics." = "Try again. If the problem continues, collect diagnostics.";
+"Not enough disk space to prepare the voice model." = "Not enough disk space to prepare the voice model.";
+"macOS did not report how much more space is needed." = "macOS did not report how much more space is needed.";
+"The voice model has been tried too many times." = "The voice model has been tried too many times.";
+"Try again after %@." = "Try again after %@.";
+"Repair available after %@." = "Repair available after %@.";
+"Try again later." = "Try again later.";
+"The voice model is being used by another process." = "The voice model is being used by another process.";
+"Try again when the other operation finishes." = "Try again when the other operation finishes.";
+"Voice model preparation was interrupted." = "Voice model preparation was interrupted.";
+"The voice model could not start." = "The voice model could not start.";
+"The cause is not clear. Repairing the cached model may help. Your downloaded model and saved voice will be kept." = "The cause is not clear. Repairing the cached model may help. Your downloaded model and saved voice will be kept.";
+"Repair Voice Model" = "Repair Voice Model";
+"The cause is not clear. Try again; if the problem continues, collect diagnostics." = "The cause is not clear. Try again; if the problem continues, collect diagnostics.";
+"Last attempt: %@" = "Last attempt: %@";
+"Available on the model disk: %@." = "Available on the model disk: %@.";
+"Available for temporary downloads: %@." = "Available for temporary downloads: %@.";
+"Available disk space: %@." = "Available disk space: %@.";
+"Estimated minimum space needed: %@. Free at least %@; additional working space may be needed." = "Estimated minimum space needed: %@. Free at least %@; additional working space may be needed.";
+"Estimated minimum space needed: %@. Additional working space may be needed." = "Estimated minimum space needed: %@. Additional working space may be needed.";
+"The available space could not be checked. Open Storage Settings and try again." = "The available space could not be checked. Open Storage Settings and try again.";
+"Open Storage Settings" = "Open Storage Settings";
+"Check Again" = "Check Again";
+"System Settings → General → Storage" = "System Settings → General → Storage";

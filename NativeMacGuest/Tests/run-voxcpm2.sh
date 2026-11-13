@@ -12,5 +12,5 @@ mkdir -p "$build_dir"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library -O -target arm64-apple-macos13.0 \
     -Xlinker -weak_framework -Xlinker CoreAI \
-    "$repo_dir"/NativeMacGuest/Attention/VoxCPM2/*.swift "$test_dir/VoxCPM2ParityTests.swift" -o "$build_dir/voxcpm2-tests"
+    "$repo_dir"/NativeMacGuest/Attention/VoxCPM2/*.swift "$repo_dir/NativeMacGuest/Attention/VoiceStorage.swift" "$test_dir/VoxCPM2ParityTests.swift" -o "$build_dir/voxcpm2-tests"
 "$build_dir/voxcpm2-tests" "$@"

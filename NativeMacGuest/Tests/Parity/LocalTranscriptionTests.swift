@@ -129,6 +129,26 @@ import XCTest
         XCTAssertEqual(store.state(listen), .absent); XCTAssertFalse(store.ready)
     }
 
+    func testCancelledDownloadCannotOverwriteImmediateRetry() async throws {
+        let source = temporaryFolder()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let url = source.appendingPathComponent("model.bin")
+        let contents = Data("voice model fixture".utf8)
+        try contents.write(to: url)
+        let file = ListenModelCatalog.File(name: "model.bin", size: Int64(contents.count), url: url,
+                                           sha256: try ListenModelStore.sha256(of: url))
+        let model = ListenModelCatalog.Model(id: "retry", role: "vad", title: "Retry", kind: "test", featureDim: nil,
+                                             languages: [], licence: "test", source: source, files: [file], config: [:])
+        let store = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: [model]),
+                                     root: temporaryFolder(), defaults: UserDefaults(suiteName: "listen-\(UUID())")!)
+        store.download(model)
+        store.cancel(model)
+        store.download(model)
+        for _ in 0..<200 where !store.state(model).installed { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(store.state(model), .installed)
+        XCTAssertEqual(try Data(contentsOf: store.folder(model).appendingPathComponent(file.name)), contents)
+    }
+
     /// Sound off normally stops output; local transcription keeps it running so
     /// WebRTC still decodes remote audio, and the mixer stays at zero.
     func testTranscriptionKeepsOutputAvailableWhileSoundIsOff() {

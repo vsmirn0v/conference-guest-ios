@@ -600,6 +600,8 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var previewing = false
     @State private var voiceMessage: String?
     @State private var voiceFailed = false
+    /// A result from an earlier preview must not overwrite a newer preparation.
+    @State private var voicePreviewGeneration = UUID()
     @ObservedObject private var listen = ListenModelStore.shared
     @ObservedObject private var clone = VoiceCloneStore.shared
     @StateObject private var headphones = HeadphoneOutputMonitor()
@@ -825,7 +827,10 @@ struct NativeDesktopIntelligenceSettings: View {
                 }
                 if store.voiceEngine == .cloned {
                     if clone.available {
-                        VoiceCloneSettingsView(clone: clone, listen: listen)
+                        VoiceCloneSettingsView(clone: clone, listen: listen) {
+                            voicePreviewGeneration = UUID()
+                            voiceMessage = nil; voiceFailed = false
+                        }
                     } else {
                         Text(VoiceSynthesisError.cloneUnsupported.localizedDescription).font(.caption).foregroundStyle(.orange)
                     }
@@ -903,11 +908,27 @@ struct NativeDesktopIntelligenceSettings: View {
             }
         }.formStyle(.grouped)
             .onAppear { aliases = store.profile.aliases.joined(separator: ", ") }
+            .onChange(of: clone.preparation) { preparation in
+                guard store.voiceEngine == .cloned else { return }
+                switch preparation {
+                case .preparing, .ready:
+                    // Clear an old preview error when preparation progresses. A
+                    // preview can itself start preparation, so don't cancel it.
+                    if voiceFailed { voiceMessage = nil; voiceFailed = false }
+                case .idle, .failed: break
+                }
+            }
+            .onChange(of: store.voiceEngine) { _ in
+                voicePreviewGeneration = UUID()
+                voiceMessage = nil; voiceFailed = false
+            }
             .sheet(isPresented: $choosingModel) { AttentionModelPicker(store: store) }
             .sheet(isPresented: $comparing) { AttentionComparisonView(store: store) }
     }
 
     private func previewVoice() {
+        let generation = UUID()
+        voicePreviewGeneration = generation
         previewing = true; voiceMessage = nil
         Task { @MainActor in
             defer { previewing = false }
@@ -927,10 +948,19 @@ struct NativeDesktopIntelligenceSettings: View {
                 } else {
                     buffer = try await attention.synthesize(text)
                 }
+                guard generation == voicePreviewGeneration else { return }
                 try VoicePreviewPlayer.shared.play(buffer)
                 voiceFailed = false
                 voiceMessage = L("Ready in %.1f s.", ProcessInfo.processInfo.systemUptime - started)
-            } catch { voiceFailed = true; voiceMessage = error.localizedDescription }
+            } catch {
+                guard generation == voicePreviewGeneration else { return }
+                // The model row already owns its actionable, localized failure.
+                if store.voiceEngine == .cloned, case .failed = clone.preparation {
+                    voiceFailed = false; voiceMessage = nil
+                } else {
+                    voiceFailed = true; voiceMessage = error.localizedDescription
+                }
+            }
         }
     }
     private func saveAliases() {

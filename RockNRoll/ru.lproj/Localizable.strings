@@ -2750,3 +2750,31 @@
 "The meeting's audio/video connection failed. Check your network and reconnect." = "Не удалось установить аудио/видеосоединение со встречей. Проверьте сеть и подключитесь заново.";
 "Finish the companion meeting before joining another meeting." = "Завершите встречу в приложении-компаньоне, прежде чем подключиться к другой встрече.";
 "The companion meeting did not stop cleanly. Quit and reopen the app before joining another meeting." = "Не удалось корректно завершить встречу в приложении-компаньоне. Закройте и снова откройте приложение, прежде чем подключиться к другой встрече.";
+
+/* Voice model recovery and storage */
+"Not enough disk space to download the voice model." = "Недостаточно места на диске для загрузки голосовой модели.";
+"The voice model could not be downloaded." = "Не удалось загрузить голосовую модель.";
+"Try again. If the problem continues, collect diagnostics." = "Попробуйте ещё раз. Если ошибка повторится, соберите диагностику.";
+"Not enough disk space to prepare the voice model." = "Недостаточно места на диске для подготовки голосовой модели.";
+"macOS did not report how much more space is needed." = "macOS не сообщила, сколько ещё места требуется.";
+"The voice model has been tried too many times." = "Слишком много попыток подготовить голосовую модель.";
+"Try again after %@." = "Попробуйте снова после %@.";
+"Repair available after %@." = "Восстановление будет доступно после %@.";
+"Try again later." = "Попробуйте снова позже.";
+"The voice model is being used by another process." = "Голосовую модель использует другой процесс.";
+"Try again when the other operation finishes." = "Попробуйте снова после завершения другой операции.";
+"Voice model preparation was interrupted." = "Подготовка голосовой модели была прервана.";
+"The voice model could not start." = "Не удалось запустить голосовую модель.";
+"The cause is not clear. Repairing the cached model may help. Your downloaded model and saved voice will be kept." = "Причина неизвестна. Может помочь восстановление кэша модели. Загруженная модель и сохранённый голос сохранятся.";
+"Repair Voice Model" = "Восстановить голосовую модель";
+"The cause is not clear. Try again; if the problem continues, collect diagnostics." = "Причина неизвестна. Попробуйте снова; если ошибка повторится, соберите диагностику.";
+"Last attempt: %@" = "Последняя попытка: %@";
+"Available on the model disk: %@." = "Доступно на диске модели: %@.";
+"Available for temporary downloads: %@." = "Доступно для временных загрузок: %@.";
+"Available disk space: %@." = "Доступно на диске: %@.";
+"Estimated minimum space needed: %@. Free at least %@; additional working space may be needed." = "Ориентировочный минимум: %@. Освободите не менее %@; для работы может понадобиться дополнительное место.";
+"Estimated minimum space needed: %@. Additional working space may be needed." = "Ориентировочный минимум: %@. Для работы может понадобиться дополнительное место.";
+"The available space could not be checked. Open Storage Settings and try again." = "Не удалось проверить доступное место. Откройте настройки хранилища и попробуйте снова.";
+"Open Storage Settings" = "Открыть настройки хранилища";
+"Check Again" = "Проверить снова";
+"System Settings → General → Storage" = "Системные настройки → Основные → Хранилище";

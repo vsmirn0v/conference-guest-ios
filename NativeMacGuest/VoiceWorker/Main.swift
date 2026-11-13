@@ -45,9 +45,11 @@ private final class ClonedVoiceWorkerRuntime {
     private var folder: URL?
     private var lease: ClonedVoiceLease?
     private var model: AnyObject?
+    private var repairedAsset: String?
 
     func perform(_ request: ClonedVoiceWire.Request,
                  progress: (ClonedVoiceWire.Response.Stage) -> Void) async -> (ClonedVoiceWire.Response, [Float]?) {
+        repairedAsset = nil
         do {
             if request.operation == .ping { return (.init(), nil) }
             #if canImport(CoreAI)
@@ -55,7 +57,7 @@ private final class ClonedVoiceWorkerRuntime {
                 if request.operation == .cacheScope { return (.init(message: "worker-default"), nil) }
                 if let folder = request.folder {
                     let samples = try await generate(request, folder: folder, progress: progress)
-                    return (.init(pcm: samples != nil, memoryBytes: measuredMemory), samples)
+                    return (.init(repairedAsset: repairedAsset, pcm: samples != nil, memoryBytes: measuredMemory), samples)
                 }
             }
             #endif
@@ -66,13 +68,21 @@ private final class ClonedVoiceWorkerRuntime {
         } catch VoxError.context(let message) where request.operation == .speak {
             return (.init(failure: .context, message: message), nil)
         } catch let failure as VoxAssetFailure {
-            return (.init(failure: .runtime, message: failure.localizedDescription,
-                          repairAsset: failure.missingSpecialization ? failure.asset : nil), nil)
+            let asset = failure.missingSpecialization ? failure.asset : nil
+            let kind: ClonedVoiceFailure.Kind = VoiceStorage.isOutOfSpace(failure.cause) ? .storage : (asset == nil ? .unknown : .cache)
+            let diagnosis = ClonedVoiceFailure(kind: kind, technicalDetails: failure.localizedDescription,
+                                                repairAsset: asset, failedAt: Date())
+            probeLog("voice-worker-failure-classified", ["kind": kind.rawValue, "repairAvailable": asset != nil])
+            return (.init(failure: .runtime, message: failure.localizedDescription, repairAsset: asset,
+                          failureInfo: diagnosis, repairedAsset: repairedAsset), nil)
         } catch {
             let detail = error as NSError
             probeLog("voice-worker-operation-failed", ["domain": detail.domain, "code": detail.code])
             let message = error is VoxError ? error.localizedDescription : "The Neural Engine could not run the voice model (\(detail.domain) \(detail.code))."
-            return (.init(failure: .runtime, message: message), nil)
+            let kind: ClonedVoiceFailure.Kind = VoiceStorage.isOutOfSpace(error) ? .storage : .unknown
+            return (.init(failure: .runtime, message: message,
+                          failureInfo: .init(kind: kind, technicalDetails: message, failedAt: Date()),
+                          repairedAsset: repairedAsset), nil)
         }
     }
 
@@ -91,10 +101,13 @@ private final class ClonedVoiceWorkerRuntime {
         self.folder = folder
         let loaded: VoxCPM2
         if let resident = model as? VoxCPM2 {
+            // An owner still using the model must never have its cache invalidated.
+            guard request.repairAsset == nil else { throw ClonedVoiceWorkerError.busy }
             loaded = resident
         } else {
             progress(.load)
-            if request.operation == .prepare, let asset = request.repairAsset { try VoxCoreAI.repair(asset, in: folder) }
+            if request.operation == .prepare, let asset = request.repairAsset,
+               try VoxCoreAI.repair(asset, in: folder) { repairedAsset = asset }
             loaded = try await VoxCPM2(bundle: folder)
             model = loaded
         }

@@ -1,6 +1,28 @@
 import Darwin
 import Foundation
 
+/// A user-facing diagnosis. Storage measurements are transient and never written
+/// to the preparation receipt or emitted to diagnostics.
+struct ClonedVoiceFailure: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable { case storage, cache, unknown, busy, interrupted, rateLimited }
+    var kind: Kind
+    var storage: VoiceStorageSnapshot?
+    var technicalDetails: String?
+    var repairAsset: String?
+    var failedAt: Date?
+    var retryAfter: Date?
+    /// Which independent budget blocked the last action, when rate-limited.
+    var rateLimitedRepair: Bool?
+    var rateLimitedStorage: Bool?
+
+    var repairAvailable: Bool { (kind == .cache || kind == .busy || kind == .interrupted || kind == .rateLimited) && repairAsset != nil }
+
+    /// Persist the failure category, not a fingerprint of the Mac's disk usage.
+    var withoutStorageMeasurement: Self {
+        var copy = self; copy.storage = nil; return copy
+    }
+}
+
 /// A private, bounded protocol between the app and its bundled speech helper.
 /// Requests carry only the installed model path and an optional text/voice pair.
 enum ClonedVoiceWire {
@@ -20,6 +42,9 @@ enum ClonedVoiceWire {
         var failure: Failure?
         var message: String?
         var repairAsset: String?
+        var failureInfo: ClonedVoiceFailure?
+        /// A cache entry actually removed during this request, even if later work failed.
+        var repairedAsset: String?
         var pcm: Bool = false
         var memoryBytes: UInt64?
     }
@@ -68,6 +93,7 @@ enum ClonedVoiceWire {
 enum ClonedVoiceWorkerError: LocalizedError, Equatable {
     case busy, stopped, timeout, protocolFailure, unavailable
     case context(String), runtime(String, repairAsset: String? = nil)
+    case diagnosed(ClonedVoiceFailure, repairedAsset: String? = nil)
 
     var errorDescription: String? {
         switch self {
@@ -77,6 +103,7 @@ enum ClonedVoiceWorkerError: LocalizedError, Equatable {
         case .protocolFailure: "The cloned voice worker returned an incomplete or invalid response."
         case .unavailable: "The cloned voice worker could not start."
         case .context(let message), .runtime(let message, _): message
+        case .diagnosed(let failure, _): failure.technicalDetails ?? "The cloned voice worker failed."
         }
     }
 }

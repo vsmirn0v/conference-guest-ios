@@ -125,6 +125,8 @@ struct ListenModelCatalog: Decodable, Equatable {
     let catalog: ListenModelCatalog
     let root: URL
     @Published private(set) var states: [String: State] = [:]
+    /// Transient local-only measurements; never include these in diagnostics.
+    @Published private(set) var storageFailures: [String: VoiceStorageSnapshot] = [:]
     @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: Self.enabledKey) } }
     /// Your own words join the transcript of the meeting that holds your microphone, while unmuted.
     @Published var includesMicrophone: Bool { didSet { defaults.set(includesMicrophone, forKey: Self.microphoneKey) } }
@@ -135,6 +137,7 @@ struct ListenModelCatalog: Decodable, Equatable {
     @Published var selectedID: String { didSet { defaults.set(selectedID, forKey: Self.modelKey) } }
     private let defaults: UserDefaults
     private var downloads: [String: Task<Void, Never>] = [:]
+    private var downloadAttempts: [String: UUID] = [:]
 
     init(catalog: ListenModelCatalog = .current, root: URL? = nil, defaults: UserDefaults = .standard) {
         self.catalog = catalog
@@ -160,6 +163,19 @@ struct ListenModelCatalog: Decodable, Equatable {
     var installed: [ListenModelCatalog.Model] { catalog.models.filter { state($0).installed } }
     var installedSize: Int64 { installed.reduce(0) { $0 + $1.size } }
     func state(_ model: ListenModelCatalog.Model) -> State { states[model.id] ?? .absent }
+    func storageFailure(_ model: ListenModelCatalog.Model) -> VoiceStorageSnapshot? { storageFailures[model.id] }
+
+    /// Re-check the same known destination after the user frees space. Unknown
+    /// locations stay unknown rather than reporting a different volume's capacity.
+    func refreshStorageFailure(_ model: ListenModelCatalog.Model) {
+        guard var failure = storageFailures[model.id] else { return }
+        switch failure.location {
+        case .model: failure.availableBytes = VoiceStorage.capacity(at: folder(model))
+        case .temporary: failure.availableBytes = VoiceStorage.capacity(at: FileManager.default.temporaryDirectory)
+        case nil: failure.availableBytes = nil
+        }
+        storageFailures[model.id] = failure
+    }
     /// Transcription can run: switched on, and the chosen model and the VAD are installed.
     var ready: Bool {
         guard enabled, let selected, let vad = catalog.vad else { return false }
@@ -187,13 +203,18 @@ struct ListenModelCatalog: Decodable, Equatable {
         if model.role == "listen", let vad = catalog.vad, !state(vad).installed, downloads[vad.id] == nil { queue.insert(vad, at: 0) }
         for item in queue where downloads[item.id] == nil && !state(item).installed {
             guard item.pinned else { states[item.id] = .failed(L("This model is not verified for this app version.")); continue }
+            storageFailures[item.id] = nil
             states[item.id] = .downloading(0)
-            downloads[item.id] = Task { [weak self] in await self?.install(item) }
+            let attempt = UUID()
+            downloadAttempts[item.id] = attempt
+            downloads[item.id] = Task { [weak self] in await self?.install(item, attempt: attempt) }
         }
     }
 
     func cancel(_ model: ListenModelCatalog.Model) {
         downloads[model.id]?.cancel(); downloads[model.id] = nil
+        downloadAttempts[model.id] = nil
+        storageFailures[model.id] = nil
         states[model.id] = .absent
     }
 
@@ -204,30 +225,72 @@ struct ListenModelCatalog: Decodable, Equatable {
         objectWillChange.send()
     }
 
-    private func install(_ model: ListenModelCatalog.Model) async {
-        defer { downloads[model.id] = nil }
+    private func install(_ model: ListenModelCatalog.Model, attempt: UUID) async {
+        defer {
+            if downloadAttempts[model.id] == attempt {
+                downloads[model.id] = nil
+                downloadAttempts[model.id] = nil
+            }
+        }
         let folder = folder(model)
+        var knownStorageLocation: VoiceStorageSnapshot.Location? = .model
         do {
+            try Task.checkCancellation()
+            guard downloadAttempts[model.id] == attempt else { return }
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            // Hash existing files away from the main actor. Do it once and reuse
+            // the results so a partially downloaded model is not counted again.
+            let assessment = try await Self.assessExistingFiles(model.files, folder: folder)
+            try Task.checkCancellation()
+            guard downloadAttempts[model.id] == attempt else { return }
+            if model.role == VoiceCloneSupport.role,
+               let needed = VoiceStorage.downloadDestinationMinimum(assessment.map(\.estimate)),
+               let available = VoiceStorage.capacity(at: folder), needed > available {
+                storageFailures[model.id] = .init(availableBytes: available, requiredBytes: needed, location: .model)
+                states[model.id] = .failed(L("There is not enough storage to download the voice model."))
+                return
+            }
             try? FileManager.default.removeItem(at: marker(model))
             var done: Int64 = 0
-            for file in model.files {
+            for (file, assessed) in zip(model.files, assessment) {
                 let target = folder.appendingPathComponent(file.name)
-                if (try? Self.sha256(of: target)) != file.sha256 {
+                if !assessed.estimate.verified {
                     let base = done, total = max(1, model.size)
                     let progress = ListenDownloadProgress { [weak self] written in
                         Task { @MainActor in
-                            guard let self, case .downloading = self.states[model.id] else { return }
+                            guard let self, self.downloadAttempts[model.id] == attempt,
+                                  case .downloading = self.states[model.id] else { return }
                             self.states[model.id] = .downloading(Double(base + written) / Double(total))
                         }
                     }
+                    // URLSession chooses its own temporary file location; do not
+                    // pretend the model volume is the failing download volume.
+                    knownStorageLocation = nil
                     let (temporary, response) = try await URLSession.shared.download(from: file.url, delegate: progress)
+                    defer { try? FileManager.default.removeItem(at: temporary) }
                     try Task.checkCancellation()
+                    guard downloadAttempts[model.id] == attempt else { return }
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                         throw ListenModelError.http(http.statusCode)
                     }
-                    guard try Self.sha256(of: temporary) == file.sha256 else {
+                    guard try await Self.hashFile(temporary) == file.sha256 else {
                         try? FileManager.default.removeItem(at: temporary); throw ListenModelError.checksum(file.name)
+                    }
+                    try Task.checkCancellation()
+                    guard downloadAttempts[model.id] == attempt else { return }
+                    knownStorageLocation = .model
+                    // A cross-volume move may copy before deleting the temporary.
+                    // Existing invalid target bytes can be reclaimed on replace;
+                    // when volume identity or capacity is unknown, do not block.
+                    if model.role == VoiceCloneSupport.role,
+                       let copy = VoiceStorage.moveRequirement(bytes: file.size, sameVolume: VoiceStorage.sameVolume(temporary, folder)),
+                       copy > 0, let available = VoiceStorage.capacity(at: folder) {
+                        let required = max(0, copy - assessed.estimate.existingBytes)
+                        if required > available {
+                            storageFailures[model.id] = .init(availableBytes: available, requiredBytes: required, location: .model)
+                            states[model.id] = .failed(L("There is not enough storage to download the voice model."))
+                            return
+                        }
                     }
                     try? FileManager.default.removeItem(at: target)
                     // Core ML packages are folders: a file name may include subfolders.
@@ -240,20 +303,53 @@ struct ListenModelCatalog: Decodable, Equatable {
             try model.files.map { "\($0.name) \($0.sha256)" }.joined(separator: "\n")
                 .write(to: marker(model), atomically: true, encoding: .utf8)
             states[model.id] = .installed
+            storageFailures[model.id] = nil
             probeLog("listen-model-installed", ["model": model.id, "bytes": model.size])
         } catch is CancellationError {
+            guard downloadAttempts[model.id] == attempt else { return }
             states[model.id] = .absent
         } catch {
+            guard downloadAttempts[model.id] == attempt else { return }
+            if model.role == VoiceCloneSupport.role, VoiceStorage.isOutOfSpace(error) {
+                let available = knownStorageLocation == .model ? VoiceStorage.capacity(at: folder) : nil
+                storageFailures[model.id] = .init(availableBytes: available, location: knownStorageLocation)
+            }
             states[model.id] = .failed(error.localizedDescription)
             probeLog("listen-model-failed", ["model": model.id, "error": String(describing: type(of: error))])
         }
+    }
+
+    private struct AssessedFile {
+        var estimate: VoiceStorage.DownloadFile
+    }
+
+    /// Cancellation is forwarded to the worker; long file hashes never block UI.
+    private nonisolated static func assessExistingFiles(_ files: [ListenModelCatalog.File], folder: URL) async throws -> [AssessedFile] {
+        let task = Task.detached(priority: .utility) {
+            try files.map { file in
+                try Task.checkCancellation()
+                let target = folder.appendingPathComponent(file.name)
+                let size = ((try? FileManager.default.attributesOfItem(atPath: target.path)[.size]) as? NSNumber)?.int64Value ?? 0
+                let verified = size == file.size && (try? sha256(of: target)) == file.sha256
+                return AssessedFile(estimate: .init(bytes: file.size, existingBytes: max(0, size), verified: verified))
+            }
+        }
+        return try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+    }
+
+    private nonisolated static func hashFile(_ url: URL) async throws -> String {
+        let task = Task.detached(priority: .utility) { try sha256(of: url) }
+        return try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
     }
 
     nonisolated static func sha256(of url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hasher = SHA256()
-        while let block = try handle.read(upToCount: 1 << 20), !block.isEmpty { hasher.update(data: block) }
+        while let block = try handle.read(upToCount: 1 << 20), !block.isEmpty {
+            try Task.checkCancellation()
+            hasher.update(data: block)
+        }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 

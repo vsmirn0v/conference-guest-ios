@@ -1,7 +1,7 @@
 import Foundation
 
-/// Reports one failing asset. An ANE missing-file error can justify a precise
-/// repair on a later explicit retry; an opaque delegate error cannot.
+/// Reports one failing asset. A cached model that fails to load or run may
+/// benefit from a narrowly scoped, explicitly requested cache repair.
 struct VoxAssetFailure: LocalizedError {
     var asset: String
     var cause: Error
@@ -15,7 +15,7 @@ struct VoxAssetFailure: LocalizedError {
     var missingSpecialization: Bool {
         let error = cause as NSError
         // MPSGraph can hide an ANE model-load failure behind this opaque error.
-        // Offer a single explicit repair only for function loading from a cache hit.
+        // Offer an explicit repair only when the failing model was a cache hit.
         if cachedFunctionLoad && error.domain == "Foundation._GenericObjCError" && error.code == 0 {
             return true
         }
@@ -69,7 +69,7 @@ enum VoxCoreAI {
     }
 
     /// Called by an exclusive worker before it has loaded any model.
-    static func repair(_ asset: String, in folder: URL) throws {
+    @discardableResult static func repair(_ asset: String, in folder: URL) throws -> Bool {
         let manifest = try JSONDecoder().decode(VoxManifest.self, from: Data(contentsOf: folder.appendingPathComponent("model.json")))
         let root = folder.resolvingSymlinksInPath()
         let target = folder.appendingPathComponent(asset).resolvingSymlinksInPath()
@@ -79,13 +79,16 @@ enum VoxCoreAI {
         }
         // A miss will naturally specialize. Preserve every other asset/options entry.
         do {
-            if try cache.model(for: target, options: options) == nil { return }
+            if try cache.model(for: target, options: options) == nil { return false }
         } catch {
+            // A full volume is not evidence that the cached entry is corrupt.
+            if VoiceStorage.isOutOfSpace(error) { throw error }
             // An unreadable entry is the reason this narrowly scoped repair was requested.
             probeLog("vox-cache-repair-lookup-failed", ["asset": asset, "code": (error as NSError).code])
         }
         try cache.deleteEntry(for: target, options: options)
         probeLog("vox-cache-entry-repaired", ["asset": asset])
+        return true
     }
 
     /// Proves in the next diagnostics whether a specialization survived between launches:
@@ -204,7 +207,7 @@ final class VoxAsset {
             guard let result = outputs.remove(output)?.ndArray else { throw VoxError.engine("missing \(output) output") }
             return result
         } catch {
-            throw VoxAssetFailure(asset: asset, cause: error)
+            throw VoxAssetFailure(asset: asset, cause: error, cachedFunctionLoad: hadCachedModel)
         }
     }
 

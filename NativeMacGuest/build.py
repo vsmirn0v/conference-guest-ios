@@ -111,7 +111,7 @@ for source in re.findall(r'(?m)^      - path: (\.\./.+)$', (ROOT/'NativeMacGuest
 sources += sorted((ROOT/'ConferenceCore/Sources').rglob('*.swift'))+[ROOT/'ConferenceCore/Package.swift']
 sources = sorted(set(sources))
 sources += [ROOT/'NativeMacGuest/VoiceWorker/Worker.entitlements']
-sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
+sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/PrivacyInfo.xcprivacy',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
 sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-livekit.json']
 sources += sorted((ROOT/'Dependencies/native-macos/livekit-patches').glob('*.patch'))
 sources += [ROOT/'NativeMacGuest/native_dependencies.py', ROOT/'Dependencies/native-macos/sdk.lock.json']
