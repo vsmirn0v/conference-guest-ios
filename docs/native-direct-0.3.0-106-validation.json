@@ -1,0 +1,115 @@
+{
+  "version": "0.3.0",
+  "build": "106",
+  "channel": "beta",
+  "sourceCommit": "5a8290cc3841b409a56496a4c22304e100b604ba",
+  "sourceState": "Committed and pushed to origin/main before archive and publication; all 314 files in the archive build evidence matched the working files after archive creation.",
+  "buildEvidenceSHA256": "05112ba934ece980921f021d65c97b093ecc4ed3e52e090a2beccdcad635ec23",
+  "archivedExecutableSHA256": "ebf1013b3834f8bff96aed6247bb0793436128b5c682fd4ed02eebe11382ed2e",
+  "privacyManifestSHA256": "5425b94e2067d8835cabcbf6fcd00bc59bee5cdfd8fd1531764bcb46272a7421",
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "106",
+    "file": "RockNRoll-0.3.0-106-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-106-arm64.dmg",
+    "sha256": "32e4c9e2470d9cdda309fe8d285cc23d64f840b11f6cea4955a40b46687d4645",
+    "length": 29706074,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-106/package/RockNRoll-0.3.0-106-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/voice-recovery-validation/RockNRollNativeGuest-0.3.0-106.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-106/export/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "106",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-106-arm64.dmg",
+      "sha256": "32e4c9e2470d9cdda309fe8d285cc23d64f840b11f6cea4955a40b46687d4645",
+      "length": 29706074
+    },
+    "state": {
+      "appcastSHA256": "18e2e316cae65b6ef7e4bbd51df226f22e50d24892537571f870c0f4a49dbe23",
+      "inventorySHA256": "427305d9c8130719992a6eb037a969586fbaaca4e5c68d6cc4f5c04959824fbf",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-106-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/dd81fb6647694f3fa67120ffc2d34c76/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "verifiedAt": "2026-11-13T23:45:04.043719+00:00",
+    "version": "0.3.0",
+    "betaBuild": "106",
+    "stableBuild": "53",
+    "checks": {
+      "immutable": {
+        "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-106-arm64.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-106-arm64.dmg",
+        "httpStatus": 200,
+        "sha256": "32e4c9e2470d9cdda309fe8d285cc23d64f840b11f6cea4955a40b46687d4645",
+        "length": 29706074,
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "betaAlias": {
+        "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "httpStatus": 200,
+        "sha256": "32e4c9e2470d9cdda309fe8d285cc23d64f840b11f6cea4955a40b46687d4645",
+        "length": 29706074,
+        "cacheControl": "no-store"
+      },
+      "stableAlias": {
+        "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "httpStatus": 200,
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+        "length": 15947096,
+        "cacheControl": "no-store"
+      },
+      "appcast": {
+        "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "httpStatus": 200,
+        "sha256": "18e2e316cae65b6ef7e4bbd51df226f22e50d24892537571f870c0f4a49dbe23",
+        "length": 6988,
+        "cacheControl": "no-store"
+      },
+      "inventory": {
+        "url": "https://rock.glowsoft.ru/mac/latest.json",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/latest.json",
+        "httpStatus": 200,
+        "sha256": "427305d9c8130719992a6eb037a969586fbaaca4e5c68d6cc4f5c04959824fbf",
+        "length": 489,
+        "cacheControl": "no-store"
+      }
+    },
+    "appcastBetaEnclosureVerified": true,
+    "allMatched": true
+  },
+  "validation": [
+    "Focused lifecycle, voice storage, transcription and Russian recovery interface suite: 44 tests executed, including 4 skipped; 0 failures.",
+    "Distribution tooling: 27 tests passed.",
+    "Signed archive, app-group and embedded voice-worker self-checks passed; archive signature and privacy manifest verified.",
+    "Developer ID app notarized and stapled; Gatekeeper accepted the exported app and the app inside the packaged DMG.",
+    "Signed feed and package passed preflight; publisher and independent HTTPS readback verified immutable, beta and stable downloads, inventory and appcast."
+  ],
+  "notVerified": [
+    "Installed Sparkle upgrade to build 106.",
+    "Real Neural Engine cache repair, low-disk failure and cloned-voice audibility on this exact signed artifact; fixture tests did not modify the installed model or saved voice.",
+    "Separate signing and notarization of the outer DMG."
+  ],
+  "evidenceRoot": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-106"
+}
