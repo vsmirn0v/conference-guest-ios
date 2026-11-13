@@ -1,0 +1,90 @@
+{
+  "version": "0.3.0",
+  "build": "103",
+  "channel": "beta",
+  "sourceBase": "b595e89cf2843cbf8a7ecf2c29c9cf2545aebc06",
+  "sourceState": "Uncommitted working tree preserved; 1669 tracked and relevant new files copied to a detached release worktree and independently hash-verified after build.",
+  "sourcePatchSHA256": "c6b65561f30948bd5bb8dcab501e48593edbe059c92e95cfa8dd8b0e27fbaceb",
+  "newSourcesSHA256": "1bdfd2d0902f14982df3f3f30ca45b868d6fb98c0c6f183227c1acf0e8038bb3",
+  "sourceManifestSHA256": "251d0ce6bdba0dd4c21d9229dd9dada395e942600fda1f748893de73ce499053",
+  "buildEvidenceSHA256": "bcc9e67905e26abd6b8766c9fc401e19a4604b91952fdde7fc91afba7fa5683f",
+  "review": {
+    "result": "Independent review cleared the frozen source",
+    "audioPatchSHA256": "cb4ca1cdada0740a8ae3ae3a2a6e01a82c0422295d3a96df36b5dbdaad9a3fbb"
+  },
+  "changes": [
+    "Native Mac meeting workspace with focused and parallel live conversations, status, per-meeting private guidance, pause, manual takeover, and draft controls.",
+    "Durable locally stored transcript revisions, assistant responses, delivery states, context snapshots, bookmarks, review and saved guidance.",
+    "English and Russian workspace and command localization.",
+    "Guest-first mixed meetings retain Rock listening and chat; microphone and assistant speech are gated until a verified SDK audio route exists.",
+    "Approved speech uses separate cancellable local and outgoing audio routes, with fail-closed microphone protection."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "103",
+    "file": "RockNRoll-0.3.0-103-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-103-arm64.dmg",
+    "sha256": "9d7b1dade85dc9ed247a89c7c87c1062e3977a90fe71346fc35162b25799986a",
+    "length": 29657220,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-103/package-account/RockNRoll-0.3.0-103-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-103/source/.build/beta-build/RockNRollNativeGuest-0.3.0-103.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-103/export-account/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "103",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-103-arm64.dmg",
+      "sha256": "9d7b1dade85dc9ed247a89c7c87c1062e3977a90fe71346fc35162b25799986a",
+      "length": 29657220
+    },
+    "state": {
+      "appcastSHA256": "65b40c53dbf7fa104e56446d53973fb52b04bd09b8bbfaa6659fb5acf4a4e7cb",
+      "inventorySHA256": "d7d6bd71f53c8d5df2f793ce42bdbc27a08ba0ec49aa5c81de6aa44dc4be6877",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-103-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/eed56140b8504952bbe7b73d94cef11d/backup",
+    "httpsVerified": true
+  },
+  "publicReadback": {
+    "location": "this Mac over canonical HTTPS",
+    "immutableSHA256": "9d7b1dade85dc9ed247a89c7c87c1062e3977a90fe71346fc35162b25799986a",
+    "betaAliasSHA256": "9d7b1dade85dc9ed247a89c7c87c1062e3977a90fe71346fc35162b25799986a",
+    "stableAliasSHA256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+    "appcastSHA256": "65b40c53dbf7fa104e56446d53973fb52b04bd09b8bbfaa6659fb5acf4a4e7cb",
+    "inventorySHA256": "d7d6bd71f53c8d5df2f793ce42bdbc27a08ba0ec49aa5c81de6aa44dc4be6877",
+    "betaBuild": "103",
+    "stableBuild": "53",
+    "allMatched": true
+  },
+  "validation": [
+    "Isolated target run: 94 passed, two restart tests skipped pending dedicated runs, and one Russian accessibility test could not access the locked screen; the same exact-source UI test passed after unlock.",
+    "Two app-host processes independently passed meeting window close, Leave, restart and transcript revision plus exact simulated reply and evidence readback; writer PID 23803, reader PID 24355.",
+    "Local LiveKit receiver passed Guest-first concurrent chat and nonzero PCM, microphone isolation, route handover, complete reply coverage, cancellation and next reply. Audio fixture and manual rendering were synthetic.",
+    "Focused voice and gate suite: 17 passed. Microphone and shared audio regression suites: 38 passed. Distribution tooling: 27 passed.",
+    "English and Russian localization catalogs and stringsdict files passed plutil lint. Independent Russian UI acceptance passed after unlock.",
+    "Notarized app stapled and accepted by Gatekeeper; mounted package app revalidated. Public immutable, beta and stable downloads, appcast and inventory matched expected hashes from this Mac."
+  ],
+  "notVerified": [
+    "Live production meeting with the configured cloned voice and physical speaker/headset audibility.",
+    "Installed Sparkle upgrade on this Mac.",
+    "Separate signing and notarization of the outer DMG."
+  ],
+  "evidenceRoot": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-103",
+  "publishedAt": "2026-11-13T06:08:42.926290+00:00"
+}

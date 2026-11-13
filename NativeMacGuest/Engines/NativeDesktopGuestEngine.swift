@@ -23,6 +23,7 @@ enum NativeDesktopGuestError: LocalizedError {
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)? { didSet { onLocalCamera?(currentNativeEngine?.localCameraTrack) } }
     var onTitle: ((String) -> Void)? { didSet { if !guestSnapshot.title.isEmpty { onTitle?(guestSnapshot.title) } } }
     var onFeatures: ((GuestMeetingSnapshot) -> Void)? { didSet { onFeatures?(guestSnapshot) } }
+    var onCapturedMessages: (([GuestMeetingMessage], Bool) -> Void)?
     /// Chat/history/transcription errors belong to their feature and never end media.
     var onFeatureError: ((Error) -> Void)?
     private(set) var featureError: String?
@@ -124,8 +125,10 @@ enum NativeDesktopGuestError: LocalizedError {
 #endif
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         guestSnapshot = .init(); onFeatures?(guestSnapshot); emit()
+#if DEBUG || NATIVE_LEGACY_AUDIO
         let profile = GuestAudioProfile.saved
         var reservedRoom: NativeDesktopSharedMedia<GuestSystemAudio>.Room?
+#endif
         if let sharedAudio {
             let meeting = try await SharedGuestMeetingAudio.attach(to: sharedAudio)
             sharedMeeting = meeting
@@ -133,13 +136,19 @@ enum NativeDesktopGuestError: LocalizedError {
                 _ = await meeting.shutdown(); sharedMeeting = nil; throw CancellationError()
             }
         } else {
+#if DEBUG || NATIVE_LEGACY_AUDIO
             let reserved = try await media.reserveRoom(profile: profile)
             self.room = reserved; reservedRoom = reserved
             guard revision == token, !leaving, !Task.isCancelled else {
                 _ = await media.releaseRoom(reserved, clean: true); self.room = nil; throw CancellationError()
             }
+#else
+            throw NativeDesktopGuestError.cleanupFailed
+#endif
         }
+#if DEBUG || NATIVE_LEGACY_AUDIO
         let room = reservedRoom
+#endif
         let session = GuestSession(makeEngine: { [weak self] in
             guard let self, revision == token, !leaving, !Task.isCancelled else { throw CancellationError() }
             let owner: any GuestMeetingAudio
@@ -152,6 +161,7 @@ enum NativeDesktopGuestError: LocalizedError {
                 owner = meeting
                 release = { [meeting] clean in await meeting.endAttempt(clean: clean) }
             } else {
+#if DEBUG || NATIVE_LEGACY_AUDIO
                 guard let room else { throw NativeDesktopGuestError.cleanupFailed }
                 let attempt = UUID()
                 let attached = try await media.attach(room, attempt: attempt, playout: outputIntent,
@@ -161,6 +171,9 @@ enum NativeDesktopGuestError: LocalizedError {
                 }
                 owner = attached
                 release = { [media] clean in await media.detach(room, attempt: attempt, clean: clean) }
+#else
+                throw NativeDesktopGuestError.cleanupFailed
+#endif
             }
             systemAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
@@ -240,9 +253,14 @@ enum NativeDesktopGuestError: LocalizedError {
                 snapshot.phase = .failed; snapshot.lastError = error.localizedDescription; emit()
                 let engineStopped = await session.leave()
                 let stopped: Bool
+#if DEBUG || NATIVE_LEGACY_AUDIO
                 if let room { stopped = await media.releaseRoom(room, clean: engineStopped) }
                 else if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
                 else { stopped = engineStopped }
+#else
+                if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
+                else { stopped = engineStopped }
+#endif
                 if revision == token, self.session === session {
                     cleanupSucceeded = stopped
                     self.session = nil; self.room = nil; sharedMeeting = nil; systemAudio = nil; bind(nil, token: token)
@@ -340,8 +358,10 @@ enum NativeDesktopGuestError: LocalizedError {
     /// A second simultaneous Guest meeting gets its own room service and owner.
     func configureConcurrentAudio(_ concurrent: Bool) {
         // On the shared engine every meeting is an attachment; there is no separate owner.
+#if DEBUG || NATIVE_LEGACY_AUDIO
         guard concurrent, sharedAudio == nil, session == nil, room == nil else { return }
         media = NativeDesktopMediaService.makeConcurrentGuestMedia()
+#endif
     }
     func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
         await setPhysicalInputPermitted(permitted, keepDeviceWarm: false)
@@ -357,8 +377,27 @@ enum NativeDesktopGuestError: LocalizedError {
         return await systemAudio.prewarmInput()
     }
     var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && systemAudio != nil }
-    func setMicrophoneGate(open: Bool) async -> Bool { systemAudio?.setMicrophoneGate(open: open) ?? open }
+    var voiceMicrophoneGateIsClosed: Bool { systemAudio?.participationVoiceGateClosed == true }
+    func setMicrophoneGate(open: Bool) async -> Bool {
+        guard let systemAudio else { return open }
+        if !open, !snapshot.microphoneOn, !systemAudio.hasParticipationVoiceGraph {
+            try? await prepareMutedCaptureForAccessories()
+            guard self.systemAudio === systemAudio, !Task.isCancelled else { return false }
+        }
+        return systemAudio.setMicrophoneGate(open: open)
+    }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await systemAudio?.playVoiceReply(buffer) ?? false }
+    var hasParticipationVoiceGraph: Bool { supportsVoiceReply && systemAudio?.hasParticipationVoiceGraph == true }
+    var participationVoiceMicrophoneAuthorized: Bool { microphoneAuthorized() }
+    var participationSenderPhysicallyMuted: Bool { systemAudio?.participationSenderPhysicallyMuted == true }
+    var participationVoiceUsesSharedOutput: Bool { systemAudio is SharedGuestMeetingAudio }
+    func setParticipationVoiceGate(open: Bool) -> Bool { systemAudio?.setMicrophoneGate(open: open) == true }
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
+        await systemAudio?.playParticipationVoice(buffer, permit: permit, canStart: canStart,
+                                                   localGain: localGain, onStarted: onStarted) ?? .notStarted
+    }
     func setPlayoutVolume(_ volume: Double) async {
         meetingVolume = volume
         _ = systemAudio?.setMeetingVolume(volume)
@@ -447,11 +486,18 @@ enum NativeDesktopGuestError: LocalizedError {
         }
         // The shared owner may outlive this room; never hand it on without input.
         // (On the shared engine a permit would take the talk role from another meeting.)
+#if DEBUG || NATIVE_LEGACY_AUDIO
         if sharedMeeting == nil, !inputPermitted, let systemAudio { _ = await systemAudio.setInputPermitted(true) }
+#endif
         let stopped: Bool
+#if DEBUG || NATIVE_LEGACY_AUDIO
         if let room { stopped = await media.releaseRoom(room, clean: engineStopped) }
         else if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
         else { stopped = engineStopped }
+#else
+        if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
+        else { stopped = engineStopped }
+#endif
         revision = UUID(); cleanupSucceeded = stopped
         old?.onEngineChange = nil; old?.onStateChange = nil
         session = nil; room = nil; sharedMeeting = nil; systemAudio = nil; detachEngine()
@@ -485,6 +531,7 @@ enum NativeDesktopGuestError: LocalizedError {
         currentNativeEngine?.onRemoteAudioChange = nil
         if currentNativeEngine != nil { onRemoteAudio?([]) }
         currentNativeEngine?.onMeetingChange = nil
+        currentNativeEngine?.onCapturedMessages = nil
         currentNativeEngine?.onIncomingVideoChange = nil
         currentNativeEngine?.onLocalCameraTrackChange = nil
         currentNativeEngine = nil
@@ -497,6 +544,10 @@ enum NativeDesktopGuestError: LocalizedError {
             systemAudio = nil; guestSnapshot = .init(); onFeatures?(guestSnapshot)
             if let session { refresh(session.snapshot) }
             return
+        }
+        engine.onCapturedMessages = { [weak self, weak engine] messages, transcript in
+            guard let self, let engine, revision == token, currentNativeEngine === engine, !leaving else { return }
+            onCapturedMessages?(messages, transcript)
         }
         engine.onMeetingChange = { [weak self, weak engine] features in
             guard let self, let engine, revision == token, currentNativeEngine === engine else { return }

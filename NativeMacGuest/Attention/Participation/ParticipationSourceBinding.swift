@@ -28,6 +28,31 @@ struct ParticipationSourceBinding: Sendable {
 
     var revisions: [String] { approvals.map { $0.grant.source.revision }.sorted() }
 
+    func readBounded(matching query: String?) async -> [ParticipationSource]? {
+        await Self.withReadDeadline { try? self.read(matching: query) }
+    }
+
+    /// A slow volume or file provider cannot keep the microphone gate closed
+    /// while speech preflight waits. Results after timeout or cancellation
+    /// are discarded without waiting for an in-progress system call.
+    static func withReadDeadline<Value: Sendable>(_ timeout: Duration = .milliseconds(300),
+                                                  _ read: @escaping @Sendable () -> Value?) async -> Value? {
+        guard !Task.isCancelled else { return nil }
+        let (results, output) = AsyncStream.makeStream(of: Value?.self, bufferingPolicy: .bufferingOldest(1))
+        let work = Task.detached(priority: .utility) { _ = output.yield(read()) }
+        let deadline = Task {
+            do { try await Task.sleep(for: timeout) } catch { return }
+            output.yield(nil)
+        }
+        defer {
+            output.finish()
+            deadline.cancel()
+            work.cancel()
+        }
+        var reader = results.makeAsyncIterator()
+        return await reader.next() ?? nil
+    }
+
     func read(matching query: String? = nil) throws -> [ParticipationSource] {
         guard !approvals.isEmpty else { return [] }
         guard let context, context.matches(context) else { throw ParticipationKnowledgeError.expired }

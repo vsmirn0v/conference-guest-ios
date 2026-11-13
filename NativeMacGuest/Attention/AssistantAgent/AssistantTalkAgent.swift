@@ -160,7 +160,8 @@ extension AssistantTalkController {
         case .remember:
             command = .init(action: .remember, text: action.text)
         }
-        return try await execute(command, context: makeContext(), attention: attention)
+        return try await execute(command, context: makeContext(), attention: attention,
+            id: action.id, revision: "\(action.revision):" + action.payloadHash)
     }
 
     // MARK: Snapshot

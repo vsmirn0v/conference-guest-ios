@@ -14,6 +14,48 @@ enum VoiceEngine: String, Codable, CaseIterable, Sendable {
     case cloned
 }
 
+struct AssistantVoiceConfiguration: Equatable, Sendable {
+    let engine: VoiceEngine
+    let cloneRecordedAt: Date?
+    private let baseURL: String
+    private let model: String
+    private let description: String
+
+    init(engine: VoiceEngine, baseURL: String, model: String, description: String, cloneRecordedAt: Date?) {
+        self.engine = engine
+        self.cloneRecordedAt = engine == .cloned ? cloneRecordedAt : nil
+        self.baseURL = engine == .rapidMLX ? baseURL : ""
+        self.model = engine == .rapidMLX ? model : ""
+        self.description = engine == .rapidMLX ? description : ""
+    }
+
+    var title: String {
+        switch engine {
+        case .system: L("The macOS voice")
+        case .personal: L("Your Personal Voice")
+        case .cloned: L("Your voice, on the Neural Engine")
+        case .rapidMLX: "Rapid-MLX · " + model
+        }
+    }
+
+    var speechHost: String? {
+        guard engine == .rapidMLX, let url = URL(string: baseURL.trimmed), let host = url.host else { return nil }
+        return url.port.map { "\(host):\($0)" } ?? host
+    }
+
+    func synthesize(_ text: String, language: String? = nil, session: URLSession = .shared) async throws -> AVAudioPCMBuffer {
+        switch engine {
+        case .system: return try await VoiceSynthesis.system(text, language: language)
+        case .personal: return try await VoiceSynthesis.personal(text)
+        case .cloned:
+            guard let cloneRecordedAt else { throw VoiceSynthesisError.cloneVoiceMissing }
+            return try await VoiceSynthesis.cloned(text, recordedAt: cloneRecordedAt)
+        case .rapidMLX:
+            return try await VoiceSynthesis.rapidMLX(text, baseURL: baseURL, model: model, description: description, session: session)
+        }
+    }
+}
+
 enum VoiceSynthesisError: LocalizedError, Equatable {
     case empty, system, server(Int, String?), transport, audio, personalUnsupported, personalDenied, personalMissing
     case cloneUnsupported, cloneModelMissing, cloneVoiceMissing, clonePreparing, clonePreparationFailed, clonePreviewWaiting, cloneTranscriptMissing
@@ -113,10 +155,10 @@ enum VoiceSynthesis {
     }
 
     /// The macOS voice for the text's language.
-    static func system(_ text: String) async throws -> AVAudioPCMBuffer {
+    static func system(_ text: String, language: String? = nil) async throws -> AVAudioPCMBuffer {
         let clean = text.trimmed
         guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
-        let language = language(of: clean) ?? Locale.preferredLanguages.first ?? "en-US"
+        let language = language ?? Self.language(of: clean) ?? Locale.preferredLanguages.first ?? "en-US"
         guard let buffer = await VoiceReplySample.make(text: clean, language: language) else { throw VoiceSynthesisError.system }
         return buffer
     }
@@ -140,10 +182,10 @@ enum VoiceSynthesis {
     }
 
     /// Your cloned voice, generated on this Mac's Neural Engine.
-    static func cloned(_ text: String) async throws -> AVAudioPCMBuffer {
+    static func cloned(_ text: String, recordedAt: Date? = nil) async throws -> AVAudioPCMBuffer {
         let clean = text.trimmed
         guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
-        let samples = try await VoiceCloneStore.shared.speak(clean)
+        let samples = try await VoiceCloneStore.shared.speak(clean, recordedAt: recordedAt)
         return try VoiceSampleAudio.buffer(samples, rate: 48_000)
     }
 

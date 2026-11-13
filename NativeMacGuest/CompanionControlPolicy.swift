@@ -118,3 +118,14 @@ enum CompanionMediaPolicy {
         await next.value
     }
 }
+
+/// Companion and workspace do not share a handover UI. Keep admission closed
+/// until the companion has fully stopped; a failed stop requires a restart.
+enum CompanionMeetingAdmission {
+    enum Block: Equatable { case active, failedCleanup }
+    static func block(admitting: Bool, finished: Bool?, cleanupSucceeded: Bool) -> Block? {
+        if finished == true && !cleanupSucceeded { return .failedCleanup }
+        if admitting || finished == false { return .active }
+        return nil
+    }
+}

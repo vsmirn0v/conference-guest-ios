@@ -137,8 +137,12 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
                 guard await meeting.beginAttempt(sound: !quiet) else { _ = await meeting.shutdown(); throw NativeDesktopRTCError.cleanupFailed }
                 owner = meeting
             } else {
+#if DEBUG || NATIVE_LEGACY_AUDIO
                 owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: !quiet, profile: audioProfile,
                                                           concurrent: concurrentAudio)
+#else
+                throw NativeDesktopRTCError.cleanupFailed
+#endif
             }
             guard epoch == attempt, snapshot.phase == .connecting else { _ = await owner.shutdown(); throw CancellationError() }
             audio = owner; admittedAudio = owner
@@ -230,7 +234,15 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         return warm
     }
     var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && audio != nil }
-    func setMicrophoneGate(open: Bool) async -> Bool { audio?.setMicrophoneGate(open: open) ?? open }
+    var voiceMicrophoneGateIsClosed: Bool { audio?.participationVoiceGateClosed == true }
+    func setMicrophoneGate(open: Bool) async -> Bool {
+        guard let audio else { return open }
+        if !open, !snapshot.microphoneOn, !audio.hasParticipationVoiceGraph {
+            try? await prepareMutedCaptureForAccessories()
+            guard self.audio === audio, !Task.isCancelled else { return false }
+        }
+        return audio.setMicrophoneGate(open: open)
+    }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await audio?.playVoiceReply(buffer) ?? false }
     /// Makes already-authorized hardware available for accessory mute gestures.
     /// This changes input availability, never publication intent or permission.

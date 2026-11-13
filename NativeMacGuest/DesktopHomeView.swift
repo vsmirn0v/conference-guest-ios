@@ -92,6 +92,7 @@ struct NativeDesktopHomeView: View {
                         case .favorites: roomList(library.favorites, title: L("Favorites"), reorder: true)
                         case .recent: roomList(library.recent, title: L("Recent meetings"))
                         case .calendar: agenda
+                        case .workspace: NativeDesktopMeetingWorkspaceView(workspace: workspace)
                         case .assistant: AttentionMomentsView(attention: workspace.attention, store: workspace.attention.store)
                         case .home: home
                         }
@@ -460,11 +461,8 @@ struct NativeDesktopSettingsView: View {
     /// Obsidian one-way export settings and status.
     var obsidian: ObsidianExportCoordinator? = nil
     @FocusState private var editingName: Bool
-    @AppStorage("nativeDesktop.multipleMeetings") private var multipleMeetings = true
     @AppStorage(NativeDesktopGuestEngine.forceTCPRelayKey) private var forceTCPRelay = false
     @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
-    @AppStorage(GuestSystemAudio.voiceRepliesKey) private var voiceReplies = false
-    @AppStorage(SharedAudioEngine.flagKey) private var sharedAudioEngine = false
     @AppStorage(NativeDesktopHeadsetMute.Platform.enabledKey) private var headsetMute = false
     @AppStorage(NativeDesktopHeadsetMute.Platform.disabledReasonKey) private var headsetMuteDisabledReason = ""
     var body: some View {
@@ -482,14 +480,8 @@ struct NativeDesktopSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section(L("Meetings")) {
-                    Toggle(L("Allow multiple meetings"), isOn: $multipleMeetings)
-                    Text(L("Stay connected to several meetings. Your microphone and camera work in one meeting at a time; the others keep playing unless you silence them."))
-                        .font(.caption).foregroundStyle(.secondary)
                     Toggle(L("Keep the microphone ready in every meeting (experimental)"), isOn: $keepMicrophoneWarm)
                     Text(L("Moving your microphone between meetings skips restarting the device. Meetings you leave the microphone in stay muted, but macOS keeps showing the microphone indicator while you are in any meeting."))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Toggle(L("Voice replies (experimental)"), isOn: $voiceReplies)
-                    Text(L("Lets the app play a spoken reply into a meeting while your own microphone is held back. Applies to meetings joined after turning it on. Try it from a meeting's More menu."))
                         .font(.caption).foregroundStyle(.secondary)
                     Toggle(L("Mute with AirPods and headset buttons"), isOn: Binding(get: { headsetMute }, set: { on in
                         headsetMute = on; if on { headsetMuteDisabledReason = "" }
@@ -499,12 +491,6 @@ struct NativeDesktopSettingsView: View {
                     if !headsetMute && !headsetMuteDisabledReason.isEmpty {
                         Text(L("Turned off after the system audio service stopped responding: %@.", headsetMuteDisabledReason))
                             .font(.caption).foregroundStyle(.orange)
-                    }
-                    Toggle(L("One audio engine for all meetings (experimental)"), isOn: $sharedAudioEngine)
-                    Text(L("Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app."))
-                        .font(.caption).foregroundStyle(.secondary)
-                    if sharedAudioEngine != SharedAudioEngine.enabledAtLaunch {
-                        Text(L("Quit and reopen the app to apply.")).font(.caption).foregroundStyle(.orange)
                     }
                 }
             }.tabItem { Label(L("General"), systemImage: "person.crop.circle") }.tag(0)

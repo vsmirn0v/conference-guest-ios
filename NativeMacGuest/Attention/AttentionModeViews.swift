@@ -64,7 +64,7 @@ struct AttentionModeChip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(participating ? title : L("Attention: %@. %@", title, AttentionModePicker.explanation(resolved)))
+        .help(participating ? participation.statusDetail : L("Attention: %@. %@", title, AttentionModePicker.explanation(resolved)))
         .accessibilityLabel(L("Attention: %@", title))
         .contextMenu {
             if participation.status == .observing {
@@ -135,7 +135,9 @@ struct AttentionModePicker: View {
                             .frame(width: 26, height: 26).background(.teal.opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
                         VStack(alignment: .leading, spacing: 1) {
                             Text(participation.status.title).fontWeight(.semibold)
-                            Text(L("Contribute in meeting chat")).font(.caption).foregroundStyle(.secondary)
+                            Text(participation.reason?.message ?? (participation.status == .inactive
+                                ? L("Contribute in chat or by voice") : participation.output.title))
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
@@ -227,6 +229,16 @@ struct AttentionControlButton: View {
     var body: some View {
         HStack(spacing: 0) {
             assistantButton
+            if participation.voiceInProgress {
+                Button { participation.interruptVoice() } label: {
+                    Image(systemName: "stop.circle").font(.title3).foregroundStyle(.teal)
+                        .frame(width: 32, height: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(L("Stop speaking"))
+                .accessibilityLabel(L("Stop speaking"))
+                .accessibilityIdentifier("participation.voice.stop.toolbar")
+            }
             if participation.queuedText != nil {
                 Button { participation.cancelCandidate() } label: {
                     Image(systemName: "xmark.circle").font(.title3)
@@ -262,16 +274,16 @@ struct AttentionControlButton: View {
             }
             .foregroundStyle(mode == .off ? Color.primary : mode.tint).frame(width: 66, height: 48).contentShape(Rectangle())
             .overlay(alignment: .topTrailing) {
-                if let card = attention.card(for: model.sessionID) {
+                if !participating, let card = attention.card(for: model.sessionID) {
                     Circle().fill(card.verdict.level.color).frame(width: 8, height: 8).padding(.top, 6).padding(.trailing, 14)
                 }
             }
         }
         .buttonStyle(.plain)
         .keyboardShortcut("a", modifiers: [.control, .option])
-        .help(participating ? participation.status.title
+        .help(participating ? participation.statusDetail
               : L("Attention: %@. %@ (⌃⌥A)", mode.title, AttentionModePicker.explanation(attention.resolvedMode(model))))
-        .accessibilityLabel(L("Assistant")).accessibilityValue(participating ? participation.status.title : mode.title)
+        .accessibilityLabel(L("Assistant")).accessibilityValue(participating ? participation.statusDetail : mode.title)
         .popover(isPresented: $open, arrowEdge: .top) {
             AttentionModePicker(attention: attention, model: model) { open = false }
         }

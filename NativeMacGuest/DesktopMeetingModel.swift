@@ -16,7 +16,9 @@ import UniformTypeIdentifiers
     let participation = ParticipationCoordinator()
     let catchUp = CatchUpStore()
     let sessionID = UUID()
-    @Published var title: String
+    @Published var title: String {
+        didSet { workspaceJournal?.rename(sessionID: sessionID, title: title) }
+    }
     @Published private(set) var snapshot = NativeDesktopExternalSnapshot()
     @Published private(set) var videos: [NativeDesktopExternalVideo] = []
     @Published private(set) var localCamera: LKRTCVideoTrack?
@@ -26,6 +28,26 @@ import UniformTypeIdentifiers
     /// Durable library and notes drafts, installed by the workspace when the model is created.
     var meetingLibrary: MeetingLibraryController?
     var notes: MeetingNotesController?
+    var workspaceJournal: MeetingWorkspaceJournal? { meetingLibrary?.workspaceJournal }
+    var workspaceSessionID: UUID { sessionID }
+    private var workspaceCaptureGap: (id: String, reason: String, start: Date)?
+    private var transcriptionDrains: [UUID: Task<Void, Never>] = [:]
+    private var archivedLocalAttribution: [UUID: [String: String]] = [:]
+    private var pendingWorkspaceObservations: [MeetingWorkspaceEvent] = []
+    private var workspaceStartedAt: Date?
+    private var workspaceSessionCreated = false
+    private var approvedWorkspaceChatID: String?
+    private var approvedWorkspaceChatPermits: [String: GuestChatDispatchPermit] = [:]
+    private var approvedWorkspaceReactionID: String?
+    private var approvedWorkspaceReactionTasks: [String: Task<Void, Never>] = [:]
+    private(set) var workspaceSoundRevision = 0
+    private var workspaceApprovedVoice: (cancel: () -> Void, drain: () async -> Void)?
+    func approvedWorkspaceChatLink(id: String) -> String? {
+        guard engine is NativeDesktopGuestEngine || engine is NativeDesktopRockEngine else { return nil }
+        return "chat:" + kind.rawValue + ":" + id
+    }
+    var canSpeakApprovedWorkspaceReply: Bool { ownsMicrophone }
+    var workspaceApprovedVoiceInProgress: Bool { workspaceApprovedVoice != nil }
     @Published var viewMode: ViewMode = .automatic { didSet { updateDemand() } }
     @Published var display: ConferenceDisplayMode = .all {
         didSet {
@@ -124,10 +146,19 @@ import UniformTypeIdentifiers
     /// This meeting only: the person paused transcription on this Mac.
     @Published var localTranscriptionPaused = false { didSet { updateLocalTranscription() } }
     private var localTranscriber: MeetingTranscriber?
+    private var localTranscriptionGeneration = UUID()
+    private var participationAudioSources: [String: ParticipationRemoteAudioBinding] = [:]
+    private var participationLocalTranscript: [ParticipationLocalTranscriptLine] = []
     let listenStore: ListenModelStore
-    var transcribingLocally: Bool { localTranscriber != nil }
+    var transcribingLocally: Bool {
+        #if DEBUG
+        if localParticipationTranscribingForTesting { return true }
+        #endif
+        return localTranscriber != nil
+    }
     /// The calendar series this meeting was joined from, for its Attention instructions.
     var calendarSeriesID: String?
+    var participationCalendar: CalendarMeeting?
     /// Participant identity per transcribed audio source; nil for a mixed stream.
     private var audioIdentities: [String: String?] = [:]
     /// Who the service reported speaking, for lines from a mixed stream.
@@ -154,10 +185,19 @@ import UniformTypeIdentifiers
             guestFeatures.transcriptionStatus != .active
         if wanted, localTranscriber == nil, let model = listenStore.recognizerModel(), let vad = listenStore.vadURL {
             LocalSpeechRecognizer.shared.acquire(model)   // loads before the first utterance
-            let transcriber = MeetingTranscriber(model: model, vadModel: vad) { [weak self] line in self?.receiveLocalLine(line) }
+            let generation = UUID()
+            localTranscriptionGeneration = generation
+            let transcriber = MeetingTranscriber(model: model, vadModel: vad, onDropped: { [weak self] start, end in
+                guard let self else { return }
+                self.workspaceJournal?.recordGap(sessionID: self.sessionID, reason: "decode", from: start, until: end)
+            }) { [weak self] line in
+                self?.receiveLocalLine(line, generation: generation)
+            }
             localTranscriber = transcriber
             engine.setTranscriptionAudioHandler { [weak self, weak transcriber] sources in
-                self?.audioIdentities = Dictionary(sources.map { ($0.id, $0.participantIdentity) }, uniquingKeysWith: { first, _ in first })
+                guard let self, self.localTranscriptionGeneration == generation else { return }
+                self.audioIdentities = Dictionary(sources.map { ($0.id, $0.participantIdentity) }, uniquingKeysWith: { first, _ in first })
+                self.updateParticipationAudioSources(sources)
                 transcriber?.update(sources)
             }
             engine.setLocalAudioSink { [weak transcriber] in transcriber?.feedLocal($0) }
@@ -166,12 +206,29 @@ import UniformTypeIdentifiers
             Task { _ = await engine.setTranscriptionOutput(true) }
             probeLog("local-transcription-start", ["model": listenStore.selectedID, "soundOn": snapshot.playoutOn,
                 "microphone": listenStore.includesMicrophone, "service": kind.rawValue])
+            observeParticipation()
             objectWillChange.send()
         } else if !wanted, let transcriber = localTranscriber {
             localTranscriber = nil
+            let generation = localTranscriptionGeneration
+            let names = Dictionary(participants.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+            archivedLocalAttribution[generation] = audioIdentities.compactMapValues { $0.flatMap { names[$0] } }
+            localTranscriptionGeneration = UUID()
+            participationAudioSources.removeAll()
+            participationLocalTranscript.removeAll()
             engine.setTranscriptionAudioHandler(nil)
             engine.setLocalAudioSink(nil)
-            transcriber.stop()
+            transcriber.stop(flushing: workspaceJournal != nil)
+            let drainID = UUID()
+            if workspaceJournal != nil {
+                transcriptionDrains[drainID] = Task { [weak self] in
+                    await transcriber.waitForDelivery()
+                    self?.transcriptionDrains[drainID] = nil
+                    self?.archivedLocalAttribution[generation] = nil
+                }
+            } else {
+                archivedLocalAttribution[generation] = nil
+            }
             LocalSpeechRecognizer.shared.release()
             let summary = transcriber.currentSummary
             probeLog("local-transcription-stop", ["utterances": summary.utterances, "lines": summary.lines,
@@ -179,11 +236,12 @@ import UniformTypeIdentifiers
                 "droppedSeconds": summary.droppedSeconds.rounded(), "micUtterances": summary.microphoneUtterances,
                 "micSeconds": summary.microphoneSeconds.rounded()])
             if !closed { let engine = engine; Task { _ = await engine.setTranscriptionOutput(false) } }
-            if !closed { observeTranscript() }
+            if !closed { observeTranscript(); observeParticipation() }
             objectWillChange.send()
         } else if wanted, localTranscriber != nil {
             updateLocalMicrophoneCapture()
         }
+        updateWorkspaceCoverage()
     }
     /// Your microphone is transcribed only on confirmed state: the setting is on,
     /// this meeting holds the microphone and the engine confirmed it unmuted.
@@ -191,23 +249,141 @@ import UniformTypeIdentifiers
         localTranscriber != nil && listenStore.includesMicrophone && ownsMicrophone && snapshot.microphoneOn && !voiceReplyActive && !assistantCaptureActive
     }
     private func updateLocalMicrophoneCapture() { localTranscriber?.setLocalCapture(transcribesMicrophone) }
-    private func receiveLocalLine(_ line: MeetingTranscriber.Line) {
-        guard !closed else { return }
+    private func updateParticipationAudioSources(_ sources: [MeetingAudioSource]) {
+        guard kind == .guest, engine is NativeDesktopGuestEngine else { return }
+        let previous = participationAudioSources, now = Date()
+        participationAudioSources = Dictionary(grouping: sources, by: \.id).compactMapValues { matches in
+            guard matches.count == 1, let source = matches.first else { return nil }
+            if let binding = previous[source.id], binding.participantID == source.participantIdentity { return binding }
+            return ParticipationRemoteAudioBinding(participantID: source.participantIdentity, since: now)
+        }
+    }
+
+    private func receiveLocalLine(_ line: MeetingTranscriber.Line, live: Bool = true, archivedAuthor: String? = nil) {
+        let observedAt = Date()
+        func capture(_ message: GuestMeetingMessage) {
+            observeWorkspace([
+                .init(id: "transcript:local:" + message.id, kind: .transcript, occurredAt: line.start,
+                    observedAt: observedAt, source: "local", author: message.participantName, text: line.text)
+            ])
+        }
         if line.trackID == MeetingTranscriber.localTrackID {
             let own = participants.first { $0.isLocal }?.id ?? line.trackID
-            localTranscript.append(GuestMeetingMessage(id: line.id, participantID: own, participantName: displayName,
-                text: line.text, sentAt: line.start, isOwn: true, receivedAt: line.end))
+            let message = GuestMeetingMessage(id: line.id, participantID: own, participantName: displayName,
+                text: line.text, sentAt: line.start, isOwn: true, receivedAt: line.end)
+            capture(message)
+            guard live, !closed else { return }
+            localTranscript.append(message)
             if localTranscript.count > 1000 { localTranscript.removeFirst(localTranscript.count - 1000) }
             observeTranscript(); return
         }
         // A per-participant track names its speaker; a mixed one is matched to
         // whoever the service said was speaking at the time.
-        let identity = audioIdentities[line.trackID].flatMap { $0 } ?? speakingTimeline.speaker(start: line.start, end: line.end)
-        let name = participants.first { $0.id == identity }?.name ?? L("Participant")
-        localTranscript.append(GuestMeetingMessage(id: line.id, participantID: identity ?? line.trackID, participantName: name,
-            text: line.text, sentAt: line.start, isOwn: false, receivedAt: line.end))
+        let identity = live ? audioIdentities[line.trackID].flatMap { $0 } ??
+            speakingTimeline.speaker(start: line.start, end: line.end) : nil
+        let name = archivedAuthor ?? participants.first { $0.id == identity }?.name ?? L("Participant")
+        let message = GuestMeetingMessage(id: line.id, participantID: identity ?? line.trackID, participantName: name,
+            text: line.text, sentAt: line.start, isOwn: false, receivedAt: line.end)
+        capture(message)
+        guard live, !closed else { return }
+        localTranscript.append(message)
         if localTranscript.count > 1000 { localTranscript.removeFirst(localTranscript.count - 1000) }
         observeTranscript()
+        if participation.status == .observing, participationTranscriptSource == .localRoomAudio {
+            guard let projected = ParticipationLocalTranscriptLine(line: line, receiver: participationAudioSources) else {
+                probeLog("participation-local-transcript", ["result": "receiver-scope-rejected"])
+                return
+            }
+            participationLocalTranscript.append(projected)
+            if participationLocalTranscript.count > 40 { participationLocalTranscript.removeFirst() }
+            observeParticipation()
+        }
+    }
+
+    private func receiveLocalLine(_ line: MeetingTranscriber.Line, generation: UUID) {
+        receiveLocalLine(line, live: localTranscriptionGeneration == generation,
+                         archivedAuthor: archivedLocalAttribution[generation]?[line.trackID])
+    }
+
+    private func captureGuestMessages(_ messages: [GuestMeetingMessage], transcript: Bool) {
+        let now = Date()
+        let captured = messages.map { message -> MeetingWorkspaceEvent in
+            let occurredAt = transcript ? Self.spokenAt(message) : (message.sentAt ?? message.receivedAt)
+            let authoredTime = message.sentAt != nil && message.sentAt == occurredAt
+            let delivery: MeetingWorkspaceEvent.Status = switch message.delivery {
+            case .pending: .sending
+            case .sent: message.locallyAcknowledged ? .accepted : .sent
+            case .failed: .failed
+            }
+            return .init(id: (transcript ? "transcript:guest:" : "chat:guest:") + message.id,
+                kind: transcript ? .transcript : .chat, occurredAt: occurredAt ?? now, observedAt: now,
+                source: transcript ? "service" : "guest", author: message.participantName,
+                text: message.text, status: transcript ? nil : delivery, timeIsObserved: !authoredTime)
+        }
+        observeWorkspace(captured)
+        if !transcript {
+            for (message, event) in zip(messages, captured) where message.isOwn {
+                guard let status = event.status else { continue }
+                workspaceJournal?.observeApprovedChat(sessionID: sessionID, chatID: event.id, status: status)
+            }
+        }
+    }
+
+    private func ensureWorkspaceSession() {
+        guard !workspaceSessionCreated, let workspaceJournal, let workspaceStartedAt else { return }
+        workspaceJournal.begin(sessionID: sessionID, title: title, calendarSeriesID: calendarSeriesID,
+            roomIdentity: MeetingRoomIdentity(invitation, engine: kind)?.displayDetails,
+            roomRuleKey: MeetingWorkspaceGuidance.roomKey(for: self), at: workspaceStartedAt)
+        workspaceSessionCreated = workspaceJournal.session(id: sessionID) != nil
+    }
+
+    private func observeWorkspace(_ events: [MeetingWorkspaceEvent]) {
+        guard let workspaceJournal else { return }
+        ensureWorkspaceSession()
+        guard workspaceJournal.session(id: sessionID) != nil else {
+            if !closed { pendingWorkspaceObservations += events }
+            return
+        }
+        let all = pendingWorkspaceObservations + events
+        pendingWorkspaceObservations.removeAll()
+        workspaceJournal.observe(sessionID: sessionID, events: all)
+    }
+
+    private func updateWorkspaceCoverage(at: Date = .now) {
+        guard let workspaceJournal, workspaceJournal.session(id: sessionID) != nil else { return }
+        let reason: String?
+        if closed { reason = nil }
+        else if !connected { reason = "connection" }
+        else if guestFeatures.transcriptionStatus == .active && guestFeatures.permissions.canViewTranscript || transcribingLocally { reason = nil }
+        else if guestFeatures.transcriptionStatus == .failed { reason = "transcriptionFailed" }
+        else if localTranscriptionPaused { reason = "transcriptionPaused" }
+        else { reason = "transcriptionUnavailable" }
+        if let existing = workspaceCaptureGap, existing.reason != reason {
+            workspaceJournal.recordGap(sessionID: sessionID, id: existing.id, reason: existing.reason,
+                                       from: existing.start, until: at)
+            workspaceCaptureGap = nil
+        }
+        if let reason, workspaceCaptureGap == nil {
+            let id = UUID().uuidString
+            workspaceCaptureGap = (id, reason, at)
+            workspaceJournal.recordGap(sessionID: sessionID, id: id, reason: reason, from: at)
+        }
+    }
+
+    func withApprovedWorkspaceChat<T>(id: String, _ action: () -> T) -> T {
+        let rock = engine as? NativeDesktopRockEngine
+        rock?.approvedChatID = id
+        approvedWorkspaceChatID = id
+        defer { approvedWorkspaceChatID = nil; rock?.approvedChatID = nil }
+        return action()
+    }
+
+    var canCorrelateApprovedWorkspaceReaction: Bool { engine is NativeDesktopGuestEngine }
+
+    func withApprovedWorkspaceReaction(id: String, _ action: () -> Void) {
+        approvedWorkspaceReactionID = id
+        defer { approvedWorkspaceReactionID = nil }
+        action()
     }
     /// Service and local text form one timeline for Live text and Catch up.
     private func observeTranscript() {
@@ -215,8 +391,28 @@ import UniformTypeIdentifiers
             canView: guestFeatures.permissions.canViewTranscript || !localTranscript.isEmpty || transcribingLocally,
             enabled: guestFeatures.transcriptionStatus == .active || transcribingLocally)
     }
+    private func observeParticipation() {
+        if !participationVoiceEligible || participationRemoteSpeaking { participation.interruptVoice() }
+        if participationSomeoneSpeaking { participation.cancelPendingDispatch() }
+        participation.observe(guestFeatures, transcriptSource: participationTranscriptSource,
+                              localTranscript: participationLocalTranscript)
+    }
 #if DEBUG
     func receiveLocalLineForTesting(_ line: MeetingTranscriber.Line) { receiveLocalLine(line) }
+    private var localParticipationTranscribingForTesting = false
+    var participationAudienceForTesting: ParticipationAudience?
+    var participationVoiceAvailableForTesting: Bool?
+
+    func setParticipationLocalReceiverForTesting(_ receiver: [String: ParticipationRemoteAudioBinding]) -> UUID {
+        localTranscriptionGeneration = UUID()
+        localParticipationTranscribingForTesting = true
+        participationAudioSources = receiver
+        return localTranscriptionGeneration
+    }
+
+    func receiveParticipationLocalLineForTesting(_ line: MeetingTranscriber.Line, generation: UUID) {
+        receiveLocalLine(line, generation: generation)
+    }
 #endif
     func showLiveText() { conversationTab = 1; panel = .conversation; dismissTranscriptionAnnouncement() }
     /// The sound-off period offered for catch-up after sound returns.
@@ -331,7 +527,7 @@ import UniformTypeIdentifiers
     // MARK: Voice replies
 
     enum VoiceReplyError: LocalizedError, Equatable {
-        case unavailable, notTalkMeeting, gate, microphone, playback, mute, sample
+        case unavailable, notTalkMeeting, gate, microphone, playback, interrupted, mute, playedMute, sample
         var errorDescription: String? {
             switch self {
             case .unavailable: L("Voice replies are not available in this meeting.")
@@ -339,7 +535,8 @@ import UniformTypeIdentifiers
             case .gate: L("Your microphone could not be held back for the reply. Nothing was sent.")
             case .microphone: L("The meeting did not accept the voice reply.")
             case .playback: L("The voice reply could not be played into the meeting.")
-            case .mute: L("The microphone could not be muted again after the reply. Mute it now.")
+            case .interrupted: L("Speech interrupted")
+            case .mute, .playedMute: L("The microphone could not be muted again after the reply. Mute it now.")
             case .sample: L("The system voice could not create the test reply.")
             }
         }
@@ -350,6 +547,7 @@ import UniformTypeIdentifiers
     @Published private(set) var assistantCaptureActive = false
     /// The mute after a reply was not confirmed, so the gate stays closed until it is.
     private var voiceReplyGateHeld = false
+    private var voicePrivacyConnection: ObjectIdentifier?
     /// What you chose with the microphone button during a reply; it wins afterwards.
     private var voiceReplyUserChoice: Bool?
     var supportsVoiceReply: Bool { connected && engine.supportsVoiceReply }
@@ -357,12 +555,14 @@ import UniformTypeIdentifiers
     /// Closes only the meeting send gate; Assistant uses a separate AVAudioEngine tap
     /// whose samples go to LocalSpeechRecognizer and never into the meeting graph.
     func holdMicrophoneForAssistant() async -> Bool {
-        guard !assistantCaptureActive, !voiceReplyActive, connected, !closed, !transferHeld else { return false }
+        await participation.stopVoiceAndWait()
+        guard !assistantCaptureActive, !voiceReplyActive, connected, !closed, !transferHeld,
+              microphoneRestriction == nil else { return false }
         if !ownsMicrophone {
             guard let arbiter = microphoneArbiter, await arbiter(self), ownsMicrophone else { return false }
         }
         assistantCaptureActive = true; updateLocalMicrophoneCapture()
-        guard await engine.setMicrophoneGate(open: false) else {
+        guard await engine.setMicrophoneGate(open: false), engine.voiceMicrophoneGateIsClosed else {
             assistantCaptureActive = false; updateLocalMicrophoneCapture()
             if !voiceReplyGateHeld { _ = await engine.setMicrophoneGate(open: true) }
             return false
@@ -381,10 +581,16 @@ import UniformTypeIdentifiers
     /// the gate closes before anything unmutes, and reopens only once the
     /// meeting is muted again (or was live before the reply).
     func speak(_ buffer: AVAudioPCMBuffer) async throws {
-        guard supportsVoiceReply, !voiceReplyActive, !assistantCaptureActive, !closed, !transferHeld else { throw VoiceReplyError.unavailable }
+        await participation.stopVoiceAndWait()
+        try Task.checkCancellation()
+        guard supportsVoiceReply, !voiceReplyActive, !assistantCaptureActive, !closed, !transferHeld,
+              participationMeetingSoundOn else { throw VoiceReplyError.unavailable }
         if !ownsMicrophone {
+            guard workspaceApprovedVoice == nil else { throw VoiceReplyError.notTalkMeeting }
             guard let arbiter = microphoneArbiter, await arbiter(self), ownsMicrophone else { throw VoiceReplyError.notTalkMeeting }
         }
+        try Task.checkCancellation()
+        guard participationMeetingSoundOn, ownsMicrophone, !closed else { throw VoiceReplyError.unavailable }
         voiceReplyActive = true; voiceReplyUserChoice = nil; updateLocalMicrophoneCapture()
         defer { voiceReplyActive = false; voiceReplyUserChoice = nil; updateLocalMicrophoneCapture() }
         let wasLive = snapshot.microphoneOn
@@ -394,15 +600,58 @@ import UniformTypeIdentifiers
             throw VoiceReplyError.gate
         }
         // The gate's volume ramps down; let it reach silence before anything unmutes.
-        try? await Task.sleep(for: .milliseconds(GuestVoiceReplyGraph.gateSettleMilliseconds))
+        do {
+            try await Task.sleep(for: .milliseconds(GuestVoiceReplyGraph.gateSettleMilliseconds))
+            guard participationMeetingSoundOn, ownsMicrophone, !closed else { throw CancellationError() }
+            guard engine.voiceMicrophoneGateIsClosed else { throw VoiceReplyError.gate }
+        } catch {
+            try await finishVoiceReply(wasLive: wasLive)
+            throw error
+        }
         if !wasLive {
             setMicrophoneEnabled(true); await microphoneControl?.value
             guard snapshot.microphoneOn else { try await finishVoiceReply(wasLive: false); throw VoiceReplyError.microphone }
         }
+        guard !Task.isCancelled, participationMeetingSoundOn, ownsMicrophone, !closed else {
+            try await finishVoiceReply(wasLive: wasLive)
+            throw CancellationError()
+        }
+        guard engine.voiceMicrophoneGateIsClosed else {
+            try await finishVoiceReply(wasLive: wasLive)
+            throw VoiceReplyError.gate
+        }
+        participation.beginVoiceEchoWindow()
         let played = await engine.playVoiceReply(buffer)
-        try await finishVoiceReply(wasLive: wasLive)
+        participation.endVoiceEchoWindow()
+        do { try await finishVoiceReply(wasLive: wasLive) }
+        catch {
+            if played, workspaceApprovedVoice != nil { throw VoiceReplyError.playedMute }
+            throw error
+        }
         probeLog("voice-reply-end", ["service": kind.rawValue, "played": played])
-        guard played else { throw VoiceReplyError.playback }
+        guard played else { throw Task.isCancelled ? VoiceReplyError.interrupted : VoiceReplyError.playback }
+    }
+
+    func startWorkspaceApprovedVoice<Result: Sendable>(_ action: @escaping @MainActor () async -> Result) -> Task<Result, Never>? {
+        guard workspaceApprovedVoice == nil, !closed else { return nil }
+        let task = Task { @MainActor [weak self] in
+            defer { self?.workspaceApprovedVoice = nil }
+            return await action()
+        }
+        workspaceApprovedVoice = (cancel: { task.cancel() }, drain: { _ = await task.value })
+        return task
+    }
+
+    func cancelWorkspaceApprovedOutputs() {
+        workspaceApprovedVoice?.cancel()
+        (engine as? NativeDesktopRockEngine)?.cancelApprovedChat()
+        for task in approvedWorkspaceReactionTasks.values { task.cancel() }
+        for (id, permit) in approvedWorkspaceChatPermits {
+            permit.cancel()
+            if !permit.didDispatch {
+                workspaceJournal?.observeApprovedChat(sessionID: sessionID, chatID: "chat:guest:" + id, status: .cancelled)
+            }
+        }
     }
     private func finishVoiceReply(wasLive: Bool) async throws {
         if let choice = voiceReplyUserChoice {
@@ -425,12 +674,17 @@ import UniformTypeIdentifiers
     var synthesizeVoiceReply: (String) async throws -> AVAudioPCMBuffer = { try await VoiceSynthesis.system($0) }
     /// Speaks a short sentence with the selected voice into this meeting.
     func playTestVoiceReply() {
-        Task { @MainActor [weak self] in
+        guard participationMeetingSoundOn, canSpeakApprovedWorkspaceReply else {
+            error = VoiceReplyError.unavailable.localizedDescription
+            return
+        }
+        startWorkspaceApprovedVoice { [weak self] in
             guard let self else { return }
             do {
                 let buffer = try await synthesizeVoiceReply(L("This is a test voice reply from Rock'N'Roll for Mac."))
                 try await speak(buffer)
-            } catch { self.error = error.localizedDescription }
+            } catch is CancellationError { return }
+            catch { self.error = error.localizedDescription }
         }
     }
 #if DEBUG
@@ -567,11 +821,39 @@ import UniformTypeIdentifiers
                 guard let self, !closed else { return }; self.error = error.localizedDescription
             }
             guest.onFeatures = { [weak self] features in self?.updateFeatures(features) }
+            guest.onCapturedMessages = { [weak self] messages, transcript in
+                self?.captureGuestMessages(messages, transcript: transcript)
+            }
             chat.onSend = { [weak self, weak guest] text in
                 guard let self, let native = guest?.currentNativeEngine else { return }
                 self.participation.yieldToUser()
                 if self.chat.draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { self.chat.draft = "" }
-                self.perform { _ in _ = try await native.sendChatMessage(text) }
+                if let id = self.approvedWorkspaceChatID {
+                    let permit = GuestChatDispatchPermit(deadline: Date().addingTimeInterval(20))
+                    self.approvedWorkspaceChatPermits[id] = permit
+                    self.perform { _ in
+                        defer { self.approvedWorkspaceChatPermits[id] = nil }
+                        let chatID = "chat:guest:" + id
+                        do {
+                            try await native.sendAttributedChat(text, id: id, permit: permit)
+                            self.workspaceJournal?.observeApprovedChat(sessionID: self.sessionID, chatID: chatID,
+                                status: permit.didDispatch ? .accepted : .cancelled)
+                        } catch {
+                            let status: MeetingWorkspaceEvent.Status
+                            if !permit.didDispatch {
+                                let current = self.workspaceJournal?.session(id: self.sessionID)?.events
+                                    .first(where: { $0.linkedChatID == chatID })?.status
+                                status = current == .cancelled ? .cancelled : .failed
+                            }
+                            else if case GuestTransportError.server = error { status = .failed }
+                            else { status = .unknown }
+                            self.workspaceJournal?.observeApprovedChat(sessionID: self.sessionID, chatID: chatID, status: status)
+                            throw error
+                        }
+                    }
+                } else {
+                    self.perform { _ in _ = try await native.sendChatMessage(text) }
+                }
             }
             chat.onRetry = { [weak self, weak guest] entry in
                 guard let self, let native = guest?.currentNativeEngine else { return }
@@ -587,15 +869,162 @@ import UniformTypeIdentifiers
         } else if kind == .trueconf {
             chat.unavailableReason = L("Chat is unavailable for this meeting service.")
         }
+        if !(engine is NativeDesktopGuestEngine) {
+            chat.onCapture = { [weak self] entries in
+                guard let self, let workspaceJournal = self.workspaceJournal else { return }
+                workspaceJournal.observe(sessionID: self.sessionID, events: entries.map { entry in
+                    let status: MeetingWorkspaceEvent.Status = switch entry.delivery {
+                    case .pending: .sending
+                    case .sent: entry.isOwn ? .submitted : .sent
+                    case .failed: .failed
+                    }
+                    return .init(id: "chat:" + self.kind.rawValue + ":" + entry.id, kind: .chat,
+                        occurredAt: entry.sentAt == .distantPast ? .now : entry.sentAt,
+                        observedAt: .now, source: self.kind.rawValue, author: entry.sender, text: entry.text,
+                        status: status, timeIsObserved: entry.sentAt == .distantPast)
+                })
+            }
+        }
+        if let rock = engine as? NativeDesktopRockEngine {
+            rock.approvedChatOutcome = { [weak self] id, status in
+                guard let self, let chatID = approvedWorkspaceChatLink(id: id) else { return }
+                workspaceJournal?.observeApprovedChat(sessionID: sessionID, chatID: chatID, status: status)
+            }
+        }
     }
     var connected: Bool { snapshot.phase == .connected }
     var participationConnection: ObjectIdentifier? {
-        (engine as? NativeDesktopGuestEngine)?.currentNativeEngine.map(ObjectIdentifier.init)
+#if DEBUG
+        if let participationAudienceForTesting { return participationAudienceForTesting.connection }
+#endif
+        return (engine as? NativeDesktopGuestEngine)?.currentNativeEngine.map(ObjectIdentifier.init)
     }
     var participationSomeoneSpeaking: Bool {
         guestFeatures.participants.contains(where: \.isSpeaking) || snapshot.participants.contains { $0.speaking == true }
     }
+    var participationRemoteSpeaking: Bool {
+        guestFeatures.participants.contains { !$0.isLocal && $0.isSpeaking }
+            || snapshot.participants.contains { !$0.isLocal && $0.speaking == true }
+    }
+    var participationVoiceAvailable: Bool {
+#if DEBUG
+        if let participationVoiceAvailableForTesting { return participationVoiceAvailableForTesting }
+#endif
+        return connected && kind == .guest && engine.supportsVoiceReply
+    }
+    var participationVoiceMicrophoneAuthorized: Bool {
+        (engine as? NativeDesktopGuestEngine)?.participationVoiceMicrophoneAuthorized == true
+    }
+    var participationVoiceCanRequestMicrophoneAccess: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
+    }
+    func requestParticipationVoiceMicrophoneAccess() async {
+        guard participationVoiceCanRequestMicrophoneAccess else { return }
+        _ = try? await GuestCaptureAuthorization.request(.audio)
+        objectWillChange.send()
+    }
+    var participationTranscriptSource: ParticipationTranscriptSource {
+        if guestFeatures.permissions.canViewTranscript && guestFeatures.transcriptionStatus == .active { return .service }
+        if kind == .guest, transcribingLocally, !localTranscriptionPaused { return .localRoomAudio }
+        return .unavailable
+    }
+    var participationVoiceHasTranscript: Bool { participationTranscriptSource != .unavailable }
+    var participationVoiceEligible: Bool {
+        participationVoiceAvailable && participationVoiceMicrophoneAuthorized && participationVoiceHasTranscript && ownsMicrophone
+            && requestedMicrophone == nil && !closed && !transferHeld
+            && !assistantCaptureActive && !voiceReplyGateHeld && participationMeetingSoundOn
+    }
+    var participationMeetingSoundOn: Bool { snapshot.playoutOn && requestedPlayout != false && meetingVolume > 0 }
+    private var participationVoiceLocalGain: Float? {
+        guard participationMeetingSoundOn else { return nil }
+        let shared = (engine as? NativeDesktopGuestEngine)?.participationVoiceUsesSharedOutput == true
+        return shared ? Float(meetingVolume) : 1
+    }
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, audience: ParticipationAudience,
+                                permit: GuestAutonomousVoicePlayback, preflight: @MainActor () async -> Bool,
+                                canStart: @escaping @MainActor () -> Bool,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
+        guard permit.canStart, participationVoiceEligible, !voiceReplyActive, !participationSomeoneSpeaking,
+              participationAudience == audience, let native = engine as? NativeDesktopGuestEngine,
+              let transport = native.currentNativeEngine else { return .notStarted }
+        let borrowsMutedSender = !snapshot.microphoneOn
+        if borrowsMutedSender, !headset.prepareParticipationCapture(permit) {
+            probeLog("participation-voice-capture", ["stage": "preparation-refused", "headsetActive": headset.isActive,
+                "processMuted": LKRTCApplicationCaptureMuted() != 0])
+            return .notStarted
+        }
+        var restoredMutedSender = true
+        voiceReplyActive = true
+        updateLocalMicrophoneCapture()
+        defer {
+            permit.cancel()
+            if !closed && (!restoredMutedSender || participationConnection != audience.connection) {
+                voicePrivacyConnection = audience.connection
+                voiceReplyGateHeld = true
+            } else if participationConnection == audience.connection {
+                restoreParticipationVoiceGate { _ = native.setParticipationVoiceGate(open: true) }
+            }
+            voiceReplyActive = false; voiceReplyUserChoice = nil; updateLocalMicrophoneCapture()
+            recoverParticipationVoiceGateIfSafe()
+        }
+        if !native.hasParticipationVoiceGraph {
+            guard borrowsMutedSender, await transport.prepareParticipationVoiceAudio(permit),
+                  native.hasParticipationVoiceGraph else { return .notStarted }
+        }
+        guard native.setParticipationVoiceGate(open: false) else { return .notStarted }
+        do { try await Task.sleep(for: .milliseconds(GuestVoiceReplyGraph.gateSettleMilliseconds)) }
+        catch { return .notStarted }
+        guard permit.canStart, await preflight() else { return .notStarted }
+        var ready = true
+        if borrowsMutedSender { ready = await transport.borrowParticipationVoiceSender(permit) }
+        let outcome = if ready, permit.canStart, await preflight() {
+            await native.playParticipationVoice(buffer, permit: permit, canStart: {
+                self.participationVoiceEligible && self.participationAudience == audience
+                    && !self.participationRemoteSpeaking && canStart()
+            }, localGain: { self.participationVoiceLocalGain }, onStarted: onStarted)
+        } else { GuestAutonomousVoicePlayback.Outcome.notStarted }
+        if borrowsMutedSender {
+            restoredMutedSender = await Task { @MainActor in await transport.restoreParticipationVoiceSender(permit) }.value
+        }
+        return outcome
+    }
+    private func restoreParticipationVoiceGate(reopen: () -> Void) {
+        guard !closed else { return }
+        let muteExpected = !snapshot.microphoneOn || requestedMicrophone == false
+            || voiceReplyUserChoice == false || !ownsMicrophone || transferHeld
+        let physicallyMuted = (engine as? NativeDesktopGuestEngine)?.participationSenderPhysicallyMuted
+            ?? !snapshot.microphoneOn
+        if muteExpected && !physicallyMuted {
+            voiceReplyGateHeld = true
+        } else {
+            reopen()
+        }
+    }
+
+    private var canReleaseHeldVoiceGate: Bool {
+        Self.canReleaseVoiceGate(heldFor: voicePrivacyConnection, current: participationConnection, connected: connected)
+    }
+
+    static func canReleaseVoiceGate(heldFor previous: ObjectIdentifier?, current: ObjectIdentifier?, connected: Bool) -> Bool {
+        guard let previous else { return true }
+        return connected && current.map { $0 != previous } == true
+    }
+
+    private func recoverParticipationVoiceGateIfSafe() {
+        guard voiceReplyGateHeld, !snapshot.microphoneOn, !voiceReplyActive, canReleaseHeldVoiceGate,
+              let guest = engine as? NativeDesktopGuestEngine, guest.participationSenderPhysicallyMuted,
+              guest.setParticipationVoiceGate(open: true) else { return }
+        voiceReplyGateHeld = false
+        voicePrivacyConnection = nil
+    }
+#if DEBUG
+    func restoreParticipationVoiceGateForTesting(_ reopen: () -> Void) { restoreParticipationVoiceGate(reopen: reopen) }
+    var participationVoiceGateHeldForTesting: Bool { voiceReplyGateHeld }
+#endif
     var participationAudience: ParticipationAudience? {
+#if DEBUG
+        if let participationAudienceForTesting { return participationAudienceForTesting }
+#endif
         guard kind == .guest, !closed, connected, guestFeatures.connected, guestFeatures.permissions.canViewParticipants,
               guestFeatures.permissions.canViewChat, guestFeatures.permissions.canSendChat,
               let room = MeetingRoomIdentity(invitation, engine: kind),
@@ -611,7 +1040,7 @@ import UniformTypeIdentifiers
     }
     func sendParticipationChat(_ text: String, id: String, audience: ParticipationAudience,
                                permit: GuestChatDispatchPermit) async throws {
-        guard participationAudience == audience, text.hasPrefix(ParticipationCoordinator.attribution),
+        guard participationMeetingSoundOn, participationAudience == audience,
               let native = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine else {
             throw NativeDesktopGuestError.notConnected
         }
@@ -754,7 +1183,7 @@ import UniformTypeIdentifiers
             try await withCheckedThrowingContinuation { continuation in completion.install(continuation, timeout: 45) }
         }, onCancel: { completion.finish(.failure(CancellationError())) })
         try Task.checkCancellation()
-        if ownsMicrophone, !headsetReady { _ = headset.useEngineOnlyFallback(confirmedMuted: !snapshot.microphoneOn) }
+        if ownsMicrophone, !headsetReady { useEngineOnlyHeadsetFallback() }
         if kind != .guest, !quiet, ownsMicrophone, !concurrentAudio, joinReadinessPolicy.microphoneExplicit,
            joinReadinessPolicy.microphone.allows(joinPower), joinReadinessPolicy.microphone.allows(power.snapshot) {
             try await engine.prepareMutedCaptureForAccessories()
@@ -839,7 +1268,18 @@ import UniformTypeIdentifiers
     private func update(_ value: NativeDesktopExternalSnapshot) {
         guard !closed else { return }
         let previous = snapshot; snapshot = value
+        if value.phase == .connected && !everConnected {
+            workspaceStartedAt = Date()
+            observeWorkspace([])
+        }
         participation.updateAudience(participationAudience)
+        if !participationVoiceEligible || participationRemoteSpeaking { participation.interruptVoice() }
+        if previous.playoutOn && !value.playoutOn { workspaceSoundTurnedOff() }
+        if previous.playoutOn != value.playoutOn, value.phase == .connected {
+            workspaceJournal?.recordAction(sessionID: sessionID,
+                text: value.playoutOn ? L("Meeting sound on") : L("Meeting sound off"),
+                source: value.playoutOn ? "soundOn" : "soundOff")
+        }
         if participationSomeoneSpeaking { participation.cancelPendingDispatch() }
         if previous.phase != value.phase { updateLocalTranscription() }
         if previous.phase != .connected, value.phase == .connected { prewarmMicrophoneIfChosen() }
@@ -860,8 +1300,11 @@ import UniformTypeIdentifiers
         if value.phase == .failed { connection?.finish(.failure(NativeDesktopError.unavailable(value.lastError ?? L("Could not connect to meeting.")))) }
         // A reply held the gate closed because the mute after it was not confirmed:
         // once the microphone is confirmed off, reopening is safe.
-        if voiceReplyGateHeld, !value.microphoneOn, !voiceReplyActive {
+        if engine is NativeDesktopGuestEngine {
+            recoverParticipationVoiceGateIfSafe()
+        } else if voiceReplyGateHeld, !value.microphoneOn, !voiceReplyActive {
             voiceReplyGateHeld = false
+            voicePrivacyConnection = nil
             let engine = engine; Task { _ = await engine.setMicrophoneGate(open: true) }
         }
         if !value.microphoneOn { headset.confirm(muted: true) }
@@ -899,12 +1342,15 @@ import UniformTypeIdentifiers
         NativeDesktopCameraLease.shared.setLiveTrack(track, owner: sessionID)
         Task { [weak self] in await self?.presenterStorage?.refreshBorrowedCamera(); self?.refreshSystemReactions() }
     }
+    var microphoneRestriction: String? { (engine as? NativeDesktopRockEngine)?.microphoneRestriction }
     func toggleMicrophone() {
         let enabled = !(requestedMicrophone ?? snapshot.microphoneOn)
         guard !assistantCaptureActive || !enabled else { return }
+        if enabled, let microphoneRestriction { error = microphoneRestriction; return }
         if voiceReplyActive { voiceReplyUserChoice = enabled }
-        else if enabled, voiceReplyGateHeld {
+        else if enabled, voiceReplyGateHeld, canReleaseHeldVoiceGate {
             voiceReplyGateHeld = false
+            voicePrivacyConnection = nil
             let engine = engine; Task { _ = await engine.setMicrophoneGate(open: true) }
         }
         guard enabled, !ownsMicrophone else { setMicrophoneEnabled(enabled); return }
@@ -916,6 +1362,7 @@ import UniformTypeIdentifiers
 
     /// Explicitly mutes this meeting's microphone without ever toggling it on during a voice reply.
     @discardableResult func muteMicrophone() -> Bool {
+        participation.interruptVoice()
         let wasActive = (requestedMicrophone ?? snapshot.microphoneOn) || voiceReplyActive
         if voiceReplyActive { voiceReplyUserChoice = false }
         if requestedMicrophone == true || snapshot.microphoneOn { setMicrophoneEnabled(false) }
@@ -951,7 +1398,12 @@ import UniformTypeIdentifiers
     /// physical input. A failed release keeps this meeting the (muted) talk meeting.
     func relinquishMicrophone() async -> Bool {
         guard ownsMicrophone else { return true }
+        participation.interruptVoice()
+        let approvedVoice = workspaceApprovedVoice
+        approvedVoice?.cancel()
+        if voiceReplyActive { await approvedVoice?.drain() }
         ownsMicrophone = false
+        await participation.stopVoiceAndWait()
         if requestedMicrophone == true || snapshot.microphoneOn { setMicrophoneEnabled(false) }
         if requestedCamera == true || snapshot.cameraOn { setCameraEnabled(false) }
         await controlTail?.value
@@ -976,11 +1428,16 @@ import UniformTypeIdentifiers
     }
     private func registerHeadset() {
         if !headset.begin(onRequestedMute: { [weak self] muted in self?.setMicrophoneEnabled(!muted) }) {
-            _ = headset.useEngineOnlyFallback(confirmedMuted: !snapshot.microphoneOn)
+            useEngineOnlyHeadsetFallback()
         }
+    }
+    private func useEngineOnlyHeadsetFallback() {
+        let physicalMute = (engine as? NativeDesktopGuestEngine)?.participationSenderPhysicallyMuted ?? true
+        _ = headset.useEngineOnlyFallback(confirmedMuted: ownsMicrophone && !snapshot.microphoneOn && physicalMute)
     }
     private func setMicrophoneEnabled(_ enabled: Bool) {
         guard !transferHeld, !closed, !enabled || ownsMicrophone else { _ = headset.requestIntent(muted: true); return }
+        participation.interruptVoice()
         requestedMicrophone = enabled
         let command = UUID(); microphoneCommand = command
         microphoneControl?.cancel()
@@ -991,6 +1448,8 @@ import UniformTypeIdentifiers
         let request = headset.requestIntent(muted: !enabled), token = generation
         microphoneControl = perform(priorityOff: !enabled) { engine in
             do {
+                await self.participation.stopVoiceAndWait()
+                try Task.checkCancellation()
                 try await engine.setMicrophone(enabled)
                 if let started = self.handoverStartedAt {
                     self.handoverStartedAt = nil
@@ -1063,6 +1522,7 @@ import UniformTypeIdentifiers
     func togglePlayout() {
         guard !transferHeld, !closed else { return }
         let enabled = !(requestedPlayout ?? snapshot.playoutOn); requestedPlayout = enabled
+        if !enabled { workspaceSoundTurnedOff() }
         perform { engine in
             do { try await engine.setPlayout(enabled) }
             catch { if self.requestedPlayout == enabled { self.requestedPlayout = nil }; throw error }
@@ -1087,12 +1547,20 @@ import UniformTypeIdentifiers
         let volume = Self.clampedVolume(value)
         if volume != meetingVolume {
             meetingVolume = volume
+            if let gain = participationVoiceLocalGain { participation.setVoiceLocalGain(gain) }
+            else if volume == 0 { workspaceSoundTurnedOff() }
+            else { participation.interruptVoice() }
             Task { [engine] in await engine.setPlayoutVolume(volume) }
         }
         if persist { UserDefaults.standard.set(volume, forKey: meetingVolumeKey) }
     }
+    private func workspaceSoundTurnedOff() {
+        workspaceSoundRevision += 1
+        cancelWorkspaceApprovedOutputs()
+        participation.workspaceSoundTurnedOff()
+    }
     func reconnect() {
-        participation.requireReview()
+        participation.requireReview(.connectionChanged)
         cancelJoinCameraPrime()
         updateMicrophoneRecoveryReadiness()
         authorizedMicrophoneRequest = nil; _ = headset.requestIntent(muted: true)
@@ -1149,6 +1617,7 @@ import UniformTypeIdentifiers
         if held {
             cancelJoinCameraPrime()
             if transferHeld && holdConfirmed { return }
+            participation.interruptVoice()
             transferHeld = true; holdConfirmed = false; authorizedMicrophoneRequest = nil; _ = headset.requestIntent(muted: true)
             requestedMicrophone = nil; requestedCamera = nil
             let tasks = Array(controlTasks.values)
@@ -1327,10 +1796,9 @@ import UniformTypeIdentifiers
         let previousTranscription = guestFeatures.transcriptionStatus
         guestFeatures = features
         participation.updateAudience(participationAudience)
-        if participationSomeoneSpeaking { participation.cancelPendingDispatch() }
-        participation.observe(features)
         noteTranscription(from: previousTranscription, to: features.transcriptionStatus)
         updateLocalTranscription()
+        observeParticipation()
         observeTranscript()
         chat.reactionHistoryAvailable = features.permissions.canSendReaction
         chat.canSend = features.permissions.canSendChat && features.connected
@@ -1370,13 +1838,33 @@ import UniformTypeIdentifiers
     func sendReaction(_ kind: MeetingReaction) {
         guard let guest = engine as? NativeDesktopGuestEngine, canReact,
               let wire = GuestMeetingReaction.allCases.first(where: { $0.symbol == kind.emoji }) else { return }
-        let id = UUID().uuidString
+        let approvedID = approvedWorkspaceReactionID
+        let id = approvedID ?? UUID().uuidString
         if let recorded = chat.reactionHistory.recordLocalSubmission(kind: kind,
             participantID: guestFeatures.localParticipantID ?? "local", displayName: displayName, submissionID: id) { floatReaction(recorded) }
-        Task {
-            do { try await guest.currentNativeEngine?.sendReaction(wire) }
-            catch { chat.reactionHistory.setLocalDelivery(.failed, submissionID: id); self.error = error.localizedDescription }
+        let task = Task {
+            defer { if let approvedID { approvedWorkspaceReactionTasks[approvedID] = nil } }
+            if let approvedID {
+                guard !Task.isCancelled, !closed else {
+                    workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .cancelled)
+                    return
+                }
+                guard guest.currentNativeEngine != nil else {
+                    workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .failed)
+                    return
+                }
+                guard workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .sending) != false else { return }
+            }
+            do {
+                try await guest.currentNativeEngine?.sendReaction(wire)
+                if let approvedID { workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .submitted) }
+            } catch {
+                if let approvedID { workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .unknown) }
+                chat.reactionHistory.setLocalDelivery(.failed, submissionID: id)
+                self.error = error.localizedDescription
+            }
         }
+        if let approvedID { approvedWorkspaceReactionTasks[approvedID] = task }
     }
     private func floatReaction(_ event: MeetingReactionEvent) {
         floatingReactions.append(event); if floatingReactions.count > 4 { floatingReactions.removeFirst() }
@@ -1480,7 +1968,9 @@ import UniformTypeIdentifiers
     }
     private func beginLeave() -> Task<Bool, Never> {
         if let leaveTask { return leaveTask }
-        participation.stop()
+        let leftAt = Date()
+        cancelWorkspaceApprovedOutputs()
+        participation.stop(.meetingEnded)
         cancelJoinCameraPrime(); power.stop()
         floatingSpeakerTask?.cancel(); floatingSpeakerTask = nil
         cameraMetadataTask?.cancel()
@@ -1527,6 +2017,7 @@ import UniformTypeIdentifiers
                 else { NativeDesktopCameraLease.shared.reportFailedStop(lease) }
             }
             await self.catchUp.finishMeeting().value
+            await self.finalizeWorkspaceCapture(leftAt: leftAt)
             if clean { self.snapshot = .init(phase: .left, playoutOn: false) }
             else { self.snapshot.phase = .failed }
             self.engine.onState = nil; self.engine.onVideo = nil; self.engine.onLocalCamera = nil; self.engine.onTitle = nil
@@ -1534,5 +2025,30 @@ import UniformTypeIdentifiers
         }
         leaveTask = cleanup
         return cleanup
+    }
+
+    private func finalizeWorkspaceCapture(leftAt: Date) async {
+        guard let workspaceJournal else { return }
+        let transcription = Array(transcriptionDrains.values)
+        let approvedVoice = workspaceApprovedVoice?.drain
+        let (results, output) = AsyncStream.makeStream(of: Bool.self, bufferingPolicy: .bufferingOldest(1))
+        Task { @MainActor [participation] in
+            await participation.waitForWorkspaceOutbound()
+            await approvedVoice?()
+            for drain in transcription { await drain.value }
+            output.yield(true)
+        }
+        let timeout = Task {
+            do { try await Task.sleep(for: .seconds(15)) } catch { return }
+            output.yield(false)
+        }
+        var iterator = results.makeAsyncIterator()
+        if await iterator.next() == false, !transcriptionDrains.isEmpty {
+            workspaceJournal.recordGap(sessionID: sessionID, reason: "finalization", from: leftAt, until: .now)
+        }
+        timeout.cancel()
+        output.finish()
+        observeWorkspace([])
+        workspaceJournal.end(sessionID: sessionID, at: leftAt)
     }
 }

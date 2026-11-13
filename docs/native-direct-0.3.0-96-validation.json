@@ -1,0 +1,52 @@
+{
+  "version": "0.3.0",
+  "build": "96",
+  "channel": "beta",
+  "sourceBase": "b595e89",
+  "sourceState": "Uncommitted voice implementation; tracked patch and new source files preserved in .build/native-beta-96/",
+  "sourcePatchSHA256": "35ec03c23f9877e4ff61a91d30619ca4899cc6219d912534b43d36e2f9c08e5c",
+  "newSourcesSHA256": "746e45a54b50265cb4edab34d5fc8b84bf97fd2d6cd3d0e96d7bad7108b2673c",
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "96",
+    "file": "RockNRoll-0.3.0-96-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-96-arm64.dmg",
+    "sha256": "df20362d2430cde37d610a90c790262b9be3c65cc21a268382515add39dee32c",
+    "length": 29058486,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-96/package/RockNRoll-0.3.0-96-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-96-arm64.dmg",
+      "sha256": "df20362d2430cde37d610a90c790262b9be3c65cc21a268382515add39dee32c",
+      "length": 29058486
+    },
+    "state": {
+      "appcastSHA256": "94a88b7e8838f4c7cd81b8211371bf45700670cb01b44059f05fe7390b7559fa",
+      "inventorySHA256": "6c96a3723ba95be832bd34dbc5389e9e1dd5104bcd27144879b7ea57dac359b0",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-96-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/9f88c013660d48efa4d7805b30d7bdce/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "76 targeted native tests passed before Release build.",
+    "Release archive built; contained app notarized, stapled and Gatekeeper accepted.",
+    "Publisher verified public feed, aliases and immutable artifact; independent beta alias download SHA-256 matched local package."
+  ],
+  "notVerified": [
+    "Live two-client speech and physical microphone behavior.",
+    "Installed Sparkle upgrade.",
+    "Separate notarization of the outer DMG."
+  ],
+  "publishedAt": "2026-11-12T07:27:36.460205+03:00"
+}

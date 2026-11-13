@@ -371,7 +371,8 @@ struct NativeDesktopMeetingView: View {
             }.buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome() }
             HStack(spacing: 4) {
                 controlButton(model.snapshot.microphoneOn ? "mic.fill" : "mic.slash", L("Mic"), selected: model.snapshot.microphoneOn, pending: model.microphoneStarting) { model.toggleMicrophone() }
-                    .help(model.microphoneStarting ? L("Starting microphone. Click to cancel.") : L("Mute or unmute (Space or ⇧⌘M)"))
+                    .help(model.microphoneRestriction ??
+                          (model.microphoneStarting ? L("Starting microphone. Click to cancel.") : L("Mute or unmute (Space or ⇧⌘M)")))
                     .contextMenu { Button(L("Audio settings")) { model.panel = .studio } }
                 controlButton(model.snapshot.cameraOn ? "video.fill" : "video.slash", L("Video"), selected: model.snapshot.cameraOn, pending: model.cameraStarting) { model.toggleCamera() }
                     .help(model.cameraStarting ? L("Starting camera. Click to cancel.") : L("Video"))
@@ -788,13 +789,56 @@ struct NativeDesktopZoomVideo: View {
 struct NativeDesktopConversationView: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     @ObservedObject var chat: ChatStore
+    @ObservedObject private var participation: ParticipationCoordinator
+
+    init(model: NativeDesktopMeetingModel, chat: ChatStore) {
+        self.model = model
+        self.chat = chat
+        _participation = ObservedObject(wrappedValue: model.participation)
+    }
+
     private enum TimelineRow: Identifiable {
-        case message(ChatEntry), reaction(MeetingReactionEvent)
-        var id: String { switch self { case .message(let item): "chat-" + item.id; case .reaction(let item): "reaction-" + item.id } }
-        var date: Date { switch self { case .message(let item): item.sentAt; case .reaction(let item): item.timestamp } }
+        case message(ChatEntry), reaction(MeetingReactionEvent), voice(ParticipationVoiceReply)
+        var id: String {
+            switch self {
+            case .message(let item): "chat-" + item.id
+            case .reaction(let item): "reaction-" + item.id
+            case .voice(let item): "assistant-voice-" + item.id
+            }
+        }
+        var date: Date {
+            switch self {
+            case .message(let item): item.sentAt
+            case .reaction(let item): item.timestamp
+            case .voice(let item): item.createdAt
+            }
+        }
+    }
+    private enum LiveTimelineRow: Identifiable {
+        case meeting(NativeDesktopMeetingModel.LiveTextRow), voice(ParticipationVoiceReply)
+        var id: String {
+            switch self {
+            case .meeting(let row): row.id
+            case .voice(let reply): "assistant-voice-" + reply.id
+            }
+        }
+    }
+    private var liveTimeline: [LiveTimelineRow] {
+        var last = Date.distantPast
+        var rows: [(Date, Int, LiveTimelineRow)] = model.liveTextRows().enumerated().map { index, row in
+            switch row {
+            case .line(_, let time): last = time ?? last
+            case .reaction(let reaction): last = reaction.timestamp
+            }
+            return (last, index, .meeting(row))
+        }
+        let offset = rows.count
+        rows += participation.voiceReplies.enumerated().map { ($0.element.createdAt, offset + $0.offset, .voice($0.element)) }
+        return rows.sorted { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }.map(\.2)
     }
     private var timeline: [TimelineRow] {
-        (chat.items.map(TimelineRow.message) + chat.reactionHistory.events.map(TimelineRow.reaction)).sorted {
+        (chat.items.map(TimelineRow.message) + chat.reactionHistory.events.map(TimelineRow.reaction)
+            + participation.voiceReplies.map(TimelineRow.voice)).sorted {
             $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date
         }
     }
@@ -821,6 +865,8 @@ struct NativeDesktopConversationView: View {
                                     }
                                 case .reaction(let event):
                                     HStack { Text(event.kind.emoji).font(.title2); Text(event.displayName ?? L("Participant")); Spacer(); Text(event.timestamp, style: .time).font(.caption2).foregroundStyle(.secondary) }
+                                case .voice(let reply):
+                                    ParticipationVoiceTranscriptRow(reply: reply)
                                 }
                             }
                             if let reason = chat.unavailableReason { Text(reason).foregroundStyle(.secondary).font(.callout) }
@@ -887,9 +933,11 @@ struct NativeDesktopConversationView: View {
                                         ? L("Transcript appears here when the meeting service provides it. To transcribe on this Mac, turn it on in Settings → Transcription.")
                                         : L("Transcript appears here when the meeting service provides it.")).foregroundStyle(.secondary)
                             }
-                            ForEach(model.liveTextRows()) { row in
+                            ForEach(liveTimeline) { row in
                                 switch row {
-                                case .line(let line, let time):
+                                case .voice(let reply):
+                                    ParticipationVoiceTranscriptRow(reply: reply)
+                                case .meeting(.line(let line, let time)):
                                     VStack(alignment: .leading, spacing: 4) {
                                         HStack {
                                             Text(line.participantName).font(.caption.bold()); Spacer()
@@ -897,7 +945,7 @@ struct NativeDesktopConversationView: View {
                                         }
                                         Text(line.text).textSelection(.enabled)
                                     }
-                                case .reaction(let event):
+                                case .meeting(.reaction(let event)):
                                     HStack(spacing: 6) {
                                         Text(event.kind.emoji)
                                         Text(event.displayName ?? L("Participant")).font(.caption).foregroundStyle(.secondary)
@@ -913,6 +961,9 @@ struct NativeDesktopConversationView: View {
                         Color.clear.frame(height: 1).id("latest")
                     }.padding(16)
                 }.onChange(of: chat.items.last?.id) { _ in proxy.scrollTo("latest", anchor: .bottom) }
+                    .onChange(of: participation.voiceReplies.last?.id) { _ in
+                        if tab != 2 { proxy.scrollTo("latest", anchor: .bottom) }
+                    }
                     .onChange(of: model.catchUpFocus) { id in if let id { proxy.scrollTo(id, anchor: .top) } }
                     .onAppear { if tab == 2, let id = model.catchUpFocus { DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) } } }
             }

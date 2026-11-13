@@ -1,4 +1,5 @@
 import AVFoundation
+import LiveKit
 import LiveKitWebRTC
 import XCTest
 @testable import RockNativeDesktop
@@ -6,6 +7,91 @@ import XCTest
 /// R4 S2: Guest meetings on the shared engine through `GuestMeetingAudio`, on the real
 /// physical owner (no microphone access needed: nothing here unmutes successfully).
 @MainActor final class SharedGuestMeetingAudioTests: XCTestCase {
+
+    func testGuestAssistantGateRequiresProvenInputEvenWhenTheRockObserverOwnsTheSharedModule() async throws {
+        let defaults = UserDefaults.standard, domain = UserDefaults.argumentDomain
+        let previous = defaults.volatileDomain(forName: domain)
+        var arguments = previous
+        arguments["nativeDesktop.voiceReplies"] = false
+        defaults.setVolatileDomain(arguments, forName: domain)
+        GuestSystemAudio.voiceRepliesOverrideForTesting = nil
+        defer {
+            GuestSystemAudio.voiceRepliesOverrideForTesting = nil
+            defaults.setVolatileDomain(previous, forName: domain)
+        }
+        XCTAssertTrue(GuestSystemAudio.voiceRepliesEnabled, "A previous experimental opt-out must not disable voice replies")
+        let engine = SharedAudioEngine.live(manualRenderingForTesting: true)
+        let meeting = try await SharedGuestMeetingAudio.attach(to: engine)
+        let owner = try XCTUnwrap(engine.guestOwner)
+        let sdkObserver = try XCTUnwrap(AudioManager.shared.sdkAudioDeviceModuleObserver as? LKRTCAudioDeviceModuleDelegate)
+        let proveInput: GuestSystemAudio.InputRouteProof = { engine, source, mixer in
+            AudioManager.shared.mixer.nativeAppReplyInputIsConnected(engine: engine, source: source, inputMixer: mixer)
+        }
+        let track = Self.track(meeting.factory)
+        meeting.registerMicrophoneTrack(track)
+        ok(await meeting.setInputPermitted(true))
+
+        XCTAssertFalse(meeting.setMicrophoneGate(open: false), "A cold graph cannot acknowledge a closed gate")
+        XCTAssertFalse(track.isEnabled)
+
+        let audio = try OfflineVoiceGraph()
+        let context: [AnyHashable: Any] = [kLKRTCAudioEngineInputMixerNodeKey: audio.inputMixer]
+        let module = meeting.factory.audioDeviceModule
+        XCTAssertEqual(owner.audioDeviceModule(module, didCreateEngine: audio.engine), 0)
+        XCTAssertEqual(owner.audioDeviceModule(module, engine: audio.engine, configureInputFromSource: nil,
+            toDestination: audio.inputMixer, format: audio.format, context: context), 0)
+        XCTAssertTrue(meeting.hasParticipationVoiceGraph)
+        XCTAssertTrue(meeting.setMicrophoneGate(open: false), "The verified prewarmed graph can close its gate")
+        XCTAssertTrue(meeting.participationVoiceGateClosed)
+        XCTAssertFalse(track.isEnabled, "Preparing or closing the graph never enables the sender")
+
+        XCTAssertEqual(owner.installForwardObserver(installFactory: { _ in
+            XCTFail("LiveKit factory installation must wait for the gate release")
+            return true
+        }, makeObserver: { sdkObserver }, proveInput: proveInput), .assistantGateHeld)
+        GuestSystemAudio.voiceRepliesOverrideForTesting = false
+        XCTAssertEqual(owner.audioDeviceModule(module, engine: audio.engine, configureInputFromSource: nil,
+            toDestination: audio.inputMixer, format: audio.format, context: [:]), -1,
+            "A rebuild without a proven input mixer cannot fall back to raw audio while held")
+        XCTAssertEqual(owner.audioDeviceModule(module, engine: audio.engine, configureInputFromSource: nil,
+            toDestination: audio.inputMixer, format: audio.format, context: context), 0)
+        XCTAssertTrue(meeting.participationVoiceGateClosed, "Turning the feature off does not remove a held raw gate")
+        XCTAssertTrue(meeting.setMicrophoneGate(open: true))
+        XCTAssertEqual(owner.installForwardObserver(installFactory: { _ in false }, makeObserver: { nil }, proveInput: proveInput), .factoryUnavailable)
+        XCTAssertTrue(meeting.setMicrophoneGate(open: false), "A refused factory installation releases its reservation")
+        XCTAssertTrue(meeting.setMicrophoneGate(open: true))
+        XCTAssertEqual(owner.installForwardObserver(installFactory: { _ in
+            XCTAssertEqual(meeting.snapshot["microphoneMuted"] as? Bool, true)
+            XCTAssertFalse(meeting.setMicrophoneGate(open: false), "A gate cannot close during reserved factory adoption")
+            return true
+        }, makeObserver: { sdkObserver }, proveInput: proveInput), .installed)
+        XCTAssertTrue(meeting.hasParticipationVoiceGraph, "Adoption leaves the existing Guest graph intact")
+        XCTAssertTrue(owner.waitingForForwardedInputRoute)
+        XCTAssertTrue(meeting.setMicrophoneGate(open: false))
+        let replacement = try OfflineVoiceGraph(startImmediately: false)
+        XCTAssertEqual(owner.audioDeviceModule(module, didCreateEngine: replacement.engine), 0)
+        XCTAssertEqual(owner.audioDeviceModule(module, engine: replacement.engine, configureInputFromSource: nil,
+            toDestination: replacement.inputMixer, format: replacement.format, context: [:]), -1,
+            "A new SDK-owned route cannot bypass a held legacy Guest gate")
+        XCTAssertFalse(owner.hasForwardedInputRoute)
+        XCTAssertEqual(owner.audioDeviceModule(module, willReleaseEngine: audio.engine), 0)
+        XCTAssertTrue(meeting.setMicrophoneGate(open: true))
+        XCTAssertEqual(owner.audioDeviceModule(module, engine: replacement.engine, configureInputFromSource: nil,
+            toDestination: replacement.inputMixer, format: replacement.format, context: [:]), 0)
+        XCTAssertTrue(owner.hasForwardedInputRoute)
+        XCTAssertFalse(meeting.hasParticipationVoiceGraph, "Guest cannot use the SDK-owned replacement input")
+        XCTAssertFalse(meeting.setMicrophoneGate(open: false))
+        XCTAssertFalse(track.isEnabled)
+        XCTAssertEqual(owner.audioDeviceModule(module, didDisableEngine: replacement.engine,
+            isPlayoutEnabled: true, isRecordingEnabled: false), 0)
+        XCTAssertFalse(owner.hasForwardedInputRoute, "Keeping playout does not retain an old input capability")
+        XCTAssertEqual(owner.audioDeviceModule(module, engine: replacement.engine, configureInputFromSource: nil,
+            toDestination: replacement.inputMixer, format: replacement.format, context: [:]), 0)
+        XCTAssertTrue(owner.hasForwardedInputRoute)
+        XCTAssertEqual(owner.audioDeviceModule(module, willReleaseEngine: replacement.engine), 0)
+        XCTAssertFalse(owner.hasForwardedInputRoute)
+        ok(await meeting.shutdown())
+    }
 
     func testTwoGuestMeetingsShareOneOwnerAndOnlyTheTalkMeetingMayUnmute() async throws {
         let engine = SharedAudioEngine.live()

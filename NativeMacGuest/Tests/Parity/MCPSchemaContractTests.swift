@@ -306,8 +306,8 @@ import XCTest
                                  "INVALID_ARGUMENT", field: "sections.attention.bogus", reason: "unknown_field")
             self.assertToolError(await self.call(server, "rocknroll_update_settings", ["action_id": action, "sections": ["attention": ["judge_enabled": "yes"]]], scopes: self.allScopes),
                                  "INVALID_ARGUMENT", field: "sections.attention.judge_enabled", reason: "type")
-            self.assertToolError(await self.call(server, "rocknroll_update_settings", ["action_id": action, "sections": ["app": ["multiple_meetings": "true"]]], scopes: self.allScopes),
-                                 "INVALID_ARGUMENT", field: "sections.app.multiple_meetings", reason: "type")
+            self.assertToolError(await self.call(server, "rocknroll_update_settings", ["action_id": action, "sections": ["app": ["multiple_meetings": false]]], scopes: self.allScopes),
+                                 "INVALID_ARGUMENT", field: "sections.app", reason: "unknown_field")
             self.assertToolError(await self.call(server, "rocknroll_update_settings", ["action_id": action, "sections": ["meeting": [:]]], scopes: self.allScopes),
                                  "INVALID_ARGUMENT", field: "sections.meeting", reason: "unknown_field")
             // A structurally valid call passes validation and fails later at the domain layer.

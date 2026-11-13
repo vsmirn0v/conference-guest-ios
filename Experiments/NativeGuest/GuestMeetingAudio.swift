@@ -44,11 +44,25 @@ import LiveKitWebRTC
     func setPrivateInputMeterEnabled(_ enabled: Bool)
     func setMicrophoneGate(open: Bool) -> Bool
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool
+    var hasParticipationVoiceGraph: Bool { get }
+    var participationVoiceGateClosed: Bool { get }
+    var participationSenderPhysicallyMuted: Bool { get }
+    func setParticipationSenderMuted(_ muted: Bool, permit: GuestAutonomousVoicePlayback) async -> Bool
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome
     func shutdown(timeout: TimeInterval) async -> Bool
 }
 
 /// The same defaults `GuestSystemAudio` declares, for calls through the protocol.
 extension GuestMeetingAudio {
+    var hasParticipationVoiceGraph: Bool { false }
+    var participationVoiceGateClosed: Bool { false }
+    var participationSenderPhysicallyMuted: Bool { false }
+    func setParticipationSenderMuted(_ muted: Bool, permit: GuestAutonomousVoicePlayback) async -> Bool { false }
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome { .notStarted }
     func activateMicrophone() async -> Bool { await activateMicrophone(timeout: nil) }
     func setMicrophoneMuted(_ muted: Bool) async -> Bool { await setMicrophoneMuted(muted, timeout: 2) }
     func setInputPermitted(_ permitted: Bool, keepWarm: Bool = false) async -> Bool {

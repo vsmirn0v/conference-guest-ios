@@ -5,7 +5,21 @@ import ImageIO
 import UniformTypeIdentifiers
 import LiveKitWebRTC
 
-enum GuestPeerError: Error { case malformed, closed, candidateOverflow, unsupportedCodec, iceFailed }
+enum GuestPeerError: Error, LocalizedError {
+    case malformed, closed, candidateOverflow, unsupportedCodec, iceFailed
+
+    var errorDescription: String? {
+        let message: String
+        switch self {
+        case .malformed: message = "The meeting service returned invalid media settings. Try reconnecting."
+        case .closed: message = "The meeting connection closed. Try reconnecting."
+        case .candidateOverflow: message = "The meeting sent too many connection candidates. Try reconnecting."
+        case .unsupportedCodec: message = "The meeting requires an unsupported media format."
+        case .iceFailed: message = "The meeting's audio/video connection failed. Check your network and reconnect."
+        }
+        return NSLocalizedString(message, comment: "Guest meeting connection error")
+    }
+}
 enum GuestPeerTarget: String { case publisher = "PUBLISHER", subscriber = "SUBSCRIBER" }
 
 /// Stable for one receiver attachment; native renderers must detach when it disappears.
@@ -44,8 +58,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private var iceTimeout: Task<Void, Never>?
     private var lastICEState: LKRTCIceConnectionState = .new
     private var activeIncomingMediaDemand = false
-    // Initial trickle failure may precede a relay connection. Real demand owns
-    // one deadline across checking/failed transitions and demand churn.
+    // Trickle ICE may report failed before another relay candidate connects.
+    // One deadline bounds initial publication or demanded reception; native state
+    // churn cannot renew it. An established connection gets one budget per outage.
     private var hasEstablishedConnection = false
     private var initialRequiredDeadline: TimeInterval?
     private var establishedICEOutageStartedAt: TimeInterval?
@@ -622,7 +637,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         activeIncomingMediaDemand = active
         if !hasEstablishedConnection {
             if active, initialRequiredDeadline == nil { initialRequiredDeadline = iceNow() + 10 }
-            if lastICEState == .checking || lastICEState == .failed { refreshICETimeout() }
+            if lastICEState == .checking || lastICEState == .failed || lastICEState == .disconnected { refreshICETimeout() }
         }
         probeLog("ice-incoming-demand", ["target": target.rawValue, "active": active])
     }
@@ -986,22 +1001,25 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         guard !closed, !iceFailureReported else { return }
         // Keep the original deadline while WebRTC is still rechecking the route.
         if !iceConnected, establishedICEOutageStartedAt != nil { return }
+        if !iceConnected, target == .publisher, initialRequiredDeadline != nil { return }
         establishedICEOutageStartedAt = nil
         iceTimeout?.cancel(); iceTimeout = nil
         guard !iceConnected else { return }
 
         let state = lastICEState
         if hasEstablishedConnection {
-            guard state == .checking || state == .disconnected else { return }
+            guard state == .checking || state == .disconnected || state == .failed else { return }
             let startedAt = iceNow()
             establishedICEOutageStartedAt = startedAt
             scheduleICETimeout(deadline: startedAt + 10)
-        } else if target == .subscriber, state == .checking || state == .failed {
+        } else if target == .subscriber, state == .checking || state == .failed || state == .disconnected {
             guard activeIncomingMediaDemand, let deadline = initialRequiredDeadline else { return }
             scheduleICETimeout(deadline: deadline, initialSubscriber: true)
         } else {
-            guard state == .checking || state == .disconnected else { return }
-            scheduleICETimeout(deadline: iceNow() + (state == .checking ? 10 : 5))
+            guard state == .checking || state == .disconnected || state == .failed else { return }
+            let deadline = iceNow() + 10
+            initialRequiredDeadline = deadline
+            scheduleICETimeout(deadline: deadline)
         }
     }
     private func scheduleICETimeout(deadline: TimeInterval, initialSubscriber: Bool = false) {
@@ -1039,9 +1057,10 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             iceConnected = newState == .connected || newState == .completed
             if iceConnected { hasEstablishedConnection = true; initialRequiredDeadline = nil }
             probeLog("ice-state", ["target": target.rawValue, "state": newState.rawValue])
-            if newState == .failed { logStallDiagnostics(reason: "native-failed") }
-            if newState == .closed || (newState == .failed && (target != .subscriber || hasEstablishedConnection)) {
-                reportICEFailure(pathFailure: newState != .closed)
+            // A failed checklist is not terminal while trickled candidates can
+            // still connect. Let the existing deadline decide when to retire it.
+            if newState == .closed {
+                reportICEFailure(pathFailure: false)
             } else {
                 refreshICETimeout()
             }

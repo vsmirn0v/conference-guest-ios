@@ -184,6 +184,7 @@ enum AppleOnDevice {
         var texts = [request.window.meetingTitle, request.profile.name, request.profile.role] + request.profile.aliases
         texts += request.window.lines.flatMap { [$0.speaker, $0.text] }
         texts += request.memory.map(\.text)
+        texts += request.workspaceGuidance
         if let preset = request.preset {
             texts += [preset.about, preset.matters, preset.never] + preset.people
             texts += preset.promptExamples.flatMap { [$0.excerpt, $0.reason, $0.note ?? ""] }
@@ -207,6 +208,7 @@ enum AppleOnDevice {
         out.profile.role = t(request.profile.role)
         out.profile.aliases = request.profile.aliases.map(t)
         out.memory = request.memory.map { .init(id: $0.id, kind: $0.kind, text: t($0.text), sourceID: $0.sourceID) }
+        out.workspaceGuidance = request.workspaceGuidance.map(t)
         if var preset = request.preset {
             preset.about = t(preset.about); preset.matters = t(preset.matters); preset.never = t(preset.never)
             preset.people = preset.people.map(t)
@@ -342,7 +344,7 @@ enum AppleOnDevice {
 
     static func replySchema(_ channels: ReplyChannels) throws -> GenerationSchema {
         let shortText = DynamicGenerationSchema(type: String.self)
-        let stance = DynamicGenerationSchema(type: String.self)
+        let stance = DynamicGenerationSchema(name: "ReplyStance", anyOf: ReplyStance.values)
         let root = DynamicGenerationSchema(name: "MeetingReply", properties: [
             .init(name: "chat", description: channels.chat
                   ? "The first variant's text, or an empty string when a reaction alone is better."

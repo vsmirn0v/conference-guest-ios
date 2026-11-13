@@ -136,7 +136,7 @@ Shows a native approval dialog; denied calls are recorded as `rejected`.
 |-|-|-|-|
 | `action_id` | string (UUID) | * | idempotency key |
 | `expected_revision` | string | | **required unless replaying**; current value from `rocknroll_get_settings` → `revision` |
-| `sections` | object | `{}` | patch; omitting it applies no changes. Keys: `attention` — object with exactly the boolean fields `judge_enabled`, `pause_on_battery`, `draft_replies`, `local_drafts`, `push_to_talk`, `talk_back`, `generate_outcomes`, `remote_outcomes`; `app` — object with `multiple_meetings` boolean. Unknown keys (including other section names) are rejected. |
+| `sections` | object | `{}` | patch; omitting it applies no changes. Keys: `attention` — object with exactly the boolean fields `judge_enabled`, `pause_on_battery`, `draft_replies`, `local_drafts`, `push_to_talk`, `talk_back`, `generate_outcomes`, `remote_outcomes`. Unknown keys (including other section names) are rejected. |
 
 ### rocknroll_run_assistant
 Runs a prompt through the in-app assistant. Actions that would need native confirmation

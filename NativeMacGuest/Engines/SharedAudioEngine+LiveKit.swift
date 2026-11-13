@@ -16,16 +16,17 @@ extension SharedAudioEngine {
             audioProcessingModule: SharedPeerConnectionFactory.audioProcessingModule as? LKRTCAudioProcessingModule)
     }
 
-    /// Hands the owner's factory to LiveKit and forwards module events to the SDK.
-    /// False when there is no owner yet or LiveKit already created its own factory
-    /// (then Rock keeps its separate engine).
-    func installIntoLiveKit() -> Bool {
-        if pinnedForProcess { return true }
-        guard let owner = guestOwner else { return false }
-        guard SharedPeerConnectionFactory.install(owner.factory) else { return false }
-        owner.forwardObserver = AudioManager.shared.sdkAudioDeviceModuleObserver as? LKRTCAudioDeviceModuleDelegate
-        pinForProcess()
-        return true
+    /// Hands the owner's factory and its input/output wiring to LiveKit as one operation.
+    func installIntoLiveKit() -> GuestSystemAudio.ForwardObserverInstallation {
+        guard let owner = guestOwner else { return .factoryUnavailable }
+        if pinnedForProcess { return owner.hasForwardObserver ? .installed : .observerUnavailable }
+        let result = owner.installForwardObserver(installFactory: { SharedPeerConnectionFactory.install($0) }, makeObserver: {
+            AudioManager.shared.sdkAudioDeviceModuleObserver as? LKRTCAudioDeviceModuleDelegate
+        }, proveInput: { engine, source, inputMixer in
+            AudioManager.shared.mixer.nativeAppReplyInputIsConnected(engine: engine, source: source, inputMixer: inputMixer)
+        })
+        if result == .installed || result == .observerUnavailable { pinForProcess() }
+        return result
     }
 }
 

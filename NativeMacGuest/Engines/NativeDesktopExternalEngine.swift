@@ -101,6 +101,7 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     var supportsVoiceReply: Bool { get }
     /// Closing the gate removes your microphone from what is sent; the player still plays.
     func setMicrophoneGate(open: Bool) async -> Bool
+    var voiceMicrophoneGateIsClosed: Bool { get }
     /// Plays one buffer into what the meeting receives; true when it finished playing.
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool
     func leave() async -> Bool
@@ -135,6 +136,7 @@ extension NativeDesktopMeetingEngine {
     func prewarmInput() async -> Bool { false }
     var supportsVoiceReply: Bool { false }
     func setMicrophoneGate(open: Bool) async -> Bool { open }
+    var voiceMicrophoneGateIsClosed: Bool { false }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { false }
 }
 enum NativeDesktopPrivateAudioError: LocalizedError {

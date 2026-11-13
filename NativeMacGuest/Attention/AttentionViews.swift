@@ -844,7 +844,7 @@ struct NativeDesktopIntelligenceSettings: View {
                     Button(previewing ? L("Preparing…") : L("Listen")) { previewVoice() }.disabled(previewing)
                     if let voiceMessage { Text(voiceMessage).font(.caption).foregroundStyle(voiceFailed ? Color.red : .secondary).lineLimit(3) }
                 }
-                Text(L("“Say it” on a card speaks the reply into that meeting while your microphone is held back. It needs Voice replies (experimental) in Settings → General, for meetings joined after turning it on. Listen plays only on this Mac.")).font(.caption).foregroundStyle(.secondary)
+                Text(L("“Say it” on a card speaks the reply into that meeting while your microphone is held back. Listen plays only on this Mac.")).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Section(L("What leaves this Mac")) {

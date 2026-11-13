@@ -285,11 +285,14 @@ final class MeetingTranscriber: @unchecked Sendable {
     private let model: ListenRecognizerModel
     private let vadModel: URL
     private let onLine: @MainActor (Line) -> Void
+    private let onDropped: (@MainActor (Date, Date) -> Void)?
+    private let deliveries = DispatchGroup()
     // Main actor: attached sinks by source id.
     private var taps: [String: (source: MeetingAudioSource, tap: MeetingAudioSink)] = [:]
     // Queue: per-speaker conversion and detection state.
     private var speakers: [String: Speaker] = [:]
     private var stopped = false
+    private var finishDeliveries = false
     private var localCapture = false
     private(set) var summary = Summary()
     /// Wall clock for line times; replaced in tests.
@@ -306,8 +309,10 @@ final class MeetingTranscriber: @unchecked Sendable {
     }
 
     init(model: ListenRecognizerModel, vadModel: URL, recognizer: LocalSpeechRecognizer = .shared,
+         onDropped: (@MainActor (Date, Date) -> Void)? = nil,
          onLine: @escaping @MainActor (Line) -> Void) {
         self.model = model; self.vadModel = vadModel; self.recognizer = recognizer; self.onLine = onLine
+        self.onDropped = onDropped
     }
 
     /// Attaches to new sources and detaches from sources that ended.
@@ -323,10 +328,22 @@ final class MeetingTranscriber: @unchecked Sendable {
         }
     }
 
-    @MainActor func stop() {
+    @MainActor func stop(flushing: Bool = false) {
         for entry in taps.values { entry.source.detach(entry.tap) }
         taps = [:]
-        queue.sync { stopped = true; speakers = [:] }
+        queue.sync {
+            guard !stopped else { return }
+            stopped = true
+            finishDeliveries = flushing
+            if flushing { for id in Array(speakers.keys) { finish(id) } }
+            else { speakers = [:] }
+        }
+    }
+
+    func waitForDelivery() async {
+        await withCheckedContinuation { continuation in
+            deliveries.notify(queue: .main) { continuation.resume() }
+        }
     }
 
     @MainActor var trackCount: Int { taps.count }
@@ -399,16 +416,30 @@ final class MeetingTranscriber: @unchecked Sendable {
             let end = start.addingTimeInterval(Double(segment.samples.count) / 16_000)
             summary.utterances += 1
             if trackID == Self.localTrackID { summary.microphoneUtterances += 1 }
+            deliveries.enter()
+            let deliveries = deliveries
             recognizer.transcribe(segment.samples, model: model) { [weak self] text, decode in
-                self?.queue.async { [weak self] in
-                    guard let self, !self.stopped else { return }
-                    guard let text else { self.summary.droppedSeconds += end.timeIntervalSince(start); return }
+                guard let self else { deliveries.leave(); return }
+                self.queue.async {
+                    guard !self.stopped || self.finishDeliveries else { deliveries.leave(); return }
+                    guard let text else {
+                        self.summary.droppedSeconds += end.timeIntervalSince(start)
+                        let dropped = self.onDropped
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated { dropped?(start, end) }
+                            deliveries.leave()
+                        }
+                        return
+                    }
                     self.summary.decodeSeconds += decode
-                    guard !text.isEmpty else { return }
+                    guard !text.isEmpty else { deliveries.leave(); return }
                     self.summary.lines += 1
                     let line = Line(id: "local-" + UUID().uuidString, trackID: trackID, text: text, start: start, end: end)
                     let deliver = self.onLine
-                    DispatchQueue.main.async { MainActor.assumeIsolated { deliver(line) } }
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { deliver(line) }
+                        deliveries.leave()
+                    }
                 }
             }
         }

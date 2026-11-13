@@ -1,8 +1,28 @@
 # Participate — implementation plan
 
-11 November 2026 · Proposal, not implemented
+11 November 2026 · Original proposal, with implementation checkpoints below
 
 Design and behavior contract: [assistant-participate-design-2026-11-11.md](assistant-participate-design-2026-11-11.md). Start on the native Mac app. Keep core policy/evidence types portable, but do not promise an iOS background executor until its lifecycle and ownership design is validated.
+
+## Implementation checkpoint · 12 November 2026
+
+Attributed chat and explicitly approved Markdown sources landed in `15fd3a2`. The audio work follows the user's clarified contract: meeting sound off or zero volume suppresses all assistant speech; a muted user microphone may coexist with assistant speech while microphone input stays private. See the voice amendment in the design document for the control matrix.
+
+The implementation adds an explicitly reviewed Voice channel, built-in Mac synthesis, bounded source revalidation, cancellable playback into the meeting and local output, and local reply rows in Chat and Live text. Playback status distinguishes local completion from remote delivery confirmation. Pending or interrupted speech is never replayed when sound returns.
+
+Activation in a new build: enable **Settings → General → Voice replies**, rejoin the Guest meeting, and select **Participate → Voice → Start participating**. Meeting-service transcription and microphone permission are required. The meeting must hold the talk role; automatic speech does not take it from another room. A meeting joined with the microphone muted can prepare its audio graph under mute, without requiring the user to unmute first. The user's mute intent stays visible and unchanged while synthesized audio temporarily uses the meeting sender.
+
+Validation must cover separate microphone and synthesized signals, delayed mute confirmation, sound-off during playback, volume zero, stop/leave/handoff, stale permit completion, stalled source reads and synthesis cancellation. Rendered PCM and native tests establish behavior within the test engine; a two-client meeting and physical speaker/headphone tests remain necessary to establish audible delivery and echo behavior. Do not label a source build as installed or released.
+
+Validated on 12 November: the final native build and all 76 selected tests passed, including offline PCM isolation, shared sender ownership, connection replacement, bounded reads, synthesis cancellation, versioned signaling acknowledgements and compensating mute after a late unmute echo. Independent source review found no blocking issues. The 360-point SwiftUI reply-row render was also inspected. Local evidence: `.build/participation-voice-verified.log` and `.build/participation-voice-ui/rows.png`. Live two-client playback, physical speaker echo and first-use microphone permission remain unverified. This checkpoint is source/build validation, not installation or release.
+
+The remaining sections preserve the original design baseline and rollout plan; their phase estimates are not a report of completed work.
+
+## Delegated reply amendment · 12 November 2026
+
+The current user request supersedes the original attribution and manually selected knowledge assumptions. Implement natural first-person replies, conditional user-requested prefixes, meeting-specific guidance, and relevant connected-vault retrieval with the configured processor. Keep citations as internal evidence and validate the requested subject and fact type. The selected vault remains a read source while automatic export is paused.
+
+Validate ordinary acknowledgments, split speech, factual meeting-info and vault answers, missing facts, instruction precedence, untrusted-source instructions, unprefixed own-message echoes, directly requested follow-ups, and source revocation through the actual model and native entry points. Release receipts record the exact tested source and remaining live-meeting checks.
 
 ## Current source and the gaps
 

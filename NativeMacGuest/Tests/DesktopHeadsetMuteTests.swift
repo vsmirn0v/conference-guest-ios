@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import LiveKitWebRTC
 
@@ -9,6 +10,8 @@ import LiveKitWebRTC
         reentrantRegistrationFailure()
         delayedMuteAndAtomicOpen()
         await deinitialization()
+        await participationCaptureLease()
+        engineOnlyFallbackClearsRetiredNativeGate()
         stalledOptInBreaker()
         print("PASS: headset intent/confirmation epochs, stale callbacks, metadata, programmatic/failed writes, owner replacement and deinit; no physical capture")
         print("PASS: off unless chosen; a stalled or failed opt-in turns the integration off for later meetings")
@@ -23,6 +26,58 @@ import LiveKitWebRTC
             precondition(LKRTCApplicationCaptureMuted() == 1 && LKRTCApplicationInputMuteReconfiguring() == 0)
             print("PASS: actual macOS AVAudioApplication handler registration/unregistration with native gate closed; no physical media")
         }
+    }
+
+    static func engineOnlyFallbackClearsRetiredNativeGate() {
+        let previous = LKRTCApplicationCaptureMuted()
+        defer { LKRTCSetApplicationCaptureMuted(previous) }
+        let suite = "headset-fallback-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: NativeDesktopHeadsetMute.Platform.enabledKey)
+        let headset = NativeDesktopHeadsetMute(platform: .live(defaults: defaults))
+        precondition(!headset.begin { _ in preconditionFailure("Headset integration was disabled") })
+        LKRTCSetApplicationCaptureMuted(1)
+        precondition(!headset.useEngineOnlyFallback(confirmedMuted: false) && LKRTCApplicationCaptureMuted() == 1)
+        precondition(headset.useEngineOnlyFallback(confirmedMuted: true) && LKRTCApplicationCaptureMuted() == 0)
+    }
+
+    static func participationCaptureLease() async {
+        let fake = Fake(), controller = NativeDesktopHeadsetMute(platform: fake.platform)
+        precondition(controller.begin { _ in preconditionFailure("Synthetic audio changed headset intent") })
+        defer { controller.end() }
+        let engine = AVAudioEngine()
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+        try! engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 480)
+        let input = AVAudioMixerNode()
+        engine.attach(input)
+        engine.connect(input, to: engine.mainMixerNode, format: format)
+        let graph = GuestVoiceReplyGraph(engine: engine, gateOpen: false)
+        precondition(graph.connect(source: nil, inputMixer: input, format: format))
+        try! engine.start()
+        defer { engine.stop() }
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480)!
+        buffer.frameLength = 480
+        buffer.floatChannelData![0].update(repeating: 0, count: 480)
+
+        let stale = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        precondition(controller.prepareParticipationCapture(stale) && fake.gate.muted)
+        precondition(fake.handlers.last?(true) == true)
+        let rejected = await graph.playAutonomous(buffer, permit: stale)
+        precondition(rejected == .notStarted && fake.gate.muted)
+
+        let voice = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        precondition(controller.prepareParticipationCapture(voice))
+        let result = await graph.playAutonomous(buffer, permit: voice, onStarted: {
+            precondition(voice.captureIsOpen && !fake.gate.muted && fake.muted && fake.intent == 1)
+            controller.confirm(muted: true)
+            precondition(voice.captureIsOpen && !fake.gate.muted)
+            precondition(fake.handlers.last?(true) == true)
+            precondition(!voice.captureIsOpen && fake.gate.muted)
+            voice.cancel()
+        })
+        precondition(result == .interrupted && fake.gate.muted && fake.muted)
+        print("PASS: assistant capture lease preserves user mute and rejects accessory supersession")
     }
 
     /// macOS 27.2: the audio session service hung on the opt-in for 9 s at most meeting

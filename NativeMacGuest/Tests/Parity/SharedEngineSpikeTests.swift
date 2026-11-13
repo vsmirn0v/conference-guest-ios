@@ -17,6 +17,147 @@ final class SharedEngineSpikeTests: XCTestCase {
         try await runSpike(hardware: false)
     }
 
+    @MainActor
+    func testParticipationVoiceReachesWebRTCLoopbackWithLocalMonitorAndMutedUser() async throws {
+        let originalCaptureMuted = LKRTCApplicationCaptureMuted()
+        _ = LKRTCInitializeSSL()
+        let factory = LKRTCPeerConnectionFactory(audioDeviceModuleType: .audioEngine, bypassVoiceProcessing: true,
+            encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(),
+            audioProcessingModule: nil)
+        let module = factory.audioDeviceModule
+        let observer = SpikeToneObserver(withVoiceReply: true)
+        module.observer = observer
+        defer {
+            module.observer = nil
+            LKRTCSetApplicationCaptureMuted(originalCaptureMuted)
+        }
+        var userMuted = false
+        let headset = NativeDesktopHeadsetMute(platform: .init(available: true, readMuted: { userMuted },
+            writeMuted: { userMuted = $0 }, install: { _ in }, uninstall: {},
+            observe: { _ in NSObject() }, removeObserver: { _ in },
+            setCaptureMuted: { LKRTCSetApplicationCaptureMuted($0 ? 1 : 0) },
+            captureState: { LKRTCApplicationCaptureState() },
+            unmuteIfState: { LKRTCUnmuteApplicationCaptureIfState($0) },
+            setIntent: { _ in }, isReconfiguring: { false }))
+        XCTAssertTrue(headset.begin { _ in XCTFail("Synthetic speech changed microphone intent") })
+        defer { headset.end() }
+        XCTAssertEqual(module.setManualRenderingMode(true), 0)
+        XCTAssertEqual(module.setMuteMode(.inputMixer), 0)
+        XCTAssertEqual(module.setMicrophoneMuted(false), 0)
+        var availability = LKRTCAudioEngineAvailability()
+        availability.isInputAvailable = true; availability.isOutputAvailable = true
+        XCTAssertEqual(module.setEngineAvailability(availability), 0)
+        let receiverDevice = GuestSyntheticAudio()
+        let receiverFactory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: receiverDevice)
+        let call = try await SpikeLoopCall.connect(factory: factory, receiverFactory: receiverFactory, name: "Participation")
+        defer { call.caller?.close(); call.callee?.close() }
+        let graph = try XCTUnwrap(observer.voiceGraph)
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+        let voice = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 144_000)!
+        voice.frameLength = voice.frameCapacity
+        for frame in 0..<Int(voice.frameLength) {
+            voice.floatChannelData![0][frame] = 0.24 * Float(sin(2 * .pi * 630 * Double(frame) / format.sampleRate))
+        }
+
+        func start(_ permit: GuestAutonomousVoicePlayback, _ phrase: AVAudioPCMBuffer) async throws
+            -> Task<GuestAutonomousVoicePlayback.Outcome, Never> {
+            let playback = Task { await graph.playAutonomous(phrase, permit: permit,
+                canStart: { !graph.gateOpen }, localGain: { 0.7 }) }
+            for _ in 0..<100 where !permit.started { try await Task.sleep(for: .milliseconds(10)) }
+            if !permit.started {
+                permit.cancel()
+                _ = await playback.value
+            }
+            return try XCTUnwrap(permit.started ? playback : nil, "The WebRTC device could not start both playback routes")
+        }
+
+        // Prove the fixture's raw input is present. This source is a generated
+        // tone in a manual audio engine with no physical microphone.
+        XCTAssertTrue(graph.setGate(open: true))
+        XCTAssertTrue(LKRTCUnmuteApplicationCaptureIfState(LKRTCApplicationCaptureState()))
+        let beforeRaw = receiverDevice.snapshot
+        _ = try await call.measure(seconds: 0.5)
+        let rawControl = receiverDevice.snapshot.since(beforeRaw)
+        LKRTCSetApplicationCaptureMuted(1)
+        XCTAssertTrue(graph.setGate(open: false))
+        XCTAssertGreaterThan(rawControl.rms, 0.015)
+        try await Task.sleep(for: .milliseconds(300))
+
+        // Reproduce the prior failure below the AVAudioEngine graph: a local
+        // monitor is audible while the WebRTC far side receives only silence.
+        let blocked = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        observer.localMonitor.reset()
+        let beforeBlocked = receiverDevice.snapshot
+        let blockedPlayback = try await start(blocked, voice)
+        try await Task.sleep(for: .milliseconds(600))
+        let blockedPCM = receiverDevice.snapshot.since(beforeBlocked)
+        XCTAssertGreaterThan(observer.localMonitor.rms, 0.02)
+        XCTAssertGreaterThan(blockedPCM.samples, 0)
+        XCTAssertLessThan(blockedPCM.rms, 0.002)
+        blocked.cancel()
+        _ = await blockedPlayback.value
+
+        // Opening downstream for a silent phrase must not expose the
+        // distinct, continuous raw-input tone while the raw gate is closed.
+        let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: voice.frameLength)!
+        silence.frameLength = voice.frameLength
+        silence.floatChannelData![0].update(repeating: 0, count: Int(silence.frameLength))
+        let silent = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        XCTAssertTrue(headset.prepareParticipationCapture(silent))
+        let beforeSilence = receiverDevice.snapshot
+        let silentPlayback = try await start(silent, silence)
+        XCTAssertEqual(LKRTCApplicationCaptureMuted(), 0)
+        try await Task.sleep(for: .milliseconds(600))
+        let silentPCM = receiverDevice.snapshot.since(beforeSilence)
+        XCTAssertGreaterThan(silentPCM.samples, 0)
+        XCTAssertLessThan(silentPCM.rms, 0.002)
+        silent.cancel()
+        _ = await silentPlayback.value
+
+        let admitted = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        XCTAssertTrue(headset.prepareParticipationCapture(admitted))
+        observer.localMonitor.reset()
+        let beforeSpeech = receiverDevice.snapshot
+        let playback = try await start(admitted, voice)
+        headset.confirm(muted: true) // The user-facing mic stays muted.
+        XCTAssertEqual(LKRTCApplicationCaptureMuted(), 0)
+        XCTAssertTrue(userMuted)
+        XCTAssertFalse(graph.setGate(open: true))
+        XCTAssertFalse(graph.gateOpen)
+        let heard = try await call.measure(seconds: 0.8)
+        let heardPCM = receiverDevice.snapshot.since(beforeSpeech)
+        XCTAssertGreaterThan(heardPCM.nonSilentCallbacks, 0)
+        XCTAssertGreaterThan(heardPCM.rms, 0.015)
+        XCTAssertGreaterThan(heard.sourceEnergyPerSecond, 0.0001)
+        XCTAssertGreaterThan(observer.localMonitor.rms, 0.02)
+        admitted.cancel()
+        XCTAssertEqual(LKRTCApplicationCaptureMuted(), 1)
+        XCTAssertTrue(userMuted)
+        let outcome = await playback.value
+        XCTAssertEqual(outcome, .interrupted)
+        try await Task.sleep(for: .milliseconds(300))
+        let beforeStop = receiverDevice.snapshot
+        _ = try await call.measure(seconds: 0.5)
+        let stoppedPCM = receiverDevice.snapshot.since(beforeStop)
+        XCTAssertLessThan(stoppedPCM.rms, 0.002)
+        let completed = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        XCTAssertTrue(headset.prepareParticipationCapture(completed))
+        let short = MicrophoneMoveTests.tone(seconds: 0.8, frequency: 550, amplitude: 0.24)
+        let beforeComplete = receiverDevice.snapshot
+        let completePlayback = try await start(completed, short)
+        let completeOutcome = await completePlayback.value
+        XCTAssertEqual(completeOutcome, .completed)
+        XCTAssertEqual(LKRTCApplicationCaptureMuted(), 1)
+        let completedPCM = receiverDevice.snapshot.since(beforeComplete)
+        XCTAssertGreaterThan(completedPCM.nonSilentCallbacks, 0)
+        XCTAssertGreaterThan(completedPCM.rms, 0.015)
+        print("PARTICIPATION LOOPBACK raw-control=\(rawControl.rms) blocked=\(blockedPCM.rms) raw-gated=\(silentPCM.rms) "
+            + "assistant=\(heardPCM.rms) frames=\(heardPCM.samples) "
+            + "source-energy-per-second=\(heard.sourceEnergyPerSecond) bytes-per-second=\(heard.bytesPerSecond) "
+            + "stopped=\(stoppedPCM.rms) receiver-playing=\(receiverDevice.isPlaying)")
+    }
+
     /// The same on real hardware with Apple Voice Processing I/O: the real microphone opens
     /// (tone mixed on top), the required output leg stays active but its mixer is silent.
     /// Skipped without microphone access.
@@ -119,8 +260,16 @@ final class SpikeToneObserver: NSObject, LKRTCAudioDeviceModuleDelegate, @unchec
     private let lock = NSLock()
     private var value = Counts()
     private var phase = 0.0
+    private let withVoiceReply: Bool
+    private var graph: GuestVoiceReplyGraph?
+    private weak var outputMixer: AVAudioMixerNode?
+    private var outputFormat: AVAudioFormat?
+    let localMonitor = SpikeEnergyMeter()
+    var voiceGraph: GuestVoiceReplyGraph? { lock.lock(); defer { lock.unlock() }; return graph }
     var counts: Counts { lock.lock(); defer { lock.unlock() }; return value }
     private func bump(_ change: (inout Counts) -> Void) { lock.lock(); change(&value); lock.unlock() }
+
+    init(withVoiceReply: Bool = false) { self.withVoiceReply = withVoiceReply }
 
     /// Another observer that also needs the module's events (the LiveKit SDK's own, when
     /// the SDK runs on this shared factory). Events go to it first; the tone is added after.
@@ -171,7 +320,7 @@ final class SpikeToneObserver: NSObject, LKRTCAudioDeviceModuleDelegate, @unchec
         let inputStage = AVAudioMixerNode()
         engine.attach(inputStage)
         if let source { engine.connect(source, to: inputStage, format: format) }
-        engine.connect(inputStage, to: target, format: format)
+        if !withVoiceReply { engine.connect(inputStage, to: target, format: format) }
         let step = 2 * Double.pi * 440 / format.sampleRate
         let tone = AVAudioSourceNode(format: format) { [weak self] _, _, frames, list in
             guard let self else { return noErr }
@@ -184,6 +333,29 @@ final class SpikeToneObserver: NSObject, LKRTCAudioDeviceModuleDelegate, @unchec
         }
         engine.attach(tone)
         engine.connect(tone, to: inputStage, format: format)
+        if withVoiceReply {
+            let reply = GuestVoiceReplyGraph(engine: engine, gateOpen: false)
+            guard reply.connect(source: inputStage, inputMixer: target, format: format) else { return -1 }
+            lock.lock()
+            graph = reply
+            let mixer = outputMixer, format = outputFormat
+            lock.unlock()
+            if let mixer, let format { reply.connectMonitor(to: mixer, format: format) }
+            else if engine.isInManualRenderingMode {
+                // WebRTC's manual ADM has only a rendered capture sink. Model
+                // an independent speaker leg with a meter followed by a zero
+                // gain stage, so it cannot contribute to the captured PCM.
+                let meterMixer = AVAudioMixerNode(), speakerSink = AVAudioMixerNode()
+                engine.attach(meterMixer); engine.attach(speakerSink)
+                speakerSink.outputVolume = 0
+                engine.connect(meterMixer, to: speakerSink, format: nil)
+                engine.connect(speakerSink, to: target, format: nil)
+                reply.connectMonitor(to: meterMixer, format: engine.manualRenderingFormat)
+                meterMixer.installTap(onBus: 0, bufferSize: 1024, format: nil) { [localMonitor] buffer, _ in
+                    localMonitor.render(pcmBuffer: buffer)
+                }
+            }
+        }
         return forwarded
     }
     func audioDeviceModule(_ module: LKRTCAudioDeviceModule, engine: AVAudioEngine, configureOutputFromSource source: AVAudioNode,
@@ -191,7 +363,18 @@ final class SpikeToneObserver: NSObject, LKRTCAudioDeviceModuleDelegate, @unchec
         let forwarded = forward?.audioDeviceModule(module, engine: engine, configureOutputFromSource: source, toDestination: destination,
                                                    format: format, context: context) ?? 0
         // The loopback tone is test input, not something to play over speakers.
-        (source as? AVAudioMixerNode)?.outputVolume = 0
+        if withVoiceReply, let mixer = source as? AVAudioMixerNode {
+            lock.lock()
+            outputMixer = mixer; outputFormat = format
+            let graph = graph
+            lock.unlock()
+            graph?.connectMonitor(to: mixer, format: format)
+            mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [localMonitor] buffer, _ in
+                localMonitor.render(pcmBuffer: buffer)
+            }
+        } else {
+            (source as? AVAudioMixerNode)?.outputVolume = 0
+        }
         return forwarded
     }
     func audioDeviceModuleDidUpdateDevices(_ module: LKRTCAudioDeviceModule) { forward?.audioDeviceModuleDidUpdateDevices(module) }
@@ -231,25 +414,32 @@ final class SpikeLoopCall: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     let meter = SpikeEnergyMeter()
     private var remoteAttached = false
     private let lock = NSLock()
+    private enum Side { case caller, callee }
+    private let iceRelay = DispatchQueue(label: "WebRTC loopback ICE relay")
+    private var readyForICE: Set<Side> = []
+    private var earlyICE: [Side: [LKRTCIceCandidate]] = [:]
 
     init(name: String) { self.name = name }
 
-    static func connect(factory: LKRTCPeerConnectionFactory, name: String) async throws -> SpikeLoopCall {
+    static func connect(factory: LKRTCPeerConnectionFactory, receiverFactory: LKRTCPeerConnectionFactory? = nil,
+                        name: String) async throws -> SpikeLoopCall {
         let call = SpikeLoopCall(name: name)
         let configuration = LKRTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan; configuration.iceServers = []
         let constraints = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         call.caller = factory.peerConnection(with: configuration, constraints: constraints, delegate: call)
-        call.callee = factory.peerConnection(with: configuration, constraints: constraints, delegate: call)
+        call.callee = (receiverFactory ?? factory).peerConnection(with: configuration, constraints: constraints, delegate: call)
         let source = factory.audioSource(with: constraints)
         call.sender = factory.audioTrack(with: source, trackId: "mic-\(name)")
         _ = call.caller.add(call.sender, streamIds: ["s-\(name)"])
         let offer = try await call.caller.offer(for: constraints)
         try await call.caller.setLocalDescription(offer)
         try await call.callee.setRemoteDescription(offer)
+        call.remoteDescriptionSet(.callee)
         let answer = try await call.callee.answer(for: constraints)
         try await call.callee.setLocalDescription(answer)
         try await call.caller.setRemoteDescription(answer)
+        call.remoteDescriptionSet(.caller)
         for _ in 0..<200 where call.caller.iceConnectionState != .connected && call.caller.iceConnectionState != .completed {
             try await Task.sleep(for: .milliseconds(25))
         }
@@ -312,8 +502,25 @@ final class SpikeLoopCall: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
 
     // Delegate: trickle ICE between the two ends.
     func peerConnection(_ pc: LKRTCPeerConnection, didGenerate candidate: LKRTCIceCandidate) {
-        let other = pc === caller ? callee : caller
-        other?.add(candidate) { _ in }
+        let side: Side = pc === caller ? .callee : .caller
+        // Separate factories can invoke these delegates concurrently on their
+        // own signaling threads. Never cross-call the other thread inline.
+        iceRelay.async { [weak self] in
+            guard let self else { return }
+            if self.readyForICE.contains(side) { self.add(candidate, to: side) }
+            else { self.earlyICE[side, default: []].append(candidate) }
+        }
+    }
+    private func remoteDescriptionSet(_ side: Side) {
+        iceRelay.async { [weak self] in
+            guard let self else { return }
+            self.readyForICE.insert(side)
+            for candidate in self.earlyICE.removeValue(forKey: side) ?? [] { self.add(candidate, to: side) }
+        }
+    }
+    private func add(_ candidate: LKRTCIceCandidate, to side: Side) {
+        let peer = side == .caller ? caller : callee
+        peer?.add(candidate) { _ in }
     }
     func peerConnection(_ pc: LKRTCPeerConnection, didChange stateChanged: LKRTCSignalingState) {}
     func peerConnection(_ pc: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {}

@@ -25,9 +25,8 @@ private enum MeetingSQLiteError: LocalizedError {
     var errorDescription: String? { String(describing: self) }
 }
 
-/// One connection is confined to `MeetingLibraryStore`. The application does not
-/// share a SQLite handle across actors and never claims success before `COMMIT`.
-private final class MeetingSQLiteConnection: @unchecked Sendable {
+/// Each connection is confined to its owning isolation domain.
+final class MeetingSQLiteConnection: @unchecked Sendable {
     private let path: URL
     private var database: OpaquePointer?
 
@@ -165,7 +164,7 @@ private final class MeetingSQLiteConnection: @unchecked Sendable {
     }
 }
 
-private extension MeetingSQLiteRow {
+extension MeetingSQLiteRow {
     func text(_ index: Int) -> String? {
         guard case .text(let value)? = self[index] else { return nil }
         return value
@@ -204,6 +203,7 @@ private final class MeetingSQLiteConnectionBox: @unchecked Sendable {
 }
 
 actor MeetingLibraryStore: @unchecked Sendable {
+    nonisolated let participationNoteChanges = ParticipationNoteChanges()
     private let root: URL
     private let connectionBox = MeetingSQLiteConnectionBox()
     private(set) var persistenceError: String?
@@ -443,6 +443,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
     func saveNote(sessionID: UUID, markdown: String) async throws -> MeetingLibraryNoteCommit {
         let db = try db()
         guard var session = try await self.session(sessionID) else { throw MeetingLibraryError.invalidSession }
+        participationNoteChanges.willChange(sessionID)
         return try db.transaction {
             let existing = try db.one("SELECT note_id,revision,created_at FROM meeting_notes WHERE session_id = ?", bind: {
                 try Self.bindText($0, sessionID.uuidString, at: 1)
@@ -936,6 +937,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
     // MARK: Data clearing
 
     func deleteAll() async throws {
+        participationNoteChanges.willChange()
         let db = try db()
         try db.transaction {
             for table in ["export_outbox", "export_bindings", "export_destinations", "note_chunks", "meeting_notes", "meeting_outcomes", "meeting_sessions"] {

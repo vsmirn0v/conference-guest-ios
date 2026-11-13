@@ -6,7 +6,7 @@ import LiveKitWebRTC
 // R4 (docs/r4-shared-engine-plan.md): one process-wide audio engine for every meeting.
 // `SharedAudioEngine` owns the one physical owner (factory, module, VPIO unit, observer)
 // and arbitrates between meetings; each meeting holds a `MeetingAudioAttachment`.
-// Behind the "One audio engine for all meetings" flag, read once at launch.
+// Production uses this engine for all meetings. Debug and comparison builds can select the legacy path.
 
 /// What the shared engine needs from its single physical owner. `GuestSystemAudio`
 /// provides it in the app; tests use a fake.
@@ -24,12 +24,29 @@ import LiveKitWebRTC
     func setInputTranscriptionSink(_ sink: ((AVAudioPCMBuffer) -> Void)?)
     func setMicrophoneGate(open: Bool) -> Bool
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer, localGain: Float) async -> Bool
+    func setVoiceReplyMonitorGain(_ gain: Float)
+    var hasParticipationVoiceGraph: Bool { get }
+    var participationVoiceGateClosed: Bool { get }
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome
     func shutdown(timeout: TimeInterval) async -> Bool
     /// Engine stops/starts the owner did not ask for (device or route change); any thread.
     var onSpontaneousEngineChange: ((GuestEngineChange) -> Void)? { get set }
 }
 
 extension GuestSystemAudio: SharedAudioModule {}
+
+extension SharedAudioModule {
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer, localGain: Float) async -> Bool { await playVoiceReply(buffer) }
+    func setVoiceReplyMonitorGain(_ gain: Float) {}
+    var hasParticipationVoiceGraph: Bool { false }
+    var participationVoiceGateClosed: Bool { false }
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome { .notStarted }
+}
 
 /// A meeting's microphone sender. Disabled, it sends silence whatever the module does.
 protocol MeetingAudioSender: AnyObject {
@@ -49,14 +66,13 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 }
 
 @MainActor final class SharedAudioEngine {
-    static let flagKey = "nativeDesktop.sharedAudioEngine"
-    /// Read once: Rock's factory is fixed for the process, so a change needs a relaunch.
-    /// Debug builds also take `R4_SHARED_AUDIO_ENGINE=1|0` so suites can run either way.
+    /// Production always uses the shared engine, regardless of an obsolete saved preference.
+    /// Debug and explicit comparison builds retain the legacy route for testing.
     static let enabledAtLaunch: Bool = {
-#if DEBUG
+#if DEBUG || NATIVE_LEGACY_AUDIO
         if let value = ProcessInfo.processInfo.environment["R4_SHARED_AUDIO_ENGINE"] { return value == "1" }
 #endif
-        return UserDefaults.standard.bool(forKey: flagKey)
+        return true
     }()
     /// The app's one engine; its owner is created when the first meeting attaches.
     static let shared: SharedAudioEngine = {
@@ -78,6 +94,8 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     private let authorized: () -> Bool
     private let sleep: (Duration) async throws -> Void
     private var module: SharedAudioModule?
+    private var participationPlayback: GuestAutonomousVoicePlayback?
+    private var participationSender: GuestAutonomousVoicePlayback?
     private var attachments: [UUID: MeetingAudioAttachment] = [:]
     private var order: [UUID] = []
     private let work = SharedAudioSerialWork()
@@ -85,6 +103,9 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     /// The meeting whose sender may be enabled; changes bump the epoch so a stale
     /// meeting's unmute is refused.
     private(set) var talkMeetingID: UUID?
+    /// The legacy companion has no UI for cross-workspace handover. While it owns
+    /// talk, reject other attachments until it has fully detached.
+    private var exclusiveTalkMeetingID: UUID?
     private(set) var talkEpoch: UInt64 = 0
     private(set) var moduleMuted = true
     /// The module's last native mute succeeded and nothing has tried to unmute it since.
@@ -233,12 +254,20 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 
     // MARK: Attach / detach
 
+    func retirePrewarmedOwnerBeforeLiveKit() async -> Bool {
+        await work.run { [self] in
+            guard !pinnedForProcess, attachments.isEmpty, guestOwner?.hasCreatedAudioEngines == true else { return true }
+            return await retireIdleLocked()
+        }
+    }
+
     func attach(meetingID: UUID) async throws -> MeetingAudioAttachment {
         idleRevision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
         var result: Result<MeetingAudioAttachment, Error> = .failure(SharedAudioEngineError.setupFailed)
         _ = await work.run { [self] in
             guard !cleanupFailed else { result = .failure(SharedAudioEngineError.cleanupFailed); return false }
             if let existing = attachments[meetingID] { result = .success(existing); return true }
+            guard exclusiveTalkMeetingID == nil else { result = .failure(SharedAudioEngineError.setupFailed); return false }
             switch await ensureModuleLocked() {
             case .success: break
             case .failure(let error): result = .failure(error); return false
@@ -255,6 +284,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     /// The last meeting out shuts the module down, which releases the device, unless
     /// foreground microphone readiness keeps the idle module warm.
     @discardableResult func detach(_ attachment: MeetingAudioAttachment) async -> Bool {
+        if talkMeetingID == attachment.meetingID { cancelParticipationVoice() }
         attachment.disableSenders(); attachment.silenceReceived()
         return await work.run { [self] in
             guard attachments[attachment.meetingID] === attachment else { return true }
@@ -285,16 +315,25 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 
     /// Moves the talk role. Every sender is disabled and the module muted first; the
     /// new talk meeting starts muted and must unmute itself.
-    @discardableResult func assignTalk(to attachment: MeetingAudioAttachment) async -> Bool {
+    @discardableResult func assignTalk(to attachment: MeetingAudioAttachment, exclusively: Bool = false) async -> Bool {
         await work.run { [self] in
-            guard attachments[attachment.meetingID] === attachment, !cleanupFailed else { return false }
-            if talkMeetingID == attachment.meetingID { return true }
+            guard attachments[attachment.meetingID] === attachment, !cleanupFailed,
+                  exclusiveTalkMeetingID == nil || exclusiveTalkMeetingID == attachment.meetingID else { return false }
+            if exclusively {
+                guard attachments.count == 1, talkMeetingID == nil || talkMeetingID == attachment.meetingID else { return false }
+            }
+            if talkMeetingID == attachment.meetingID {
+                if exclusively { exclusiveTalkMeetingID = attachment.meetingID }
+                return true
+            }
             guard await muteEverythingLocked() else { return false }
             talkUnmuted = false
             talkMeetingID = attachment.meetingID; talkEpoch &+= 1
             inputSink.set(attachment.inputSinkHandler)
             _ = module?.setMicrophoneGate(open: true)
-            return await module?.setInputPermitted(true, keepWarm: false, timeout: timeouts.mute) ?? false
+            let permitted = await module?.setInputPermitted(true, keepWarm: false, timeout: timeouts.mute) ?? false
+            if permitted && exclusively { exclusiveTalkMeetingID = attachment.meetingID }
+            return permitted
         }
     }
 
@@ -311,6 +350,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     /// Unmuting needs the talk role, the epoch it was granted at, no private check,
     /// and every other meeting's sender off before the module opens.
     @discardableResult func setMuted(_ muted: Bool, for attachment: MeetingAudioAttachment, epoch: UInt64) async -> Bool {
+        if talkMeetingID == attachment.meetingID { cancelParticipationVoice() }
         if muted { attachment.disableSenders() }
         return await work.run { [self] in
             guard let module, attachments[attachment.meetingID] === attachment else { return muted }
@@ -318,10 +358,12 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
             if muted {
                 attachment.disableSenders()
                 guard isTalk else { return true }
+                participationSender = nil
                 talkUnmuted = false
                 return await muteModuleLocked(module)
             }
             guard isTalk, epoch == talkEpoch, !privateCheckActive, !cleanupFailed else { return false }
+            guard participationSender == nil else { return false }
             let unmuted = await unmuteLocked(attachment, module: module, epoch: epoch)
             if unmuted { talkUnmuted = true }
             return unmuted
@@ -338,6 +380,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         case .stopped:
             guard !rebuilding else { return nil }
             rebuilding = true
+            cancelParticipationVoice()
             for attachment in attachments.values { attachment.disableSenders() }
             return Task { await work.run { [self] in
                 guard let module else { return true }
@@ -436,8 +479,83 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     }
 
     func playVoiceReply(_ buffer: AVAudioPCMBuffer, for attachment: MeetingAudioAttachment) async -> Bool {
-        guard talkMeetingID == attachment.meetingID, let module else { return false }
-        return await module.playVoiceReply(buffer)
+        guard talkMeetingID == attachment.meetingID, attachment.soundOn, attachment.meetingVolume > 0,
+              let module else { return false }
+        return await module.playVoiceReply(buffer, localGain: Float(attachment.meetingVolume))
+    }
+
+    func setVoiceReplyMonitorGain(for attachment: MeetingAudioAttachment) {
+        guard attachments[attachment.meetingID] === attachment, talkMeetingID == attachment.meetingID else { return }
+        module?.setVoiceReplyMonitorGain(attachment.soundOn ? Float(attachment.meetingVolume) : 0)
+    }
+
+    func hasParticipationVoiceGraph(for attachment: MeetingAudioAttachment) -> Bool {
+        attachments[attachment.meetingID] === attachment && module?.hasParticipationVoiceGraph == true
+    }
+
+    func participationVoiceGateClosed(for attachment: MeetingAudioAttachment) -> Bool {
+        talkMeetingID == attachment.meetingID && attachments[attachment.meetingID] === attachment
+            && module?.participationVoiceGateClosed == true
+    }
+
+    func setParticipationSenderMuted(_ muted: Bool, for attachment: MeetingAudioAttachment,
+                                    permit: GuestAutonomousVoicePlayback) async -> Bool {
+        let epoch = talkEpoch
+        if muted, participationSender === permit { attachment.disableSenders() }
+        return await work.run { [self] in
+            guard let module, attachments[attachment.meetingID] === attachment,
+                  talkMeetingID == attachment.meetingID, talkEpoch == epoch else {
+                return muted && !attachment.anySenderEnabled
+            }
+            if muted {
+                guard !talkUnmuted, participationSender == nil || participationSender === permit else { return false }
+                attachment.disableSenders()
+                participationSender = nil
+                return await muteModuleLocked(module)
+            }
+            guard permit.canStart, !talkUnmuted, participationSender == nil, !rebuilding, !privateCheckActive,
+                  !cleanupFailed, module.participationVoiceGateClosed,
+                  attachments.values.allSatisfy({ !$0.anySenderEnabled }) else { return false }
+            participationSender = permit
+            muteConfirmed = false
+            guard await module.setMicrophoneMuted(false, timeout: timeouts.mute),
+                  permit.canStart, !rebuilding, module.participationVoiceGateClosed else {
+                participationSender = nil
+                _ = await muteModuleLocked(module)
+                return false
+            }
+            moduleMuted = false
+            attachment.enableSenders()
+            return true
+        }
+    }
+
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, for attachment: MeetingAudioAttachment,
+                                permit: GuestAutonomousVoicePlayback, canStart: @escaping @MainActor () -> Bool,
+                                localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
+        let epoch = talkEpoch
+        guard let module, participationPlayback == nil, permitsParticipationVoice(attachment, epoch: epoch, permit: permit) else {
+            return .notStarted
+        }
+        participationPlayback = permit
+        defer { if participationPlayback === permit { participationPlayback = nil } }
+        return await module.playParticipationVoice(buffer, permit: permit, canStart: {
+            self.participationPlayback === permit && self.permitsParticipationVoice(attachment, epoch: epoch, permit: permit) && canStart()
+        }, localGain: localGain, onStarted: onStarted)
+    }
+
+    private func permitsParticipationVoice(_ attachment: MeetingAudioAttachment, epoch: UInt64,
+                                           permit: GuestAutonomousVoicePlayback) -> Bool {
+        attachments[attachment.meetingID] === attachment && talkMeetingID == attachment.meetingID && talkEpoch == epoch
+            && (talkUnmuted || participationSender === permit) && !moduleMuted && !muteConfirmed
+            && attachment.anySenderEnabled && !rebuilding && !privateCheckActive
+            && attachments.values.allSatisfy { $0 === attachment || !$0.anySenderEnabled }
+    }
+
+    private func cancelParticipationVoice() {
+        participationPlayback?.cancel()
+        participationSender?.cancel()
     }
 
     // MARK: Internals (run inside `work`)
@@ -460,6 +578,8 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     }
 
     private func muteEverythingLocked() async -> Bool {
+        cancelParticipationVoice()
+        participationSender = nil
         for attachment in attachments.values { attachment.disableSenders() }
         guard let module else { return true }
         return await muteModuleLocked(module)
@@ -516,7 +636,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     private func releaseTalkLocked(keepForegroundWarm: Bool = false) async -> Bool {
         let muted = await muteEverythingLocked()
         talkUnmuted = false
-        talkMeetingID = nil; talkEpoch &+= 1
+        talkMeetingID = nil; exclusiveTalkMeetingID = nil; talkEpoch &+= 1
         inputSink.set(nil)
         guard let module else { return muted }
         let released = await module.setInputPermitted(false, keepWarm: keepInputWarm || keepForegroundWarm, timeout: timeouts.activation)
@@ -604,9 +724,11 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     }
     func setMeetingVolume(_ volume: Double) {
         meetingVolume = Self.clamp(volume); applyReceivedVolumes()
+        engine?.setVoiceReplyMonitorGain(for: self)
     }
     @discardableResult func setSound(_ on: Bool) async -> Bool {
         soundOn = on && !detached
+        engine?.setVoiceReplyMonitorGain(for: self)
         return await engine?.outputChanged() ?? !on
     }
     @discardableResult func setTranscriptionOutput(_ keep: Bool) async -> Bool {
@@ -621,6 +743,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 
     // Talk and mute go through the engine's serial order.
     @discardableResult func assumeTalk() async -> Bool { await engine?.assignTalk(to: self) ?? false }
+    @discardableResult func assumeTalkExclusively() async -> Bool { await engine?.assignTalk(to: self, exclusively: true) ?? false }
     @discardableResult func relinquishTalk() async -> Bool { await engine?.releaseTalk(from: self) ?? true }
     @discardableResult func setMuted(_ muted: Bool, epoch: UInt64? = nil) async -> Bool {
         guard let engine else { if muted { disableSenders() }; return muted }
@@ -628,6 +751,17 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     }
     func setMicrophoneGate(open: Bool) -> Bool { engine?.setMicrophoneGate(open: open, for: self) ?? false }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await engine?.playVoiceReply(buffer, for: self) ?? false }
+    var hasParticipationVoiceGraph: Bool { engine?.hasParticipationVoiceGraph(for: self) == true }
+    var participationVoiceGateClosed: Bool { engine?.participationVoiceGateClosed(for: self) == true }
+    func setParticipationSenderMuted(_ muted: Bool, permit: GuestAutonomousVoicePlayback) async -> Bool {
+        await engine?.setParticipationSenderMuted(muted, for: self, permit: permit) ?? false
+    }
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
+        await engine?.playParticipationVoice(buffer, for: self, permit: permit, canStart: canStart,
+                                             localGain: localGain, onStarted: onStarted) ?? .notStarted
+    }
     @discardableResult func detach() async -> Bool { await engine?.detach(self) ?? true }
 
     fileprivate func enableSenders() { for sender in senders.values { sender.isEnabled = true } }

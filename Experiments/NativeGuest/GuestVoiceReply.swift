@@ -1,6 +1,62 @@
 import AVFoundation
 import Foundation
 
+/// This permit and AVAudioPlayerNode scheduling share the main actor with
+/// meeting consent and media control. Cancelling stops already scheduled audio
+/// synchronously and prevents a prepared buffer from starting later.
+@MainActor final class GuestAutonomousVoicePlayback {
+    enum Outcome: Equatable { case notStarted, completed, interrupted, unknown }
+
+    struct CaptureAdmission {
+        let open: () -> Bool
+        let isOpen: () -> Bool
+        let close: () -> Void
+    }
+
+    private let deadline: Date
+    private var stopped = false
+    private var resolve: ((Outcome) -> Void)?
+    private var stopPlayer: (() -> Void)?
+    private var localGain: ((Float) -> Void)?
+    private var capture: CaptureAdmission?
+    private(set) var started = false
+
+    init(deadline: Date) { self.deadline = deadline }
+
+    var canStart: Bool { !stopped && !started && Date() < deadline }
+
+    func cancel() { finish(started ? .interrupted : .notStarted, stopping: true) }
+    func setLocalGain(_ gain: Float) { localGain?(gain) }
+
+    func bindCapture(_ admission: CaptureAdmission) -> Bool {
+        guard canStart, capture == nil else { return false }
+        capture = admission
+        return true
+    }
+    fileprivate func openCapture() -> Bool { capture?.open() ?? true }
+    var captureIsOpen: Bool { capture?.isOpen() ?? true }
+
+    fileprivate func start(stop: @escaping () -> Void, localGain: @escaping (Float) -> Void,
+                           resolve: @escaping (Outcome) -> Void) {
+        started = true
+        stopPlayer = stop
+        self.localGain = localGain
+        self.resolve = resolve
+    }
+
+    fileprivate func finish(_ outcome: Outcome, stopping: Bool = false) {
+        guard !stopped else { return }
+        stopped = true
+        let resolve = resolve, stop = stopPlayer
+        self.resolve = nil; stopPlayer = nil; localGain = nil
+        let capture = capture
+        self.capture = nil
+        capture?.close()
+        if stopping { stop?() }
+        resolve?(outcome)
+    }
+}
+
 /// The voice-reply part of an audio engine's input graph:
 ///
 ///     microphone ─► gate ─┐
@@ -21,11 +77,18 @@ final class GuestVoiceReplyGraph: @unchecked Sendable {
     /// matching LiveKit's microphone mixer rather than a single-input pass-through.
     private let gateActivity = AVAudioPlayerNode()
     let player = AVAudioPlayerNode()
+    private let monitor = AVAudioPlayerNode()
     private(set) weak var engine: AVAudioEngine?
     private weak var source: AVAudioNode?
     private weak var inputMixer: AVAudioNode?
     private(set) var playerFormat: AVAudioFormat?
     private let lock = NSLock()
+    private let playbackLock = NSLock()
+    private var monitorFormat: AVAudioFormat?
+    private weak var monitorMixer: AVAudioMixerNode?
+    private var autonomous: (id: UUID, interrupted: @Sendable () -> Void)?
+    private enum ApprovedRoute: Sendable { case outgoing, local }
+    private var approved: (id: UUID, complete: @Sendable (Bool) -> Void, outgoing: Bool, local: Bool)?
 #if DEBUG
     /// Native topology only: no audio content is retained.
     var evidence: [String: Any] {
@@ -54,7 +117,7 @@ final class GuestVoiceReplyGraph: @unchecked Sendable {
 
     init(engine: AVAudioEngine, gateOpen: Bool) {
         self.engine = engine
-        engine.attach(gate); engine.attach(gateActivity); engine.attach(player)
+        engine.attach(gate); engine.attach(gateActivity); engine.attach(player); engine.attach(monitor)
         gate.outputVolume = gateOpen ? 1 : 0
     }
 
@@ -63,50 +126,246 @@ final class GuestVoiceReplyGraph: @unchecked Sendable {
     @discardableResult func connect(source: AVAudioNode?, inputMixer: AVAudioNode, format: AVAudioFormat) -> Bool {
         guard let engine, let playerFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
                                                            channels: format.channelCount, interleaved: false) else { return false }
-        lock.lock(); self.playerFormat = playerFormat; self.source = source; self.inputMixer = inputMixer; lock.unlock()
+        lock.lock(); self.playerFormat = nil; lock.unlock()
+        stop()
         if let source { engine.connect(source, to: gate, format: format) }
         engine.connect(gateActivity, to: gate, format: playerFormat)
         engine.connect(gate, to: inputMixer, format: format)
         engine.connect(player, to: inputMixer, format: playerFormat)
+        lock.lock(); self.playerFormat = playerFormat; self.source = source; self.inputMixer = inputMixer; lock.unlock()
         return true
     }
 
-    func setGate(open: Bool) { gate.outputVolume = open ? 1 : 0 }
+    @discardableResult func setGate(open: Bool) -> Bool {
+        playbackLock.lock(); defer { playbackLock.unlock() }
+        // The process PCM path may be open for a muted user's reply. A raw
+        // gate request must wait until that playback has released it.
+        guard !open || autonomous == nil else { return false }
+        gate.outputVolume = open ? 1 : 0
+        return gateOpen == open
+    }
     var gateOpen: Bool { gate.outputVolume != 0 }
-
-    func detach() {
-        player.stop()
-        guard let engine else { return }
-        if player.engine === engine { engine.detach(player) }
-        if gateActivity.engine === engine { engine.detach(gateActivity) }
-        if gate.engine === engine { engine.detach(gate) }
+    var isConnected: Bool {
+        guard let engine, player.engine === engine else { return false }
+        return currentPlayerFormat() != nil
     }
 
-    /// Converts and schedules one buffer; `completion` runs once it has been played.
+    func connectMonitor(to mixer: AVAudioMixerNode, format: AVAudioFormat) {
+        playbackLock.lock()
+        guard let engine, mixer !== inputMixer, mixer.engine === engine, monitor.engine === engine,
+              let pcm = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
+                                      channels: format.channelCount, interleaved: false),
+              monitorMixer !== mixer || monitorFormat != pcm else { playbackLock.unlock(); return }
+        let interrupted = stopLocked()
+        engine.connect(monitor, to: mixer, format: pcm)
+        monitorMixer = mixer
+        monitorFormat = pcm
+        playbackLock.unlock()
+        interrupted?()
+    }
+
+    func detach() {
+        playbackLock.lock()
+        let interrupted = stopLocked()
+        if let engine {
+            if player.engine === engine { engine.detach(player) }
+            if monitor.engine === engine { engine.detach(monitor) }
+            if gateActivity.engine === engine { engine.detach(gateActivity) }
+            if gate.engine === engine { engine.detach(gate) }
+        }
+        monitorMixer = nil; monitorFormat = nil
+        playbackLock.unlock()
+        interrupted?()
+    }
+
+    /// Converts and schedules one buffer; `completion` runs after rendering into the input mixer.
     func schedule(_ buffer: AVAudioPCMBuffer, completion: @escaping @Sendable () -> Void) -> TimeInterval? {
         lock.lock(); let format = playerFormat; lock.unlock()
         guard let format, player.engine != nil, let converted = Self.convert(buffer, to: format) else { return nil }
-        player.scheduleBuffer(converted, completionCallbackType: .dataPlayedBack) { _ in completion() }
+        player.scheduleBuffer(converted, completionCallbackType: .dataRendered) { _ in completion() }
         if let engine, engine.isRunning || engine.isInManualRenderingMode, !player.isPlaying { player.play() }
         return Double(converted.frameLength) / format.sampleRate
     }
 
     /// Plays one buffer; true once it was played back, false when it could not
     /// start or did not finish within its length plus `grace` seconds.
-    func play(_ buffer: AVAudioPCMBuffer, grace: TimeInterval = 2) async -> Bool {
-        guard let engine, engine.isRunning else { return false }
-        return await withCheckedContinuation { continuation in
-            let once = Once()
-            guard let seconds = schedule(buffer, completion: { once.run { continuation.resume(returning: true) } }) else {
-                continuation.resume(returning: false); return
+    func play(_ buffer: AVAudioPCMBuffer, localGain: Float? = nil, grace: TimeInterval = 2) async -> Bool {
+        guard !Task.isCancelled, let engine, engine.isRunning,
+              let format = currentPlayerFormat(), let converted = Self.convert(buffer, to: format) else { return false }
+        let seconds = Double(converted.frameLength) / format.sampleRate
+        guard seconds.isFinite, seconds > 0 else { return false }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                playbackLock.lock()
+                guard !Task.isCancelled, engine.isRunning, player.engine === engine, approved == nil, autonomous == nil else {
+                    playbackLock.unlock()
+                    continuation.resume(returning: false)
+                    return
+                }
+                let mirror = localGain.flatMap { gain -> AVAudioPCMBuffer? in
+                    guard gain > 0, !gateOpen, let monitorFormat, monitorMixer?.engine === engine else { return nil }
+                    return Self.convert(buffer, to: monitorFormat)
+                }
+                guard localGain == nil || mirror != nil else {
+                    playbackLock.unlock()
+                    continuation.resume(returning: false)
+                    return
+                }
+                approved = (id, { continuation.resume(returning: $0) }, true, mirror != nil)
+                player.scheduleBuffer(converted, completionCallbackType: .dataRendered) { [weak self] _ in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        self?.finishApproved(id, rendered: .outgoing)
+                    }
+                }
+                if let mirror, let localGain {
+                    monitor.volume = localGain
+                    monitor.scheduleBuffer(mirror, completionCallbackType: .dataRendered) { [weak self] _ in
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            self?.finishApproved(id, rendered: .local)
+                        }
+                    }
+                    monitor.play()
+                }
+                if !player.isPlaying { player.play() }
+                playbackLock.unlock()
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + seconds + max(0, grace)) { [weak self] in
+                    self?.finishApproved(id)
+                }
             }
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + seconds + grace) {
-                once.run { continuation.resume(returning: false) }
-            }
+        } onCancel: { [weak self] in
+            self?.finishApproved(id)
         }
     }
 
-    func stop() { player.stop() }
+    private func finishApproved(_ id: UUID, rendered route: ApprovedRoute? = nil) {
+        playbackLock.lock()
+        guard var current = approved, current.id == id else { playbackLock.unlock(); return }
+        let completed = route != nil && engine?.isRunning == true && player.engine === engine
+        if completed {
+            if route == .outgoing { current.outgoing = false } else { current.local = false }
+            if current.outgoing || current.local {
+                approved = current
+                playbackLock.unlock()
+                return
+            }
+        }
+        approved = nil
+        player.stop()
+        monitor.stop()
+        playbackLock.unlock()
+        current.complete(completed)
+    }
+
+    func setApprovedLocalGain(_ gain: Float) {
+        playbackLock.lock(); defer { playbackLock.unlock() }
+        if approved?.local == true { monitor.volume = gain }
+    }
+
+    @MainActor func playAutonomous(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                  canStart: @MainActor () -> Bool = { true },
+                                  localGain: @MainActor () -> Float? = { nil },
+                                  captureReady: @MainActor () -> Bool = { true },
+                                  onStarted: @MainActor () -> Void = {},
+                                  grace: TimeInterval = 2) async -> GuestAutonomousVoicePlayback.Outcome {
+        guard !Task.isCancelled, permit.canStart, let engine, engine.isRunning,
+              let format = currentPlayerFormat(), let converted = Self.convert(buffer, to: format) else { return .notStarted }
+        let seconds = Double(converted.frameLength) / format.sampleRate
+        guard seconds.isFinite, seconds > 0 else { return .notStarted }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled, permit.canStart, canStart(), engine.isRunning,
+                      player.engine === engine else {
+                    continuation.resume(returning: .notStarted)
+                    return
+                }
+                let gain = localGain(), id = UUID()
+                playbackLock.lock()
+                guard engine.isRunning, player.engine === engine, autonomous == nil, approved == nil, !gateOpen else {
+                    playbackLock.unlock()
+                    continuation.resume(returning: .notStarted)
+                    return
+                }
+                let mirror = gain.flatMap { gain -> AVAudioPCMBuffer? in
+                    guard gain > 0, let monitorFormat, monitorMixer?.engine === engine else { return nil }
+                    return Self.convert(buffer, to: monitorFormat)
+                }
+                guard gain == nil || mirror != nil, permit.openCapture(), captureReady() else {
+                    playbackLock.unlock()
+                    permit.cancel()
+                    continuation.resume(returning: .notStarted)
+                    return
+                }
+                player.stop()
+                autonomous = (id, { Task { @MainActor in permit.cancel() } })
+                permit.start(stop: { [weak self] in self?.stopAutonomous(id) },
+                    localGain: { [weak self] gain in self?.updateMonitorGain(gain, id: id) }) {
+                        continuation.resume(returning: $0)
+                    }
+                player.scheduleBuffer(converted, completionCallbackType: .dataRendered) { _ in
+                    Task { @MainActor in
+                        let outcome: GuestAutonomousVoicePlayback.Outcome = if !self.isAutonomous(id) || !permit.captureIsOpen { .interrupted }
+                            else if engine.isRunning, self.player.engine === engine { .completed }
+                            else { .unknown }
+                        permit.finish(outcome, stopping: true)
+                    }
+                }
+                if let mirror, let gain {
+                    monitor.volume = gain
+                    monitor.scheduleBuffer(mirror, completionHandler: nil)
+                    monitor.play()
+                }
+                player.play()
+                playbackLock.unlock()
+                onStarted()
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(seconds + max(0, grace)))
+                    permit.finish(.unknown, stopping: true)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in permit.cancel() }
+        }
+    }
+
+    private func currentPlayerFormat() -> AVAudioFormat? {
+        lock.lock(); defer { lock.unlock() }
+        return playerFormat
+    }
+
+    func stop() {
+        playbackLock.lock(); let interrupted = stopLocked(); playbackLock.unlock()
+        interrupted?()
+    }
+
+    private func stopLocked() -> (@Sendable () -> Void)? {
+        let interrupted = autonomous?.interrupted
+        let stopped = approved?.complete
+        autonomous = nil
+        approved = nil
+        player.stop()
+        monitor.stop()
+        stopped?(false)
+        return interrupted
+    }
+
+    private func stopAutonomous(_ id: UUID) {
+        playbackLock.lock(); defer { playbackLock.unlock() }
+        guard autonomous?.id == id else { return }
+        _ = stopLocked()
+    }
+
+    private func isAutonomous(_ id: UUID) -> Bool {
+        playbackLock.lock(); defer { playbackLock.unlock() }
+        return autonomous?.id == id
+    }
+
+    private func updateMonitorGain(_ gain: Float, id: UUID) {
+        playbackLock.lock(); defer { playbackLock.unlock() }
+        guard autonomous?.id == id, monitor.isPlaying else { return }
+        if gain > 0 { monitor.volume = gain }
+        else { monitor.stop() }
+    }
 
     static func convert(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
         if buffer.format == format { return buffer }
@@ -122,12 +381,4 @@ final class GuestVoiceReplyGraph: @unchecked Sendable {
         return error == nil && output.frameLength > 0 ? output : nil
     }
 
-    private final class Once: @unchecked Sendable {
-        private let lock = NSLock()
-        private var done = false
-        func run(_ body: () -> Void) {
-            lock.lock(); let first = !done; done = true; lock.unlock()
-            if first { body() }
-        }
-    }
 }

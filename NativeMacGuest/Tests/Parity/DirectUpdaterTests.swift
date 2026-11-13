@@ -346,7 +346,7 @@ private actor DirectUpdaterCalendar: CalendarReading {
         updates.updater(updates.updater, didFinishUpdateCycleFor: .updates, error: failure)
         XCTAssertEqual(updates.status, failure.localizedDescription)
         try begin(fixture)
-        XCTAssertEqual(updates.status, "Checking for updates…")
+        XCTAssertEqual(updates.status, L("Checking for updates…"))
         updates.updater(updates.updater, didFinishUpdateCycleFor: .updates, error: nil)
         XCTAssertEqual(updates.status, idleStatus, "A completed cycle restores neutral status; it does not prove this build is current")
         XCTAssertTrue(updates.mayStartMeeting)

@@ -2,9 +2,38 @@
 
 Design proposal · 11 November 2026 · Native Mac first
 
-Status: design only. No autonomous behavior has been enabled. Grounded in local checkout `440a7e6`, including the working-tree changes present during inspection. These are source observations, not claims about the installed release. Companion implementation plan: [assistant-participate-plan-2026-11-11.md](assistant-participate-plan-2026-11-11.md).
+Original design snapshot: local checkout `440a7e6`, including the working-tree changes present during inspection. At that point no autonomous behavior had been enabled. Attributed chat and approved-note participation were subsequently implemented in `15fd3a2`. The voice amendment below records the user's 12 November decisions; source changes do not establish availability in an installed release. Companion implementation plan: [assistant-participate-plan-2026-11-11.md](assistant-participate-plan-2026-11-11.md).
+
+## Delegated replies and knowledge · 12 November 2026
+
+The user's latest direction governs the current implementation wherever earlier proposal language differs. Participate replies on the user's behalf, using natural first-person wording and the selected voice. An opening label or prefix is included only when explicitly requested in user-authored meeting notes, meeting information, the current objective, or Assistant reply instructions. Meeting-specific instructions take precedence over general reply style.
+
+Factual replies use the current conversation, meeting metadata, meeting notes and relevant excerpts from the selected connected Obsidian vault. The configured processor may receive those relevant excerpts. The automatic export switch controls exports while the selected vault remains available for search. Calendar and vault text are factual evidence; user-authored reply guidance controls wording. Internal citations and source identifiers stay out of the spoken or sent reply. Unsupported facts call for clarification or silence.
+
+Directly requested follow-up replies use normal conversation pacing. Source edits, vault changes and participation cancellation revoke pending work. Microphone isolation and the meeting sound controls apply to these delegated replies.
+
+## Voice amendment · 12 November 2026
+
+Participate offers an explicit **Chat / Voice** choice and remembers the last successfully started channel. Changing the channel or voice pauses the grant until you review the new choice and select **Start participating**. Replies use the configured voice and the delegated wording described above. A speech server receives the reply text when you approve that voice. Legacy individually approved notes retain their existing processor scope.
+
+The user's meeting **sound** control governs assistant speech. Microphone mute is an independent choice:
+
+| Meeting controls | Assistant behavior |
+| --- | --- |
+| Sound on, positive volume, microphone on | Speak into the meeting and play the reply locally at the meeting's volume. Gate microphone input during assistant speech. |
+| Sound on, positive volume, microphone muted | The assistant may speak into the meeting and locally while keeping the user's microphone input private. Preserve the user's mute choice. |
+| Sound off or volume zero | No assistant audio locally or into the meeting. Retain the reply as private text. |
+| Sound turned off during speech | Stop outgoing and local playback immediately. Keep the text and mark speech interrupted. |
+
+Show assistant reply text alongside **Chat** and **Live text**, with clear local-only, preparing, speaking, completed, interrupted or unknown status. These local rows must not masquerade as delivered room messages or provider transcripts. Completed playback means the app played audio into the meeting path; it is not proof that a remote participant heard it.
+
+Keep **Stop speaking** available in both the meeting toolbar and the assistant controls. Sound restored after interruption must not replay an old answer. Meeting switches, leaving, source revocation, permission changes and human turns invalidate stale speech. Assistant voice must never take microphone ownership from another meeting or expose raw microphone input while temporarily enabling synthesized audio transmission.
+
+This amendment supersedes the original voice deferral and the ambiguous phrase “meeting mute” below. Supported audio engines, transcription coverage and runtime verification remain explicit implementation limits.
 
 ## Product decision
+
+12 November lifecycle amendment: a fresh Start with live meeting context only explicitly covers everyone who joins the same meeting occurrence and connection. A roster change cancels pending work and discards earlier conversation context before observing new speech. Grants containing approved notes stay bound to the reviewed audience and require review after membership changes. Manual pause and review states never resume on their own. Backgrounding or hiding the window does not change the grant. The UI and diagnostics distinguish manual pause, audience review, connection changes and model failures.
 
 Call the mode **Participate**. Its promise is: **“Contributes useful answers and context to this meeting.”**
 

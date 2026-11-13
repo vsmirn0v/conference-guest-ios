@@ -4,7 +4,7 @@ import Foundation
 
 struct ParticipationReceipt: Codable, Identifiable, Equatable {
     enum State: String, Codable {
-        case reserved, cancelled, failed, unknown, serverAccepted, confirmed
+        case reserved, cancelled, failed, unknown, serverAccepted, confirmed, voicePlayed, voiceInterrupted
 
         var title: String {
             switch self {
@@ -13,6 +13,8 @@ struct ParticipationReceipt: Codable, Identifiable, Equatable {
             case .failed: L("Send failed")
             case .serverAccepted: L("Accepted by the service")
             case .confirmed: L("Observed in meeting chat")
+            case .voicePlayed: L("Played into meeting audio")
+            case .voiceInterrupted: L("Speech interrupted")
             }
         }
     }
@@ -26,6 +28,12 @@ struct ParticipationReceipt: Codable, Identifiable, Equatable {
     var updatedAt: Date
     var state: State
     let providerMessageID: String?
+    var output: ParticipationOutput?
+
+    var title: String {
+        if output == .voice, state == .reserved || state == .unknown { return L("Voice playback unknown") }
+        return state.title
+    }
 
     static func hash(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()

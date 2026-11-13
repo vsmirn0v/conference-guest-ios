@@ -231,6 +231,176 @@ import XCTest
         if why { XCTAssertNotNil(button(rendered, L("Why")), "Terminal detail keeps its inspector entry") }
     }
 
+    func testRussianMeetingWorkspaceLiveParallelAndReloadedReview() async throws {
+        let store = store()
+        store.enabled = true
+        let coordinator = AttentionCoordinator(store: store)
+        let name = "workspace-ui-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: name))
+        addTeardownBlock { preferences.removePersistentDomain(forName: name) }
+        let history = RoomHistoryStore(storage: OutcomeFixtureCalendarStorage())
+        let library = NativeDesktopLibrary(preferences: preferences, history: history,
+            syncStorage: OutcomeFixtureCalendarStorage())
+        let workspace = NativeDesktopWorkspace(library: library, detect: { _ in .unknown },
+            makeMeeting: { destination, name, title, quiet in
+                NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: AssistantUIEngine())
+            }, attention: coordinator)
+        addTeardownBlock {
+            _ = await workspace.leave()
+            await MainActor.run { coordinator.stop() }
+        }
+        let rooms = ["Проверка релиза", "План инфраструктуры", "Резервное восстановление"]
+        for (index, title) in rooms.enumerated() {
+            workspace.join(URL(string: "https://example.test/calls/workspace-\(index)")!,
+                engine: .guest, title: title, quiet: index == 2, nameOverride: "Виталий")
+            try await wait { workspace.meetings.count == index + 1 && workspace.meetings.allSatisfy(\.connected) }
+        }
+        let first = try XCTUnwrap(workspace.meetings.first)
+        let journal = store.meetingLibrary.workspaceJournal
+        let at = Date().addingTimeInterval(-10)
+        let line = "Начинаем с десяти процентов после успешной проверки."
+        let reply = "Я проверю восстановление перед расширением."
+        journal.observe(sessionID: first.sessionID, events: [
+            .init(id: "speech:fixture", kind: .transcript, occurredAt: at, source: "local", author: "Анна", text: line)
+        ])
+        journal.recordGap(sessionID: first.sessionID, reason: "connection", from: at - 20, until: at - 15)
+        let source = MeetingWorkspaceEvent.SourceSnapshot(id: "trigger:fixture", title: "Анна", text: line,
+            revision: "fixture", capturedAt: at)
+        XCTAssertTrue(journal.recordAssistantReply(sessionID: first.sessionID, id: "reply", text: reply, source: "voice",
+            status: .spoken, sourceSnapshots: [source]))
+        try await withRussianBundle {
+            let view = NativeDesktopMeetingWorkspaceView(workspace: workspace)
+            let rendered = await present(view, size: NSSize(width: 1030, height: 815), name: "workspace-live")
+            XCTAssertTrue(containsText(rendered, "Текущие встречи"))
+            XCTAssertTrue(containsText(rendered, "Микрофон назначен на"))
+            XCTAssertTrue(containsText(rendered, "Расшифровка речи недоступна"))
+            XCTAssertTrue(containsText(rendered, line))
+            let guidanceInput = element(rendered, identifier: "meetingWorkspace.privateGuidance") ?? nodes(rendered).first {
+                let role = attribute($0, kAXRoleAttribute) as? String
+                return (role == kAXTextFieldRole || role == kAXTextAreaRole) && strings($0).contains("Приватное указание")
+            }
+            if guidanceInput == nil { try capture(rendered) }
+            let input = try XCTUnwrap(guidanceInput, "Missing editable private-guidance field")
+            let instruction = "Уточни, кто отвечает за проверку."
+            rendered.window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            await settle()
+            XCTAssertEqual(AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue), .success)
+            for character in instruction {
+                let text = String(character)
+                let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: rendered.window.windowNumber,
+                    context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: 0))
+                rendered.window.sendEvent(key)
+            }
+            await settle()
+            XCTAssertEqual(workspace.workspaceViewState.guidanceDrafts[first.sessionID], instruction)
+            try await press(rendered, identifier: "meetingWorkspace.applyGuidance")
+            XCTAssertEqual(first.participation.workspaceGuidance, [instruction])
+            XCTAssertTrue(workspace.meetings.dropFirst().allSatisfy { $0.participation.workspaceGuidance.isEmpty })
+            try capture(rendered)
+            try await press(rendered, identifier: "meetingWorkspace.parallel")
+            XCTAssertTrue(workspace.workspaceViewState.parallel)
+            for title in rooms { XCTAssertTrue(containsText(rendered, title)) }
+            XCTAssertTrue(containsText(rendered, "Звук встречи выключен"))
+            XCTAssertEqual(workspace.talkID, first.sessionID)
+            XCTAssertFalse(first.assistantMicrophoneOn)
+            try capture(Rendered(window: rendered.window, hosting: rendered.hosting, name: "workspace-parallel"))
+
+            let ended = await workspace.leave(first)
+            XCTAssertTrue(ended)
+            let allEnded = await workspace.leave()
+            XCTAssertTrue(allEnded)
+            let reloaded = MeetingWorkspaceJournal(root: store.root)
+            reloaded.prepare()
+            defer { reloaded.close() }
+            XCTAssertNotNil(reloaded.session(id: first.sessionID)?.endedAt)
+            workspace.workspaceViewState.reviewID = first.sessionID
+            let review = MeetingWorkspaceReview(workspace: workspace, state: workspace.workspaceViewState, journal: reloaded)
+            let archive = await present(review, size: NSSize(width: 1030, height: 720), name: "workspace-review-reloaded")
+            archive.window.makeKeyAndOrderFront(nil)
+            await settle()
+            XCTAssertTrue(containsText(archive, "Сохранённые встречи"))
+            XCTAssertTrue(containsText(archive, "В записи этого разговора есть пропуски."))
+            XCTAssertTrue(containsText(archive, line))
+            XCTAssertTrue(containsText(archive, reply))
+            let reviewReply = try XCTUnwrap(button(archive, "Посмотреть ответ"))
+            // A same-process AX action can update SwiftUI before AppKit returns its status.
+            _ = AXUIElementPerformAction(reviewReply, kAXPressAction as CFString)
+            try await wait { self.containsText(archive, "Контекст в момент ответа") }
+            try capture(archive)
+        }
+    }
+
+    func testWorkspacePauseRestoresOnlyCurrentPauseTokens() async throws {
+        let store = store()
+        store.enabled = true
+        let coordinator = AttentionCoordinator(store: store)
+        let models = [try await meeting("Release"), try await meeting("Infra"), try await meeting("Recovery")]
+        coordinator.meetings = { models }
+        for model in models { coordinator.setMode(.watch, for: model) }
+        let state = MeetingWorkspaceViewState()
+        let previous = try XCTUnwrap(state.pause(models[0], attention: coordinator))
+        state.toggleAll(models, attention: coordinator)
+        XCTAssertNil(state.restorePauses[models[0].sessionID])
+        XCTAssertEqual(state.restorePauses.count, 2)
+        XCTAssertTrue(models.allSatisfy { coordinator.resolvedMode($0).mode == .off })
+        let second = try XCTUnwrap(state.restorePauses[models[1].sessionID])
+        state.restorePauses[models[1].sessionID] = nil
+        state.resume(models[1], pause: second, attention: coordinator)
+        let repaused = try XCTUnwrap(state.pause(models[1], attention: coordinator))
+        state.toggleAll(models, attention: coordinator)
+        XCTAssertEqual(coordinator.resolvedMode(models[0]).mode, .off)
+        XCTAssertEqual(coordinator.resolvedMode(models[1]).mode, .off)
+        XCTAssertEqual(coordinator.resolvedMode(models[2]).mode, .watch)
+        state.resume(models[0], pause: previous, attention: coordinator)
+        state.resume(models[1], pause: repaused, attention: coordinator)
+        XCTAssertTrue(models.allSatisfy { coordinator.resolvedMode($0).mode == .watch })
+    }
+
+    func testWorkspaceGuidanceScopesAndSurvivesReloadForFollowingPrompts() async throws {
+        let store = store()
+        store.enabled = true
+        store.provider = .init(kind: .local, baseURL: "http://192.0.2.1:1/v1", model: "workspace-fixture")
+        let coordinator = AttentionCoordinator(store: store)
+        let release = try await meeting("Release")
+        let infra = try await meeting("Infra")
+        release.calendarSeriesID = "release-series"
+        let room = try XCTUnwrap(MeetingWorkspaceGuidance.roomKey(for: release))
+        XCTAssertTrue(coordinator.applyWorkspaceGuidance("Flag this meeting’s recovery risk.", for: release))
+        try store.workspaceGuidance.append("Keep replies concise.", to: .allMeetings)
+        try store.workspaceGuidance.append("Use the rollout terminology.", to: .calendarSeries("release-series"))
+        try store.workspaceGuidance.append("Focus on staging only.", to: .room(room))
+        let reloaded = MeetingWorkspaceGuidance(root: store.root)
+        XCTAssertEqual(reloaded.instructions(for: release),
+            ["Keep replies concise.", "Focus on staging only.", "Use the rollout terminology."])
+        XCTAssertEqual(reloaded.instructions(for: infra), ["Keep replies concise."])
+        let judge = AssistantUIJudge()
+        judge.next = .init(level: .now, probability: 0.9, reason: "Release confirmation requested.",
+                           evidence: ["L1"], action: .chat)
+        let writer = WorkspaceFixtureWriter()
+        coordinator.meetings = { [release, infra] }
+        coordinator.hasTranscript = { _ in true }
+        coordinator.makeJudge = { _, _ in judge }
+        coordinator.makeWriter = { _, _ in writer }
+        coordinator.replyChannels = { _ in .init(chat: true) }
+        coordinator.setMode(.watch, for: release)
+        let now = Date()
+        release.receiveLocalLineForTesting(.init(id: "guide", trackID: "anna", text: "Vitalii, what is the rollout plan?",
+            start: now, end: now))
+        await coordinator.tick()
+        try await wait { coordinator.card(for: release.sessionID)?.draft != nil }
+        let captured = await writer.lastRequest
+        let request = try XCTUnwrap(captured)
+        XCTAssertTrue(AttentionPrompt.userContent(request.judge).contains("Flag this meeting’s recovery risk."))
+        XCTAssertTrue(ReplyPrompt.userContent(request).contains("Use the rollout terminology."))
+        let rule = try XCTUnwrap(reloaded.rules.first { $0.scope == .room(room) })
+        try reloaded.replace(rule, text: "Check staging first.")
+        XCTAssertTrue(MeetingWorkspaceGuidance(root: store.root).instructions(for: release).contains("Check staging first."))
+        try reloaded.remove(try XCTUnwrap(reloaded.rules.first { $0.scope == .room(room) }))
+        XCTAssertFalse(MeetingWorkspaceGuidance(root: store.root).instructions(for: release).contains("Check staging first."))
+    }
+
     func testRussianSituationDefaultsDoNotCropSegmentedControls() async throws {
         try await withRussianBundle {
             XCTAssertEqual(language, "ru", "The test host must render the Russian resources")
@@ -277,6 +447,7 @@ import XCTest
 
     func testOverflowButtonUsesAccessibilityActionWithoutDelivery() async throws {
         let store = store(); await store.waitForMoments()
+        store.situationModes[.background] = .mentions
         store.enabled = true
         store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "fixture")
         let models = try await [meeting("Overflow A"), meeting("Overflow B"), meeting("Overflow C")]
@@ -1039,6 +1210,15 @@ private final class OutcomeFixtureCalendarStorage: RoomHistoryStorage {
     private var data: Data?
     func read() -> Data? { data }
     func write(_ data: Data) throws { self.data = data }
+}
+
+private actor WorkspaceFixtureWriter: ReplyWriter {
+    private(set) var lastRequest: ReplyRequest?
+
+    func draft(_ request: ReplyRequest) async throws -> ReplyResult {
+        lastRequest = request
+        return .init(draft: .init(chat: "I’ll check the recovery test.", reaction: nil), latency: 0)
+    }
 }
 
 private final class AssistantUIJudge: AttentionJudge, @unchecked Sendable {

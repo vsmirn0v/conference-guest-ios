@@ -19,6 +19,7 @@ import SwiftUI
         var context: AssistantCommandContext
         var title: String
         var detail: String
+        var originalInput: String? = nil
     }
 
     @Published private(set) var entries: [Entry] = []
@@ -117,7 +118,7 @@ import SwiftUI
             } else {
                 try await provider.commandInterpreter(key: attention.store.apiKey(for: provider)).interpret(.init(input: clean, context: context))
             }
-            try prepare(command, context: context, external: externalMCPRequest)
+            try prepare(command, context: context, external: externalMCPRequest, originalInput: clean)
         } catch is CancellationError { return }
         catch { append(.assistant, error.localizedDescription) }
     }
@@ -164,7 +165,8 @@ import SwiftUI
         }
     }
 
-    private func prepare(_ command: AssistantCommand, context: AssistantCommandContext, external: Bool) throws {
+    private func prepare(_ command: AssistantCommand, context: AssistantCommandContext, external: Bool,
+                         originalInput: String? = nil) throws {
         var command = command
         // Resolve an implicit target before a confirmation can outlive the current selection.
         if command.meetingID == nil, [.setAttention, .leave, .mute, .sendChat, .say, .react, .readChat, .catchUp].contains(command.action) {
@@ -180,32 +182,41 @@ import SwiftUI
                 globalDefault: attention?.store.agentMeetingSendDefault ?? .sendImmediately)
             if !bypass {
                 pending = .init(command: command, context: context, title: confirmationTitle(command, context: context),
-                    detail: confirmationDetail(command))
+                    detail: confirmationDetail(command), originalInput: originalInput)
                 return
             }
         }
-        Task { @MainActor [weak self] in await self?.execute(command, context: context) }
+        Task { @MainActor [weak self] in
+            await self?.execute(command, context: context, id: UUID(), originalInput: originalInput)
+        }
     }
 
     func confirmPending() {
         guard let pending else { return }
         self.pending = nil
-        Task { @MainActor [weak self] in await self?.execute(pending.command, context: pending.context) }
+        Task { @MainActor [weak self] in
+            await self?.execute(pending.command, context: pending.context, id: pending.id, originalInput: pending.originalInput)
+        }
     }
     func cancelPending() { pending = nil; append(.assistant, L("Cancelled. Nothing was sent.")) }
 
-    private func execute(_ command: AssistantCommand, context: AssistantCommandContext) async {
+    private func execute(_ command: AssistantCommand, context: AssistantCommandContext, id: UUID, originalInput: String?) async {
         guard let attention else { return }
         do {
-            let answer = try await execute(command, context: context, attention: attention)
+            let answer = try await execute(command, context: context, attention: attention, id: id, originalInput: originalInput)
             append(.assistant, answer)
             await speakAnswer(answer)
         } catch { append(.assistant, error.localizedDescription) }
     }
 
     func execute(_ command: AssistantCommand, context: AssistantCommandContext,
-                 attention: AttentionCoordinator) async throws -> String {
+                 attention: AttentionCoordinator, id: UUID = UUID(), originalInput: String? = nil,
+                 revision: String? = nil) async throws -> String {
         let target = try meeting(command.meetingID, context: context)
+        let evidence: [MeetingWorkspaceEvent.SourceSnapshot] = target.map {
+            [.init(id: "command:" + command.action.rawValue + ":" + id.uuidString, title: $0.title,
+                   text: originalInput ?? command.text, revision: revision, capturedAt: context.now)]
+        } ?? []
         switch command.action {
         case .setAttention:
             guard let target, let model = activeModel(target.id), let mode = command.mode else { throw AssistantCommandError.missingField }
@@ -226,19 +237,19 @@ import SwiftUI
             let muted = model.muteMicrophone()
             return muted ? L("Muting “%@”.", target.title) : L("Your microphone is already muted in “%@”.", target.title)
         case .sendChat:
-            guard let target, let model = activeModel(target.id), model.chat.canSend,
-                  attention.deliverChat(model, command.text) else { throw AssistantCommandError.unsupported }
-            return L("Sent to “%@”: %@", target.title, command.text)
+            guard let target, let model = activeModel(target.id), model.chat.canSend else { throw AssistantCommandError.unsupported }
+            try attention.sendWorkspaceApprovedChat(command.text, to: model, id: id, evidence: evidence)
+            return L("Sending to “%@”: %@", target.title, command.text)
         case .say:
             guard let target, let model = activeModel(target.id), model.supportsVoiceReply else { throw AssistantCommandError.unsupported }
-            let buffer = try await attention.synthesize(command.text)
-            try await attention.deliverVoice(model, buffer)
+            try await attention.speakWorkspaceApprovedCommand(command.text, in: model, id: id.uuidString.lowercased(),
+                source: "approvedVoice", evidence: evidence)
             return L("Spoken into “%@”.", target.title)
         case .react:
             guard let target, let model = activeModel(target.id), let reaction = command.reaction,
                   model.canReact else { throw AssistantCommandError.unsupported }
-            attention.deliverReaction(model, reaction)
-            return L("Sent %@ to “%@”.", reaction.emoji, target.title)
+            try attention.sendWorkspaceApprovedReaction(reaction, to: model, id: id, evidence: evidence)
+            return L("Submitting %@ to “%@”.", reaction.emoji, target.title)
         case .readChat:
             guard let target, let model = activeModel(target.id) else { throw AssistantCommandError.unknownMeeting }
             let rows = model.chat.items.suffix(command.count)

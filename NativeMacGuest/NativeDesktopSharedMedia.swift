@@ -348,10 +348,17 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
     static let shared = NativeDesktopSharedMedia<GuestSystemAudio>(
         authorized: { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized },
         create: { profile in
+#if DEBUG || NATIVE_LEGACY_AUDIO
             _ = LKRTCInitializeSSL()
             return try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false,
                 profile: profile, exclusive: true)
+#else
+            // The service still coordinates admission and update barriers, but a
+            // shared-only build must never create a separate meeting audio owner.
+            throw NativeDesktopRTCError.cleanupFailed
+#endif
         })
+#if DEBUG || NATIVE_LEGACY_AUDIO
     /// A separate room service for an additional simultaneous Guest meeting. It is
     /// never foregrounded, so its owner retires with the room and never idles input.
     static func makeConcurrentGuestMedia() -> NativeDesktopSharedMedia<GuestSystemAudio> {
@@ -362,6 +369,7 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
                     profile: profile, concurrent: true)
             })
     }
+#endif
 }
 
 /// App activity AND a visible window are required. Menu-bar residency alone
@@ -406,17 +414,26 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
         let policy = NativeDesktopJoinReadinessPolicy.current(), state = power.snapshot
         let microphone = policy.microphone.allows(state)
         // With one engine for all meetings, the shared engine itself prepares idle input.
+#if DEBUG || NATIVE_LEGACY_AUDIO
         if SharedAudioEngine.enabledAtLaunch {
             SharedAudioEngine.shared.setForeground(foreground, microphone: microphone)
         } else {
             NativeDesktopMediaService.shared.setForeground(foreground, microphone: microphone, profile: .saved)
         }
         let mediaBusy = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared.busy : NativeDesktopMediaService.shared.busy
+#else
+        SharedAudioEngine.shared.setForeground(foreground, microphone: microphone)
+        let mediaBusy = SharedAudioEngine.shared.busy
+#endif
         guard foreground, !mediaBusy, policy.camera.allows(state), metadata == nil else { return }
         metadata = Task { [weak self] in
             defer { self?.metadata = nil }
             _ = try? await NativeDesktopCameraMetadataPreparation.shared.prepare(eligible: {
+#if DEBUG || NATIVE_LEGACY_AUDIO
                 let busy = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared.busy : NativeDesktopMediaService.shared.busy
+#else
+                let busy = SharedAudioEngine.shared.busy
+#endif
                 return self?.stopped == false && !busy && self?.foregroundWindowVisible == true &&
                     NativeDesktopJoinReadinessPolicy.current().camera.allows(self?.power.snapshot ?? state)
             }, deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID"))

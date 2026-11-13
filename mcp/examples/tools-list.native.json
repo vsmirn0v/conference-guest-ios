@@ -455,18 +455,6 @@
             "additionalProperties": false,
             "description": "Settings patch; omitting it applies no changes. Unknown section or field names are rejected.",
             "properties": {
-              "app": {
-                "additionalProperties": false,
-                "description": "App settings.",
-                "properties": {
-                  "multiple_meetings": {
-                    "description": "Allow joining more than one meeting at once.",
-                    "type": "boolean"
-                  }
-                },
-                "required": [],
-                "type": "object"
-              },
               "attention": {
                 "additionalProperties": false,
                 "description": "Attention settings; every field is a boolean.",

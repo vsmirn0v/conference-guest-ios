@@ -100,7 +100,10 @@ final class InitialSubscriberICETests: XCTestCase {
             XCTAssertTrue(h.peer.transportConnected); XCTAssertTrue(h.waits.isEmpty)
             XCTAssertNil(h.engine.failure)
             await h.signal(.failed)
-            XCTAssertEqual(h.failures, 1, "Established ICE failure remains fatal")
+            try await h.until { h.waits.count == 1 }
+            XCTAssertEqual(h.failures, 0, "Native failure can still recover within its deadline")
+            h.clock = 110; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 1, "An unrecovered outage remains fatal")
             XCTAssertNotNil(h.engine.failure)
             await h.signal(.connected); await h.transport(.connected)
             XCTAssertNotNil(h.engine.failure, "Later connection must never clear a sticky engine error")
@@ -240,15 +243,44 @@ final class InitialSubscriberICETests: XCTestCase {
         }
     }
 
-    @MainActor func testTerminalICEFailureAndInitialCancellationRemainStrict() async throws {
+    @MainActor func testInitialPublisherFailedThenConnectedWithin22MillisecondsDoesNotFailEngine() async throws {
         try await exercise(.publisher) { h in
+            // The incident's last retry: checking -> failed -> connected while
+            // candidate gathering is still running. No session retry is consumed.
+            await h.gather(.gathering)
+            await h.signal(.checking); try await h.until { h.waits.count == 1 }
+            h.clock = 100.097
             await h.signal(.failed)
-            XCTAssertEqual(h.failures, 1); XCTAssertTrue(h.waits.isEmpty)
+            XCTAssertEqual(h.failures, 0); XCTAssertNil(h.engine.failure)
+            h.clock = 100.119
+            await h.transport(.connected); await h.signal(.connected)
+            XCTAssertTrue(h.peer.iceConnected); XCTAssertTrue(h.peer.transportConnected)
+            h.clock = 111; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 0); XCTAssertNil(h.engine.failure)
         }
+    }
+
+    @MainActor func testInitialPublisherCannotRenewDeadlineThroughStateChurn() async throws {
+        try await exercise(.publisher) { h in
+            await h.signal(.failed); try await h.until { h.waits.count == 1 }
+            h.clock = 105
+            await h.signal(.new); await h.signal(.checking); await h.signal(.disconnected); await h.signal(.failed)
+            XCTAssertEqual(h.waits.count, 1)
+            XCTAssertEqual(h.failures, 0)
+            h.clock = 110; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 1); XCTAssertNotNil(h.engine.failure)
+            await h.signal(.connected)
+            XCTAssertNotNil(h.engine.failure, "An expired attempt must not be resurrected")
+        }
+    }
+
+    @MainActor func testTerminalClosureAndInitialCancellationRemainStrict() async throws {
         try await exercise { h in
             await h.transport(.connected)
             await h.signal(.failed)
-            XCTAssertEqual(h.failures, 1, "Overall connected also establishes a subscriber")
+            try await h.until { h.waits.count == 1 }
+            h.clock = 110; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 1, "Overall connected also establishes a subscriber with an outage deadline")
         }
         try await exercise { h in
             await h.signal(.closed)
@@ -276,7 +308,7 @@ final class InitialSubscriberICETests: XCTestCase {
             await h.transport(.connected)
             h.peer.setActiveIncomingMediaDemand(true)
             h.peer.setActiveIncomingMediaDemand(false)
-            await h.signal(.new); await h.signal(.disconnected); await h.signal(.disconnected)
+            await h.signal(.new); await h.signal(.failed); await h.signal(.disconnected); await h.signal(.disconnected)
             XCTAssertEqual(h.waits.count, 1)
             XCTAssertEqual(h.failures, 0)
 
@@ -287,7 +319,7 @@ final class InitialSubscriberICETests: XCTestCase {
         }
     }
 
-    @MainActor func testEstablishedPublisherRecoveryCancelsOldWaitAndNativeFailureIsImmediate() async throws {
+    @MainActor func testEstablishedPublisherRecoveryCancelsOldWaitAndFailureKeepsDeadline() async throws {
         try await exercise(.publisher) { h in
             await h.signal(.connected); await h.signal(.disconnected)
             try await h.until { h.waits.count == 1 }
@@ -301,10 +333,10 @@ final class InitialSubscriberICETests: XCTestCase {
             XCTAssertEqual(h.failures, 0, "The old wait cannot fail the next outage")
 
             await h.signal(.failed)
-            XCTAssertEqual(h.failures, 1)
-            await h.signal(.connected); await h.signal(.disconnected); await h.signal(.closed)
+            XCTAssertEqual(h.failures, 0)
             h.clock = 117; h.waits[1].release(); try await h.until { h.finished == 2 }
             XCTAssertEqual(h.failures, 1)
+            await h.signal(.connected); await h.signal(.disconnected); await h.signal(.closed)
             XCTAssertEqual(h.waits.count, 2, "A failed peer cannot arm another outage")
         }
     }
@@ -325,15 +357,21 @@ final class InitialSubscriberICETests: XCTestCase {
             try await h.until { h.finished == 1 }
             XCTAssertEqual(fallbacks, 0)
             await h.signal(.failed)
-            await h.signal(.closed)
+            try await h.until { h.waits.count == 2 }
+            XCTAssertEqual(fallbacks, 0, "Transient failure must not discard or replace a viable route")
+            h.clock = 116; h.waits[1].release(); try await h.until { h.finished == 2 }
             XCTAssertEqual(fallbacks, 1)
             XCTAssertEqual(h.failures, 1)
+            await h.signal(.closed)
+            XCTAssertEqual(fallbacks, 1)
         }
         try await exercise(.publisher) { h in
             h.peer.observeSelectedRoute(.udp)
             var fallbacks = 0
             h.peer.onICEPathFailure = { fallbacks += 1 }
             await h.signal(.connected); await h.signal(.failed)
+            try await h.until { h.waits.count == 1 }
+            h.clock = 110; h.waits[0].release(); try await h.until { h.finished == 1 }
             XCTAssertEqual(fallbacks, 0, "Without a server-advertised endpoint retain ordinary recovery")
             XCTAssertEqual(h.failures, 1)
         }
@@ -376,6 +414,31 @@ final class InitialSubscriberICETests: XCTestCase {
             h.clock = 110; h.waits[0].release(); try await h.until { h.finished == 1 }
             XCTAssertEqual(h.failures, 0)
         }
+    }
+
+    @MainActor func testEstablishedSubscriberTransientFailureRecoversWithoutRetiringMedia() async throws {
+        try await exercise { h in
+            await h.signal(.connected); await h.signal(.failed)
+            try await h.until { h.waits.count == 1 }
+            h.clock = 100.022; await h.signal(.connected)
+            h.clock = 111; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 0); XCTAssertNil(h.engine.failure)
+        }
+    }
+
+    func testPeerErrorsHaveActionableEnglishAndRussianDescriptions() throws {
+        let errors: [GuestPeerError] = [.malformed, .closed, .candidateOverflow, .unsupportedCodec, .iceFailed]
+        let english = try XCTUnwrap(Bundle.main.path(forResource: "en", ofType: "lproj")).appending("/Localizable.strings")
+        let russian = try XCTUnwrap(Bundle.main.path(forResource: "ru", ofType: "lproj")).appending("/Localizable.strings")
+        let en = try XCTUnwrap(NSDictionary(contentsOfFile: english) as? [String: String])
+        let ru = try XCTUnwrap(NSDictionary(contentsOfFile: russian) as? [String: String])
+        for error in errors {
+            XCTAssertFalse(error.localizedDescription.contains("GuestPeerError"))
+        }
+        let key = "The meeting's audio/video connection failed. Check your network and reconnect."
+        XCTAssertEqual(en[key], key)
+        XCTAssertEqual(ru[key], "Не удалось установить аудио/видеосоединение со встречей. Проверьте сеть и подключитесь заново.")
+        XCTAssertEqual(GuestPeerError.iceFailed.localizedDescription, NSLocalizedString(key, comment: ""))
     }
 }
 #endif

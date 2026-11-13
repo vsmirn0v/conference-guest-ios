@@ -309,8 +309,9 @@ struct StoredClonedVoice: Codable, Equatable {
         }
     }
 
-    func speak(_ text: String) async throws -> [Float] {
+    func speak(_ text: String, recordedAt: Date? = nil) async throws -> [Float] {
         try Task.checkCancellation()
+        if let recordedAt, stored?.recordedAt != recordedAt { throw VoiceSynthesisError.cloneVoiceMissing }
         let inputs = try synthesisInputs()
         let receipt = identity.flatMap { ClonedVoicePreparation.read(inputs.folder, identity: $0) }
         do {

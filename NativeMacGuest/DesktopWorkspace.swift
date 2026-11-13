@@ -6,16 +6,17 @@ import UserNotifications
 
 @MainActor final class NativeDesktopWorkspace: NSObject, ObservableObject, NSWindowDelegate {
     enum Section: String, CaseIterable, Identifiable {
-        case home = "Home", assistant = "Assistant", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
+        case home = "Home", workspace = "Meeting workspace", assistant = "Assistant", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
         var id: Self { self }
         var symbol: String {
-            switch self { case .home: "house"; case .assistant: "tray"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
+            switch self { case .home: "house"; case .workspace: "rectangle.split.3x1"; case .assistant: "tray"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
         }
     }
     let library: NativeDesktopLibrary
     /// Judges the meetings you are not looking at and raises attention cards.
     let attention: AttentionCoordinator
     var mayAdmitMeeting: () -> Bool = { true }
+    var meetingAdmissionError: () -> String? = { nil }
     var onUpdateActivityChanged: () -> Void = {}
     var busyForUpdate: Bool { preparing || !meetings.isEmpty || leaveTask != nil || !meetingLeaves.isEmpty || shutdownBlocked }
     #if NATIVE_DIRECT_UPDATES
@@ -44,11 +45,11 @@ import UserNotifications
     /// Simultaneous meetings in join order. One talk meeting holds mic and camera.
     @Published private(set) var meetings: [NativeDesktopMeetingModel] = [] { didSet { onUpdateActivityChanged() } }
     @Published private(set) var talkID: UUID?
+    let workspaceViewState = MeetingWorkspaceViewState()
     var talkMeeting: NativeDesktopMeetingModel? { meetings.first { $0.sessionID == talkID } }
     /// The meeting single-meeting surfaces act on: the talk meeting, else the latest.
     var meeting: NativeDesktopMeetingModel? { talkMeeting ?? meetings.last }
     static let meetingLimit = 4
-    private let multipleMeetings: () -> Bool
     private var window: NSWindow?
     private let mainHider = NativeDesktopWindowHider()
     private var meetingWindows: [UUID: NativeDesktopMeetingWindow] = [:]
@@ -86,7 +87,6 @@ import UserNotifications
          detect: @escaping @MainActor (URL) async throws -> MeetingEngineDetection = { try await VendorEndpointResolver.makeDetector().detect($0) },
          makeMeeting: (@MainActor (JoinDestination, String, String?, Bool) -> NativeDesktopMeetingModel)? = nil,
          makeHandoffActivity: @escaping @MainActor (ActiveJam) -> NSUserActivity = { NativeDesktopHandoff.activity(for: $0) },
-         multipleMeetings: @escaping () -> Bool = { UserDefaults.standard.object(forKey: "nativeDesktop.multipleMeetings") as? Bool ?? true },
          attention: AttentionCoordinator? = nil) {
         let library = library ?? NativeDesktopLibrary()
         self.attention = attention ?? AttentionCoordinator()
@@ -94,7 +94,6 @@ import UserNotifications
         self.attention.calendarOccurrences = { [weak library] in
             (library?.calendar.meetings ?? []).filter { $0.start > Date() }
         }
-        self.multipleMeetings = multipleMeetings
         self.library = library; self.detect = detect; self.makeHandoffActivity = makeHandoffActivity
         self.makeMeeting = makeMeeting ?? { NativeDesktopMeetingModel(destination: $0, name: $1, title: $2, quiet: $3) }
         super.init()
@@ -253,7 +252,7 @@ import UserNotifications
     func join(_ url: URL, engine known: MeetingEngineKind? = nil, title: String? = nil, eventID: String? = nil,
               quiet: Bool = false, scheduled: NativeDesktopScheduledJoin? = nil, nameOverride: String? = nil) {
         guard mayAdmitMeeting() else {
-            scheduled?.finish(); error = L("An update is being installed. Please try again after Rock'N'Roll for Mac restarts."); return
+            scheduled?.finish(); error = meetingAdmissionError() ?? L("An update is being installed. Please try again after Rock'N'Roll for Mac restarts."); return
         }
         guard leaveTask == nil, meetingLeaves.isEmpty, !shutdownBlocked else { scheduled?.finish(); return }
         // Calendar automation never adds a second meeting; a reminder's Join does.
@@ -270,13 +269,7 @@ import UserNotifications
         if let existing = meetings.first(where: { MeetingRoomIdentity($0.invitation, engine: $0.kind) == room }) {
             showMeeting(existing); return
         }
-        let replacing = !meetings.isEmpty && !multipleMeetings()
-        if replacing {
-            let alert = NSAlert(); alert.messageText = L("Join another meeting?")
-            alert.informativeText = L("Your current meeting will end before joining the next one.")
-            alert.addButton(withTitle: L("Switch meeting")); alert.addButton(withTitle: L("Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        } else if meetings.count >= Self.meetingLimit {
+        if meetings.count >= Self.meetingLimit {
             error = L("You can be in up to %d meetings at once.", Self.meetingLimit); return
         }
         if scheduled == nil { library.setup.suspendForMeeting() }
@@ -295,7 +288,6 @@ import UserNotifications
             }
             var ownedModel: NativeDesktopMeetingModel?
             do {
-                if replacing, !(await leaveAllMeetings()) { throw NativeDesktopError.cleanupFailed }
                 try Task.checkCancellation(); guard token == joinGeneration else { return }
                 guard scheduled?.admission() != false else { throw CancellationError() }
                 let detection = try await detect(url)
@@ -311,7 +303,9 @@ import UserNotifications
                 guard destination.engineKind.inputPolicy.accepts(name: name) else { throw NativeGuestEntryError.invalidName }
                 let model = makeMeeting(destination, name, title, quiet)
                 ownedModel = model; joinModels[joinID] = ObjectIdentifier(model)
-                model.calendarSeriesID = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id }?.seriesID }
+                let calendarMeeting = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id } }
+                model.calendarSeriesID = calendarMeeting?.seriesID
+                model.participationCalendar = calendarMeeting
                 model.meetingLibrary = attention.store.meetingLibrary
                 model.notes = attention.store.notes
                 model.synthesizeVoiceReply = { [weak attention] text in

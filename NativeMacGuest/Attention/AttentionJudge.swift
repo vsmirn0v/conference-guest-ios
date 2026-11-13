@@ -87,7 +87,7 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
     /// Judges saved messages again, as the model comparison does.
     func judge(messages: [[String: String]], window: AttentionWindow) async throws -> JudgeResult {
         let (content, latency) = try await complete(requestBody(messages: messages, name: AttentionPrompt.schemaName,
-                                                                schema: AttentionPrompt.schema, hint: AttentionPrompt.jsonHint))
+                                                                schema: AttentionPrompt.schema(for: window), hint: AttentionPrompt.jsonHint))
         do { return .init(verdict: try AttentionPrompt.verdict(from: content, window: window), latency: latency) }
         catch let error as AttentionVerdictError { throw AttentionJudgeError.verdict(error) }
     }
@@ -147,7 +147,7 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
     static func body(_ request: JudgeRequest, model: String) -> [String: Any] {
         ["model": model, "messages": AttentionPrompt.messages(request),
          "response_format": ["type": "json_schema",
-                             "json_schema": ["name": AttentionPrompt.schemaName, "strict": true, "schema": AttentionPrompt.schema]]]
+                             "json_schema": ["name": AttentionPrompt.schemaName, "strict": true, "schema": AttentionPrompt.schema(for: request.window)]]]
     }
 
     static func replyBody(_ request: ReplyRequest, model: String) -> [String: Any] {

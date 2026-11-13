@@ -33,7 +33,7 @@ enum VoiceReplySample {
     /// asset is missing or Personal Voice access is withdrawn mid-way it may never send
     /// one, so the wait ends after `timeout` with nothing (a card would otherwise stay
     /// "speaking" forever).
-    static func make(text: String, language: String = Locale.preferredLanguages.first ?? "en-US",
+    @MainActor static func make(text: String, language: String = Locale.preferredLanguages.first ?? "en-US",
                      voice: AVSpeechSynthesisVoice? = nil, timeout: TimeInterval = 30) async -> AVAudioPCMBuffer? {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice ?? AVSpeechSynthesisVoice(language: language) ?? AVSpeechSynthesisVoice(language: "en-US")
@@ -49,13 +49,25 @@ enum VoiceReplySample {
     }
 
     /// Runs `start`, which calls `finish` once with the result; nil after `timeout`.
-    static func bounded(timeout: TimeInterval, cancel: @escaping () -> Void = {},
+    @MainActor static func bounded(timeout: TimeInterval, cancel: @escaping @MainActor () -> Void = {},
                         _ start: (@escaping (AVAudioPCMBuffer?) -> Void) -> Void) async -> AVAudioPCMBuffer? {
         let once = Once()
-        return await withCheckedContinuation { continuation in
-            once.continuation = continuation
-            start { once.resume($0) }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+        guard !Task.isCancelled, timeout.isFinite, timeout > 0 else { return nil }
+        let timer = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(timeout))
+                if once.resume(nil) { cancel() }
+            } catch {}
+        }
+        defer { timer.cancel() }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else { continuation.resume(returning: nil); return }
+                once.continuation = continuation
+                start { once.resume($0) }
+            }
+        } onCancel: {
+            Task { @MainActor in
                 if once.resume(nil) { cancel() }
             }
         }

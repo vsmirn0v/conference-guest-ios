@@ -1,0 +1,62 @@
+{
+  "version": "0.3.0",
+  "build": "101",
+  "channel": "beta",
+  "sourceBase": "b595e89cf2843cbf8a7ecf2c29c9cf2545aebc06",
+  "sourceState": "Uncommitted working tree. Exact tracked diff and relevant new files preserved under .build/native-beta-101. Build cache reused from beta 100, with its published manifest preserved.",
+  "sourcePatchSHA256": "def77247446454d78c55e445acf8f8d4453116e781d70ea2633e3b8f6fd11596",
+  "newSourcesSHA256": "a4cb8b9f21f2a9de8c32bbad87baa2c18e7ffc8f18e28001950f4c5205a8b662",
+  "modelReplaySourceSHA256": "0dd3cdb34abc44441e6efca28ddabf650f881d8ca7093be16b77d1d66f283041",
+  "changes": [
+    "Participation can offer to take a question when a participant asks whether the local attendee is on the line or can respond.",
+    "Adjacent verified speech from the same participant can provide the missing name in a split request. Current requests, exact name evidence and the approved roster determine the reply.",
+    "Quiet verified local turns receive a current-request check so explicit hearing checks can produce a reply. Typed diagnostics identify proposal and assessment outcomes.",
+    "Suggested reply buttons use localized stance identifiers. Older brief hold and hold labels resolve to the existing translated label."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "101",
+    "file": "RockNRoll-0.3.0-101-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-101-arm64.dmg",
+    "sha256": "a7c6c16cc67947b560746d5a337e8b8dd5514adb04e959aed2edc5b2888cefcb",
+    "length": 29141626,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-101/package/RockNRoll-0.3.0-101-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-101-arm64.dmg",
+      "sha256": "a7c6c16cc67947b560746d5a337e8b8dd5514adb04e959aed2edc5b2888cefcb",
+      "length": 29141626
+    },
+    "state": {
+      "appcastSHA256": "47eab584351fe94f46f0640c693c08acdc9be0ce5eedf8de26cd5a38a139ecd1",
+      "inventorySHA256": "cc994266967d05f6b00a55089943242494c6561d41a0b56c7d78e6dad3ded3ce",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-101-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/336336422dc94f6da6e5bd5fea460ccc/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "43 targeted native tests passed, covering participant identity, fragment adjacency, lexical name boundaries, localization, on-device schema and muted-microphone WebRTC playback.",
+    "33 synthetic outcomes matched expectations using the configured gpt-5.4-mini through normal signed-app settings and Keychain APIs. Each full-name and first-name split request passed four times. All 19 negative trials stayed silent.",
+    "24 Apple on-device replay outcomes matched expectations across two exact-source runs.",
+    "Native two-peer WebRTC decoded assistant audio with the local monitor active and the simulated raw microphone gated to silence.",
+    "Archive source hashes, app notarization, Gatekeeper, translated signed-app resources, feed signatures and public download hashes verified."
+  ],
+  "diagnosis": "Beta 100 logs identified assessmentDeclined before synthesis. A signed probe against the configured provider and exact published beta 100 source reproduced rejection of both intact and split forms of the screenshot request.",
+  "notVerified": [
+    "End-to-end automatic speech in a live provider meeting with the configured voice clone. Synthetic model replays synthesized built-in Russian TTS and sent no room audio.",
+    "Installed Sparkle upgrade.",
+    "Separate notarization of the outer DMG."
+  ],
+  "publishedAt": "2026-11-12T13:49:35.017830+03:00"
+}

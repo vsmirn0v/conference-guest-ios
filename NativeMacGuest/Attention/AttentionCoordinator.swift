@@ -22,8 +22,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
 }
 
-/// Judges each meeting as closely as its attention mode asks (by default: not the one
-/// you look at with sound on, only for your name in the background, closely when silenced)
+/// Judges each meeting as closely as its attention mode asks (by default: off for meetings
+/// with sound on, closely when silenced)
 /// and raises a card when one needs you. One judge call runs at a time across meetings, at most six a minute.
 @MainActor final class AttentionCoordinator: ObservableObject {
     struct Card: Identifiable, Equatable {
@@ -50,6 +50,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         var canSpeak = false
         /// Exact local excerpts given to this Moment's judge and writer.
         var memory: [AssistantMemoryExcerpt] = []
+        var workspaceGuidance: [String] = []
+        var workspaceGuidanceRevisions: [UUID] = []
+        var workspaceWriterInput: [MeetingWorkspaceEvent.SourceSnapshot] = []
         /// Historical evidence only: no open, delivery, or learning controls.
         var readOnly = false
         var speaking = false
@@ -129,6 +132,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     @Published private(set) var outcomeStatus: [UUID: String] = [:]
     @Published private(set) var outcomeError: [UUID: String] = [:]
     @Published var requestedOutcomeSessionID: UUID?
+    @Published private(set) var workspaceFollowingPauses: [UUID: UUID] = [:]
+    private var workspacePauseRevisions: [UUID: UUID] = [:]
 
     let store: AttentionStore
     var meetings: () -> [NativeDesktopMeetingModel] = { [] }
@@ -248,10 +253,22 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             ruleStore.actionDenied(pending.id)
             return AssistantAgentError.unsupported.localizedDescription ?? "Unsupported"
         }
+        let id = "rule:" + pending.id.uuidString
+        let evidence: [MeetingWorkspaceEvent.SourceSnapshot] = [
+            .init(id: "rule:" + pending.ruleID.uuidString, title: L("Automation rule"), text: pending.ruleText,
+                  revision: String(pending.ruleRevision), capturedAt: pending.createdAt),
+            .init(id: "voice:" + pending.voiceID, title: L("Voice"), text: pending.voiceID,
+                  revision: nil, capturedAt: pending.createdAt),
+            .init(id: "event:" + pending.eventKey, title: pending.meetingTitle, text: nil,
+                  revision: pending.action.payloadHash, capturedAt: pending.createdAt),
+            .init(id: "expires:" + pending.meetingID.uuidString, title: L("Approval expires"), text: nil,
+                  revision: nil, capturedAt: pending.expiresAt)
+        ]
         do {
-            try actionCoordinator.approved(pending.action)
-            let buffer = try await synthesize(pending.ruleText)
-            try await deliverVoice(model, buffer)
+            try await speakWorkspaceApprovedCommand(pending.ruleText, in: model, id: id,
+                source: "ruleVoice", evidence: evidence) {
+                try self.actionCoordinator.approved(pending.action)
+            }
             actionCoordinator.applied(pending.action)
             ruleStore.actionExecuted(pending.id)
             return L("Spoken into “%@”.", pending.meetingTitle)
@@ -325,6 +342,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     /// Your choice for this meeting, else its series' or room's mode, else the situation's.
     func resolvedMode(_ model: NativeDesktopMeetingModel) -> ResolvedMode {
+        if workspaceFollowingPauses[model.sessionID] != nil {
+            return .init(mode: .off, source: .meeting(until: nil))
+        }
         if model.participation.status != .inactive {
             return .init(mode: .watch, source: .meeting(until: nil))
         }
@@ -340,6 +360,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     func setMode(_ mode: AttentionMode, for model: NativeDesktopMeetingModel, scope: ModeScope = .untilLeave) {
         model.participation.stop()
         let id = model.sessionID
+        workspaceFollowingPauses[id] = nil
         switch scope {
         case .untilLeave: states[id, default: .init()].override = .init(mode: mode, until: nil)
         case .minutes(let minutes): states[id, default: .init()].override = .init(mode: mode, until: now().addingTimeInterval(Double(minutes) * 60))
@@ -357,6 +378,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     /// Drops your choice for this meeting (and its series' mode, when `series`), back to the defaults.
     func resetMode(for model: NativeDesktopMeetingModel, series: Bool = false) {
         model.participation.stop()
+        workspaceFollowingPauses[model.sessionID] = nil
         states[model.sessionID]?.override = nil
         if series, store.preset(room: model.invitation, series: model.calendarSeriesID)?.mode != nil {
             store.setMeetingMode(nil, room: model.invitation, series: model.calendarSeriesID, title: model.title)
@@ -374,6 +396,47 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         }
         let all = AttentionMode.allCases, current = resolvedMode(model).mode
         setMode(all[((all.firstIndex(of: current) ?? 0) + 1) % all.count], for: model)
+    }
+
+    func pauseWorkspaceFollowing(_ model: NativeDesktopMeetingModel) -> UUID? {
+        let id = model.sessionID
+        guard !model.isClosed, workspaceFollowingPauses[id] == nil else { return nil }
+        let token = UUID()
+        workspaceFollowingPauses[id] = token
+        workspacePauseRevisions[id] = token
+        model.cancelWorkspaceApprovedOutputs()
+        for card in cards where card.meetingID == id { miss(card) }
+        clearOverflow(forMeeting: id)
+        return token
+    }
+
+    func resumeWorkspaceFollowing(_ model: NativeDesktopMeetingModel, pause token: UUID) {
+        let id = model.sessionID
+        guard workspaceFollowingPauses[id] == token, !model.isClosed else { return }
+        var state = states[id] ?? .init()
+        let current = now()
+        let window = buildWindow(model, state: state, now: current)
+        state.fingerprint = window.fingerprint
+        state.seenLines.formUnion(window.lines.map(\.id))
+        state.judgedAt = current
+        states[id] = state
+        workspaceFollowingPauses[id] = nil
+    }
+
+    func workspaceInstructions(for model: NativeDesktopMeetingModel) -> [String] {
+        store.workspaceGuidance.instructions(for: model) + model.participation.workspaceGuidance
+    }
+
+    private func workspaceGuidanceRevisions(for model: NativeDesktopMeetingModel) -> [UUID] {
+        store.workspaceGuidance.revisions(for: model)
+    }
+
+    @discardableResult func applyWorkspaceGuidance(_ text: String, for model: NativeDesktopMeetingModel) -> Bool {
+        guard model.participation.applyWorkspaceGuidance(text, for: model) else { return false }
+        for card in cards where card.meetingID == model.sessionID { miss(card) }
+        clearOverflow(forMeeting: model.sessionID)
+        states[model.sessionID]?.fingerprint = nil
+        return true
     }
 
     /// Why a meeting is not judged right now, or nil when it is.
@@ -637,6 +700,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         ruleStore.expirePendingActions(now: current)
         let ids = Set(list.map(\.sessionID))
         states = states.filter { ids.contains($0.key) }
+        if workspaceFollowingPauses.keys.contains(where: { !ids.contains($0) }) {
+            workspaceFollowingPauses = workspaceFollowingPauses.filter { ids.contains($0.key) }
+        }
+        workspacePauseRevisions = workspacePauseRevisions.filter { ids.contains($0.key) }
         // A mode chosen for a while returns to the defaults when its time is up.
         for (id, state) in states where (state.override?.until ?? .distantFuture) <= current { states[id]?.override = nil }
         let activeOpenIDs = Set(list.filter { !$0.isClosed && resolvedMode($0).mode != .off }.map(\.sessionID))
@@ -718,6 +785,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     private func judge(_ model: NativeDesktopMeetingModel, window: AttentionWindow, mode: AttentionMode, mentioned: Bool, at time: Date) async {
         let id = model.sessionID
+        let pauseRevision = workspacePauseRevisions[id]
+        let guidanceRevisions = workspaceGuidanceRevisions(for: model)
         judging = id; calls.append(time)
         defer { judging = nil }
         let preset = store.preset(room: model.invitation, series: model.calendarSeriesID)
@@ -725,7 +794,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let memory = store.assistant.retrieve(meetingTitle: model.title, invitation: model.invitation,
             series: model.calendarSeriesID, people: model.participants.filter { !$0.isLocal }.map(\.name))
         let request = JudgeRequest(window: window, preset: preset, profile: store.profile, yourName: model.displayName,
-                                   language: language, replyChannels: channels, memory: memory)
+                                   language: language, replyChannels: channels, memory: memory,
+                                   workspaceGuidance: workspaceInstructions(for: model))
         let provider = store.provider
         let decisionID = UUID()
         do {
@@ -755,7 +825,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 } catch is CancellationError { throw CancellationError() }
                 catch { probeLog("attention-escalation-failed", ["error": String(describing: error)]) }
             }
-            guard let model = meetings().first(where: { $0.sessionID == id }), !model.isClosed else { return }
+            guard workspacePauseRevisions[id] == pauseRevision, workspaceFollowingPauses[id] == nil,
+                  let model = meetings().first(where: { $0.sessionID == id }), !model.isClosed,
+                  request.workspaceGuidance == workspaceInstructions(for: model),
+                  guidanceRevisions == workspaceGuidanceRevisions(for: model) else { return }
             var state = states[id] ?? .init()
             state.verdict = result.verdict; state.judgedAt = now(); state.fingerprint = window.fingerprint; state.error = nil
             state.seenLines.formUnion(window.lines.map(\.id))
@@ -765,7 +838,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 seriesID: model.calendarSeriesID, verdict: result.verdict, window: window, presetID: preset?.id, threshold: threshold,
                 provider: judgedBy.host, model: judgedBy.model, latency: result.latency, createdAt: now(), channels: channels,
                 canDraft: store.draftsAllowed, canSpeak: store.draftReplies && (preset?.repliesAllowed ?? true) && voiceAvailable(model),
-                memory: memory, mode: mode, mentioned: mentioned)
+                memory: memory, workspaceGuidance: request.workspaceGuidance, workspaceGuidanceRevisions: guidanceRevisions,
+                mode: mode, mentioned: mentioned)
             let outcome = apply(card, state: &state), shown = outcome == .shown
             // The judge suggests answering in writing: have a draft ready on the card.
             if shown, card.canDraft, [.chat, .reaction].contains(result.verdict.action), !channels.isEmpty,
@@ -785,6 +859,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         } catch is CancellationError {
             return
         } catch {
+            guard workspacePauseRevisions[id] == pauseRevision, workspaceFollowingPauses[id] == nil else { return }
             var state = states[id] ?? .init()
             state.judgedAt = now(); state.error = error.localizedDescription
             states[id] = state; lastError = error.localizedDescription
@@ -844,7 +919,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             return nil
         }
         let card = currentCard(fallback.id) ?? fallback
-        guard !card.readOnly else { return nil }
+        guard !card.readOnly, workspaceFollowingPauses[card.meetingID] == nil else { return nil }
+        if let model = meetings().first(where: { $0.sessionID == card.meetingID }),
+           card.workspaceGuidance != workspaceInstructions(for: model)
+            || card.workspaceGuidanceRevisions != workspaceGuidanceRevisions(for: model) { return nil }
         return card
     }
 
@@ -1014,7 +1092,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     /// Drafts ranked replies or a reaction for a card. Nothing is sent: you choose,
     /// edit and send a variant, or explicitly discard it.
     func draftReply(_ cardID: UUID, hint: String? = nil) {
-        guard let card = currentCard(cardID), card.canDraft, !card.drafting,
+        guard let card = currentCard(cardID), workspaceFollowingPauses[card.meetingID] == nil, card.canDraft, !card.drafting,
               !card.channels.isEmpty || card.canSpeak,
               let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed else { return }
         updateCard(cardID) { $0.drafting = true; $0.draftError = nil }
@@ -1024,15 +1102,37 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         var channels = card.channels
         if card.canSpeak { channels.chat = true }
         let request = ReplyRequest(judge: JudgeRequest(window: card.window, preset: preset, profile: store.profile,
-            yourName: model.displayName, language: language, replyChannels: channels, memory: card.memory),
+            yourName: model.displayName, language: language, replyChannels: channels, memory: card.memory,
+            workspaceGuidance: workspaceInstructions(for: model)),
             verdict: card.verdict, redraftHint: hint)
+        let requestedAt = now()
+        let writerInput = ReplyPrompt.messages(request).enumerated().compactMap { index, message -> MeetingWorkspaceEvent.SourceSnapshot? in
+            guard let content = message["content"] else { return nil }
+            return .init(id: "writer:\(index)", title: L("Instructions used for this reply"),
+                text: String(content.prefix(32_768)), revision: ParticipationReceipt.hash(content), capturedAt: requestedAt)
+        }
+        let guidanceRevisions = workspaceGuidanceRevisions(for: model)
+        let pauseRevision = workspacePauseRevisions[model.sessionID]
         let provider = store.effectiveWriter, writer = makeWriter(provider, store.apiKey(for: provider))
         Task { @MainActor [weak self] in
             do {
                 let result = try await writer.draft(request)
                 guard let self, currentCard(cardID) != nil else { return }
+                guard request.judge.workspaceGuidance == workspaceInstructions(for: model),
+                      guidanceRevisions == workspaceGuidanceRevisions(for: model),
+                      workspacePauseRevisions[model.sessionID] == pauseRevision,
+                      workspaceFollowingPauses[model.sessionID] == nil else {
+                    updateCard(cardID) { $0.drafting = false }
+                    return
+                }
                 let ranked = result.draft.ranked(preferredStance: store.assistant.preferredStance(), edits: preset?.replyEdits ?? [])
-                updateCard(cardID) { $0.drafting = false; $0.draft = ranked }
+                updateCard(cardID) {
+                    $0.drafting = false
+                    $0.draft = ranked
+                    $0.workspaceGuidance = request.judge.workspaceGuidance
+                    $0.workspaceGuidanceRevisions = guidanceRevisions
+                    $0.workspaceWriterInput = writerInput
+                }
                 store.log(.init(at: now(), meetingTitle: card.meetingTitle, meetingID: card.meetingID, invitation: card.invitation,
                     seriesID: card.seriesID, presetID: card.presetID, provider: provider.host, model: provider.model,
                     latencyMilliseconds: Int(result.latency * 1000), outcome: .drafted, decisionID: cardID,
@@ -1065,8 +1165,13 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     @discardableResult func sendReply(_ card: Card, text: String) -> Bool {
         let clean = text.trimmed
         guard let current = actionableCard(card), !current.speaking, !clean.isEmpty, current.channels.chat,
-              let model = meetings().first(where: { $0.sessionID == current.meetingID }), !model.isClosed, deliverChat(model, clean) else {
+              let model = meetings().first(where: { $0.sessionID == current.meetingID }), !model.isClosed else {
             setDraftError(L("The meeting did not accept the message. Open the meeting to answer."), card: card); return false
+        }
+        do { try sendWorkspaceApprovedChat(clean, to: model, evidence: workspaceEvidence(current)) }
+        catch {
+            setDraftError(error.localizedDescription, card: card)
+            return false
         }
         feedback(current, decision: .approved, reason: nil, note: nil, outcome: .replied,
                  sent: clean, reaction: nil, edited: clean != current.draft?.chat.trimmed)
@@ -1078,13 +1183,86 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         return true
     }
 
+    func sendWorkspaceApprovedChat(_ text: String, to model: NativeDesktopMeetingModel,
+        id: UUID = UUID(), evidence: [MeetingWorkspaceEvent.SourceSnapshot]) throws {
+        let id = id.uuidString.lowercased(), clean = text.trimmed
+        let journal = model.workspaceJournal, linked = model.approvedWorkspaceChatLink(id: id)
+        if let journal, !journal.recordAssistantReply(sessionID: model.sessionID, id: id, text: clean,
+            source: "approvedChat", status: .sending, sourceSnapshots: evidence, linkedChatID: linked) {
+            throw MeetingLibraryError.persistenceFailed(L("The assistant could not save its activity on this Mac. Check local storage before restarting."))
+        }
+        guard model.withApprovedWorkspaceChat(id: id, { deliverChat(model, clean) }) else {
+            journal?.updateReplyStatus(sessionID: model.sessionID, id: id, status: .failed, isPrivate: true)
+            throw AssistantCommandError.unsupported
+        }
+        if linked == nil { journal?.updateReplyStatus(sessionID: model.sessionID, id: id, status: .submitted) }
+    }
+
+    func sendWorkspaceApprovedReaction(_ reaction: MeetingReaction, to model: NativeDesktopMeetingModel,
+        id: UUID = UUID(), evidence: [MeetingWorkspaceEvent.SourceSnapshot]) throws {
+        let id = id.uuidString.lowercased(), journal = model.workspaceJournal
+        if let journal, !journal.recordAction(sessionID: model.sessionID, text: reaction.emoji,
+            source: "approvedReaction", id: id, status: .queued, isPrivate: false, sourceSnapshots: evidence) {
+            throw AssistantCommandError.unsupported
+        }
+        model.withApprovedWorkspaceReaction(id: id) { deliverReaction(model, reaction) }
+        if !model.canCorrelateApprovedWorkspaceReaction {
+            journal?.updateActionStatus(sessionID: model.sessionID, id: id, status: .submitted)
+        }
+    }
+
+    func speakWorkspaceApprovedCommand(_ text: String, in model: NativeDesktopMeetingModel, id: String,
+        source: String, evidence: [MeetingWorkspaceEvent.SourceSnapshot],
+        beforeSynthesis: @escaping @MainActor () throws -> Void = {}) async throws {
+        let journal = model.workspaceJournal
+        let canSpeak = model.participationMeetingSoundOn && model.canSpeakApprovedWorkspaceReply &&
+            workspaceFollowingPauses[model.sessionID] == nil && !model.workspaceApprovedVoiceInProgress && !model.isClosed
+        if let journal, !journal.recordAssistantReply(sessionID: model.sessionID, id: id, text: text,
+            source: source, status: canSpeak ? .queued : .held, isPrivate: true, sourceSnapshots: evidence) {
+            throw MeetingLibraryError.persistenceFailed(L("The assistant could not save its activity on this Mac. Check local storage before restarting."))
+        }
+        guard canSpeak, let task = model.startWorkspaceApprovedVoice({ [self] () -> Result<Void, Error> in
+            var attempted = false
+            do {
+                try Task.checkCancellation()
+                try beforeSynthesis()
+                let buffer = try await synthesize(text)
+                try Task.checkCancellation()
+                guard model.participationMeetingSoundOn, model.canSpeakApprovedWorkspaceReply,
+                      workspaceFollowingPauses[model.sessionID] == nil else { throw CancellationError() }
+                if let journal, !journal.recordAssistantReply(sessionID: model.sessionID, id: id, text: text,
+                    source: source, status: .sending, sourceSnapshots: evidence) {
+                    throw MeetingLibraryError.persistenceFailed(L("The meeting conversation could not be read."))
+                }
+                attempted = true
+                try await deliverVoice(model, buffer)
+                journal?.updateReplyStatus(sessionID: model.sessionID, id: id, status: .spoken)
+                return .success(())
+            } catch {
+                let status = workspaceVoiceStatus(error, attempted: attempted)
+                journal?.updateReplyStatus(sessionID: model.sessionID, id: id, status: status,
+                    isPrivate: status == .cancelled || status == .held ? true : nil)
+                return .failure(error)
+            }
+        }) else { throw AssistantCommandError.unsupported }
+        try await withTaskCancellationHandler {
+            try await task.value.get()
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     /// Sends one reaction into the meeting and counts as an approval.
     @discardableResult func sendReaction(_ card: Card, _ reaction: MeetingReaction) -> Bool {
         guard let current = actionableCard(card), !current.speaking, current.channels.reactions.contains(reaction),
               let model = meetings().first(where: { $0.sessionID == current.meetingID }), !model.isClosed else {
             setDraftError(L("The meeting did not accept the reaction. Open the meeting to answer."), card: card); return false
         }
-        deliverReaction(model, reaction)
+        do { try sendWorkspaceApprovedReaction(reaction, to: model, evidence: workspaceEvidence(current)) }
+        catch {
+            setDraftError(error.localizedDescription, card: card)
+            return false
+        }
         feedback(current, decision: .approved, reason: nil, note: nil, outcome: .reacted,
                  sent: nil, reaction: reaction, edited: reaction != current.draft?.reaction)
         return true
@@ -1095,17 +1273,50 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     func sayReply(_ card: Card, text: String) {
         let clean = text.trimmed
         guard let current = actionableCard(card), current.canSpeak, !clean.isEmpty, !current.speaking,
-              let model = meetings().first(where: { $0.sessionID == current.meetingID }), !model.isClosed else {
+              let model = meetings().first(where: { $0.sessionID == current.meetingID }), !model.isClosed,
+              !model.workspaceApprovedVoiceInProgress else {
             setDraftError(L("This meeting cannot play a spoken reply now. Open the meeting to answer."), card: card); return
         }
+        let id = UUID().uuidString
+        let journal = model.workspaceJournal
+        let evidence = workspaceEvidence(current)
+        guard model.participationMeetingSoundOn, model.canSpeakApprovedWorkspaceReply else {
+            journal?.recordAssistantReply(sessionID: model.sessionID, id: id, text: clean, source: "approvedVoice",
+                status: .held, isPrivate: true, sourceSnapshots: evidence)
+            setDraftError(L("This meeting cannot play a spoken reply now. Open the meeting to answer."), card: card)
+            return
+        }
+        if let journal, !journal.recordAssistantReply(sessionID: model.sessionID, id: id, text: clean,
+            source: "approvedVoice", status: .queued, isPrivate: true, sourceSnapshots: evidence) {
+            setDraftError(L("The assistant could not save its activity on this Mac. Check local storage before restarting."), card: card)
+            return
+        }
         updateCard(card.id) { $0.speaking = true; $0.draftError = nil }
-        Task { @MainActor [weak self] in
+        let pauseRevision = workspacePauseRevisions[model.sessionID]
+        let soundRevision = model.workspaceSoundRevision
+        model.startWorkspaceApprovedVoice { [weak self] in
             guard let self else { return }
             let started = ProcessInfo.processInfo.systemUptime
+            var playbackAttempted = false
             do {
                 let buffer = try await synthesize(clean)
                 let synthesized = ProcessInfo.processInfo.systemUptime
+                guard !Task.isCancelled, workspacePauseRevisions[model.sessionID] == pauseRevision,
+                      workspaceFollowingPauses[model.sessionID] == nil, !model.isClosed,
+                      current.workspaceGuidance == workspaceInstructions(for: model),
+                      current.workspaceGuidanceRevisions == workspaceGuidanceRevisions(for: model),
+                      model.canSpeakApprovedWorkspaceReply, model.participationMeetingSoundOn,
+                      model.workspaceSoundRevision == soundRevision else {
+                    journal?.updateReplyStatus(sessionID: model.sessionID, id: id, status: .held)
+                    throw CancellationError()
+                }
+                if let journal, !journal.recordAssistantReply(sessionID: model.sessionID, id: id, text: clean,
+                    source: "approvedVoice", status: .sending, sourceSnapshots: evidence) {
+                    throw MeetingLibraryError.persistenceFailed(L("The meeting conversation could not be read."))
+                }
+                playbackAttempted = true
                 try await deliverVoice(model, buffer)
+                journal?.updateReplyStatus(sessionID: model.sessionID, id: id, status: .spoken)
                 probeLog("attention-spoken", ["voice": store.voiceEngine.rawValue, "seconds": Double(buffer.frameLength) / buffer.format.sampleRate,
                     "synthesisMs": Int((synthesized - started) * 1000)])
                 // Playback already happened. If the card was closed or dismissed while it played,
@@ -1120,6 +1331,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                         edited: clean != finished.draft?.chat.trimmed)
                 }
             } catch {
+                if journal?.session(id: model.sessionID)?.events.first(where: { $0.id == "assistant:" + id })?.status != .held {
+                    let status = workspaceVoiceStatus(error, attempted: playbackAttempted)
+                    journal?.updateReplyStatus(sessionID: model.sessionID, id: id, status: status,
+                        isPrivate: status == .cancelled || status == .held ? true : nil)
+                }
                 updateCard(card.id) {
                     $0.speaking = false
                     if !(error is CancellationError) { $0.draftError = error.localizedDescription }
@@ -1128,15 +1344,43 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         }
     }
 
+    private func workspaceVoiceStatus(_ error: Error, attempted: Bool) -> MeetingWorkspaceEvent.Status {
+        if error is CancellationError { return attempted ? .cancelled : .held }
+        if let error = error as? NativeDesktopMeetingModel.VoiceReplyError {
+            switch error {
+            case .playback, .mute: return .unknown
+            case .playedMute: return .spoken
+            case .interrupted: return .interrupted
+            case .unavailable, .notTalkMeeting, .gate, .microphone, .sample: return .failed
+            }
+        }
+        return attempted ? .unknown : .failed
+    }
+
+    private func workspaceEvidence(_ card: Card) -> [MeetingWorkspaceEvent.SourceSnapshot] {
+        let observed = card.createdAt
+        var result: [MeetingWorkspaceEvent.SourceSnapshot] = [
+            .init(id: "reason", title: L("Why this reply"), text: card.verdict.reason, revision: nil, capturedAt: observed)
+        ]
+        let cited = Set(card.verdict.evidence)
+        result += card.window.lines.map {
+            .init(id: cited.contains($0.id) ? "trigger:" + $0.id : $0.id,
+                title: $0.speaker, text: $0.text, revision: ParticipationReceipt.hash($0.text), capturedAt: observed)
+        }
+        result += card.memory.map {
+            .init(id: $0.id, title: L("Assistant memory"), text: $0.text, revision: $0.sourceID.uuidString, capturedAt: observed)
+        }
+        result += card.workspaceGuidance.enumerated().map { index, guidance in
+            .init(id: "guidance:\(index)", title: L("Private guidance"), text: guidance,
+                revision: ParticipationReceipt.hash(guidance), capturedAt: observed)
+        }
+        result += card.workspaceWriterInput
+        return result
+    }
+
     func synthesize(_ text: String) async throws -> AVAudioPCMBuffer {
         if let synthesizeOverride { return try await synthesizeOverride(text) }
-        switch store.voiceEngine {
-        case .system: return try await VoiceSynthesis.system(text)
-        case .personal: return try await VoiceSynthesis.personal(text)
-        case .cloned: return try await VoiceSynthesis.cloned(text)
-        case .rapidMLX:
-            return try await VoiceSynthesis.rapidMLX(text, baseURL: store.voiceBaseURL, model: store.voiceModel, description: store.voiceDescription)
-        }
+        return try await store.voiceConfiguration.synthesize(text)
     }
 
     private func setDraftError(_ message: String, card: Card) { updateCard(card.id) { $0.draftError = message } }

@@ -1,0 +1,59 @@
+{
+  "version": "0.3.0",
+  "build": "98",
+  "channel": "beta",
+  "sourceBase": "b595e89cf2843cbf8a7ecf2c29c9cf2545aebc06",
+  "sourceState": "Uncommitted working tree; tracked patch and new source archive preserved in .build/native-beta-98",
+  "sourcePatchSHA256": "c4cf9e24979d395e917b49a6ad7cadff6e0b4b23a37e40cabd2c9cfba5c46f8c",
+  "newSourcesSHA256": "5844b7115cb1be7821eb0f0a042e2630ce0c8b316995a714ea9107fdb46ac3a4",
+  "changes": [
+    "Fresh live-context-only grants follow attendee changes within the same room and connection; pending work and earlier context are discarded.",
+    "Approved-note grants still require audience review; manual pause never auto-resumes.",
+    "Distinct localized lifecycle reasons and content-free transition diagnostics; background lifecycle regression coverage."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "98",
+    "file": "RockNRoll-0.3.0-98-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-98-arm64.dmg",
+    "sha256": "6153363a9732f390a9617df473788b309cbc03b2b5aeaa2f2d761c21181fe8a4",
+    "length": 29103890,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-98/package/RockNRoll-0.3.0-98-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-98-arm64.dmg",
+      "sha256": "6153363a9732f390a9617df473788b309cbc03b2b5aeaa2f2d761c21181fe8a4",
+      "length": 29103890
+    },
+    "state": {
+      "appcastSHA256": "5a76453b4a075836487ba181f83e91d5cfcc83a6f13f8e8fb74e01796a4907af",
+      "inventorySHA256": "504e9b366fc1cc83bf4404802b13aec637caaecda760e29c744573612fecb201",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-98-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/cd774d793fed4e57b0df10c81dc5fc1c/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "28 native tests passed on final source, including real Start, attendee rollover, hidden meeting, old response cancellation, note-grant boundaries and signaling/audio graph regressions.",
+    "Independent source and EN/RU localization review passed.",
+    "Synthetic hosted OpenAI request/response and assessment fixture reached real built-in Russian synthesis; no live model inference was exercised.",
+    "Release archive, app notarization/stapling and package verification passed; independent public beta download hash matched."
+  ],
+  "diagnosisLimit": "Build97 log recorded a join after connection but not participation start/stop timing; roster-triggered review fits the screenshot but is not proven as the observed reason.",
+  "notVerified": [
+    "Live two-client autonomous voice delivery and configured-model inference.",
+    "Installed Sparkle upgrade.",
+    "Separate notarization of outer DMG."
+  ],
+  "publishedAt": "2026-11-12T08:42:54.840207+03:00"
+}

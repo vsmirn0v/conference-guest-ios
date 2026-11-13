@@ -1,0 +1,56 @@
+{
+  "version": "0.3.0",
+  "build": "97",
+  "channel": "beta",
+  "sourceBase": "b595e89",
+  "sourceState": "Uncommitted working tree; tracked patch and new source files preserved under .build/native-beta-97",
+  "sourcePatchSHA256": "2480f75057eaf0810cdda8c6115e2715f09b94ab5f8973297e8489245557505f",
+  "newSourcesSHA256": "5844b7115cb1be7821eb0f0a042e2630ce0c8b316995a714ea9107fdb46ac3a4",
+  "changes": [
+    "Participate consumes locally transcribed Guest meeting audio with attribution and echo safeguards.",
+    "Expanded Russian localization across assistant, knowledge, settings, notes and updates."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "97",
+    "file": "RockNRoll-0.3.0-97-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-97-arm64.dmg",
+    "sha256": "1c7938a98598db84bb6f258e93544ad469b61ede27f5e7e152aab2b7a8ff990e",
+    "length": 29099412,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-97/package/RockNRoll-0.3.0-97-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-97-arm64.dmg",
+      "sha256": "1c7938a98598db84bb6f258e93544ad469b61ede27f5e7e152aab2b7a8ff990e",
+      "length": 29099412
+    },
+    "state": {
+      "appcastSHA256": "1943a03e843d80f54a9ae33a6f45a50f6409311d50b110bbcbdba56f3b4f6c05",
+      "inventorySHA256": "10ad1ca470dc41e07ef7454360ad95c908142dff8cab90c36b16d12e1ddd8a99",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-97-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/3663e532bab945b39a9643a37b9d61b7/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "143 targeted native tests passed before the final delayed-context change; 15 focused tests passed on its final source.",
+    "Russian and English catalogs validated, including Foundation plural and formatting checks; 16 updater safety tests passed.",
+    "Release archive and notarized, stapled app passed package checks; independent beta alias download matched the package SHA-256."
+  ],
+  "notVerified": [
+    "Live two-client automatic voice participation and physical microphone behavior.",
+    "Installed Sparkle upgrade.",
+    "Separate notarization of outer DMG."
+  ],
+  "publishedAt": "2026-11-12T08:20:11.352647+03:00"
+}

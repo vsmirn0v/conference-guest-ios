@@ -142,9 +142,6 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
         "Settings patch; omitting it applies no changes. Unknown section or field names are rejected.",
         properties: [
             "attention": .object("Attention settings; every field is a boolean.", properties: attentionPatchKeys),
-            "app": .object("App settings.", properties: [
-                "multiple_meetings": .boolean("Allow joining more than one meeting at once."),
-            ]),
         ])
     let desiredState = MCPToolProperty.object(
         "Requested device state; an empty object is allowed. Joining (room:/occurrence: targets) uses microphone=false to join muted; leave and camera apply to active sessions only.",

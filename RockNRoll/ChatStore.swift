@@ -50,6 +50,8 @@ final class ChatStore: ObservableObject {
     }
     var onSend: ((String) -> Void)?
     var onRetry: ((ChatEntry) -> Void)?
+    /// Optional capture before the visible chat window trims or replaces rows.
+    var onCapture: (([ChatEntry]) -> Void)?
 
     func send(_ text: String) -> Bool {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,6 +75,7 @@ final class ChatStore: ObservableObject {
             if !items.isEmpty { items = [] }
             return
         }
+        if let onCapture { onCapture(messages.map(entry)) }
         let anchor = snapshotTail.last
         var start = 0
         var verified = !hasSnapshot
@@ -97,6 +100,7 @@ final class ChatStore: ObservableObject {
     }
 
     func append(_ message: ChatEntry) {
+        onCapture?([message])
         guard !hasSnapshot || message.sentAt > (newestTimestamp ?? .distantPast) || seenMessageIDs.contains(message.id) else { return }
         guard remember(message.id) else { return }
         if !message.isOwn && !isConversationOpen { unreadCount += 1 }
@@ -107,6 +111,7 @@ final class ChatStore: ObservableObject {
     func setDelivery(_ delivery: ChatDelivery, for id: String) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].delivery = delivery
+        onCapture?([items[index]])
     }
 
     func retry(_ id: String) {

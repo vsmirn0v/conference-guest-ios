@@ -18,7 +18,7 @@ struct ParticipationOutcomeActivity: View {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(receipts) { receipt in
                             HStack(alignment: .firstTextBaseline) {
-                                Text(receipt.state.title)
+                                Text(receipt.title)
                                 Spacer()
                                 Text(receipt.createdAt.formatted(date: .omitted, time: .shortened))
                                     .foregroundStyle(.secondary)

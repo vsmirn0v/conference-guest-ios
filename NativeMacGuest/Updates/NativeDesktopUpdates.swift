@@ -17,7 +17,7 @@ import SwiftUI
 /// Direct-distribution only. Meeting admission and Sparkle callbacks share MainActor.
 @MainActor final class NativeDesktopUpdates: NSObject, ObservableObject, SPUUpdaterDelegate {
     let safety: NativeUpdateSafety
-    @Published private(set) var status = "Updates install only when no meeting is active."
+    @Published private(set) var status = L("Updates install only when no meeting is active.")
     @Published private(set) var beta = UserDefaults.standard.bool(forKey: "native.updates.beta")
     private var subscriptions = Set<AnyCancellable>()
     private var deferred: [() -> Void] = []
@@ -42,7 +42,7 @@ import SwiftUI
         updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: self)
         safety.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         updater.publisher(for: \.canCheckForUpdates).sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
-        if let target = safety.recoveryTargetBuild { status = "Finish updating to build \(target) before joining a meeting."; prepared = true }
+        if let target = safety.recoveryTargetBuild { status = L("Finish updating to build %ld before joining a meeting.", target); prepared = true }
     }
     /// A newer published build than the update Sparkle already downloaded.
     @Published private(set) var newerThanDownloaded: (build: Int, url: URL)?
@@ -69,7 +69,8 @@ import SwiftUI
                   (response as? HTTPURLResponse)?.statusCode == 200,
                   let latest = Self.latestBuild(in: data, beta: beta), latest.build > staged else { return }
             self?.newerThanDownloaded = latest
-            self?.status = "Build \(staged) was downloaded earlier. Build \(latest.build) is newer: install \(staged) now and the app checks again after it restarts, or download \(latest.build) directly."
+            self?.status = L("Build %ld was downloaded earlier. Build %ld is newer: install %ld now and the app checks again after it restarts, or download %ld directly.",
+                             staged, latest.build, staged, latest.build)
         }
     }
     nonisolated static func latestBuild(in data: Data, beta: Bool) -> (build: Int, url: URL)? {
@@ -84,7 +85,7 @@ import SwiftUI
     func check() {
         guard updater.canCheckForUpdates else { return }
         if busy() {
-            status = "Checking in the background. Installation will wait until the meeting ends."
+            status = L("Checking in the background. Installation will wait until the meeting ends.")
             updater.checkForUpdatesInBackground()
         } else { updater.checkForUpdates() }
     }
@@ -94,7 +95,7 @@ import SwiftUI
         updater.resetUpdateCycle()
     }
     func showWhenIdle(_ action: @escaping () -> Void) {
-        if busy() { deferred.append(action); status = "An update is waiting until the meeting ends." }
+        if busy() { deferred.append(action); status = L("An update is waiting until the meeting ends.") }
         else { action() }
     }
     func activityChanged() {
@@ -128,7 +129,7 @@ import SwiftUI
                 guard let self, self.cycleActive, self.cycleEpoch == epoch else { return }
                 self.installChoice(choice, reply: reply)
             }
-            status = "The update will install after the meeting ends."
+            status = L("The update will install after the meeting ends.")
             return
         }
         let epoch = cycleEpoch
@@ -141,7 +142,7 @@ import SwiftUI
             guard cycleActive, cycleEpoch == epoch else { return }
             mediaPreparation = nil; mediaPreparedForInstall = clean
             guard clean, reserve() else {
-                status = "Media could not stop safely for the update. Leave any private check and try again."
+                status = L("Media could not stop safely for the update. Leave any private check and try again.")
                 reply(.dismiss); return
             }
             reply(choice)
@@ -149,7 +150,7 @@ import SwiftUI
     }
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
         guard !safety.installationReserved else { throw NativeUpdateSafety.SafetyError.installerMayRun }
-        status = "Checking for updates…"
+        status = L("Checking for updates…")
         cycleActive = true; cycleEpoch = UUID(); installWhenIdle = nil; deferred.removeAll(); driver.invalidate()
     }
     func allowedChannels(for updater: SPUUpdater) -> Set<String> { beta ? ["beta"] : [] }
@@ -179,7 +180,7 @@ import SwiftUI
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         invalidateCycle()
         clearPreparedIfSafe()
-        if error == nil, !prepared { status = "Updates install only when no meeting is active." }
+        if error == nil, !prepared { status = L("Updates install only when no meeting is active.") }
     }
     private func invalidateCycle() {
         let epoch = cycleEpoch
@@ -275,7 +276,7 @@ struct NativeDesktopUpdatesView: View {
                 Button("Check for Updates…") { updates.check() }.disabled(!updates.updater.canCheckForUpdates)
                 Text(updates.status).font(.caption).foregroundStyle(.secondary)
                 if let newer = updates.newerThanDownloaded {
-                    Link("Download build \(newer.build)", destination: newer.url)
+                    Link(L("Download build %ld", newer.build), destination: newer.url)
                 }
             }
         }

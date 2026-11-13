@@ -73,6 +73,7 @@ final class NativeGuestEngine {
     var onMeetingChange: ((GuestMeetingSnapshot) -> Void)? {
         didSet { onMeetingChange?(meetingSnapshot) }
     }
+    var onCapturedMessages: (([GuestMeetingMessage], Bool) -> Void)?
     var meetingSnapshot: GuestMeetingSnapshot { meetingFeatures.snapshot }
     /// Production capture injection, also used for an explicitly selected device.
     var cameraCaptureFactory: ((LKRTCVideoSource) -> any GuestCameraCapture)?
@@ -194,6 +195,7 @@ final class NativeGuestEngine {
     private var published: [String: String] = [:]
     private var publicationKinds: [String: String] = [:]
     private var forcedMuteSIDs = Set<String>()
+    private var participationVoiceSender: GuestAutonomousVoicePlayback?
     private var pendingPublications: [String: GuestCompletion<[String: Any]>] = [:]
     private(set) var failure: Error?
 #if DEBUG
@@ -365,7 +367,7 @@ final class NativeGuestEngine {
             probeLog("server-error", ["client": probeClient, "correlated": event["requestId"] != nil])
             if event["requestId"] == nil { throw GuestEngineError.admissionDenied }
         default:
-            meetingFeatures.receive(event); emitMeetingChange()
+            meetingFeatures.receive(event, capture: onCapturedMessages); emitMeetingChange()
             if ["participant-joined", "participant-left"].contains(kind) {
                 probeLog(kind, ["client": probeClient, "participantToken": (payload["participantId"] as? String).map { String($0.hashValue) } ?? "absent"])
             }
@@ -1162,6 +1164,10 @@ final class NativeGuestEngine {
 
     /// Synchronous privacy barrier used even while publication/control is suspended.
     func setLocalMuteIntent(_ muted: Bool, video: Bool) {
+        if !video, let participationVoiceSender {
+            participationVoiceSender.cancel()
+            publisher?.suppress(video: false)
+        }
         localMuteIntent[video] = muted
         meetingFeatures.setLocalMute(muted, video: video); emitMeetingChange()
         if !muted, let sid = published[video ? "video" : "audio"] { forcedMuteSIDs.remove(sid) }
@@ -1199,6 +1205,84 @@ final class NativeGuestEngine {
             throw GuestEngineError.admissionDenied
         }
     }
+
+    /// The existing Guest audio track carries synthesized speech while its
+    /// user's desired mute remains true. The physical gate is already settled
+    /// closed and a host-forced mute cannot be overridden by this path.
+    func borrowParticipationVoiceSender(_ permit: GuestAutonomousVoicePlayback) async -> Bool {
+        guard participationVoiceSender == nil, let sid = published["audio"],
+              let publisher, let systemAudio, serverMute[sid] == true,
+              permitsParticipationVoice(permit, sid: sid, audio: systemAudio) else { return false }
+        participationVoiceSender = permit
+        do {
+            try await signalParticipationMute(false, sid: sid)
+            guard permitsParticipationVoice(permit, sid: sid, audio: systemAudio),
+                  await systemAudio.setParticipationSenderMuted(false, permit: permit),
+                  permitsParticipationVoice(permit, sid: sid, audio: systemAudio) else { return false }
+            try await publisher.setMuted(false, video: false)
+            return self.publisher === publisher && serverMute[sid] == false
+                && permitsParticipationVoice(permit, sid: sid, audio: systemAudio)
+        } catch { return false }
+    }
+
+    /// Initializes a cold input graph under both local and server mute, then
+    /// verifies and closes the new graph's raw microphone gate.
+    func prepareParticipationVoiceAudio(_ permit: GuestAutonomousVoicePlayback) async -> Bool {
+        guard permit.canStart, !closing, failure == nil, !outputSuppressed, localMuteIntent[false] == true,
+              permissions["canShareMicrophone"] == true, let sid = published["audio"],
+              serverMute[sid] == true, !forcedMuteSIDs.contains(sid), let publisher, let systemAudio else { return false }
+        publisher.suppress(video: false)
+        guard await systemAudio.setParticipationSenderMuted(true, permit: permit), permit.canStart,
+              !Task.isCancelled, await systemAudio.activateMicrophone(), permit.canStart,
+              systemAudio.setMicrophoneGate(open: false), systemAudio.participationVoiceGateClosed else { return false }
+        return permitsParticipationVoice(permit, sid: sid, audio: systemAudio)
+    }
+
+    /// Suppress RTP before waiting for the audio module and service to
+    /// confirm mute. The caller leaves the raw gate closed on any failure.
+    func restoreParticipationVoiceSender(_ permit: GuestAutonomousVoicePlayback) async -> Bool {
+        guard participationVoiceSender === permit else { return true }
+        publisher?.suppress(video: false)
+        let muted = await systemAudio?.setParticipationSenderMuted(true, permit: permit) == true
+        if let sid = published["audio"] {
+            do {
+                try await signalParticipationMute(true, sid: sid)
+                if muted { participationVoiceSender = nil; return true }
+            } catch {}
+        }
+        // A connection whose audio mute cannot be confirmed must not reopen
+        // the raw gate. Normal recovery reapplies the unchanged user mute.
+        recordFailure(GuestEngineError.disconnected)
+        return false
+    }
+
+    private func permitsParticipationVoice(_ permit: GuestAutonomousVoicePlayback, sid: String,
+                                            audio: any GuestMeetingAudio) -> Bool {
+        !Task.isCancelled && permit.canStart && !closing && failure == nil && !outputSuppressed
+            && localMuteIntent[false] == true && permissions["canShareMicrophone"] == true
+            && !forcedMuteSIDs.contains(sid) && published["audio"] == sid && audio.participationVoiceGateClosed
+    }
+
+    private func signalParticipationMute(_ muted: Bool, sid: String) async throws {
+        let completion = GuestCompletion<Void>()
+        guard muteWaiters[sid] == nil else { throw GuestEngineError.malformed }
+        muteWaiters[sid] = (muted, completion, localParticipantVersion)
+        defer { muteWaiters.removeValue(forKey: sid) }
+        // Await enqueue in the calling task. A cancelled unmute may have
+        // reached the writer; its compensating mute then follows on the wire.
+        try await media(["method": "rtc:track:muted", "mute": ["sid": sid, "muted": muted]])
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { continuation in
+                completion.install(continuation, timeout: muted ? 3 : 2)
+            }
+        } onCancel: { completion.finish(.failure(CancellationError())) }
+    }
+#if DEBUG
+    func signalParticipationMuteForTesting(_ muted: Bool, sid: String) async throws {
+        try await signalParticipationMute(muted, sid: sid)
+    }
+#endif
 
     func mute(_ muted: Bool, video: Bool = false) async throws {
         try checkActive()
@@ -1485,15 +1569,28 @@ extension NativeGuestEngine {
         guard joined, meetingSnapshot.permissions.canSendChat, !text.isEmpty, text.count <= 2_000,
               text.utf8.count <= 16_384 else { throw GuestEngineError.admissionDenied }
         let id = UUID().uuidString.lowercased()
-        meetingFeatures.addOutgoing(id: id, text: text); emitMeetingChange()
+        meetingFeatures.addOutgoing(id: id, text: text)
+        captureOutgoing(id)
+        emitMeetingChange()
         do {
             _ = try await featureRequest("send-chat-message", payload: ["messageText": text], requestID: id)
             try checkActive()
-            meetingFeatures.finishOutgoing(id: id, succeeded: true); emitMeetingChange()
+            meetingFeatures.finishOutgoing(id: id, succeeded: true)
+            captureOutgoing(id)
+            emitMeetingChange()
             return id
         } catch {
-            meetingFeatures.finishOutgoing(id: id, succeeded: false); emitMeetingChange()
+            meetingFeatures.finishOutgoing(id: id, succeeded: false)
+            captureOutgoing(id)
+            emitMeetingChange()
             throw error
+        }
+    }
+
+    private func captureOutgoing(_ id: String) {
+        if var message = meetingSnapshot.messages.first(where: { $0.id == id }) {
+            message.locallyAcknowledged = message.delivery == .sent && message.receivedAt == nil
+            onCapturedMessages?([message], false)
         }
     }
 
@@ -1530,7 +1627,8 @@ extension NativeGuestEngine {
         guard meetingFeatures.acceptsScope(response), let payload = response["payload"] as? [String: Any] else {
             throw GuestEngineError.malformed
         }
-        try meetingFeatures.acceptHistory(payload, transcript: transcript, epoch: epoch); emitMeetingChange()
+        try meetingFeatures.acceptHistory(payload, transcript: transcript, epoch: epoch, capture: onCapturedMessages)
+        emitMeetingChange()
     }
 
     func setTranscriptionEnabled(_ enabled: Bool) async throws {
@@ -1728,7 +1826,7 @@ extension NativeGuestEngine {
     }
     func prepareJoinForTesting(microphone: Bool = true, camera: Bool = true) async throws -> GuestPeer {
         guard publisher == nil else { throw GuestEngineError.malformed }
-        let peer = try await GuestPeer(target: .publisher, factory: factory)
+        let peer = try await makePeer(.publisher)
         let config = peer.connection.configuration
         config.iceServers = []; config.iceTransportPolicy = .none
         guard peer.connection.setConfiguration(config) else { throw GuestPeerError.malformed }

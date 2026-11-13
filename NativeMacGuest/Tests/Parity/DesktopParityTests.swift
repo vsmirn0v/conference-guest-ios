@@ -36,7 +36,11 @@ import XCTest
     var voiceReply = false
     var supportsVoiceReply: Bool { voiceReply }
     var voiceReplies = 0
-    func setMicrophoneGate(open: Bool) async -> Bool { true }
+    private(set) var voiceMicrophoneGateIsClosed = false
+    func setMicrophoneGate(open: Bool) async -> Bool {
+        voiceMicrophoneGateIsClosed = !open
+        return true
+    }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { voiceReplies += 1; return true }
     var onConnect: (() async throws -> Void)?
     var onMicrophoneEnable: (() async throws -> Void)?
@@ -1149,7 +1153,7 @@ private final class DesktopActivitySpy: NSUserActivity {
                 let engine = engines[created]; created += 1
                 return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine,
                     joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower(), sharedMedia: media)
-            }, multipleMeetings: { true }, attention: attention ?? desktopTestAttention())
+            }, attention: attention ?? desktopTestAttention())
     }
     private func room(_ index: Int) -> URL { URL(string: "https://example.test/calls/multi-\(index)")! }
     private func join(_ workspace: NativeDesktopWorkspace, _ index: Int) async throws {
@@ -1197,7 +1201,7 @@ private final class DesktopActivitySpy: NSUserActivity {
             let engine = engines[created]; created += 1
             return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine,
                 joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower(), sharedMedia: media)
-        }, multipleMeetings: { true }, attention: desktopTestAttention())
+        }, attention: desktopTestAttention())
         workspace.join(room(1))
         try await spin { detecting != nil }
         workspace.join(room(2))
@@ -1209,6 +1213,13 @@ private final class DesktopActivitySpy: NSUserActivity {
         let clean = await workspace.leave(); XCTAssertTrue(clean)
     }
     func testSecondJoinAddsListeningMeetingWithoutLeavingFirst() async throws {
+        // Users who opted out before the setting was removed still get the new behavior.
+        let defaults = UserDefaults.standard, domain = UserDefaults.argumentDomain
+        let previous = defaults.volatileDomain(forName: domain)
+        var arguments = previous
+        arguments["nativeDesktop.multipleMeetings"] = false
+        defaults.setVolatileDomain(arguments, forName: domain)
+        defer { defaults.setVolatileDomain(previous, forName: domain) }
         let first = DesktopTestEngine(), second = DesktopTestEngine()
         let workspace = multiWorkspace([first, second])
         try await join(workspace, 1); try await join(workspace, 2)

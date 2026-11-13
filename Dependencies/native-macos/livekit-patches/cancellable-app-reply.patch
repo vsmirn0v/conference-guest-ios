@@ -1,0 +1,329 @@
+diff --git a/Sources/LiveKit/Audio/MixerEngineObserver.swift b/Sources/LiveKit/Audio/MixerEngineObserver.swift
+index 3e4e2c2..323e398 100644
+--- a/Sources/LiveKit/Audio/MixerEngineObserver.swift
++++ b/Sources/LiveKit/Audio/MixerEngineObserver.swift
+@@ -69,6 +69,9 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+         // App audio (Input)
+         let appNode = AVAudioPlayerNode()
+         let appMixerNode = AVAudioMixerNode()
++        #if os(macOS)
++        let appReplyPlayer = NativeAppReplyPlayer()
++        #endif
+ 
+         // Mic audio (Input), not connected for device rendering mode.
+         let micNode = AVAudioPlayerNode()
+@@ -146,6 +149,13 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+ 
+         engine.attach(appNode)
+         engine.attach(appMixerNode)
++        #if os(macOS)
++        let reply = _state.read { $0.appReplyPlayer }
++        reply.node.maximumFramesToRender = maxFrames
++        engine.attach(reply.node)
++        reply.monitor.maximumFramesToRender = maxFrames
++        engine.attach(reply.monitor)
++        #endif
+         engine.attach(micNode)
+         engine.attach(micMixerNode)
+         engine.attach(soundPlayerNodes)
+@@ -164,6 +174,12 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+         }
+ 
+         engine.detach(appNode)
++        #if os(macOS)
++        let reply = _state.read { $0.appReplyPlayer }
++        reply.invalidateRoute()
++        if reply.node.engine === engine { engine.detach(reply.node) }
++        if reply.monitor.engine === engine { engine.detach(reply.monitor) }
++        #endif
+         engine.detach(appMixerNode)
+         engine.detach(micNode)
+         engine.detach(micMixerNode)
+@@ -178,8 +194,12 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+         let mainMixerNode = engine.isInManualRenderingMode ? engine.mainMixerNode : (context[kLKRTCAudioEngineInputMixerNodeKey] as? AVAudioMixerNode)
+ 
+         guard let mainMixerNode else {
+-            // If failed to get main mixer, call next and return.
++            #if os(macOS)
++            // The ADM falls back to raw microphone wiring on successful return.
++            return -1
++            #else
+             return next?.engineWillConnectInput(engine, src: src, dst: dst, format: format, context: context) ?? 0
++            #endif
+         }
+ 
+         // Read nodes from state lock.
+@@ -194,13 +214,20 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+                                                    interleaved: format.isInterleaved)
+         else {
+             log("Failed to create player node format", .error)
++            #if os(macOS)
++            return -1
++            #else
+             return next?.engineWillConnectInput(engine, src: src, dst: dst, format: format, context: context) ?? 0
++            #endif
+         }
+ 
+         log("Connecting app -> appMixer -> mainMixer")
+         // appAudio -> appAudioMixer -> mainMixer
+         engine.connect(appNode, to: appMixerNode, format: playerNodeFormat)
+         engine.connect(appMixerNode, to: mainMixerNode, format: format)
++        #if os(macOS)
++        _state.read { $0.appReplyPlayer }.connect(to: appMixerNode, engine: engine, format: playerNodeFormat)
++        #endif
+ 
+         // src is not null if device rendering mode.
+         if let src {
+@@ -228,6 +255,9 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+             $0.isInputConnected = true
+         }
+ 
++        #if os(macOS)
++        guard nativeAppReplyInputIsConnected(engine: engine, source: src, inputMixer: mainMixerNode) else { return -1 }
++        #endif
+         // Invoke next
+         return next?.engineWillConnectInput(engine, src: src, dst: dst, format: format, context: context) ?? 0
+     }
+@@ -241,6 +271,13 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+         }
+ 
+         engine.mainMixerNode.outputVolume = outputVolume
++        #if os(macOS)
++        // In manual mode the engine's main mixer feeds outgoing capture.
++        // Never attach a local copy to it.
++        if !engine.isInManualRenderingMode, dst === engine.outputNode, let mixer = src as? AVAudioMixerNode {
++            _state.read { $0.appReplyPlayer }.connectMonitor(to: mixer, engine: engine, format: format)
++        }
++        #endif
+ 
+         return next?.engineWillConnectOutput(engine, src: src, dst: dst, format: format, context: context) ?? 0
+     }
+@@ -254,12 +291,18 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+         micNode.reset()
+         appNode.reset()
+         soundPlayerNodes.reset()
++        #if os(macOS)
++        _state.read { $0.appReplyPlayer }.interrupt()
++        #endif
+ 
+         return next?.engineWillStart(engine, isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
+     }
+ 
+     public func engineDidStop(_ engine: AVAudioEngine, isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int {
+         log("isPlayoutEnabled: \(isPlayoutEnabled), isRecordingEnabled: \(isRecordingEnabled)")
++        #if os(macOS)
++        _state.read { $0.appReplyPlayer }.interrupt()
++        #endif
+         // Invoke next first
+         let nextResult = next?.engineDidStop(engine, isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled)
+ 
+@@ -275,6 +318,32 @@ public final class MixerEngineObserver: AudioEngineObserver, Loggable {
+ }
+ 
+ extension MixerEngineObserver {
++    #if os(macOS)
++    /// Checks this engine's actual connections before the meeting enables a sender.
++    public func nativeAppReplyInputIsConnected(engine: AVAudioEngine, source: AVAudioNode?, inputMixer: AVAudioNode) -> Bool {
++        let (microphone, app, reply) = _state.read { ($0.micMixerNode, $0.appMixerNode, $0.appReplyPlayer.node) }
++        func connects(_ from: AVAudioNode, to target: AVAudioNode) -> Bool {
++            from.engine === engine && target.engine === engine &&
++                engine.outputConnectionPoints(for: from, outputBus: 0).contains { $0.node === target }
++        }
++        let sourceConnected = source.map { connects($0, to: microphone) } ?? engine.isInManualRenderingMode
++        return sourceConnected && connects(microphone, to: inputMixer) &&
++            connects(reply, to: app) && connects(app, to: inputMixer)
++    }
++
++    /// Sends one reply using the existing WebRTC input graph. Cancellation
++    /// synchronously clears this reply's scheduled audio without touching the mic.
++    @MainActor public func playNativeAppReply(_ buffer: AVAudioPCMBuffer, localGain: Float? = nil,
++                                              canStart: @MainActor () -> Bool) async -> Bool
++    {
++        await _state.read { $0.appReplyPlayer }.play(buffer, localGain: localGain, canStart: canStart)
++    }
++
++    public func setNativeAppReplyMonitorGain(_ gain: Float) {
++        _state.read { $0.appReplyPlayer }.setMonitorGain(gain)
++    }
++    #endif
++
+     // Create or use cached AudioConverter.
+     func converter(for format: AVAudioFormat) -> AudioConverter? {
+         _state.mutate {
+diff --git a/Sources/LiveKit/Audio/NativeAppReplyPlayer.swift b/Sources/LiveKit/Audio/NativeAppReplyPlayer.swift
+new file mode 100644
+index 0000000..9256907
+--- /dev/null
++++ b/Sources/LiveKit/Audio/NativeAppReplyPlayer.swift
+@@ -0,0 +1,171 @@
++/*
++ * Rock'N'Roll for Mac patch (Dependencies/native-macos/livekit-patches/cancellable-app-reply.patch).
++ * Licensed under the Apache License, Version 2.0, like the rest of this SDK.
++ */
++
++#if os(macOS)
++@preconcurrency import AVFoundation
++import Foundation
++
++/// One cancellable speech buffer on the SDK's outgoing mixer, with an optional
++/// local copy on its separate output mixer. Ordinary app audio has its own node.
++final class NativeAppReplyPlayer: @unchecked Sendable {
++    let node = AVAudioPlayerNode()
++    let monitor = AVAudioPlayerNode()
++    private enum Path: Sendable { case outgoing, local }
++    private struct Route {
++        let id = UUID()
++        let format: AVAudioFormat
++        weak var mixer: AVAudioMixerNode?
++    }
++    private struct Active {
++        let id: UUID
++        let continuation: CheckedContinuation<Bool, Never>
++        var outgoing = true
++        var local: Bool
++    }
++    private let lock = NSLock()
++    private var route: Route?
++    private var monitorRoute: Route?
++    private var active: Active?
++
++    func connect(to mixer: AVAudioMixerNode, engine: AVAudioEngine, format: AVAudioFormat) {
++        lock.lock()
++        route = nil
++        let current = takeActive()
++        lock.unlock()
++        current?.resume(returning: false)
++        engine.connect(node, to: mixer, format: format)
++        lock.lock()
++        route = Route(format: format, mixer: mixer)
++        lock.unlock()
++    }
++
++    func connectMonitor(to mixer: AVAudioMixerNode, engine: AVAudioEngine, format: AVAudioFormat) {
++        guard let pcm = AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: format.channelCount)
++        else { return }
++        lock.lock()
++        guard route?.mixer !== mixer, monitorRoute?.mixer !== mixer || monitorRoute?.format != pcm else {
++            lock.unlock()
++            return
++        }
++        monitorRoute = nil
++        let current = takeActive()
++        lock.unlock()
++        current?.resume(returning: false)
++        engine.connect(monitor, to: mixer, format: pcm)
++        lock.lock()
++        monitorRoute = Route(format: pcm, mixer: mixer)
++        lock.unlock()
++    }
++
++    func setMonitorGain(_ gain: Float) {
++        lock.lock(); defer { lock.unlock() }
++        if active?.local == true { monitor.volume = gain }
++    }
++
++    func interrupt() {
++        lock.lock()
++        let current = takeActive()
++        lock.unlock()
++        current?.resume(returning: false)
++    }
++
++    func invalidateRoute() {
++        lock.lock()
++        route = nil
++        monitorRoute = nil
++        let current = takeActive()
++        lock.unlock()
++        current?.resume(returning: false)
++    }
++
++    @MainActor func play(_ buffer: AVAudioPCMBuffer, localGain: Float? = nil, canStart: @MainActor () -> Bool) async -> Bool {
++        let (outgoing, local) = currentRoutes()
++        guard !Task.isCancelled, let outgoing, let converted = Self.convert(buffer, to: outgoing.format)
++        else { return false }
++        let mirror = localGain.flatMap { gain in
++            gain > 0 ? local.flatMap { Self.convert(buffer, to: $0.format) } : nil
++        }
++        guard localGain == nil || mirror != nil else { return false }
++        let duration = Double(converted.frameLength) / outgoing.format.sampleRate
++        guard duration.isFinite, duration > 0 else { return false }
++
++        let id = UUID()
++        return await withTaskCancellationHandler {
++            await withCheckedContinuation { continuation in
++                guard canStart() else { continuation.resume(returning: false); return }
++                lock.lock()
++                guard !Task.isCancelled, route?.id == outgoing.id, active == nil,
++                      let engine = node.engine, engine.isRunning,
++                      mirror == nil || (monitorRoute?.id == local?.id &&
++                          monitor.engine?.isRunning == true && monitorRoute?.mixer !== route?.mixer) else {
++                    lock.unlock()
++                    continuation.resume(returning: false)
++                    return
++                }
++                active = Active(id: id, continuation: continuation, local: mirror != nil)
++                schedule(converted, on: node, path: .outgoing, id: id)
++                if let mirror, let localGain {
++                    monitor.volume = localGain
++                    schedule(mirror, on: monitor, path: .local, id: id)
++                }
++                lock.unlock()
++                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + duration + 2) { [weak self] in
++                    self?.finish(id)
++                }
++            }
++        } onCancel: {
++            self.finish(id)
++        }
++    }
++
++    private func schedule(_ buffer: AVAudioPCMBuffer, on player: AVAudioPlayerNode, path: Path, id: UUID) {
++        player.scheduleBuffer(buffer, completionCallbackType: .dataRendered) { [weak self] _ in
++            // A stopped buffer also generates a callback. Stop clears its token first.
++            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++                self?.finish(id, rendered: path)
++            }
++        }
++        player.play()
++    }
++
++    private func currentRoutes() -> (Route?, Route?) {
++        lock.lock(); defer { lock.unlock() }
++        return (route, monitorRoute)
++    }
++
++    private func finish(_ id: UUID, rendered path: Path? = nil) {
++        lock.lock()
++        guard var current = active, current.id == id else { lock.unlock(); return }
++        let completed = path != nil && node.engine?.isRunning == true &&
++            (path != .local || monitor.engine?.isRunning == true)
++        if completed {
++            if path == .outgoing { current.outgoing = false } else { current.local = false }
++            if current.outgoing || current.local {
++                active = current
++                lock.unlock()
++                return
++            }
++        }
++        let continuation = takeActive()
++        lock.unlock()
++        continuation?.resume(returning: completed)
++    }
++
++    /// The next phrase waits for both players to discard the old buffers.
++    private func takeActive() -> CheckedContinuation<Bool, Never>? {
++        guard let current = active else { return nil }
++        active = nil
++        node.stop()
++        if monitor.engine != nil { monitor.stop() }
++        return current.continuation
++    }
++
++    private static func convert(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
++        if buffer.format == format { return buffer }
++        let capacity = AudioConverter.frameCapacity(from: buffer.format, to: format, inputFrameCount: buffer.frameLength)
++        return AudioConverter(from: buffer.format, to: format, outputBufferCapacity: capacity)?.convert(from: buffer)
++    }
++}
++#endif

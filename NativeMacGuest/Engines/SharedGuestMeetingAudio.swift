@@ -126,6 +126,19 @@ import LiveKitWebRTC
     /// Voice replies reach only the talk meeting: they share its input graph and sender.
     func setMicrophoneGate(open: Bool) -> Bool { attachment.setMicrophoneGate(open: open) }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await attachment.playVoiceReply(buffer) }
+    var hasParticipationVoiceGraph: Bool { attachment.hasParticipationVoiceGraph }
+    var participationVoiceGateClosed: Bool { attachment.participationVoiceGateClosed }
+    var participationSenderPhysicallyMuted: Bool {
+        owner.participationSenderPhysicallyMuted && !attachment.anySenderEnabled
+    }
+    func setParticipationSenderMuted(_ muted: Bool, permit: GuestAutonomousVoicePlayback) async -> Bool {
+        await attachment.setParticipationSenderMuted(muted, permit: permit)
+    }
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
+        await attachment.playParticipationVoice(buffer, permit: permit, canStart: canStart, localGain: localGain, onStarted: onStarted)
+    }
     /// Leaves the shared engine; the last meeting out releases the device.
     func shutdown(timeout: TimeInterval) async -> Bool { await attachment.detach() }
 }

@@ -464,7 +464,7 @@ import Foundation
         var sections: MCPJSON = [:]
         if requested.contains("app") {
             sections["app"] = [
-                "display_name": library?.displayName ?? "", "multiple_meetings": defaults.object(forKey: "nativeDesktop.multipleMeetings") as? Bool ?? true,
+                "display_name": library?.displayName ?? "",
                 "calendar_enabled": library?.calendar.enabled ?? false, "calendar_access": String(describing: library?.calendar.access ?? .notDetermined),
                 // Published so rocknroll_set_favorite callers can supply expected_revision.
                 "favorite_revision": favoriteRevision,
@@ -645,8 +645,8 @@ import Foundation
             guard allowed[key] != nil else { throw MCPToolFailure("INVALID_ARGUMENT", "Unsupported attention setting: \(key)") }
             updates[key] = try MCPValue.bool(attentionPatch[key], key: key)
         }
-        if let appPatch = sections["app"] as? MCPJSON, appPatch.keys.contains("multiple_meetings"), !(appPatch["multiple_meetings"] is Bool) {
-            throw MCPToolFailure("INVALID_ARGUMENT", "multiple_meetings must be a boolean.")
+        guard sections.keys.allSatisfy({ $0 == "attention" }) else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "Unsupported settings section.")
         }
         // Validate before recording so a refused action leaves no pending record;
         // replays skip the revision check and return the stored result.
@@ -668,9 +668,6 @@ import Foundation
             case "remote_outcomes": store.remoteOutcomes = value
             default: break
             }
-        }
-        if let appPatch = sections["app"] as? MCPJSON, let multiple = appPatch["multiple_meetings"] as? Bool {
-            defaults.set(multiple, forKey: "nativeDesktop.multipleMeetings")
         }
         settingsRevision = UUID().uuidString
         return actions.finish(id, client: client, type: "settings", target: "settings", status: "applied", result: ["action_id": id, "status": "applied", "observed_at": mcpNow(), "entity_id": "settings", "revision": settingsRevision, "warnings": []])

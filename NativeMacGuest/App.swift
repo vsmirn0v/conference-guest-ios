@@ -94,11 +94,29 @@ struct NativeGuestApplication {
     private var busyForUpdate: Bool {
         terminating || admittingCompanion || workspace?.busyForUpdate == true || (controller != nil && controller?.finished == false)
     }
+    private var companionAdmissionBlock: CompanionMeetingAdmission.Block? {
+        CompanionMeetingAdmission.block(admitting: admittingCompanion, finished: controller?.finished,
+            cleanupSucceeded: controller?.cleanupSucceeded ?? true)
+    }
     private func makeWorkspace() -> NativeDesktopWorkspace {
         let value = NativeDesktopWorkspace()
+        value.mayAdmitMeeting = { [weak self] in
+            guard let self, !terminating, companionAdmissionBlock == nil else { return false }
+            #if NATIVE_DIRECT_UPDATES
+            return updates?.mayStartMeeting == true
+            #else
+            return true
+            #endif
+        }
+        value.meetingAdmissionError = { [weak self] in
+            switch self?.companionAdmissionBlock {
+            case .active: return L("Finish the companion meeting before joining another meeting.")
+            case .failedCleanup: return L("The companion meeting did not stop cleanly. Quit and reopen the app before joining another meeting.")
+            case nil: return nil
+            }
+        }
         #if NATIVE_DIRECT_UPDATES
         value.updates = updates
-        value.mayAdmitMeeting = { [weak self] in self?.updates?.mayStartMeeting == true && self?.terminating == false }
         value.onUpdateActivityChanged = { [weak self] in
             Task { @MainActor in self?.updates?.activityChanged() }
         }

@@ -51,7 +51,8 @@ import XCTest
         XCTAssertFalse(unmuted, "Unmuting is refused while another meeting holds the talk role")
         let granted = await owner.setInputPermitted(true); XCTAssertTrue(granted)
         XCTAssertEqual(owner.snapshot["inputKeptWarm"] as? Bool, false)
-        XCTAssertTrue(owner.setMicrophoneGate(open: false), "Without an input graph the gate state is kept for when one is built")
+        XCTAssertFalse(owner.setMicrophoneGate(open: false), "A cold graph cannot prove that the raw microphone is gated")
+        XCTAssertEqual(owner.snapshot["microphoneMuted"] as? Bool, true)
         let played = await owner.playVoiceReply(Self.tone(seconds: 0.1, frequency: 300, amplitude: 0.2))
         XCTAssertFalse(played, "Nothing plays without an input graph")
         XCTAssertTrue(owner.setMicrophoneGate(open: true))
@@ -270,6 +271,143 @@ import XCTest
         _ = await model.leave()
     }
 
+#if DEBUG
+    func testParticipationSoundOffAndZeroVolumeInterruptBothAudioRoutes() async throws {
+        let silence: [(NativeDesktopMeetingModel) -> Void] = [
+            { $0.togglePlayout() },
+            { $0.setMeetingVolume(0, persist: false) },
+        ]
+        for silenceMeeting in silence {
+            let model = try await meeting(VoiceTestEngine())
+            await model.setMicrophoneForTesting(true)
+            XCTAssertTrue(model.participationMeetingSoundOn)
+            let audio = try OfflineVoiceGraph(connectMonitor: true)
+            defer { audio.engine.stop() }
+            let permit = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+            let reply = ParticipationVoiceReply(id: UUID().uuidString, text: "The rollout starts Friday.",
+                                                createdAt: Date(), status: .speaking)
+            model.participation.setVoicePlaybackForTesting(permit, reply: reply)
+            let phrase = audio.tone(seconds: 1)
+            let playback = Task { await audio.graph.playAutonomous(phrase, permit: permit, localGain: { 0.5 }) }
+            defer { permit.cancel() }
+            try await audio.waitForStart(permit)
+            XCTAssertEqual(try audio.renderRMS(), Float(0.3 / 2.squareRoot()), accuracy: 0.01)
+
+            silenceMeeting(model)
+            XCTAssertFalse(model.participationMeetingSoundOn)
+            XCTAssertFalse(audio.graph.player.isPlaying)
+            XCTAssertEqual(try audio.renderRMS(), 0, accuracy: 0)
+            let outcome = await playback.value
+            XCTAssertEqual(outcome, .interrupted)
+            XCTAssertTrue(model.snapshot.microphoneOn, "Silencing the meeting does not change the user's microphone choice")
+            XCTAssertEqual(model.participation.voiceReplies.map(\.text), [reply.text])
+            _ = await model.leave()
+        }
+    }
+
+    func testParticipationMicrophoneMuteStopsVoiceAndKeepsTheGateClosedUntilConfirmed() async throws {
+        let engine = VoiceTestEngine()
+        let model = try await meeting(engine)
+        await model.setMicrophoneForTesting(true)
+        XCTAssertTrue(model.snapshot.microphoneOn)
+        engine.events.removeAll()
+
+        let audio = try OfflineVoiceGraph(connectMonitor: true)
+        defer { audio.engine.stop() }
+        let permit = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        model.participation.setVoicePlaybackForTesting(permit)
+        let phrase = audio.tone(seconds: 1)
+        let playback = Task { await audio.graph.playAutonomous(phrase, permit: permit, localGain: { 0.5 }) }
+        defer { permit.cancel() }
+        try await audio.waitForStart(permit)
+        XCTAssertEqual(try audio.renderRMS(), Float(0.3 / 2.squareRoot()), accuracy: 0.01)
+
+        let (muteRelease, releaseMute) = AsyncStream.makeStream(of: Void.self)
+        defer { releaseMute.finish() }
+        engine.beforeMicrophoneChange = { enabled in
+            guard !enabled else { return }
+            for await _ in muteRelease {}
+        }
+        let mute = Task { await model.setMicrophoneForTesting(false) }
+        for _ in 0..<100 where !engine.events.contains("mic:false") { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(engine.events.contains("mic:false"))
+        let outcome = await playback.value
+        XCTAssertEqual(outcome, .interrupted)
+        XCTAssertEqual(try audio.renderRMS(), 0, accuracy: 0)
+        XCTAssertTrue(model.snapshot.microphoneOn, "The mute is still waiting for confirmation")
+
+        model.restoreParticipationVoiceGateForTesting { XCTFail("Microphone gate opened before the mute was confirmed") }
+        XCTAssertTrue(model.participationVoiceGateHeldForTesting)
+        releaseMute.finish()
+        await mute.value
+        XCTAssertFalse(model.snapshot.microphoneOn)
+        XCTAssertFalse(model.participationVoiceGateHeldForTesting)
+        for _ in 0..<50 where !engine.events.contains("gate:true") { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(engine.events.contains("gate:true"))
+        _ = await model.leave()
+    }
+
+    func testMovingTheTalkRoleClearsOldParticipationVoiceBeforeReleasingTheInput() async throws {
+        for microphoneWasOn in [true, false] {
+            let engine = VoiceTestEngine()
+            let model = try await meeting(engine)
+            if microphoneWasOn { await model.setMicrophoneForTesting(true) }
+            let audio = try OfflineVoiceGraph()
+            defer { audio.engine.stop() }
+            let permit = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+            model.participation.setVoicePlaybackForTesting(permit)
+            let phrase = audio.tone(seconds: 1)
+            let playback = Task { await audio.graph.playAutonomous(phrase, permit: permit) }
+            defer { permit.cancel() }
+            try await audio.waitForStart(permit)
+            XCTAssertGreaterThan(try audio.renderRMS(), 0.1)
+
+            engine.beforeInputPermitChange = { permitted in
+                if !permitted { XCTAssertFalse(audio.graph.player.isPlaying, "Voice must stop before the microphone is released") }
+            }
+            let released = await model.relinquishMicrophone()
+            let outcome = await playback.value
+            XCTAssertTrue(released)
+            XCTAssertFalse(model.ownsMicrophone)
+            XCTAssertEqual(outcome, .interrupted)
+            XCTAssertEqual(try audio.renderRMS(), 0, accuracy: 0)
+            await model.assumeMicrophone()
+            XCTAssertTrue(model.ownsMicrophone)
+            XCTAssertFalse(model.snapshot.microphoneOn)
+            let stalePlayback = await audio.graph.playAutonomous(phrase, permit: permit)
+            XCTAssertEqual(stalePlayback, .notStarted)
+            XCTAssertEqual(try audio.renderRMS(), 0, accuracy: 0)
+            _ = await model.leave()
+        }
+    }
+
+    func testLeavingAMutedMeetingStopsParticipationVoiceWithoutChangingMicIntent() async throws {
+        let engine = VoiceTestEngine()
+        let model = try await meeting(engine)
+        XCTAssertFalse(model.snapshot.microphoneOn)
+        let audio = try OfflineVoiceGraph(connectMonitor: true)
+        defer { audio.engine.stop() }
+        let permit = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        model.participation.setVoicePlaybackForTesting(permit)
+        let phrase = audio.tone(seconds: 1)
+        let playback = Task { await audio.graph.playAutonomous(phrase, permit: permit, localGain: { 0.5 }) }
+        defer { permit.cancel() }
+        try await audio.waitForStart(permit)
+        XCTAssertGreaterThan(try audio.renderRMS(), 0.1)
+
+        let left = await model.leave()
+        let outcome = await playback.value
+        XCTAssertTrue(left)
+        XCTAssertEqual(outcome, .interrupted)
+        XCTAssertFalse(model.snapshot.microphoneOn)
+        XCTAssertFalse(engine.events.contains("mic:true"))
+        XCTAssertEqual(try audio.renderRMS(), 0, accuracy: 0)
+        let stalePlayback = await audio.graph.playAutonomous(phrase, permit: permit)
+        XCTAssertEqual(stalePlayback, .notStarted)
+        XCTAssertEqual(try audio.renderRMS(), 0, accuracy: 0)
+    }
+#endif
+
     // MARK: Helpers
 
     private func meeting(_ engine: VoiceTestEngine) async throws -> NativeDesktopMeetingModel {
@@ -327,6 +465,8 @@ import XCTest
     var failMute = false
     var failGate = false
     var playResult = true
+    var beforeMicrophoneChange: ((Bool) async -> Void)?
+    var beforeInputPermitChange: ((Bool) -> Void)?
 
     func connect(invitation: URL, name: String, quiet: Bool) async throws {
         snapshot = .init(phase: .connected, playoutOn: !quiet, participants: [.init(id: "me", name: name, isLocal: true)])
@@ -336,6 +476,7 @@ import XCTest
     func setMicrophone(_ enabled: Bool) async throws {
         if !enabled && failMute { throw NativeDesktopRTCError.invalidResponse }
         events.append("mic:\(enabled)")
+        await beforeMicrophoneChange?(enabled)
         snapshot.microphoneOn = enabled; onState?(snapshot)
     }
     func forceMicrophone(_ enabled: Bool) { snapshot.microphoneOn = enabled; onState?(snapshot) }
@@ -344,11 +485,18 @@ import XCTest
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {}
     func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool { await setPhysicalInputPermitted(permitted, keepDeviceWarm: false) }
     func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
+        beforeInputPermitChange?(permitted)
         events.append("permit:\(permitted) warm:\(keepDeviceWarm)"); return true
     }
     func prewarmInput() async -> Bool { events.append("prewarm"); return true }
     var supportsVoiceReply: Bool { voiceReply }
-    func setMicrophoneGate(open: Bool) async -> Bool { events.append("gate:\(open)"); return !failGate }
+    private(set) var voiceMicrophoneGateIsClosed = false
+    func setMicrophoneGate(open: Bool) async -> Bool {
+        events.append("gate:\(open)")
+        guard !failGate else { return false }
+        voiceMicrophoneGateIsClosed = !open
+        return true
+    }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { events.append("play"); return playResult }
     func leave() async -> Bool { snapshot.phase = .left; onState?(snapshot); return true }
 }

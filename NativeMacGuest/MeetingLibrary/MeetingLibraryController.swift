@@ -10,6 +10,8 @@ enum MeetingNoteSaveStatus: Equatable {
 /// All repository calls cross to the actor-owned store; the UI never touches SQLite.
 @MainActor final class MeetingLibraryController: ObservableObject {
     let store: MeetingLibraryStore
+    let workspaceJournal: MeetingWorkspaceJournal
+    let participationVaultConnection = ParticipationVaultConnection()
     @Published private(set) var cards: [MeetingLibraryCard] = []
     @Published private(set) var noteStatus: [UUID: MeetingNoteSaveStatus] = [:]
     @Published private(set) var persistenceError: String?
@@ -17,6 +19,8 @@ enum MeetingNoteSaveStatus: Equatable {
 
     init(root: URL) {
         store = MeetingLibraryStore(root: root)
+        workspaceJournal = MeetingWorkspaceJournal(root: root)
+        workspaceJournal.prepare()
     }
 
     /// Opens (and creates if needed) the database, then loads the first snapshot.
@@ -35,7 +39,7 @@ enum MeetingNoteSaveStatus: Equatable {
 
     /// Deterministic teardown for tests and app shutdown; the underlying store
     /// reopens on the next `prepare()` if the controller is used again.
-    func close() async { await store.close() }
+    func close() async { await store.close(); workspaceJournal.close() }
 
     /// Sessions visible to Assistant/history. Failed joins with no content are excluded
     /// by the store's card query.
@@ -93,6 +97,7 @@ enum MeetingNoteSaveStatus: Equatable {
 
     func renameSession(_ id: UUID, title: String) async throws {
         try await store.renameSession(id, title: title)
+        workspaceJournal.rename(sessionID: id, title: title.trimmingCharacters(in: .whitespacesAndNewlines))
         await refresh()
     }
 

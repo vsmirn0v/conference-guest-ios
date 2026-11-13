@@ -36,7 +36,7 @@ enum AttentionSituation: String, CaseIterable, Sendable {
     /// Its sound is off, whether or not you are looking at it.
     case silenced
 
-    static let defaultModes: [AttentionSituation: AttentionMode] = [.onScreen: .off, .background: .mentions, .silenced: .watch]
+    static let defaultModes: [AttentionSituation: AttentionMode] = [.onScreen: .off, .background: .off, .silenced: .watch]
 }
 
 /// One approve or decline, shown to the judge as an example on its preset.
@@ -189,6 +189,28 @@ struct AttentionWindow: Equatable, Sendable, Codable {
     }
     func line(ref: String) -> Line? { lines.first { $0.ref == ref } }
     func line(id: String) -> Line? { lines.first { $0.id == id } }
+
+    /// Formal reference syntax only: an exact ref or an inclusive L<number>-L<number>
+    /// range. Bound expansion by this window and require every cited line to exist.
+    func evidenceLines(ref: String) -> [Line]? {
+        let ref = ref.trimmed
+        if let exact = line(ref: ref) { return [exact] }
+        let ends = ref.split(separator: "-", omittingEmptySubsequences: false)
+        func number(_ token: Substring) -> Int? {
+            let token = String(token).trimmed
+            guard token.first == "L", let value = Int(token.dropFirst()), value > 0,
+                  token == "L\(value)" else { return nil }
+            return value
+        }
+        guard ends.count == 2, let lower = number(ends[0]), let upper = number(ends[1]),
+              lower <= upper, upper - lower < lines.count else { return nil }
+        var resolved: [Line] = []
+        for index in lower...upper {
+            guard let line = line(ref: "L\(index)") else { return nil }
+            resolved.append(line)
+        }
+        return resolved
+    }
 }
 
 enum AttentionWindowBuilder {
@@ -260,6 +282,8 @@ struct JudgeRequest: Sendable {
     var replyChannels = ReplyChannels()
     /// Exactly the bounded local excerpts supplied to the model, kept for inspection.
     var memory: [AssistantMemoryExcerpt] = []
+    /// Explicit, locally stored user instructions scoped to this meeting.
+    var workspaceGuidance: [String] = []
 }
 
 /// The ways a meeting accepts an answer from a card.
@@ -272,6 +296,8 @@ struct ReplyChannels: Equatable, Sendable {
 /// Stable reply-stance ids. Model labels are free-form and often localized, so preference
 /// matching folds known English and Russian wordings onto these ids.
 enum ReplyStance {
+    static let values = ["confirm", "askForTime", "handOff", "decline", "reply"]
+
     static func normalize(_ raw: String) -> String {
         let folded = raw.trimmed.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "ru")).lowercased()
         guard !folded.isEmpty else { return "" }
@@ -279,6 +305,7 @@ enum ReplyStance {
             "confirm": "confirm", "yes": "confirm", "accept": "confirm", "agree": "confirm",
             "подтвердить": "confirm", "подтверждаю": "confirm", "согласие": "confirm", "согласен": "confirm",
             "ask for time": "askForTime", "askfortime": "askForTime", "delay": "askForTime", "later": "askForTime",
+            "brief hold": "askForTime", "hold": "askForTime",
             "попросить время": "askForTime", "нужно время": "askForTime", "позже": "askForTime",
             "hand off": "handOff", "handoff": "handOff", "delegate": "handOff",
             "передать": "handOff", "делегировать": "handOff",
@@ -306,7 +333,7 @@ struct ReplyVariant: Codable, Identifiable, Equatable, Sendable {
         case "handOff": L("Hand off")
         case "decline": L("Decline")
         case "reply": L("Reply")
-        default: stance
+        default: L("Reply")
         }
     }
 }
@@ -383,7 +410,8 @@ enum ReplyPrompt {
                          "description": "An emoji reaction that alone answers, or none."],
             "variants": ["type": "array", "minItems": 0, "maxItems": 3, "items": [
                 "type": "object", "additionalProperties": false, "required": ["stance", "text"],
-                "properties": ["stance": ["type": "string", "description": "Short label such as confirm, ask for time, hand off or decline."],
+                "properties": ["stance": ["type": "string", "enum": ReplyStance.values,
+                                         "description": "A stable stance identifier. The app supplies its translated button label."],
                                "text": ["type": "string"]]]],
          ]]
     }
@@ -395,6 +423,7 @@ enum ReplyPrompt {
     - Answer what the decision below says the meeting needs from the user. Each variant is one or two short sentences \
     of plain text, with no greeting formulas, signature or markdown.
     - Give up to three genuinely different stances, not cosmetic rewording. Do not force three when only one is safe.
+    - Use one of these stance identifiers: confirm, askForTime, handOff, decline, reply. The app translates the button labels.
     - Write in the language the other participants use in the recent lines.
     - Never invent facts, numbers, dates, names, status or decisions that are not stated in the meeting lines or the \
     user's instructions. When the answer needs information you do not have, write a short holding reply: \
@@ -498,15 +527,19 @@ enum AttentionVerdictError: LocalizedError, Equatable {
 enum AttentionPrompt {
     static let schemaName = "attention_verdict"
     /// Strict JSON schema for OpenAI-compatible structured output.
-    static var schema: [String: Any] {
-        ["type": "object", "additionalProperties": false,
+    static func schema(for window: AttentionWindow) -> [String: Any] {
+        var evidence: [String: Any] = ["type": "array", "items": ["type": "string"],
+            "description": "Individual refs of the lines the decision rests on, such as L4. Never use ranges."]
+        if window.lines.isEmpty { evidence["maxItems"] = 0 }
+        else { evidence["items"] = ["type": "string", "enum": window.lines.map(\.ref)] }
+        return ["type": "object", "additionalProperties": false,
          "required": ["attention", "probability", "reason", "evidence", "action"],
          "properties": [
             "attention": ["type": "string", "enum": AttentionLevel.allCases.map(\.rawValue),
                           "description": "now: the user should join or answer within a minute; soon: within a few minutes; no: not needed."],
             "probability": ["type": "number", "description": "Probability from 0 to 1 that the user needs to act in this meeting now or soon."],
             "reason": ["type": "string", "description": "At most two short sentences for the user, naming who wants what."],
-            "evidence": ["type": "array", "items": ["type": "string"], "description": "Refs of the lines the decision rests on, such as L4."],
+            "evidence": evidence,
             "action": ["type": "string", "enum": AttentionAction.allCases.map(\.rawValue)],
          ]]
     }
@@ -515,7 +548,7 @@ enum AttentionPrompt {
     static let jsonHint = #"""
 
     - Answer with one JSON object and nothing else: {"attention": "no"|"soon"|"now", "probability": number from 0 to 1, \#
-    "reason": string, "evidence": [refs such as "L3"], "action": "none"|"open"|"chat"|"reaction"}.
+    "reason": string, "evidence": [individual refs such as "L3", "L4", never ranges], "action": "none"|"open"|"chat"|"reaction"}.
     """#
 
     static let system = """
@@ -532,7 +565,7 @@ enum AttentionPrompt {
     rest on something another participant said or did; if only the user's own lines are notable, answer "no".
     - Mentions of the user's name in passing, without a question or request, are not enough for "now".
     - Follow the meeting instructions and learn from the user's past approvals and declines.
-    - Cite the refs of the lines your decision rests on. For "no", evidence may be empty.
+    - Cite only individual refs present in these meeting lines, never ranges. For "no", evidence may be empty.
     - action: "open" when the user should join, speak or look; "chat" when a short written answer in the meeting \
     chat would do; "reaction" when an emoji alone answers; "none" otherwise. Suggest chat or reaction only when \
     the meeting accepts them.
@@ -569,6 +602,10 @@ enum AttentionPrompt {
             if !preset.never.trimmed.isEmpty { lines.append("Never: " + preset.never.trimmed) }
             lines.append("Urgency preference: " + preset.urgency.rawValue)
             parts.append(lines.joined(separator: "\n"))
+        }
+        if !request.workspaceGuidance.isEmpty {
+            parts.append("Private guidance from the user for this meeting. Apply it alongside the existing boundaries; do not quote it in replies:\n" +
+                request.workspaceGuidance.map { "- " + $0 }.joined(separator: "\n"))
         }
         if includeExamples, let examples = request.preset?.promptExamples, !examples.isEmpty {
             let approved = examples.filter { $0.decision == .approved }, declined = examples.filter { $0.decision == .declined }
@@ -645,8 +682,8 @@ enum AttentionPrompt {
         guard !reason.isEmpty else { throw AttentionVerdictError.emptyReason }
         var evidence: [String] = []
         for ref in raw.evidence {
-            guard let line = window.line(ref: ref.trimmed) else { throw AttentionVerdictError.unknownEvidence(ref) }
-            if !evidence.contains(line.id) { evidence.append(line.id) }
+            guard let lines = window.evidenceLines(ref: ref) else { throw AttentionVerdictError.unknownEvidence(ref) }
+            for line in lines where !evidence.contains(line.id) { evidence.append(line.id) }
         }
         if raw.attention != .no && evidence.isEmpty { throw AttentionVerdictError.noEvidence }
         if raw.attention != .no {

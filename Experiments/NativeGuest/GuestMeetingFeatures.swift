@@ -56,6 +56,8 @@ struct GuestMeetingMessage: Identifiable, Equatable, Sendable {
     /// When a live event first delivered this message here; nil for history pages.
     /// It places live text in time when the provider's own timestamp is absent.
     var receivedAt: Date? = nil
+    /// Local acknowledgement carries less evidence than a server chat row.
+    var locallyAcknowledged = false
 }
 
 struct GuestMeetingReactionEvent: Identifiable, Equatable, Sendable {
@@ -102,7 +104,7 @@ struct GuestMeetingFeatures {
     private var permissions: [String: Bool] = [:]
     private var stopped = false
 
-    mutating func receive(_ envelope: [String: Any]) {
+    mutating func receive(_ envelope: [String: Any], capture: (([GuestMeetingMessage], Bool) -> Void)? = nil) {
         guard !stopped, let event = envelope["event"] as? String else { return }
         let payload = envelope["payload"] as? [String: Any] ?? [:]
         if event == "joined" {
@@ -145,6 +147,7 @@ struct GuestMeetingFeatures {
                 if let title = payload["title"] as? String { snapshot.title = String(title.prefix(512)) }
             case "chat-message":
                 if snapshot.permissions.canViewChat, let message = decodeMessage(payload["message"], fallbackID: envelope["requestId"], receivedAt: Date()) {
+                    capture?([archiveMessage(message, raw: payload["message"])], false)
                     upsert(message, transcript: false)
                 }
             case "reaction":
@@ -161,6 +164,7 @@ struct GuestMeetingFeatures {
                         loggedTranscriptShape = true
                         probeLog("transcript-message-shape", ["keys": fields.keys.sorted(), "dated": message.sentAt != nil])
                     }
+                    capture?([archiveMessage(message, raw: payload["message"])], true)
                     upsert(message, transcript: true)
                 }
             case "transcription-started": snapshot.transcriptionStatus = .active
@@ -223,15 +227,21 @@ struct GuestMeetingFeatures {
         snapshot.messages[index].delivery = succeeded ? .sent : .failed
     }
 
-    mutating func acceptHistory(_ payload: [String: Any], transcript: Bool, epoch: UInt64) throws {
+    mutating func acceptHistory(_ payload: [String: Any], transcript: Bool, epoch: UInt64,
+                                capture: (([GuestMeetingMessage], Bool) -> Void)? = nil) throws {
         guard !stopped, epoch == self.epoch,
               transcript ? snapshot.permissions.canViewTranscript : snapshot.permissions.canViewChat else { return }
         guard let values = payload["messages"] as? [[String: Any]], values.count <= 1_000 else { throw GuestEngineError.malformed }
         // The server pages newest first. Upsert sorts by timestamp and identity,
         // so live events received during the request remain present.
+        var captured: [GuestMeetingMessage] = []
         for value in values.reversed() {
-            if let message = decodeMessage(value) { upsert(message, transcript: transcript) }
+            if let message = decodeMessage(value) {
+                if capture != nil { captured.append(archiveMessage(message, raw: value)) }
+                upsert(message, transcript: transcript)
+            }
         }
+        if !captured.isEmpty { capture?(captured, transcript) }
         let page = payload["nextPageKey"]
         let next: Any? = (page is String || page is NSNumber) ? page : nil
         if transcript { transcriptPage = next; snapshot.transcriptHasMore = next != nil; snapshot.transcriptHistoryLoaded = true }
@@ -294,6 +304,11 @@ struct GuestMeetingFeatures {
         }.sorted { $0.isLocal != $1.isLocal ? $0.isLocal : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
     private var loggedTranscriptShape = false
+    private func archiveMessage(_ message: GuestMeetingMessage, raw: Any?) -> GuestMeetingMessage {
+        var message = message
+        message.text = (raw as? [String: Any])?["text"] as? String ?? message.text
+        return message
+    }
     private func decodeMessage(_ raw: Any?, fallbackID: Any? = nil, receivedAt: Date? = nil) -> GuestMeetingMessage? {
         guard let value = raw as? [String: Any], let id = Self.identifier(value["id"] ?? fallbackID),
               let participant = Self.identifier(value["participantId"]), let text = value["text"] as? String,

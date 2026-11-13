@@ -533,13 +533,12 @@ import XCTest
             }
             let wasEnabled = fixtures.store.enabled
             var args: MCPJSON = ["action_id": UUID().uuidString, "expected_revision": revision,
-                                 "sections": ["attention": ["judge_enabled": !wasEnabled], "app": ["multiple_meetings": false]]]
+                                 "sections": ["attention": ["judge_enabled": !wasEnabled]]]
             guard let first = try? await fixtures.backend.updateSettings(args, client: self.client()) else {
                 XCTFail("updateSettings should succeed"); return
             }
             XCTAssertEqual(first["status"] as? String, "applied")
             XCTAssertEqual(fixtures.store.enabled, !wasEnabled)
-            XCTAssertFalse(fixtures.injected.bool(forKey: "nativeDesktop.multipleMeetings"))
             // An exact replay returns the stored result without asking again.
             guard let replay = try? await fixtures.backend.updateSettings(args, client: self.client()) else {
                 XCTFail("the replay should succeed"); return

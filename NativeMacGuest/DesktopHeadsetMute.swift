@@ -62,8 +62,10 @@ import LiveKitWebRTC
             }
             return .init(available: false, readMuted: { true }, writeMuted: { _ in }, install: { _ in },
                 uninstall: {}, observe: { _ in NSObject() }, removeObserver: { _ in },
-                setCaptureMuted: { _ in }, captureState: { 1 }, unmuteIfState: { _ in false },
-                setIntent: { _ in }, isReconfiguring: { false })
+                setCaptureMuted: { LKRTCSetApplicationCaptureMuted($0 ? 1 : 0) },
+                captureState: { LKRTCApplicationCaptureState() },
+                unmuteIfState: { LKRTCUnmuteApplicationCaptureIfState($0) },
+                setIntent: { LKRTCSetApplicationInputMuteIntent($0) }, isReconfiguring: { false })
         }
     }
 
@@ -82,6 +84,21 @@ import LiveKitWebRTC
     private var requestRevision: UInt64 = 0
     private var platformSynchronized = true
     private var latestRequest: Request?
+    private final class ParticipationCapture {
+        weak var permit: GuestAutonomousVoicePlayback?
+        let requestRevision: UInt64
+        let muteEpoch: Int64
+        let closedState: UInt64
+        var openState: UInt64?
+
+        init(permit: GuestAutonomousVoicePlayback, requestRevision: UInt64, muteEpoch: Int64, closedState: UInt64) {
+            self.permit = permit
+            self.requestRevision = requestRevision
+            self.muteEpoch = muteEpoch
+            self.closedState = closedState
+        }
+    }
+    private var participationCapture: ParticipationCapture?
     private var requested: (@MainActor (Bool) -> Void)?
     private(set) var lastError: String?
     var onError: ((Error) -> Void)?
@@ -148,6 +165,7 @@ import LiveKitWebRTC
     /// Both directions close immediately: a pending unmute is not capture authority.
     @discardableResult func requestIntent(muted: Bool) -> Request? {
         guard isActive, let owner else { return nil }
+        participationCapture?.permit?.cancel()
         requestRevision &+= 1
         let request = Request(owner: owner, revision: requestRevision, muteEpoch: lifetime?.muteEpoch ?? 0)
         policy.request(muted)
@@ -165,10 +183,20 @@ import LiveKitWebRTC
         // Untagged status can close capture, but never grants new authority.
         guard muted else { return }
         policy.confirm(muted)
+        if let capture = participationCapture {
+            // A repeated muted engine snapshot does not supersede the permit.
+            // A real accessory mute writes a different native epoch off-main.
+            if platform.captureState() == (capture.openState ?? capture.closedState) { return }
+            capture.permit?.cancel()
+        }
         platform.setCaptureMuted(true)
     }
     func confirm(muted: Bool, request: Request?) {
         guard let request, accepts(request) else { return }
+        if participationCapture != nil {
+            if muted { confirm(muted: true) }
+            return
+        }
         if !muted && !policy.requestedMuted {
             guard lifetime?.muteEpoch == request.muteEpoch, !platform.readMuted() else {
                 platform.setCaptureMuted(true); return
@@ -187,16 +215,57 @@ import LiveKitWebRTC
         _ = platform.unmuteIfState(state)
     }
 
+    /// The meeting has a separate, settled raw-input gate. This admission
+    /// controls only the native PCM path downstream of that gate, while the
+    /// accessory and app continue to present the user's muted microphone.
+    func prepareParticipationCapture(_ permit: GuestAutonomousVoicePlayback) -> Bool {
+        guard isActive else { return LKRTCApplicationCaptureMuted() == 0 }
+        guard participationCapture == nil, platformSynchronized, platform.readMuted(),
+              policy.requestedMuted, policy.confirmedMuted, !policy.pending, let lifetime else { return false }
+        let closedState = platform.captureState()
+        guard closedState & 1 == 1 else { return false }
+        let capture = ParticipationCapture(permit: permit, requestRevision: requestRevision,
+                                           muteEpoch: lifetime.muteEpoch, closedState: closedState)
+        guard permit.bindCapture(.init(open: { [weak self] in
+            guard let self, self.accepts(capture), self.platform.readMuted(),
+                  self.platform.unmuteIfState(capture.closedState) else { return false }
+            let opened = (capture.closedState & ~UInt64(1)) &+ 2
+            capture.openState = opened
+            return self.platform.captureState() == opened
+        }, isOpen: { [weak self] in
+            guard let self, self.accepts(capture), let opened = capture.openState else { return false }
+            return self.platform.captureState() == opened
+        }, close: { [weak self] in
+            guard let self, self.participationCapture === capture else { return }
+            self.participationCapture = nil
+            // Only this main-actor owner can open a new epoch. The off-main
+            // accessory callback can close it but cannot grant new authority.
+            if let opened = capture.openState, self.platform.captureState() == opened {
+                self.platform.setCaptureMuted(true)
+            }
+        })) else { return false }
+        participationCapture = capture
+        return true
+    }
+
+    private func accepts(_ capture: ParticipationCapture) -> Bool {
+        isActive && participationCapture === capture && requestRevision == capture.requestRevision
+            && lifetime?.muteEpoch == capture.muteEpoch && platformSynchronized
+    }
+
     /// Explicit fallback after a failed registration. The caller must have
     /// independently confirmed all current network microphone senders are muted.
     @discardableResult func useEngineOnlyFallback(confirmedMuted: Bool) -> Bool {
         guard confirmedMuted, owner == nil, Self.currentOwner == nil else { return false }
-        platform.setIntent(-1); platform.setCaptureMuted(false); return true
+        let state = platform.captureState()
+        platform.setIntent(-1)
+        return platform.unmuteIfState(state)
     }
 
     func end() { invalidate(unregister: true) }
 
     private func invalidate(unregister: Bool) {
+        participationCapture?.permit?.cancel()
         lifetime?.invalidate(); lifetime = nil
         if let observer { platform.removeObserver(observer) }; observer = nil
         let owned = owner != nil && owner == Self.currentOwner

@@ -258,6 +258,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// How the voice should sound, for a VoiceDesign model.
     @Published var voiceDescription: String { didSet { defaults.set(voiceDescription, forKey: Self.voiceDescriptionKey) } }
     @Published var voiceBaseURL: String { didSet { defaults.set(voiceBaseURL, forKey: Self.voiceBaseURLKey) } }
+    var voiceConfiguration: AssistantVoiceConfiguration {
+        .init(engine: voiceEngine, baseURL: voiceBaseURL, model: voiceModel, description: voiceDescription,
+              cloneRecordedAt: voiceEngine == .cloned ? VoiceCloneStore.shared.stored?.recordedAt : nil)
+    }
     static let voiceEngineKey = "attention.voice.engine", voiceModelKey = "attention.voice.model"
     static let voiceDescriptionKey = "attention.voice.description", voiceBaseURLKey = "attention.voice.baseURL"
     static let defaultVoiceModel = "qwen3-tts-voicedesign-4bit"
@@ -333,6 +337,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     @Published private(set) var persistenceWarning: String?
     @Published private(set) var journalWarning: String?
     let root: URL
+    lazy var workspaceGuidance = MeetingWorkspaceGuidance(root: root)
     let assistant: AssistantDataStore
     /// Test-teardown entry point: cancels pending library preparation, closes any
     /// open handle, and drains the in-flight prepare. XCTest teardown blocks run
@@ -354,6 +359,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         for task in persistTasks.values { await task.value }
         persistTasks.removeAll()
         meetingLibrary.store.closeSync()
+        meetingLibrary.workspaceJournal.close()
     }
 
     /// Durable meeting library: sessions, notes and outcomes in SQLite. Shared root
@@ -362,6 +368,11 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// Per-session note drafts with debounced autosave.
     let notes: MeetingNotesController
     private let defaults: UserDefaults
+    var lastParticipationOutput: ParticipationOutput {
+        get { defaults.string(forKey: "attention.participation.output").flatMap(ParticipationOutput.init(rawValue:)) ?? .chat }
+        set { defaults.set(newValue.rawValue, forKey: "attention.participation.output") }
+    }
+
     private let keychain: AttentionKeychain
     private var loading = false
     @Published private(set) var momentHistory = AttentionMomentHistory()

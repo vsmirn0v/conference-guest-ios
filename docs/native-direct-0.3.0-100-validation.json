@@ -1,0 +1,59 @@
+{
+  "version": "0.3.0",
+  "build": "100",
+  "channel": "beta",
+  "sourceBase": "b595e89cf2843cbf8a7ecf2c29c9cf2545aebc06",
+  "sourceState": "Uncommitted working tree. Exact tracked diff and relevant new sources preserved under .build/native-beta-100.",
+  "sourcePatchSHA256": "f3902a5bdb929d39d8581b0adaf87929df293c1fc68447889362e7b844410941",
+  "newSourcesSHA256": "a4cb8b9f21f2a9de8c32bbad87baa2c18e7ffc8f18e28001950f4c5205a8b662",
+  "changes": [
+    "Automatic participation can invite a named attendee's question or acknowledge a verified inbound audio check in the assistant's own words.",
+    "The host binds fixed replies to the verified current turn. An independent current-turn classifier checks the cue and addressee.",
+    "Successful Start remembers the approved reply channel for later setup. Typed decision progress and English and Russian labels identify silent outcomes."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "100",
+    "file": "RockNRoll-0.3.0-100-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-100-arm64.dmg",
+    "sha256": "31c1cf7e2773107b4a06380d134c44675a7adc8a8d0fa0aad683b86dacc606c7",
+    "length": 29131860,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-100/package/RockNRoll-0.3.0-100-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-100-arm64.dmg",
+      "sha256": "31c1cf7e2773107b4a06380d134c44675a7adc8a8d0fa0aad683b86dacc606c7",
+      "length": 29131860
+    },
+    "state": {
+      "appcastSHA256": "05db5c6255de501d8768efe865b73c5e77e8a7094e7af30e42b886adc6994ee1",
+      "inventorySHA256": "dc071921d79905a06f46a6b12f53d374049246bf5b737eaba9e90a267bf5b09a",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-100-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/9a80673f865d41dea672080cc666f50f/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "34 targeted native tests passed, including Russian voice admission and private text fallback, and both no-hardware WebRTC spikes.",
+    "With the release audio-route-r1 framework, the remote WebRTC decoder measured 0.15823 assistant RMS over 41,280 samples while the local monitor played. The simulated microphone gate and canceled assistant channel both measured zero.",
+    "Two Apple on-device model replays each approved both directed Russian prompts and refused both a room-wide sound check and a later turn after a human answered.",
+    "Independent source review, 27 distribution tests, signed application localization checks, app notarization and public beta download SHA-256 verification passed."
+  ],
+  "diagnosisLimit": "Build 99 accepted identified room audio but had no automatic synthesis event. Its diagnostics cannot identify the exact reason that turn stopped before synthesis. Synthetic Apple model replays reproduced fixed-action structural rejection and overbroad classification in unpublished candidates.",
+  "notVerified": [
+    "Live meeting delivery through the provider SFU with the user's configured model and voice clone.",
+    "Installed Sparkle upgrade.",
+    "Separate notarization of the outer DMG."
+  ],
+  "publishedAt": "2026-11-12T09:46:27.786567+03:00"
+}

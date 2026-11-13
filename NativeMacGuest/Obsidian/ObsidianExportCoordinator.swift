@@ -57,6 +57,8 @@ import Foundation
 
     func chooseVault() {
         guard let choice = ObsidianVaultAccess.chooseVaultBookmark() else { return }
+        let connection = library.participationVaultConnection
+        let change = connection.beginChange()
         update { destination in
             if let bookmark = destination.vaultBookmark,
                !ObsidianVaultAccess.identifiesSameVault(bookmark, selected: choice.url) {
@@ -64,6 +66,11 @@ import Foundation
                 destination.layout.legacyRuntimeYears = nil
             }
             destination.vaultBookmark = choice.bookmark
+        }
+        let save = settingsWrite
+        Task {
+            await save?.value
+            connection.endChange(change)
         }
     }
 

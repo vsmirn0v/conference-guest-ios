@@ -1,0 +1,59 @@
+{
+  "version": "0.3.0",
+  "build": "99",
+  "channel": "beta",
+  "sourceBase": "b595e89cf2843cbf8a7ecf2c29c9cf2545aebc06",
+  "sourceState": "Uncommitted working tree. Runtime source patch and new sources preserved under .build/native-beta-99. Only the loopback test fixture changed after the source snapshot.",
+  "sourcePatchSHA256": "514cbb6a6f6f83f25dd1c7798c5bba37373020bdfef853bedf30851a80568173",
+  "newSourcesSHA256": "fe8a19d0b9df9babaf761b858cf0077796b137b37167b32c3986fe870ac901db",
+  "changes": [
+    "Automatic voice uses the reviewed Assistant voice, including the selected clone recording.",
+    "A reply can open the WebRTC capture gate while the physical microphone remains isolated. The permit restores the gate at completion or interruption."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "99",
+    "file": "RockNRoll-0.3.0-99-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-99-arm64.dmg",
+    "sha256": "91d5926dfa511c2d3e12c458a4df310a1bc987692d5298223833a4d447aa21f3",
+    "length": 29114370,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-99/package/RockNRoll-0.3.0-99-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-99-arm64.dmg",
+      "sha256": "91d5926dfa511c2d3e12c458a4df310a1bc987692d5298223833a4d447aa21f3",
+      "length": 29114370
+    },
+    "state": {
+      "appcastSHA256": "c0769b314856f1994a5d74267a2a511190950f7c016672210359eea0624f78cf",
+      "inventorySHA256": "589184bdf33e1dee3c9bed2c608c64ecc09ab393775f244aa4fcd2caef7fe67e",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-99-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/91fb6ee92fc446d5a41d63354990f4d6/backup",
+    "httpsVerified": true
+  },
+  "validation": [
+    "89 targeted native tests passed, with one existing hardware clone test skipped.",
+    "The release audio-route-r1 framework passed real two-peer WebRTC encode/decode. Received assistant RMS 0.15723 over 39,360 samples with the local monitor active. The gated simulated microphone and post-cancel receiver both measured zero.",
+    "Headset capture lease and engine-only fallback tests passed with the release framework.",
+    "Independent source review passed. Release app notarization, package checks, and public beta download hash verification passed."
+  ],
+  "diagnosisLimit": "Build 98 diagnostics showed local playout and server mute transitions. The process capture gate was not recorded in that call. The failure was reproduced in WebRTC loopback.",
+  "notVerified": [
+    "Live meeting delivery through the provider SFU and physical device.",
+    "Synthesis using the user’s installed clone in the published app.",
+    "Installed Sparkle upgrade.",
+    "Separate notarization of the outer DMG."
+  ],
+  "publishedAt": "2026-11-12T09:10:50.792632+03:00"
+}

@@ -246,12 +246,77 @@ import XCTest
 
     // MARK: Client
 
+    func testVerdictExpandsIncidentEvidenceRangesAndDeduplicatesOverlaps() throws {
+        var window = sampleWindow()
+        window.lines = (1...38).map {
+            .init(id: "transcript-\($0)", ref: "L\($0)", source: .speech, speaker: "Anna", isYou: false,
+                  text: "Meeting line", at: nil, mentionsYou: false)
+        }
+        let verdict = try AttentionPrompt.verdict(from: #"{"attention":"soon","probability":0.8,"reason":"Follow-up needed.","evidence":["L8-L12","L10","L12-L13"],"action":"open"}"#, window: window)
+        XCTAssertEqual(verdict.evidence, ["transcript-8", "transcript-9", "transcript-10", "transcript-11", "transcript-12", "transcript-13"])
+        // Other range forms recorded in the 13 November diagnostics remain valid.
+        for ref in ["L5-L9", "L19-L27", "L31-L38", "L26-L33", "L13-L20", "L7-L14", "L8-L15",
+                    "L11-L17", "L13-L15", "L25-L29", "L12-L16", "L8-L17"] {
+            let content = #"{"attention":"soon","probability":0.8,"reason":"Follow-up.","evidence":["\#(ref)"],"action":"open"}"#
+            XCTAssertFalse(try AttentionPrompt.verdict(from: content, window: window).evidence.isEmpty, ref)
+        }
+    }
+
+    func testVerdictRejectsMissingMalformedReversedAndUnboundedRanges() {
+        for ref in ["L1-L9", "L2-L1", "L0-L2", "L01-L2", "L1-L2-L3", "L1-2", "L1-", "-L2",
+                    "L1-L9223372036854775807", "L1-L99999999999999999999999", "L1, L2"] {
+            let content = #"{"attention":"soon","probability":0.8,"reason":"Follow-up.","evidence":["\#(ref)"],"action":"open"}"#
+            XCTAssertThrowsError(try AttentionPrompt.verdict(from: content, window: sampleWindow()), ref) {
+                XCTAssertEqual($0 as? AttentionVerdictError, .unknownEvidence(ref))
+            }
+        }
+        var gap = sampleWindow()
+        gap.lines.append(.init(id: "t4", ref: "L4", source: .speech, speaker: "Anna", isYou: false,
+                               text: "Question", at: nil, mentionsYou: false))
+        gap.lines.append(.init(id: "t5", ref: "L5", source: .speech, speaker: "Anna", isYou: false,
+                               text: "Question", at: nil, mentionsYou: false))
+        XCTAssertThrowsError(try AttentionPrompt.verdict(from: #"{"attention":"soon","probability":0.8,"reason":"Follow-up.","evidence":["L1-L4"],"action":"open"}"#, window: gap)) {
+            XCTAssertEqual($0 as? AttentionVerdictError, .unknownEvidence("L1-L4"))
+        }
+    }
+
+    func testEvidenceRangesPreserveOwnSpeechSuppression() throws {
+        var window = sampleWindow()
+        window.lines = (1...2).map {
+            .init(id: "own-\($0)", ref: "L\($0)", source: .speech, speaker: "Me", isYou: true,
+                  text: "I will check", at: nil, mentionsYou: false)
+        }
+        let content = #"{"attention":"now","probability":0.9,"reason":"Follow-up.","evidence":[" L1 - L2 "],"action":"open"}"#
+        let verdict = try AttentionPrompt.verdict(from: content, window: window)
+        XCTAssertEqual(verdict.level, .no); XCTAssertTrue(verdict.evidence.isEmpty)
+    }
+
+    func testEvidenceSchemaIsBoundToTheCurrentWindowIncludingEmptyWindows() throws {
+        func evidence(_ window: AttentionWindow) throws -> [String: Any] {
+            let properties = try XCTUnwrap(AttentionPrompt.schema(for: window)["properties"] as? [String: Any])
+            return try XCTUnwrap(properties["evidence"] as? [String: Any])
+        }
+        let refs = try XCTUnwrap(try evidence(sampleWindow())["items"] as? [String: Any])
+        XCTAssertEqual(refs["enum"] as? [String], ["L1", "L2"])
+        var empty = sampleWindow(); empty.lines = []
+        XCTAssertEqual(try evidence(empty)["maxItems"] as? Int, 0)
+        let quiet = try AttentionPrompt.verdict(from: #"{"attention":"no","probability":0.1,"reason":"Quiet.","evidence":[],"action":"none"}"#, window: empty)
+        XCTAssertTrue(quiet.evidence.isEmpty)
+    }
+
     func testClientSendsSchemaAndKeyAndParsesTheVerdict() async throws {
         let session = StubProtocol.session { request in
             XCTAssertEqual(request.url?.absoluteString, "https://judge.example.test/v1/chat/completions")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key-not-real")
             let body = try JSONSerialization.jsonObject(with: StubProtocol.body(request)) as? [String: Any]
             XCTAssertEqual(body?["model"] as? String, "judge-model")
+            let format = try XCTUnwrap(body?["response_format"] as? [String: Any])
+            let envelope = try XCTUnwrap(format["json_schema"] as? [String: Any])
+            let schema = try XCTUnwrap(envelope["schema"] as? [String: Any])
+            let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+            let evidence = try XCTUnwrap(properties["evidence"] as? [String: Any])
+            let items = try XCTUnwrap(evidence["items"] as? [String: Any])
+            XCTAssertEqual(items["enum"] as? [String], ["L1", "L2"])
             return (200, StubProtocol.answer(#"{"attention":"now","probability":0.9,"reason":"Anna waits.","evidence":["L2"],"action":"open"}"#))
         }
         let judge = OpenAIChatJudge(provider: .init(kind: .custom, baseURL: "https://judge.example.test/v1/", model: "judge-model"),
@@ -524,6 +589,24 @@ import XCTest
         XCTAssertTrue(decisions.contains("\"crowdedOut\""))
     }
 
+    func testBackgroundModeDefaultsOffAndKeepsSavedChoices() {
+        let fresh = store()
+        XCTAssertEqual(fresh.mode(for: .background), .off)
+        XCTAssertEqual(fresh.mode(for: .onScreen), .off)
+        XCTAssertEqual(fresh.mode(for: .silenced), .watch)
+
+        for saved in [AttentionMode.mentions, .watch, .off] {
+            let suite = "attention-mode-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(saved.rawValue, forKey: AttentionStore.modeKey(.background))
+            let keychain = AttentionKeychain(service: "attention-mode-tests-\(UUID().uuidString)")
+            let restored = AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
+            closeLibraryAtTeardown(restored)
+            addTeardownBlock { defaults.removePersistentDomain(forName: suite); keychain.deleteAll() }
+            XCTAssertEqual(restored.mode(for: .background), saved, "A saved preference survives the new default")
+        }
+    }
+
     /// Your choice for the meeting beats its series' mode, which beats the situation default;
     /// a timed choice runs out; the situation follows the meeting as it is silenced or shown.
     func testModeResolvesFromMeetingThenSeriesThenSituation() async throws {
@@ -534,7 +617,7 @@ import XCTest
         let coordinator = AttentionCoordinator(store: store)
         coordinator.meetings = { [infra] }; coordinator.now = { clock }; coordinator.isOnScreen = { _ in onScreen }
 
-        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.background)))
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .situation(.background)))
         try await engine.setPlayout(false)
         XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .situation(.silenced)))
         onScreen = true
@@ -561,7 +644,7 @@ import XCTest
         XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .meeting(until: nil)), "Watch → Off")
         coordinator.resetMode(for: infra, series: true)
         XCTAssertNil(store.preset(room: infra.invitation)?.mode)
-        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.background)))
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .situation(.background)))
     }
 
     /// Hangup turns sound off while the meeting is still shown. The assistant keeps
@@ -578,7 +661,7 @@ import XCTest
         coordinator.isOnScreen = { shown.contains($0.sessionID) }
 
         XCTAssertEqual(coordinator.resolvedMode(visible), .init(mode: .off, source: .situation(.onScreen)))
-        XCTAssertEqual(coordinator.resolvedMode(behind), .init(mode: .mentions, source: .situation(.background)))
+        XCTAssertEqual(coordinator.resolvedMode(behind), .init(mode: .off, source: .situation(.background)))
         XCTAssertEqual(coordinator.resolvedMode(muted), .init(mode: .watch, source: .situation(.silenced)))
 
         coordinator.noteLeave(visible)
@@ -593,7 +676,7 @@ import XCTest
         XCTAssertFalse(visible.snapshot.playoutOn)
         XCTAssertEqual(coordinator.situation(visible), .onScreen)
         XCTAssertEqual(coordinator.resolvedMode(visible), .init(mode: .off, source: .situation(.onScreen)))
-        XCTAssertEqual(coordinator.resolvedMode(behind), .init(mode: .mentions, source: .situation(.background)))
+        XCTAssertEqual(coordinator.resolvedMode(behind), .init(mode: .off, source: .situation(.background)))
         XCTAssertEqual(coordinator.resolvedMode(muted), .init(mode: .watch, source: .situation(.silenced)))
         XCTAssertEqual(coordinator.situation(unnoted), .silenced)
 
@@ -650,6 +733,7 @@ import XCTest
 
     func testCoordinatorWaitsWhenOffPausedOrOnBatteryAndReportsFailures() async throws {
         let store = store()
+        store.situationModes[.background] = .mentions
         store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
         let (infra, _) = try await meeting("infra")
         let judge = FakeJudge(); judge.error = AttentionJudgeError.transport
@@ -711,6 +795,19 @@ import XCTest
         XCTAssertEqual(preferred.chat, "I cannot confirm yet.")
         XCTAssertEqual(parsed.ranked(preferredStance: nil, edits: []).variants?.map(\.id), parsed.variants?.map(\.id),
                        "Equal scores retain model order")
+    }
+
+    func testReplyButtonsUseLocalizedLabelsForLegacyAndUnknownStances() throws {
+        for stance in ["brief hold", "hold", "askForTime"] {
+            XCTAssertEqual(ReplyVariant(stance: stance, text: "One moment.").stanceTitle, L("Ask for time"))
+        }
+        XCTAssertEqual(ReplyVariant(stance: "custom generated label", text: "Reply.").stanceTitle, L("Reply"))
+        let properties = try XCTUnwrap(ReplyPrompt.schema(.init(chat: true))["properties"] as? [String: Any])
+        let variants = try XCTUnwrap(properties["variants"] as? [String: Any])
+        let items = try XCTUnwrap(variants["items"] as? [String: Any])
+        let fields = try XCTUnwrap(items["properties"] as? [String: Any])
+        let stance = try XCTUnwrap(fields["stance"] as? [String: Any])
+        XCTAssertEqual(stance["enum"] as? [String], ReplyStance.values)
     }
 
     func testSelectingAVariantOnlyChangesTheDraftAndRecordsPreference() throws {
@@ -844,17 +941,17 @@ import XCTest
         let request = JudgeRequest(window: sampleWindow(), preset: nil, profile: .init(name: "Vitalii"), yourName: "Vitalii", language: "ru")
         let messages = AttentionPrompt.messages(request)
         let local = OpenAIChatJudge(provider: try XCTUnwrap(AttentionProvider.defaults[.rapidMLX]), key: nil)
-        let body = local.requestBody(messages: messages, name: AttentionPrompt.schemaName, schema: AttentionPrompt.schema, hint: AttentionPrompt.jsonHint)
+        let body = local.requestBody(messages: messages, name: AttentionPrompt.schemaName, schema: AttentionPrompt.schema(for: sampleWindow()), hint: AttentionPrompt.jsonHint)
         XCTAssertEqual((body["response_format"] as? [String: Any])?["type"] as? String, "json_object")
         XCTAssertEqual((body["chat_template_kwargs"] as? [String: Bool])?["enable_thinking"], false)
         let system = ((body["messages"] as? [[String: String]])?.first?["content"]) ?? ""
         XCTAssertTrue(system.hasSuffix(AttentionPrompt.jsonHint))
         let again = local.requestBody(messages: body["messages"] as? [[String: String]] ?? [], name: AttentionPrompt.schemaName,
-                                      schema: AttentionPrompt.schema, hint: AttentionPrompt.jsonHint)
+                                      schema: AttentionPrompt.schema(for: sampleWindow()), hint: AttentionPrompt.jsonHint)
         XCTAssertEqual(((again["messages"] as? [[String: String]])?.first?["content"])?.components(separatedBy: "Answer with one JSON object").count, 2,
                        "Saved messages replayed locally get the shape once")
         let remote = OpenAIChatJudge(provider: try XCTUnwrap(AttentionProvider.defaults[.openAI]), key: "k")
-        let strict = remote.requestBody(messages: messages, name: AttentionPrompt.schemaName, schema: AttentionPrompt.schema, hint: AttentionPrompt.jsonHint)
+        let strict = remote.requestBody(messages: messages, name: AttentionPrompt.schemaName, schema: AttentionPrompt.schema(for: sampleWindow()), hint: AttentionPrompt.jsonHint)
         XCTAssertEqual((strict["response_format"] as? [String: Any])?["type"] as? String, "json_schema")
         XCTAssertNil(strict["chat_template_kwargs"])
 
@@ -905,6 +1002,7 @@ import XCTest
 
     func testAModelOnThisMacJudgesWhileAnotherWrites() async throws {
         let store = store()
+        store.situationModes[.background] = .mentions
         store.enabled = true; store.provider = try XCTUnwrap(AttentionProvider.defaults[.rapidMLX])
         XCTAssertFalse(store.draftsAllowed)
         store.writerProvider = .init(kind: .local, baseURL: "http://192.168.1.5:8000/v1", model: "writer-model")
@@ -990,6 +1088,7 @@ import XCTest
 
         // Sending an edited draft records it on the meeting's instructions.
         let store = store()
+        store.situationModes[.background] = .mentions
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
         let (infra, _) = try await meeting("infra")
         let fake = FakeJudge(), writerFake = FakeWriter()
@@ -1010,6 +1109,7 @@ import XCTest
 
     func testSayItSpeaksTheReplyAndCountsAsApproval() async throws {
         let store = store()
+        store.situationModes[.background] = .mentions
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
         let (trueconf, _) = try await meeting("trueconf")
         let judge = FakeJudge()
@@ -1166,6 +1266,7 @@ import XCTest
 
     func testMissedMomentRetainsDraftAndAnswersWithoutOverlay() async throws {
         let store = store()
+        store.situationModes[.background] = .mentions
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
         let (infra, _) = try await meeting("infra")
         let judge = FakeJudge(), writer = FakeWriter()
@@ -1200,6 +1301,7 @@ import XCTest
 
     func testOverflowClearsWhenDisplacedMeetingGoesOffOrClosesWhileOtherCardsRemain() async throws {
         let store = store()
+        store.situationModes[.background] = .mentions
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
         let (a, _) = try await meeting("overflow-off-a"), (b, _) = try await meeting("overflow-off-b"), (c, _) = try await meeting("overflow-off-c")
         let judge = FakeJudge(), coordinator = AttentionCoordinator(store: store)
@@ -1218,6 +1320,7 @@ import XCTest
 
     func testOverflowTracksOnlyDisplacedLiveMomentsAndClearsAtCycleEnd() async throws {
         let store = store()
+        store.situationModes[.background] = .mentions
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
         let (a, _) = try await meeting("overflow-a"), (b, _) = try await meeting("overflow-b"), (c, _) = try await meeting("overflow-c")
         let judge = FakeJudge(), coordinator = AttentionCoordinator(store: store)
@@ -1266,6 +1369,7 @@ import XCTest
 
     func testClosedMeetingRefusesMissedDelivery() async throws {
         let store = store(); store.enabled = true
+        store.situationModes[.background] = .mentions
         store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
         let (infra, _) = try await meeting("closed")
         let judge = FakeJudge(), coordinator = AttentionCoordinator(store: store)
@@ -1286,6 +1390,7 @@ import XCTest
 
     func testNowCardExpiresToMissedAndSummaryUsesOnlyLaterLines() async throws {
         let store = store(); store.enabled = true
+        store.situationModes[.background] = .mentions
         store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
         let (infra, _) = try await meeting("summary")
         let judge = FakeJudge(), summarizer = FakeMomentSummarizer()

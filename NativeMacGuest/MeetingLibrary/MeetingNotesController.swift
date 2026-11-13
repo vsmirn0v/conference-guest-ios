@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// One source buffer and one editing lease for each meeting session.
@@ -62,6 +63,9 @@ import Foundation
     }
 
     func draft(sessionID: UUID) -> Draft? { drafts[sessionID] }
+    func participationDraftChanges(sessionID: UUID) -> AnyPublisher<Void, Never> {
+        $drafts.map { $0[sessionID]?.text }.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+    }
     func buffer(sessionID: UUID) -> String { drafts[sessionID]?.text ?? "" }
     func editorOwner(sessionID: UUID) -> UUID? { leases[sessionID] }
 

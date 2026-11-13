@@ -43,7 +43,7 @@ enum ParticipationKnowledgeError: Error, Equatable {
 enum ParticipationKnowledgeReader {
     static let maxBytes = 1_048_576
 
-    static func inspect(root: URL, relativePath: String) throws -> ParticipationKnowledgeSnapshot {
+    static func inspect(root: URL, relativePath: String, byteLimit: Int = maxBytes) throws -> ParticipationKnowledgeSnapshot {
         let parts = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard root.isFileURL, !relativePath.hasPrefix("/"), !parts.isEmpty,
               parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".") && !$0.contains("\0") }),
@@ -75,7 +75,7 @@ enum ParticipationKnowledgeReader {
         var before = stat()
         guard fstat(descriptor, &before) == 0, (before.st_mode & S_IFMT) == S_IFREG,
               before.st_nlink == 1 else { throw ParticipationKnowledgeError.unsupportedFile }
-        guard before.st_size >= 0, before.st_size <= maxBytes else { throw ParticipationKnowledgeError.tooLarge }
+        guard before.st_size >= 0, before.st_size <= byteLimit else { throw ParticipationKnowledgeError.tooLarge }
         var bytes = Data()
         var buffer = [UInt8](repeating: 0, count: 16_384)
         while true {
@@ -85,7 +85,7 @@ enum ParticipationKnowledgeReader {
                 throw ParticipationKnowledgeError.inaccessible
             }
             if count == 0 { break }
-            guard bytes.count + count <= maxBytes else { throw ParticipationKnowledgeError.tooLarge }
+            guard bytes.count + count <= byteLimit else { throw ParticipationKnowledgeError.tooLarge }
             bytes.append(contentsOf: buffer.prefix(count))
         }
         var after = stat()

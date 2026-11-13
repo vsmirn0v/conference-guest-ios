@@ -43,6 +43,7 @@ import LiveKitWebRTC
     private var outputOn: Bool
     private var terminalError: NativeGuestErrorCode?
     private(set) var finished = false
+    private(set) var cleanupSucceeded = true
     #if DEBUG
     private var captureDiagnosticsRequested = false
     private var reconnectSequence: UInt64 = 0
@@ -105,8 +106,29 @@ import LiveKitWebRTC
         stateLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         session = makeSession?() ?? GuestSession(makeEngine: { [weak self] in
             guard let self, !finishing else { throw CancellationError() }
-            let audio = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: outputOn)
-            return NativeGuestEngine(label: displayName, systemAudio: audio, verifyReceivedPixels: false)
+#if DEBUG || NATIVE_LEGACY_AUDIO
+            if !SharedAudioEngine.enabledAtLaunch {
+                let audio = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: outputOn)
+                return NativeGuestEngine(label: displayName, systemAudio: audio, verifyReceivedPixels: false)
+            }
+#endif
+            let audio = try await SharedGuestMeetingAudio.attach(to: SharedAudioEngine.shared)
+            guard !finishing, !Task.isCancelled, await audio.beginAttempt(sound: outputOn),
+                  await audio.attachment.assumeTalkExclusively() else {
+                _ = await audio.shutdown(); throw NativeDesktopGuestError.cleanupFailed
+            }
+            guard !finishing, !Task.isCancelled else {
+                _ = await audio.shutdown(); throw CancellationError()
+            }
+            let engine = NativeGuestEngine(label: displayName, systemAudio: audio, verifyReceivedPixels: false)
+            engine.configureStartupPlayback(sound: outputOn)
+            audio.onLevelChange = { [weak engine] in engine?.reconcilePlaybackLevels() }
+            engine.releaseSystemAudio = { [audio] clean in
+                let ended = await audio.endAttempt(clean: clean)
+                let detached = await audio.shutdown()
+                return ended && detached
+            }
+            return engine
         })
         session.onEngineChange = { [weak self] engine in self?.bind(engine) }
         session.onStateChange = { [weak self] snapshot in
@@ -419,6 +441,7 @@ import LiveKitWebRTC
         let task = shutdown.start { [self] in
             await publishStatus(state: .leaving)
             let clean = await session.leave()
+            cleanupSucceeded = clean
             detachVideo()
             if !clean { terminalError = .mediaFailed }
             await publishStatus(state: clean && error == nil ? .left : .failed)

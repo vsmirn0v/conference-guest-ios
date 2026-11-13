@@ -15,11 +15,11 @@ import Foundation
 
         var errorDescription: String? {
             switch self {
-            case .anotherInstanceRunning: return "Another copy of RockNRoll is already running."
-            case .invalidBuild: return "The update build number is invalid or older than the pending update."
-            case .updateNotPrepared: return "The update has not been safely prepared."
-            case .installerMayRun: return "The update installer may already be running."
-            case .unsafeState(let detail): return "Update safety could not be verified: \(detail)"
+            case .anotherInstanceRunning: return L("Another copy of RockNRoll is already running.")
+            case .invalidBuild: return L("The update build number is invalid or older than the pending update.")
+            case .updateNotPrepared: return L("The update has not been safely prepared.")
+            case .installerMayRun: return L("The update installer may already be running.")
+            case .unsafeState(let detail): return L("Update safety could not be verified: %@", detail)
             }
         }
     }

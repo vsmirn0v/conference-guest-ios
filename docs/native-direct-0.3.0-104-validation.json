@@ -1,0 +1,84 @@
+{
+  "version": "0.3.0",
+  "build": "104",
+  "channel": "beta",
+  "sourceBase": "288715d515b9509e73d85ed0b1edfde7a289ade2",
+  "sourceState": "Isolated detached worktree at 288715d plus preserved existing local changes; all 1669 source file hashes matched the tested worktree and remained unchanged through archive creation.",
+  "sourceManifestSHA256": "a1c0ff036650e5fab84eb099d9ff49ecc2bf00bcaaa92edfcdc462b2e068f898",
+  "changedFromBuild103": [
+    "Experiments/NativeGuest/GuestEngine.swift",
+    "Experiments/NativeGuest/GuestPeer.swift",
+    "NativeMacGuest/Attention/AttentionJudge.swift",
+    "NativeMacGuest/Attention/AttentionModel.swift",
+    "NativeMacGuest/Attention/AttentionViews.swift",
+    "NativeMacGuest/Tests/Parity/AttentionTests.swift",
+    "NativeMacGuest/Tests/Parity/InitialSubscriberICETests.swift",
+    "RockNRoll/en.lproj/Localizable.strings",
+    "RockNRoll/ru.lproj/Localizable.strings"
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "104",
+    "file": "RockNRoll-0.3.0-104-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-104-arm64.dmg",
+    "sha256": "f25c33ca6628c0882ec12b490f2a60818446218fc8e6b3890aca936dfc4b70d3",
+    "length": 29654888,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-104/package/RockNRoll-0.3.0-104-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-104/source/.build/beta-build/RockNRollNativeGuest-0.3.0-104.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-104/export-account/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "104",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-104-arm64.dmg",
+      "sha256": "f25c33ca6628c0882ec12b490f2a60818446218fc8e6b3890aca936dfc4b70d3",
+      "length": 29654888
+    },
+    "state": {
+      "appcastSHA256": "ee268d41b6e6d9154445f1c66a2f635c39b979fd4d86cc10434680969f43748e",
+      "inventorySHA256": "6f447f2b7e41c523ed7319b1204f2d54a025943862a0be7f3e18639cb6753919",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-104-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/d707e0a2680141b88a01b546d226e4c8/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "immutableSHA256": "f25c33ca6628c0882ec12b490f2a60818446218fc8e6b3890aca936dfc4b70d3",
+    "betaAliasSHA256": "f25c33ca6628c0882ec12b490f2a60818446218fc8e6b3890aca936dfc4b70d3",
+    "stableAliasSHA256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+    "betaBuild": "104",
+    "stableBuild": "53"
+  },
+  "validation": [
+    "Focused hosted Mac suites: 98 passed, 2 skipped (Rapid-MLX server unavailable), zero failures; tests included 22 ms ICE recovery, bounded retry, evidence ranges, English/Russian messages, and participation voice signaling.",
+    "31 deterministic session policy and lifecycle scenarios passed in prior fix validation; file hashes matched the frozen release source.",
+    "27 distribution tooling tests passed.",
+    "Release build and Xcode archive succeeded. Archive signature verified with Apple Development identity 4Z8BRSUNL4, TeamIdentifier 5V64BP2H3P.",
+    "A separate post-archive loose-product signing check failed because the build command specified identity 3DMJXF2U5P. The independently verified archive retained its correct team signature and was exported by Xcode using the Developer ID account.",
+    "Apple notarized the exported app; stapling and Gatekeeper validation passed, including the app mounted from the packaged DMG.",
+    "Signed beta feed and publisher preflight passed. Publisher and independent HTTPS readback verified immutable, beta and stable artifact SHA-256 hashes."
+  ],
+  "notVerified": [
+    "Live production meeting during a physical network outage or handover.",
+    "Installed Sparkle upgrade.",
+    "The outer DMG was not separately signed or notarized; the app inside is notarized and stapled."
+  ],
+  "evidenceRoot": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-104",
+  "publishedAt": "2026-11-13T13:40:54.102918+00:00"
+}

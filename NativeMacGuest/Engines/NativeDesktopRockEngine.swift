@@ -6,7 +6,7 @@ import LiveKit
 import LiveKitWebRTC
 
 enum NativeDesktopRockError: LocalizedError {
-    case notConnected, staleOperation, noScreenFrames, cameraUnavailable, microphoneAccessRequired, cleanupFailed, audioOwnerBusy
+    case notConnected, staleOperation, noScreenFrames, cameraUnavailable, microphoneAccessRequired, cleanupFailed, audioOwnerBusy, assistantGateBusy, sharedAudioInputUnavailable
     var errorDescription: String? {
         switch self {
         case .notConnected: L("Join a jam before changing media.")
@@ -16,6 +16,8 @@ enum NativeDesktopRockError: LocalizedError {
         case .microphoneAccessRequired: L("Allow microphone access before enabling headset mute controls.")
         case .cleanupFailed: L("Microphone preparation could not stop. Quit and reopen the app before joining again.")
         case .audioOwnerBusy: L("Stop the private microphone check before joining a meeting.")
+        case .assistantGateBusy: L("Wait for the assistant to release the microphone before joining this meeting.")
+        case .sharedAudioInputUnavailable: L("You can listen and use chat in this jam. To use the microphone or assistant speech, reopen the app and join this jam first.")
         }
     }
 }
@@ -63,6 +65,10 @@ struct NativeRockLiveMediaEvidence {
     private var screenPublication: LocalTrackPublication?
     private var ownsPreparedCapture = false
     private var audioPreparation: Task<Void, Error>?
+    private var voicePlayback: Task<Bool, Never>?
+    var approvedChatID: String?
+    var approvedChatOutcome: ((String, MeetingWorkspaceEvent.Status) -> Void)?
+    private var approvedChatTasks: [String: Task<Void, Never>] = [:]
     private var audioProfile = GuestAudioProfile.speech
     private var audioLease: GuestAudioOwnerLease?
     private var concurrentAudio = false
@@ -112,12 +118,17 @@ struct NativeRockLiveMediaEvidence {
             admitted = (credentials.serverURL.absoluteString, credentials.participantToken, credentials.jam.title)
 #endif
             guard revision == token, !Task.isCancelled else { throw CancellationError() }
-            if let shared = await attachSharedAudio(quiet: quiet) {
+            if let shared = try await attachSharedAudio(quiet: quiet) {
                 attachment = shared
                 guard revision == token, !Task.isCancelled else { throw CancellationError() }
             } else {
+#if DEBUG || NATIVE_LEGACY_AUDIO
                 guard let lease = GuestAudioOwnerLease(privateCheck: false, concurrent: concurrentAudio) else { throw NativeDesktopRockError.audioOwnerBusy }
                 audioLease = lease
+#else
+                // The shared-only release must never silently start a second engine.
+                throw NativeDesktopRockError.audioOwnerBusy
+#endif
             }
             if renderFactory == nil {
                 renderFactory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
@@ -163,8 +174,10 @@ struct NativeRockLiveMediaEvidence {
     }
     func setMicrophone(_ enabled: Bool) async throws {
         let room = try connectedRoom(), token = revision
+        if !enabled { voicePlayback?.cancel() }
         if enabled {
             guard inputPermitted else { throw NativeDesktopRockError.notConnected }
+            guard !waitingForSharedAudioInput else { throw NativeDesktopRockError.sharedAudioInputUnavailable }
             guard try await GuestCaptureAuthorization.request(.audio) else { throw GuestSystemAudioError.microphonePermissionRequired }
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             try Task.checkCancellation()
@@ -173,20 +186,35 @@ struct NativeRockLiveMediaEvidence {
             try await setSharedMicrophone(enabled, room: room, attachment: attachment, engine: sharedAudio, token: token)
             refresh(room); return
         }
+#if DEBUG || NATIVE_LEGACY_AUDIO
         _ = try await room.localParticipant.setMicrophone(enabled: enabled, captureOptions: NativeRockAudioPolicy.captureOptions(audioProfile))
         guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
         refresh(room)
+#else
+        throw NativeDesktopRockError.audioOwnerBusy
+#endif
     }
 
     // MARK: Shared audio engine (R4)
 
     /// Attaches to the shared engine and hands LiveKit its factory. Nil keeps Rock on its
     /// own engine (flag off, or LiveKit already made its own factory in this process).
-    private func attachSharedAudio(quiet: Bool) async -> MeetingAudioAttachment? {
-        guard let sharedAudio, let attached = try? await sharedAudio.attach(meetingID: UUID()) else { return nil }
-        guard sharedAudio.installIntoLiveKit() else {
+    private func attachSharedAudio(quiet: Bool) async throws -> MeetingAudioAttachment? {
+        guard let sharedAudio else { return nil }
+        guard await sharedAudio.retirePrewarmedOwnerBeforeLiveKit() else { throw NativeDesktopRockError.cleanupFailed }
+        guard let attached = try? await sharedAudio.attach(meetingID: UUID()) else { return nil }
+        switch sharedAudio.installIntoLiveKit() {
+        case .installed: break
+        case .factoryUnavailable:
             probeLog("rock-shared-audio-unavailable", ["reason": "liveKitFactoryAlreadyCreated"])
-            _ = await attached.detach(); return nil
+            _ = await attached.detach()
+            return nil
+        case .assistantGateHeld:
+            _ = await attached.detach()
+            throw NativeDesktopRockError.assistantGateBusy
+        case .observerUnavailable:
+            _ = await attached.detach()
+            throw NativeDesktopRockError.cleanupFailed
         }
         _ = await attached.setSound(!quiet)
         if inputPermitted, sharedAudio.talkMeetingID == nil { _ = await attached.assumeTalk() }
@@ -205,15 +233,15 @@ struct NativeRockLiveMediaEvidence {
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             return
         }
-        guard attachment.isTalk, await engine.activateInput(for: attachment), await attachment.setMuted(false) else {
-            throw GuestSystemAudioError.microphoneActivationFailure(authorization: AVCaptureDevice.authorizationStatus(for: .audio))
-        }
-        guard revision == token, self.room === room else { attachment.suppress(); throw NativeDesktopRockError.staleOperation }
+        guard attachment.isTalk, !waitingForSharedAudioInput, await engine.activateInput(for: attachment),
+              hasSharedAudioInputRoute else { throw NativeDesktopRockError.sharedAudioInputUnavailable }
+        guard revision == token, self.room === room, await attachment.setMuted(false),
+              hasSharedAudioInputRoute else { attachment.suppress(); throw NativeDesktopRockError.staleOperation }
         do {
             _ = try await room.localParticipant.setMicrophone(enabled: true, captureOptions: NativeRockAudioPolicy.captureOptions(audioProfile))
         } catch { attachment.suppress(); throw error }
         registerMicrophoneSender(room, attachment: attachment)
-        guard revision == token, self.room === room, await attachment.setMuted(false) else {
+        guard revision == token, self.room === room, hasSharedAudioInputRoute, await attachment.setMuted(false) else {
             attachment.suppress(); _ = try? await room.localParticipant.setMicrophone(enabled: false)
             throw NativeDesktopRockError.staleOperation
         }
@@ -273,9 +301,11 @@ struct NativeRockLiveMediaEvidence {
         if let audioPreparation { try await audioPreparation.value; return }
         // Shared engine: the talk meeting's input starts muted there; nothing is published.
         if let attachment, let sharedAudio {
-            guard await sharedAudio.activateInput(for: attachment) else { throw NativeDesktopRockError.microphoneAccessRequired }
+            guard !waitingForSharedAudioInput, await sharedAudio.activateInput(for: attachment),
+                  hasSharedAudioInputRoute else { throw NativeDesktopRockError.sharedAudioInputUnavailable }
             return
         }
+#if DEBUG || NATIVE_LEGACY_AUDIO
         let task = Task { @MainActor in
             let previous = await Task.detached { AudioManager.shared.isRecordingAlwaysPreparedMode }.value
             guard !previous else { return }
@@ -294,9 +324,13 @@ struct NativeRockLiveMediaEvidence {
         audioPreparation = task
         defer { audioPreparation = nil }
         try await task.value
+#else
+        throw NativeDesktopRockError.audioOwnerBusy
+#endif
     }
     func setPlayout(_ enabled: Bool) async throws {
         let room = try connectedRoom(), token = revision, previous = playoutIntent
+        if !enabled { voicePlayback?.cancel(); cancelApprovedChat() }
         playoutIntent = enabled
         do {
             if let attachment { _ = await attachment.setSound(enabled) }
@@ -328,18 +362,61 @@ struct NativeRockLiveMediaEvidence {
     }
     // Voice replies go through LiveKit's own input mixer: its microphone volume
     // is the gate, and app audio is mixed into what the room receives.
-    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && room != nil }
+    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && room != nil && !waitingForSharedAudioInput }
+    private var ownsVoiceInput: Bool { inputPermitted && (attachment?.isTalk ?? (audioLease != nil)) }
+    private var waitingForSharedAudioInput: Bool {
+        attachment != nil && sharedAudio?.guestOwner?.waitingForForwardedInputRoute == true
+    }
+    var microphoneRestriction: String? {
+        waitingForSharedAudioInput ? NativeDesktopRockError.sharedAudioInputUnavailable.localizedDescription : nil
+    }
+    private var hasSharedAudioInputRoute: Bool {
+        attachment == nil || sharedAudio?.guestOwner?.hasForwardedInputRoute == true
+    }
+    var voiceMicrophoneGateIsClosed: Bool {
+        ownsVoiceInput && hasSharedAudioInputRoute && AudioManager.shared.mixer.micVolume == 0
+    }
     func setMicrophoneGate(open: Bool) async -> Bool {
+        guard ownsVoiceInput else { return false }
+        if open { voicePlayback?.cancel() }
+        if !open, !hasSharedAudioInputRoute {
+            guard !waitingForSharedAudioInput, !snapshot.microphoneOn, let attachment, let sharedAudio,
+                  await sharedAudio.activateInput(for: attachment), ownsVoiceInput, hasSharedAudioInputRoute else { return false }
+        }
         let mixer = AudioManager.shared.mixer
         mixer.micVolume = open ? 1 : 0
         return (mixer.micVolume != 0) == open
     }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool {
-        guard let room, room.localParticipant.isMicrophoneEnabled() else { return false }
-        AudioManager.shared.mixer.capture(appAudio: buffer)
-        let seconds = Double(buffer.frameLength) / buffer.format.sampleRate
-        do { try await Task.sleep(for: .seconds(seconds + 0.2)) } catch { return false }
-        return true
+        await playVoiceReply(buffer, monitorLocally: true)
+    }
+#if DEBUG
+    // LiveKit manual rendering has an outgoing input graph and no device output graph.
+    func playVoiceReplyWithoutMonitorForTesting(_ buffer: AVAudioPCMBuffer) async -> Bool {
+        await playVoiceReply(buffer, monitorLocally: false)
+    }
+#endif
+    private func playVoiceReply(_ buffer: AVAudioPCMBuffer, monitorLocally: Bool) async -> Bool {
+        guard !Task.isCancelled, voicePlayback == nil, let room else { return false }
+        let token = revision, mixer = AudioManager.shared.mixer
+        let playback = Task { @MainActor [weak self, weak room] in
+            guard let self else { return false }
+            let localGain = monitorLocally ? Float(meetingVolume) : nil
+            return await mixer.playNativeAppReply(buffer, localGain: localGain) {
+                guard let room, revision == token, self.room === room,
+                      room.connectionState == .connected, room.localParticipant.isMicrophoneEnabled(),
+                      inputPermitted, playoutIntent, meetingVolume > 0, hasSharedAudioInputRoute,
+                      mixer.micVolume == 0 else { return false }
+                return attachment?.isTalk ?? (audioLease != nil)
+            }
+        }
+        voicePlayback = playback
+        defer { voicePlayback = nil }
+        return await withTaskCancellationHandler {
+            await playback.value
+        } onCancel: {
+            playback.cancel()
+        }
     }
     /// Each remote participant's audio track, reported when the set changes.
     private func publishAudioSources(_ room: Room) {
@@ -362,6 +439,10 @@ struct NativeRockLiveMediaEvidence {
     }
     func setPlayoutVolume(_ volume: Double) async {
         meetingVolume = volume.isFinite ? min(1, max(0, volume)) : 1
+        if meetingVolume == 0 { voicePlayback?.cancel() }
+        else if voicePlayback != nil, attachment?.isTalk ?? (audioLease != nil) {
+            AudioManager.shared.mixer.setNativeAppReplyMonitorGain(Float(meetingVolume))
+        }
         if let room { await applyVolume(room) }
     }
     /// Newly subscribed tracks start at full level, so every subscription reapplies it.
@@ -428,6 +509,7 @@ struct NativeRockLiveMediaEvidence {
     /// microphone and any prepared capture it owns, so it sends and holds nothing.
     func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
         inputPermitted = permitted
+        if !permitted { voicePlayback?.cancel() }
         if permitted, let attachment { return await attachment.assumeTalk() }
         guard !permitted, let room else { return true }
         // The sender is off before LiveKit unpublishes it.
@@ -439,12 +521,14 @@ struct NativeRockLiveMediaEvidence {
             do { try await room.localParticipant.unpublish(publication: local) } catch { clean = false }
         }
         audioPreparation?.cancel(); _ = try? await audioPreparation?.value; audioPreparation = nil
+#if DEBUG || NATIVE_LEGACY_AUDIO
         if ownsPreparedCapture {
             do {
                 try await Task.detached { try await AudioManager.shared.setRecordingAlwaysPreparedMode(false) }.value
                 ownsPreparedCapture = false
             } catch { clean = false }
         }
+#endif
         if let attachment {
             attachment.removeAllSenders()
             clean = await attachment.relinquishTalk() && clean
@@ -454,6 +538,8 @@ struct NativeRockLiveMediaEvidence {
     }
     func leave() async -> Bool { await disconnect(clearChat: true) }
     private func disconnect(clearChat: Bool) async -> Bool {
+        voicePlayback?.cancel()
+        cancelApprovedChat()
         revision = UUID(); snapshot.phase = .leaving; emit()
         subscriptions.reset(); subscriptionFailure = nil
         audioPreparation?.cancel(); _ = try? await audioPreparation?.value; audioPreparation = nil
@@ -475,12 +561,14 @@ struct NativeRockLiveMediaEvidence {
     }
     private func releaseAudioOwnership(after room: Room?) async -> Bool {
         var preparedStopped = true
+#if DEBUG || NATIVE_LEGACY_AUDIO
         if ownsPreparedCapture {
             do {
                 try await Task.detached { try await AudioManager.shared.setRecordingAlwaysPreparedMode(false) }.value
                 ownsPreparedCapture = false
             } catch { preparedStopped = false; snapshot.lastError = error.localizedDescription }
         }
+#endif
         var clean = preparedStopped && (room == nil || room?.connectionState == .disconnected)
         if let attachment {
             // The shared engine quarantines itself if the release fails.
@@ -488,7 +576,9 @@ struct NativeRockLiveMediaEvidence {
             clean = await attachment.detach() && clean
             return clean
         }
+#if DEBUG || NATIVE_LEGACY_AUDIO
         if clean { audioLease = nil } else { GuestAudioOwnerLease.reportFailedStop() }
+#endif
         return clean
     }
     private func connectedRoom() throws -> Room {
@@ -543,6 +633,7 @@ struct NativeRockLiveMediaEvidence {
     private func refresh(_ room: Room) {
         guard self.room === room, let factory = renderFactory else { return }
         let connected = room.connectionState == .connected
+        if !connected { voicePlayback?.cancel() }
         snapshot.microphoneOn = connected && room.localParticipant.isMicrophoneEnabled()
         snapshot.cameraOn = connected && room.localParticipant.isCameraEnabled()
         snapshot.sharing = connected && screenPublication != nil
@@ -592,11 +683,41 @@ struct NativeRockLiveMediaEvidence {
         }
     }
     private func sendChat(_ text: String) {
+        if let id = approvedChatID {
+            sendApprovedChat(text, id: id)
+            return
+        }
         guard snapshot.phase == .connected else { return }
         let packet = RoomChatPacket(id: UUID().uuidString, text: text)
         guard (try? packet.encoded()) != nil else { return }
         chat.append(.init(id: packet.id, sender: L("You"), text: text, sentAt: Date(), isOwn: true, delivery: .pending))
         publishChat(id: packet.id, text: text)
+    }
+    func cancelApprovedChat() { for task in approvedChatTasks.values { task.cancel() } }
+
+    private func sendApprovedChat(_ text: String, id: String) {
+        guard let room, snapshot.phase == .connected,
+              let payload = try? RoomChatPacket(id: id, text: text).encoded() else {
+            approvedChatOutcome?(id, .failed)
+            return
+        }
+        let token = revision
+        approvedChatTasks[id] = Task { [weak self] in
+            guard let self else { return }
+            defer { approvedChatTasks[id] = nil }
+            guard !Task.isCancelled, revision == token, self.room === room, room.connectionState == .connected else {
+                approvedChatOutcome?(id, .cancelled)
+                return
+            }
+            do {
+                try await room.localParticipant.publish(data: payload,
+                    options: DataPublishOptions(topic: RoomChatPacket.topic, reliable: true))
+                approvedChatOutcome?(id, .submitted)
+                if revision == token {
+                    chat.append(.init(id: id, sender: L("You"), text: text, sentAt: .now, isOwn: true))
+                }
+            } catch { approvedChatOutcome?(id, .unknown) }
+        }
     }
     private func publishChat(id: String, text: String) {
         guard let room, snapshot.phase == .connected else { return }

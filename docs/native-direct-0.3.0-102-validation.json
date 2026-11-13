@@ -1,0 +1,120 @@
+{
+  "version": "0.3.0",
+  "build": "102",
+  "channel": "beta",
+  "sourceBase": "b595e89cf2843cbf8a7ecf2c29c9cf2545aebc06",
+  "sourceState": "Uncommitted working tree. Exact tracked diff and relevant new files preserved under .build/native-beta-102. Prior beta artifacts and evidence retained.",
+  "sourcePatchSHA256": "23f60c4bbc3381911811e648fce7591a5eee2161401715e26e96ae239c0a74b3",
+  "newSourcesSHA256": "175f4e7c29cf16d1398274b7893c3a2fa268a9eb5c20f9150fdbfe95be90d9e2",
+  "plannerSHA256": "2173a7016151601ec6e78bb8942d4657f28f30f4fb35e7a579320182a873bb48",
+  "contextSHA256": "ed6a2e386732540d101e73de81af24bfb13197cde3acc66da3ec9b28b4f01164",
+  "vaultSearchSHA256": "bb7cf1b435397ee3f045814a7709a7a424f94435f99b01717bf110e0c371f34e",
+  "changes": [
+    "Natural first-person replies on behalf of the user. No default brand or assistant prefix in chat, speech or private transcript.",
+    "Prefix is applied only when supported by explicit user instructions, with current meeting guidance taking precedence over global style.",
+    "Answers use current meeting information, notes, About and relevant excerpts from the selected Obsidian vault. The selected vault remains available for lookup when automatic export is paused.",
+    "Model-requested bounded vault retrieval uses the existing security-scoped bookmark. Source removal and changes cancel pending replies. Retrieved content is evidence rather than behavioral instructions.",
+    "Host-owned scope checks prevent calendar logistics from grounding unrelated project answers. Current meeting schedule questions remain supported.",
+    "Fresh direct questions can receive consecutive replies while unsolicited pacing, exact-turn ownership, echo protection and voice delivery guards remain.",
+    "Participation explanation and source-scope text updated in English and Russian."
+  ],
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "102",
+    "file": "RockNRoll-0.3.0-102-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-102-arm64.dmg",
+    "sha256": "46fd4db227405d75adadf51c4f9594f3fba6cfbc274b4eebb5c110aab59ec0d2",
+    "length": 29228602,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-102/package/RockNRoll-0.3.0-102-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "transport": {
+      "originAddress": "46.225.51.10",
+      "hostKeyAlias": "kachat.app",
+      "strictHostKeyChecking": true,
+      "reason": "kachat.app resolved to Cloudflare; same known host key verified at rock.glowsoft.ru origin"
+    },
+    "artifact": {
+      "file": "RockNRoll-0.3.0-102-arm64.dmg",
+      "sha256": "46fd4db227405d75adadf51c4f9594f3fba6cfbc274b4eebb5c110aab59ec0d2",
+      "length": 29228602
+    },
+    "state": {
+      "appcastSHA256": "5ea78dcb303b8dbda9a451982bdd2f4ddaf377be1655f2e5396bea3c1678d904",
+      "inventorySHA256": "d6e8b360377a2d3a2c1b370eb9260c398cc59f0e24f3871f5bc7bab55bd4f674",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-102-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/d11ede7509d3437fa30eaaec4000ebf7/backup",
+    "httpsVerified": true,
+    "httpsVerificationLocation": "Release server, through canonical public HTTPS URLs with normal certificate verification",
+    "localHTTPSMetadataVerified": true,
+    "localFullHTTPSDownloadVerified": false,
+    "localHTTPSDownloadLimitation": "Full and 1 MiB range downloads from the Mac stalled after roughly 16 KiB on HTTP/2 and HTTP/1.1. No DNS, VPN, SSH configuration, or network setting was changed.",
+    "recovery": "Normal publisher installed release successfully, then its local HTTPS read timed out. Evidence recovered from read-only remote preflight, remote public HTTPS hash checks and local public metadata readback.",
+    "publicHTTPSProbe": [
+      {
+        "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-102-arm64.dmg",
+        "status": 200,
+        "length": 29228602,
+        "sha256": "46fd4db227405d75adadf51c4f9594f3fba6cfbc274b4eebb5c110aab59ec0d2",
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      {
+        "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "status": 200,
+        "length": 29228602,
+        "sha256": "46fd4db227405d75adadf51c4f9594f3fba6cfbc274b4eebb5c110aab59ec0d2",
+        "cacheControl": "no-store"
+      },
+      {
+        "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "status": 200,
+        "length": 15947096,
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+        "cacheControl": "no-store"
+      },
+      {
+        "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "status": 200,
+        "length": 6979,
+        "sha256": "5ea78dcb303b8dbda9a451982bdd2f4ddaf377be1655f2e5396bea3c1678d904",
+        "cacheControl": "no-store"
+      },
+      {
+        "url": "https://rock.glowsoft.ru/mac/latest.json",
+        "status": 200,
+        "length": 489,
+        "sha256": "d6e8b360377a2d3a2c1b370eb9260c398cc59f0e24f3871f5bc7bab55bd4f674",
+        "cacheControl": "no-store"
+      }
+    ]
+  },
+  "validation": [
+    "44 targeted native tests passed on final planner 2173a701, covering source invalidation, note snapshots, no-prefix echoes, consecutive direct turns, explicit opening rendering, metadata scope and muted-raw-microphone WebRTC output.",
+    "14 of 14 synthetic configured gpt-5.4-mini persona scenarios passed on predecessor planner 79105ddb; final changes were the narrower metadata guard tested separately.",
+    "Supplementary configured-model tests passed for About answers, meeting guidance overriding global prefix, a long meeting note and safe empty-vault handling. An earlier wrong-entity metadata acceptance motivated the final guard.",
+    "All 4 signed final-planner metadata checks passed: current meeting schedule with no vault, current schedule with an empty vault, forced unrelated calendar citation rejection and model-generated unrelated calendar answer rejection.",
+    "Apple on-device focused prefix checks passed 3 of 3. A supplemental Apple scope probe stalled and was stopped; comprehensive on-device planner validation was not established.",
+    "Independent review cleared the final source. Archive source manifest and preserved tracked diff match the tested local source.",
+    "App notarization and Gatekeeper accepted. Signed-app Russian resources, localization syntax, package/feed signatures, remote artifact digest and public HTTPS metadata verified.",
+    "Full public HTTPS immutable, beta and stable artifacts and feed/inventory hashes matched from the release server. Stable remained build 53. Full Mac HTTPS downloads stalled; verified local installer is available."
+  ],
+  "diagnosis": "The supplied 15.36 diagnostics show beta 101 completed automatic cloned speech. This change addresses the default scripted persona, unwanted identity prefix and missing automatic context lookup.",
+  "notVerified": [
+    "End-to-end automatic reply with the configured clone in a new live provider meeting on build 102. Model fixtures were synthetic, rendered built-in TTS into buffers and sent no meeting messages or audio.",
+    "Installed Sparkle upgrade and full HTTPS artifact download from this Mac.",
+    "Comprehensive Apple on-device planning validation; supplemental scope probe stalled.",
+    "Separate notarization of the outer DMG."
+  ],
+  "publishedAt": "2026-11-12T13:56:11.454482+00:00",
+  "evidenceRoot": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-102"
+}
