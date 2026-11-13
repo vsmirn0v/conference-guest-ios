@@ -1,0 +1,77 @@
+{
+  "version": "0.3.0",
+  "build": "105",
+  "channel": "beta",
+  "sourceCommit": "d0587553689d5bc7af55aa9bd098f09e984c5a92",
+  "sourceManifestSHA256": "103ebd435ed6a1fc8c28bf34aa707e32d3ddcacc2a79af2d7ac15beefde91603",
+  "sourceState": "Committed and pushed to origin/main before publication; 1,670 recorded source files matched the pre-archive manifest after archive creation.",
+  "archivedExecutableSHA256": "59ef4f20ce725d72143b99303f70cd7eada1c00cae09e8a088a602e0d7105162",
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "105",
+    "file": "RockNRoll-0.3.0-105-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-105-arm64.dmg",
+    "sha256": "a7153e8b6036fd02e68956053b93016181a867aad0eb2d8bc946152440cc2760",
+    "length": 29636645,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-105/package/RockNRoll-0.3.0-105-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-105/RockNRollNativeGuest-0.3.0-105.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-105/export-retry-2/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "105",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-105-arm64.dmg",
+      "sha256": "a7153e8b6036fd02e68956053b93016181a867aad0eb2d8bc946152440cc2760",
+      "length": 29636645
+    },
+    "state": {
+      "appcastSHA256": "cfd27080616d2ca7d37f7dd3e75aaae0fb42f98fa3e2fd612a6db70525ed9f40",
+      "inventorySHA256": "0d3086f25b3a190bc801eaa8540ad2ce1229bfa73833669e0492906f18dd4401",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-105-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/6d9ebbd0a0e94351852a1b1956b81fce/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "immutableSHA256": "a7153e8b6036fd02e68956053b93016181a867aad0eb2d8bc946152440cc2760",
+    "betaAliasSHA256": "a7153e8b6036fd02e68956053b93016181a867aad0eb2d8bc946152440cc2760",
+    "stableAliasSHA256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+    "appcastSHA256": "cfd27080616d2ca7d37f7dd3e75aaae0fb42f98fa3e2fd612a6db70525ed9f40",
+    "betaBuild": "105",
+    "stableBuild": "53"
+  },
+  "validation": [
+    "19 focused tests passed",
+    "14 attention and voice-gate tests passed",
+    "34 shared audio and microphone tests passed; 5 hardware tests excluded",
+    "27 distribution tooling tests passed",
+    "signed archive app-group and voice-worker self-checks passed",
+    "Both unsigned comparison archives and packages were built from matching source; the shared-only executable was 66,288 bytes smaller and the compressed package 148,242 bytes smaller.",
+    "Developer ID app notarized and stapled; Gatekeeper accepted the app including from the packaged DMG.",
+    "Signed feed and package passed preflight; publisher and independent HTTPS readback matched immutable, beta, stable and feed hashes."
+  ],
+  "notVerified": [
+    "Installed Sparkle upgrade to build 105.",
+    "Live production multi-provider meeting, physical route changes, and cloned-voice audibility on this exact signed artifact.",
+    "Separate signing and notarization of the outer DMG."
+  ],
+  "notarizationAttempts": "First attempt timed out contacting Apple; second failed during multipart upload; third uploaded successfully and was notarized.",
+  "evidenceRoot": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-105",
+  "independentReadbackAt": "2026-11-13T21:34:27.762241+00:00"
+}
