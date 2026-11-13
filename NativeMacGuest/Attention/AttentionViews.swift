@@ -19,7 +19,7 @@ struct AttentionCardStack: View {
                 Button(action: openAssistant) {
                     Label(L("+%ld in Assistant", attention.overflowMomentIDs.count), systemImage: "tray.full")
                         .font(.callout.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(.regularMaterial, in: Capsule())
+                        .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
                 }.buttonStyle(.plain).accessibilityIdentifier("attention.overflow")
             }
         }
@@ -47,7 +47,7 @@ struct AttentionCardView: View {
             ForEach(card.evidence.prefix(2), id: \.id) { line in
                 HStack(alignment: .top, spacing: 6) {
                     Rectangle().fill(Color.secondary.opacity(0.4)).frame(width: 2)
-                    (Text(line.speaker).fontWeight(.semibold) + Text(" — " + line.text)).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                    (Text(line.speaker).fontWeight(.semibold) + Text(" — " + line.text)).font(.callout).foregroundStyle(.primary).lineLimit(3)
                 }.fixedSize(horizontal: false, vertical: true)
             }
             if !card.readOnly, (!card.channels.isEmpty || card.canSpeak) && !declining { AttentionReplyView(attention: attention, card: card) }
@@ -84,7 +84,8 @@ struct AttentionCardView: View {
             }
         }
         .padding(12).frame(width: 380, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        // Shared screens can be bright white; keep the card opaque so every label stays legible.
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
         .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(card.verdict.level.color).frame(width: 4).padding(.vertical, 10) }
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
         .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
