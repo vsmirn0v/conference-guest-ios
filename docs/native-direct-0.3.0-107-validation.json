@@ -1,0 +1,124 @@
+{
+  "version": "0.3.0",
+  "build": "107",
+  "channel": "beta",
+  "sourceCommit": "2520bb14ff0c782a4f8df002d7791b740aeee97d",
+  "sourceState": "Committed and pushed to origin/main before archive and publication; all 314 files in the archive build evidence matched the working files after archive creation.",
+  "buildEvidenceSHA256": "ec43bf0ed2e1b799bf6bb6d5466458ea7b8b7c7031062fbfaccb19ced490c278",
+  "archivedExecutableSHA256": "1f00e2dc3c470ff15feb48bf560a4102597fdee57c5984a2f056172fb8bc15bb",
+  "privacyManifestSHA256": "5425b94e2067d8835cabcbf6fcd00bc59bee5cdfd8fd1531764bcb46272a7421",
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "107",
+    "file": "RockNRoll-0.3.0-107-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-107-arm64.dmg",
+    "sha256": "ee962fdaa412013a4be9027852c655f0e0c4cb840d46600f8a13fd9c89a20c2e",
+    "length": 29812869,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-107/package/RockNRoll-0.3.0-107-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/voice-recovery-validation/RockNRollNativeGuest-0.3.0-107.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-107/export/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "107",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-107-arm64.dmg",
+      "sha256": "ee962fdaa412013a4be9027852c655f0e0c4cb840d46600f8a13fd9c89a20c2e",
+      "length": 29812869
+    },
+    "state": {
+      "appcastSHA256": "62d1abc36b10460bce5e8cd8f05efe8885d6b0996fcbb9e0f92cc69503f351c4",
+      "inventorySHA256": "849c0ec4be05dedd77336d5b8f78fc5226e501fa586d27dd09c09daaa35974a4",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-107-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/6f269d0746784cde803219a3b09cb503/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "verifiedAt": "2026-11-14T00:36:35.234486+00:00",
+    "version": "0.3.0",
+    "betaBuild": "107",
+    "stableBuild": "53",
+    "expectedBetaSHA256": "ee962fdaa412013a4be9027852c655f0e0c4cb840d46600f8a13fd9c89a20c2e",
+    "expectedStableSHA256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+    "checks": {
+      "immutable": {
+        "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-107-arm64.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-107-arm64.dmg",
+        "httpStatus": 200,
+        "sha256": "ee962fdaa412013a4be9027852c655f0e0c4cb840d46600f8a13fd9c89a20c2e",
+        "length": 29812869,
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "betaAlias": {
+        "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "httpStatus": 200,
+        "sha256": "ee962fdaa412013a4be9027852c655f0e0c4cb840d46600f8a13fd9c89a20c2e",
+        "length": 29812869,
+        "cacheControl": "no-store"
+      },
+      "stableAlias": {
+        "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "httpStatus": 200,
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+        "length": 15947096,
+        "cacheControl": "no-store"
+      },
+      "appcast": {
+        "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "httpStatus": 200,
+        "sha256": "62d1abc36b10460bce5e8cd8f05efe8885d6b0996fcbb9e0f92cc69503f351c4",
+        "length": 6988,
+        "cacheControl": "no-store",
+        "expectedPreparedSHA256": "62d1abc36b10460bce5e8cd8f05efe8885d6b0996fcbb9e0f92cc69503f351c4"
+      },
+      "inventory": {
+        "url": "https://rock.glowsoft.ru/mac/latest.json",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/latest.json",
+        "httpStatus": 200,
+        "sha256": "849c0ec4be05dedd77336d5b8f78fc5226e501fa586d27dd09c09daaa35974a4",
+        "length": 489,
+        "cacheControl": "no-store",
+        "expectedPreparedSHA256": "849c0ec4be05dedd77336d5b8f78fc5226e501fa586d27dd09c09daaa35974a4"
+      }
+    },
+    "errors": [],
+    "appcastBetaEnclosureVerified": true,
+    "inventoryChannelsVerified": true,
+    "allMatched": true
+  },
+  "validation": {
+    "integratedTests": "127 executed, 0 failures, 6 skipped; .build/native-beta-107/integrated-tests-v3.xcresult",
+    "distributionTests": "27 passed",
+    "localizations": "English and Russian property lists passed plutil -lint",
+    "sourceReview": "Independent review of meeting and model changes found no concrete beta-blocking issue.",
+    "signedBuild": "Release build and archive succeeded; archived app signature verified; signed app-group IO and embedded voice worker launch checks passed.",
+    "notarization": "Exported app stapled and accepted by Gatekeeper; mounted app validated after packaging. The outer DMG is not separately notarized.",
+    "skips": "Three transcription tests require ASR fixtures; two workspace restart tests require dedicated restart fixtures; one installed Neural Engine voice test was skipped.",
+    "limits": [
+      "No live two-meeting model switch, meeting takeover, microphone or cloned-voice playback test on this artifact.",
+      "No real low-disk voice recovery or notes save failure interaction was exercised.",
+      "Scroll-follow direction policy was tested, but the actual AppKit observer has not been verified with trackpad, scrollbar, keyboard, or VoiceOver.",
+      "Home bitmap snapshots have native compositing artifacts; live beta 107 appearance has not been verified.",
+      "An installed Sparkle upgrade was not exercised."
+    ]
+  }
+}
