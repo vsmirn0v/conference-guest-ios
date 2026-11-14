@@ -255,6 +255,7 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
             case .context: throw ClonedVoiceWorkerError.context(response.message ?? "")
             case .runtime:
                 if let failure = response.failureInfo {
+                    probeLog("voice-worker-failure", failure.diagnosticFields.merging(["operation": request.operation.rawValue]) { current, _ in current })
                     throw ClonedVoiceWorkerError.diagnosed(failure, repairedAsset: response.repairedAsset)
                 }
                 throw ClonedVoiceWorkerError.runtime(response.message ?? "", repairAsset: response.repairAsset)

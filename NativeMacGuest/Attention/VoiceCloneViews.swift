@@ -150,6 +150,31 @@ struct VoiceCloneSettingsView: View {
         let failure = clone.failure
         VStack(alignment: .leading, spacing: 6) {
             switch failure?.kind {
+            case .preparationSpace:
+                if let available = failure?.storage?.availableBytes,
+                   let required = failure?.storage?.requiredBytes, available >= 0, required >= 0 {
+                    if available >= required {
+                        Label(L("Ready to retry voice preparation."), systemImage: "arrow.clockwise")
+                    } else {
+                        Label(L("Not enough working space to prepare your voice."), systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
+                } else {
+                    Label(L("Check working space for voice preparation."), systemImage: "externaldrive")
+                }
+                Text(L("Preparing the voice model needs extra working space. Your downloaded model and saved voice will be kept."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                preparationStorageDetails(failure?.storage)
+                storageActions { retryPreparation() }
+            case .compilation:
+                Label(L("Neural Engine model compilation failed."), systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text(L("Check the working space below, then try again. If preparation fails again, collect diagnostics."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(L("Your downloaded model and saved voice will be kept."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                preparationStorageDetails(failure?.storage)
+                storageActions { retryPreparation() }
             case .storage:
                 Label(L("Not enough disk space to prepare the voice model."), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -208,11 +233,42 @@ struct VoiceCloneSettingsView: View {
                     Button(L("Try Again")) { retryPreparation() }
                 }
             }
+            if let failure, [.compilation, .cache, .unknown].contains(failure.kind),
+               let details = failure.technicalDetails, !details.isEmpty {
+                DisclosureGroup(L("Technical details")) {
+                    Text(details).font(.caption.monospaced()).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.accessibilityIdentifier("voiceModel.failureDetails")
+            }
             if let date = failure?.failedAt {
                 Text(L("Last attempt: %@", date.formatted(date: .abbreviated, time: .shortened)))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.accessibilityIdentifier("voiceModel.preparationFailure")
+    }
+
+    /// Preparation needs temporary compiler files in addition to the downloaded
+    /// model. Present the measured free space against the estimated headroom,
+    /// without treating an opaque compilation failure as a confirmed full disk.
+    @ViewBuilder private func preparationStorageDetails(_ storage: VoiceStorageSnapshot?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let available = storage?.availableBytes, available >= 0 {
+                Text(L("Available for preparation: %@.", ByteCountFormatter.string(fromByteCount: available, countStyle: .file)))
+            } else {
+                Text(L("The available space could not be checked. Open Storage Settings and try again."))
+            }
+            if let required = storage?.requiredBytes, required >= 0 {
+                Text(L("Estimated free space needed for preparation: %@.", ByteCountFormatter.string(fromByteCount: required, countStyle: .file)))
+                if let shortfall = storage?.shortfallBytes {
+                    Text(L("Free at least %@ more before retrying.", ByteCountFormatter.string(fromByteCount: shortfall, countStyle: .file)))
+                } else if let available = storage?.availableBytes, available >= required {
+                    Text(L("The available space meets this estimate. You can try again."))
+                }
+                Text(L("The estimate includes temporary compilation files. Actual space needed can vary."))
+            }
+        }.font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("voiceModel.preparationStorage")
     }
 
     @ViewBuilder private func repairActionIfAvailable(_ failure: ClonedVoiceFailure?) -> some View {

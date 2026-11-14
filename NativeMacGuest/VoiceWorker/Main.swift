@@ -46,10 +46,12 @@ private final class ClonedVoiceWorkerRuntime {
     private var lease: ClonedVoiceLease?
     private var model: AnyObject?
     private var repairedAsset: String?
+    private var pendingRepairAsset: String?
 
     func perform(_ request: ClonedVoiceWire.Request,
                  progress: (ClonedVoiceWire.Response.Stage) -> Void) async -> (ClonedVoiceWire.Response, [Float]?) {
         repairedAsset = nil
+        pendingRepairAsset = nil
         do {
             if request.operation == .ping { return (.init(), nil) }
             #if canImport(CoreAI)
@@ -67,11 +69,20 @@ private final class ClonedVoiceWorkerRuntime {
             return (.init(failure: .busy), nil)
         } catch VoxError.context(let message) where request.operation == .speak {
             return (.init(failure: .context, message: message), nil)
+        } catch let failure as VoicePreparationStorageError {
+            let diagnosis = ClonedVoiceFailure(kind: .preparationSpace, storage: failure.snapshot,
+                technicalDetails: failure.localizedDescription,
+                repairAsset: pendingRepairAsset, failedAt: Date())
+            return (.init(failure: .runtime, message: failure.localizedDescription,
+                          failureInfo: diagnosis, repairedAsset: repairedAsset), nil)
         } catch let failure as VoxAssetFailure {
             let asset = failure.missingSpecialization ? failure.asset : nil
-            let kind: ClonedVoiceFailure.Kind = VoiceStorage.isOutOfSpace(failure.cause) ? .storage : (asset == nil ? .unknown : .cache)
+            let kind: ClonedVoiceFailure.Kind = VoiceStorage.isOutOfSpace(failure.cause) ? .storage :
+                (asset != nil ? .cache : (failure.duringSpecialization ? .compilation : .unknown))
+            let detail = failure.cause as NSError
             let diagnosis = ClonedVoiceFailure(kind: kind, technicalDetails: failure.localizedDescription,
-                                                repairAsset: asset, failedAt: Date())
+                                                repairAsset: asset, failedAt: Date(), asset: failure.asset,
+                                                errorDomain: detail.domain, errorCode: detail.code)
             probeLog("voice-worker-failure-classified", ["kind": kind.rawValue, "repairAvailable": asset != nil])
             return (.init(failure: .runtime, message: failure.localizedDescription, repairAsset: asset,
                           failureInfo: diagnosis, repairedAsset: repairedAsset), nil)
@@ -106,8 +117,11 @@ private final class ClonedVoiceWorkerRuntime {
             loaded = resident
         } else {
             progress(.load)
-            if request.operation == .prepare, let asset = request.repairAsset,
-               try VoxCoreAI.repair(asset, in: folder) { repairedAsset = asset }
+            if request.operation == .prepare, let asset = request.repairAsset {
+                pendingRepairAsset = asset
+                if try VoxCoreAI.repair(asset, in: folder) { repairedAsset = asset }
+                pendingRepairAsset = nil
+            }
             loaded = try await VoxCPM2(bundle: folder)
             model = loaded
         }

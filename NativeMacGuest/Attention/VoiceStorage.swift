@@ -93,3 +93,78 @@ enum VoiceStorage {
         return false
     }
 }
+
+/// Preparation needs compiler scratch space in addition to the downloaded files.
+/// This conservative 12 GiB working-space budget is an estimate for the pinned
+/// VoxCPM2 bundle, not a measured minimum or a guarantee of successful compilation.
+/// A real base-model repair exhausted a compiler temporary file beyond 4.6 GiB;
+/// other compiler outputs, cached specializations and concurrent disk use need room too.
+enum VoicePreparationStorage {
+    static let estimatedRequiredBytes: Int64 = 12 * 1_024 * 1_024 * 1_024
+    static let compilerTemporaryFolder = URL(fileURLWithPath: "/private/var/tmp", isDirectory: true)
+
+    /// ANE compilation allocates temporary files outside the app's model folder.
+    /// Reclaimable "important usage" capacity can overstate what its allocator
+    /// can use immediately, so preparation deliberately uses current free bytes.
+    static func immediatelyAvailableCapacity(at path: URL) -> Int64? {
+        guard let existing = VoiceStorage.existingAncestor(of: path),
+              let value = try? existing.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity,
+              value >= 0 else { return nil }
+        return Int64(value)
+    }
+
+    static func snapshot(
+        at modelFolder: URL,
+        cacheFolder: URL? = nil,
+        compilerTemporaryFolder: URL = compilerTemporaryFolder,
+        capacity: (URL) -> Int64? = immediatelyAvailableCapacity,
+        sameVolume: (URL, URL) -> Bool? = VoiceStorage.sameVolume
+    ) -> VoiceStorageSnapshot {
+        // The worker's default CoreAI cache was observed under its Application
+        // Support directory. Measure that volume without depending on a private
+        // cache subdirectory name or reading its contents.
+        let cacheFolder = cacheFolder ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        var locations: [(URL, VoiceStorageSnapshot.Location)] = [(modelFolder, .model)]
+        if let cacheFolder { locations.append((cacheFolder, .model)) }
+        locations.append((compilerTemporaryFolder, .temporary))
+
+        // Do not add the estimate repeatedly for paths sharing a volume. Sampling
+        // can race other disk users, so retain the lower known reading in a group.
+        var volumes: [(paths: [URL], available: Int64?, location: VoiceStorageSnapshot.Location)] = []
+        for (path, location) in locations {
+            let available = capacity(path).flatMap { $0 >= 0 ? $0 : nil }
+            if let index = volumes.firstIndex(where: { group in
+                group.paths.contains { sameVolume(path, $0) == true }
+            }) {
+                volumes[index].paths.append(path)
+                if let available {
+                    volumes[index].available = min(volumes[index].available ?? available, available)
+                }
+            } else {
+                volumes.append(([path], available, location))
+            }
+        }
+        // A known deficit on any relevant volume is actionable. Unknown capacity
+        // never invents a deficit, even if the other volume has sufficient space.
+        let constrained = volumes.filter { $0.available != nil }.min { $0.available! < $1.available! }
+        return .init(availableBytes: constrained?.available, requiredBytes: estimatedRequiredBytes,
+                     location: constrained?.location)
+    }
+
+    static func ensureSpace(
+        at modelFolder: URL,
+        cacheFolder: URL? = nil,
+        compilerTemporaryFolder: URL = compilerTemporaryFolder,
+        capacity: (URL) -> Int64? = immediatelyAvailableCapacity,
+        sameVolume: (URL, URL) -> Bool? = VoiceStorage.sameVolume
+    ) throws {
+        let value = snapshot(at: modelFolder, cacheFolder: cacheFolder, compilerTemporaryFolder: compilerTemporaryFolder,
+                             capacity: capacity, sameVolume: sameVolume)
+        if value.shortfallBytes != nil { throw VoicePreparationStorageError(snapshot: value) }
+    }
+}
+
+struct VoicePreparationStorageError: LocalizedError, Equatable, Sendable {
+    let snapshot: VoiceStorageSnapshot
+    var errorDescription: String? { "Voice preparation needs more free working space." }
+}

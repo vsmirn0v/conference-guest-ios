@@ -4,7 +4,7 @@ import Foundation
 /// A user-facing diagnosis. Storage measurements are transient and never written
 /// to the preparation receipt or emitted to diagnostics.
 struct ClonedVoiceFailure: Codable, Equatable, Sendable {
-    enum Kind: String, Codable, Sendable { case storage, cache, unknown, busy, interrupted, rateLimited }
+    enum Kind: String, Codable, Sendable { case storage, preparationSpace, compilation, cache, unknown, busy, interrupted, rateLimited }
     var kind: Kind
     var storage: VoiceStorageSnapshot?
     var technicalDetails: String?
@@ -14,12 +14,33 @@ struct ClonedVoiceFailure: Codable, Equatable, Sendable {
     /// Which independent budget blocked the last action, when rate-limited.
     var rateLimitedRepair: Bool?
     var rateLimitedStorage: Bool?
+    /// Bounded technical metadata, never speech, voice features or filesystem paths.
+    var asset: String?
+    var errorDomain: String?
+    var errorCode: Int?
 
-    var repairAvailable: Bool { (kind == .cache || kind == .busy || kind == .interrupted || kind == .rateLimited) && repairAsset != nil }
+    var repairAvailable: Bool { (kind == .cache || kind == .preparationSpace || kind == .busy || kind == .interrupted || kind == .rateLimited) && repairAsset != nil }
+
+    var preparationRecovery: Bool { kind == .storage || kind == .preparationSpace || kind == .compilation }
 
     /// Persist the failure category, not a fingerprint of the Mac's disk usage.
     var withoutStorageMeasurement: Self {
         var copy = self; copy.storage = nil; return copy
+    }
+
+    /// Persist enough to diagnose a worker failure without recording speech,
+    /// enrollment features, disk measurements or arbitrary error descriptions.
+    var diagnosticFields: [String: Any] {
+        var fields: [String: Any] = ["kind": kind.rawValue, "repairAvailable": repairAvailable]
+        let identifierCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        for (key, value) in [("asset", asset ?? repairAsset), ("domain", errorDomain)] {
+            if let value, !value.isEmpty, value.count <= 160,
+               value.unicodeScalars.allSatisfy(identifierCharacters.contains), !value.contains("..") {
+                fields[key] = value
+            }
+        }
+        if let errorCode { fields["code"] = errorCode }
+        return fields
     }
 }
 

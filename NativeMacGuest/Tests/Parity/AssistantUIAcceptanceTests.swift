@@ -214,6 +214,125 @@ import XCTest
         }
     }
 
+    func testRussianVoicePreparationSpaceShowsShortfallAndRetriesWithoutRemovingSavedData() async throws {
+        try await withRussianBundle {
+            let gib: Int64 = 1_024 * 1_024 * 1_024
+            let initialAvailable = 4 * gib
+            var available: Int64? = initialAvailable
+            let required = 12 * gib
+            let fixture = try voiceRecoveryFixture(failure: .init(kind: .preparationSpace)) {
+                .init(availableBytes: available, requiredBytes: required, location: .model)
+            }
+            let rendered = await present(VoiceCloneSettingsView(clone: fixture.clone, listen: fixture.listen),
+                                         size: NSSize(width: 1000, height: 900), name: "voice-preparation-space")
+            XCTAssertTrue(containsText(rendered, "Недостаточно места на диске для подготовки вашего голоса"))
+            XCTAssertTrue(containsText(rendered, L("Available for preparation: %@.", ByteCountFormatter.string(fromByteCount: initialAvailable, countStyle: .file))))
+            XCTAssertTrue(containsText(rendered, L("Estimated free space needed for preparation: %@.", ByteCountFormatter.string(fromByteCount: required, countStyle: .file))))
+            XCTAssertTrue(containsText(rendered, L("Free at least %@ more before retrying.", ByteCountFormatter.string(fromByteCount: required - initialAvailable, countStyle: .file))))
+            XCTAssertTrue(containsText(rendered, "Загруженная модель и сохранённый голос останутся на месте"))
+            XCTAssertNotNil(button(rendered, L("Open Storage Settings")))
+
+            available = nil
+            fixture.clone.refreshStorage()
+            await settle()
+            XCTAssertTrue(containsText(rendered, L("Check working space for voice preparation.")))
+            XCTAssertTrue(containsText(rendered, L("The available space could not be checked. Open Storage Settings and try again.")))
+            XCTAssertFalse(containsText(rendered, L("Not enough working space to prepare your voice.")))
+            XCTAssertFalse(containsText(rendered, L("Ready to retry voice preparation.")))
+
+            available = 14 * gib
+            fixture.clone.refreshStorage()
+            await settle()
+            XCTAssertTrue(containsText(rendered, L("Ready to retry voice preparation.")))
+            XCTAssertFalse(containsText(rendered, L("Not enough working space to prepare your voice.")))
+            XCTAssertTrue(containsText(rendered, "По этой оценке свободного места достаточно"))
+            try await press(rendered, L("Check Again"))
+            try await wait { fixture.clone.preparation == .ready }
+            let requests = await fixture.worker.requests
+            XCTAssertEqual(requests.count, 1)
+            XCTAssertNil(requests.first?.repairAsset)
+            XCTAssertEqual(try Data(contentsOf: fixture.modelURL), fixture.modelData)
+            XCTAssertEqual(try Data(contentsOf: fixture.voiceURL), fixture.voiceData)
+            await fixture.engine.unload()
+        }
+    }
+
+    func testRussianCompilationFailureShowsTechnicalDetailsWithoutClaimingDiskFull() async throws {
+        try await withRussianBundle {
+            let details = "encoder.h16g.aimodelc (CoreAI 2)"
+            let fixture = try voiceRecoveryFixture(failure: .init(kind: .compilation, technicalDetails: details)) {
+                .init(availableBytes: 20 * 1_024 * 1_024 * 1_024, requiredBytes: 12 * 1_024 * 1_024 * 1_024)
+            }
+            let rendered = await present(VoiceCloneSettingsView(clone: fixture.clone, listen: fixture.listen),
+                                         size: NSSize(width: 1000, height: 900), name: "voice-compilation-failure")
+            XCTAssertTrue(containsText(rendered, "Не удалось скомпилировать модель для Neural Engine"))
+            XCTAssertFalse(containsText(rendered, L("Not enough disk space to prepare the voice model.")))
+            XCTAssertFalse(containsText(rendered, L("Not enough working space to prepare your voice.")))
+            XCTAssertTrue(containsText(rendered, "По этой оценке свободного места достаточно"))
+            XCTAssertFalse(containsText(rendered, details))
+            // SwiftUI propagates the failure container's identifier to this
+            // child on macOS. Find the actual native disclosure by role/title.
+            let disclosure = try XCTUnwrap(nodes(rendered).first {
+                (attribute($0, kAXRoleAttribute) as? String) == kAXDisclosureTriangleRole &&
+                    strings($0).contains(L("Technical details"))
+            })
+            XCTAssertEqual(AXUIElementPerformAction(disclosure, kAXPressAction as CFString), .success)
+            await settle()
+            XCTAssertTrue(containsText(rendered, details))
+            XCTAssertEqual(try Data(contentsOf: fixture.modelURL), fixture.modelData)
+            XCTAssertEqual(try Data(contentsOf: fixture.voiceURL), fixture.voiceData)
+            await fixture.engine.unload()
+        }
+    }
+
+    private struct VoiceRecoveryFixture {
+        let clone: VoiceCloneStore
+        let listen: ListenModelStore
+        let worker: AssistantVoiceUIWorker
+        let engine: ClonedVoiceEngine
+        let modelURL: URL
+        let modelData: Data
+        let voiceURL: URL
+        let voiceData: Data
+    }
+
+    private func voiceRecoveryFixture(failure: ClonedVoiceFailure,
+                                      storage: @escaping () -> VoiceStorageSnapshot) throws -> VoiceRecoveryFixture {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("voice-recovery-ui-\(UUID())", isDirectory: true)
+        let suite = "voice-recovery-ui-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let file = ListenModelCatalog.File(name: "model.json", size: 2, url: URL(fileURLWithPath: "/fixture"),
+                                           sha256: String(repeating: "a", count: 64))
+        let model = ListenModelCatalog.Model(id: "voice-recovery-ui", role: VoiceCloneSupport.role, title: "Fixture",
+            kind: VoiceCloneSupport.kind, featureDim: nil, languages: ["ru"], licence: "",
+            source: URL(fileURLWithPath: "/fixture"), files: [file], config: ["architecture": "test"])
+        let listen = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "fixture", models: [model]),
+                                      root: root, defaults: defaults)
+        let folder = listen.folder(model)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let modelURL = folder.appendingPathComponent(file.name), modelData = Data("{}".utf8)
+        try modelData.write(to: modelURL)
+        try "\(file.name) \(file.sha256)".write(to: folder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        listen.refresh()
+        let identity = ClonedVoicePreparation.identity(for: model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .failed, startedAt: Date(),
+            recentStarts: [], message: failure.technicalDetails, failureInfo: failure).write(folder)
+        let voice = VoxVoice(mode: .clone, transcript: "", reference: nil, continuation: nil, patches: 0)
+        let voiceURL = root.appendingPathComponent("voxcpm2-voice.json")
+        let voiceData = try JSONEncoder().encode(StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5))
+        try voiceData.write(to: voiceURL)
+        let worker = AssistantVoiceUIWorker()
+        let engine = ClonedVoiceEngine(connect: { worker })
+        let clone = VoiceCloneStore(model: model, listen: listen, folder: root, engine: engine, osBuild: "fixture",
+                                   preparationStorage: { _ in storage() })
+        return .init(clone: clone, listen: listen, worker: worker, engine: engine, modelURL: modelURL,
+                     modelData: modelData, voiceURL: voiceURL, voiceData: voiceData)
+    }
+
     private func requiredWidth(of control: NSSegmentedControl) -> CGFloat {
         let labels = (0..<control.segmentCount).compactMap { control.label(forSegment: $0) }
         let measuring = NSSegmentedControl(labels: labels, trackingMode: control.trackingMode,

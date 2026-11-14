@@ -115,7 +115,7 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         XCTAssertTrue(competing.isEmpty)
         let running = try XCTUnwrap(ClonedVoicePreparation.read(fixtures.modelFolder, identity: identity))
         XCTAssertEqual(running.state, .preparing)
-        XCTAssertEqual(running.recentStarts.count, 2)
+        XCTAssertEqual(running.recentStarts.count, 1, "explicit recovery has its own cooldown budget")
         await worker.release()
         try await waitUntil { store.preparation == .ready }
         XCTAssertEqual(fixtures.store(competitor).preparation, .ready)
@@ -143,10 +143,6 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         let store = fixtures.store(worker, now: { now })
         XCTAssertEqual(store.failure?.repairAsset, asset)
         store.prepare()
-        XCTAssertEqual(store.failure?.kind, .rateLimited)
-        XCTAssertEqual(store.failure?.rateLimitedRepair, false)
-        XCTAssertTrue(store.failure?.repairAvailable == true)
-        store.repair()
         try await waitUntil { await worker.requests.count == 1 }
         try await waitUntil { store.failure?.kind == .cache }
         let firstRequests = await worker.requests
@@ -206,7 +202,8 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         try await waitUntil { first.preparation == .failed("silent smoke PCM") }
         let failed = try XCTUnwrap(ClonedVoicePreparation.read(fixtures.modelFolder, identity: identity))
         XCTAssertEqual(failed.state, .failed)
-        XCTAssertEqual(failed.recentStarts.count, 3)
+        XCTAssertEqual(failed.recentStarts.count, 2, "explicit retries do not consume the automatic hourly budget")
+        XCTAssertEqual(failed.recoveryStarts?.count, 1)
         let restarted = fixtures.store(worker)
         XCTAssertEqual(restarted.preparation, .failed("silent smoke PCM"))
         for _ in 0..<10 { restarted.prepare() }
@@ -259,6 +256,97 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         XCTAssertThrowsError(try ClonedVoiceWire.validatePCM([0.1, 0.2]))
     }
 
+    func testRetryRepairsSuccessiveStaleAssetsAndPreservesUserFiles() async throws {
+        let encoder = "encoder.h16g.aimodelc", base = "base-0.h16g.aimodelc"
+        let fixtures = try modelFixture(assets: [encoder, base])
+        let voiceURL = fixtures.root.appendingPathComponent("voxcpm2-voice.json")
+        let voiceData = try JSONEncoder().encode(StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5))
+        try voiceData.write(to: voiceURL)
+        let modelData = try Data(contentsOf: fixtures.modelFolder.appendingPathComponent("model.json"))
+        let worker = FixtureWorker(pcm: pcm)
+        await worker.enqueue([
+            .failure(.diagnosed(.init(kind: .cache, repairAsset: encoder))),
+            .failure(.diagnosed(.init(kind: .cache, repairAsset: base), repairedAsset: encoder)),
+            .success(.init(repairedAsset: base))
+        ])
+        let store = fixtures.store(worker)
+        store.prepare()
+        try await waitUntil { store.preparation == .ready }
+        let requests = await worker.requests
+        XCTAssertEqual(requests.map(\.repairAsset), [nil, encoder, base])
+        let receipt = try XCTUnwrap(ClonedVoicePreparation.read(fixtures.modelFolder,
+            identity: ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")))
+        XCTAssertEqual(receipt.repairedAssets, [encoder, base])
+        XCTAssertEqual(try Data(contentsOf: voiceURL), voiceData)
+        XCTAssertEqual(try Data(contentsOf: fixtures.modelFolder.appendingPathComponent("model.json")), modelData)
+    }
+
+    func testRetryStopsWhenTheSameRepairedAssetStillFails() async throws {
+        let asset = "encoder.h16g.aimodelc"
+        let fixtures = try modelFixture(assets: [asset])
+        let worker = FixtureWorker(pcm: pcm)
+        await worker.fail(.diagnosed(.init(kind: .cache, repairAsset: asset)))
+        let store = fixtures.store(worker)
+        store.prepare()
+        try await waitUntil { store.failure?.kind == .cache }
+        let requests = await worker.requests
+        XCTAssertEqual(requests.map(\.repairAsset), [nil, asset])
+    }
+
+    func testCompilationFailureRetainsCompletedRepairsAndCanResumeAfterCleanup() async throws {
+        for kind in [ClonedVoiceFailure.Kind.compilation, .preparationSpace] {
+        let asset = "encoder.h16g.aimodelc"
+        let fixtures = try modelFixture(assets: [asset])
+        let worker = FixtureWorker(pcm: pcm)
+        await worker.enqueue([
+            .failure(.diagnosed(.init(kind: .cache, repairAsset: asset))),
+            .failure(.diagnosed(.init(kind: kind, asset: "base-0.h16g.aimodelc"), repairedAsset: asset))
+        ])
+        var now = Date()
+        let store = fixtures.store(worker, now: { now })
+        store.prepare()
+        try await waitUntil { store.failure?.kind == kind }
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        XCTAssertEqual(ClonedVoicePreparation.read(fixtures.modelFolder, identity: identity)?.repairedAssets, [asset])
+        store.prepare()
+        XCTAssertEqual(store.failure?.kind, .rateLimited)
+        now.addTimeInterval(61)
+        store.prepare()
+        try await waitUntil { store.preparation == .ready }
+        let requests = await worker.requests
+        XCTAssertEqual(requests.map(\.repairAsset), [nil, asset, nil], "failed compilation resumes without clearing working entries")
+        }
+    }
+
+    func testUnknownLegacyCompilerFailureCanRetryDespiteOldHourlyBudget() async throws {
+        let fixtures = try modelFixture()
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        let now = Date()
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .failed, startedAt: now,
+            recentStarts: [now, now, now], failureInfo: .init(kind: .unknown)).write(fixtures.modelFolder)
+        let worker = FixtureWorker(pcm: pcm)
+        let store = fixtures.store(worker)
+        store.prepare()
+        try await waitUntil { store.preparation == .ready }
+        let requests = await worker.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertNil(requests.first?.repairAsset)
+    }
+
+    func testWorkerFailureDiagnosticsExcludePrivateDetailsAndMeasurements() {
+        let failure = ClonedVoiceFailure(kind: .compilation, storage: .init(availableBytes: 123, requiredBytes: 456),
+            technicalDetails: "private error content", asset: "base-0.h16g.aimodelc", errorDomain: "CoreAI.AIError", errorCode: 7)
+        let fields = failure.diagnosticFields
+        XCTAssertEqual(fields["asset"] as? String, "base-0.h16g.aimodelc")
+        XCTAssertEqual(fields["code"] as? Int, 7)
+        XCTAssertNil(fields["technicalDetails"])
+        XCTAssertNil(fields["availableBytes"])
+        XCTAssertNil(fields["requiredBytes"])
+        var unsafe = failure; unsafe.asset = "/Users/private/model"; unsafe.errorDomain = "private details with spaces"
+        XCTAssertNil(unsafe.diagnosticFields["asset"])
+        XCTAssertNil(unsafe.diagnosticFields["domain"])
+    }
+
     func testGenericCoreAIErrorCannotTriggerRepair() {
         let asset = "base-0.h16g.aimodelc"
         let missing = NSError(domain: "com.apple.appleneuralengine", code: 16)
@@ -298,20 +386,26 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         }
     }
 
-    private func modelFixture() throws -> ModelFixture {
+    private func modelFixture(assets: [String] = []) throws -> ModelFixture {
         let root = try temporaryFolder()
         let file = ListenModelCatalog.File(name: "model.json", size: 2, url: URL(fileURLWithPath: "/fixture"),
                                            sha256: String(repeating: "a", count: 64))
+        let files = [file] + assets.map { ListenModelCatalog.File(name: $0 + "/fixture", size: 2,
+            url: URL(fileURLWithPath: "/fixture"), sha256: String(repeating: "b", count: 64)) }
         let model = ListenModelCatalog.Model(id: "voice-fixture", role: VoiceCloneSupport.role, title: "Fixture",
             kind: VoiceCloneSupport.kind, featureDim: nil, languages: ["en"], licence: "",
-            source: URL(fileURLWithPath: "/fixture"), files: [file], config: ["architecture": "test"])
+            source: URL(fileURLWithPath: "/fixture"), files: files, config: ["architecture": "test"])
         let catalog = ListenModelCatalog(schemaVersion: 1, runtime: "fixture", models: [model])
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "voice-fixture-\(UUID())"))
         let listen = ListenModelStore(catalog: catalog, root: root, defaults: defaults)
         let folder = listen.folder(model)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try "{}".write(to: folder.appendingPathComponent(file.name), atomically: true, encoding: .utf8)
-        try "\(file.name) \(file.sha256)".write(to: folder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        for file in files {
+            let path = folder.appendingPathComponent(file.name)
+            try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "{}".write(to: path, atomically: true, encoding: .utf8)
+        }
+        try files.map { "\($0.name) \($0.sha256)" }.joined(separator: "\n").write(to: folder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
         listen.refresh()
         return .init(model: model, listen: listen, root: root)
     }
@@ -330,6 +424,7 @@ private actor FixtureWorker: ClonedVoiceWorkerConnection {
     private var blocked = false
     private var failure: ClonedVoiceWorkerError?
     private var repairedAsset: String?
+    private var replies: [Result<ClonedVoiceWorkerOutput, ClonedVoiceWorkerError>] = []
     private var resume: CheckedContinuation<Void, Never>?
     private(set) var requests: [ClonedVoiceWire.Request] = []
     private(set) var stops = 0
@@ -342,6 +437,8 @@ private actor FixtureWorker: ClonedVoiceWorkerConnection {
 
     func succeed(repairedAsset: String? = nil) { failure = nil; self.repairedAsset = repairedAsset }
 
+    func enqueue(_ replies: [Result<ClonedVoiceWorkerOutput, ClonedVoiceWorkerError>]) { self.replies = replies }
+
     func release() {
         blocked = false
         resume?.resume()
@@ -351,6 +448,7 @@ private actor FixtureWorker: ClonedVoiceWorkerConnection {
     func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval) async throws -> ClonedVoiceWorkerOutput {
         requests.append(request)
         if blocked { await withCheckedContinuation { resume = $0 } }
+        if !replies.isEmpty { return try replies.removeFirst().get() }
         if let failure { throw failure }
         return .init(samples: request.operation == .speak ? pcm : nil, repairedAsset: repairedAsset)
     }

@@ -2875,3 +2875,16 @@
 "Ready to switch after active transcription finishes." = "Модель переключится после завершения текущей расшифровки.";
 "Remembered. You can review or delete it in Settings → Assistant → Memory and privacy." = "Запомнено. Запись можно проверить или удалить в Настройки → Ассистент → Память и конфиденциальность.";
 "Notes need attention. Open notes to see recovery options." = "Заметки требуют внимания. Откройте их, чтобы увидеть варианты восстановления.";
+"Not enough working space to prepare your voice." = "Недостаточно места на диске для подготовки вашего голоса.";
+"Preparing the voice model needs extra working space. Your downloaded model and saved voice will be kept." = "Для подготовки голосовой модели нужно дополнительное место на диске. Загруженная модель и сохранённый голос останутся на месте.";
+"Neural Engine model compilation failed." = "Не удалось скомпилировать модель для Neural Engine.";
+"Check the working space below, then try again. If preparation fails again, collect diagnostics." = "Проверьте доступное место ниже и повторите попытку. Если подготовка снова завершится ошибкой, соберите диагностику.";
+"Your downloaded model and saved voice will be kept." = "Загруженная модель и сохранённый голос останутся на месте.";
+"Available for preparation: %@." = "Доступно для подготовки: %@.";
+"Estimated free space needed for preparation: %@." = "Ориентировочно нужно свободного места для подготовки: %@.";
+"Free at least %@ more before retrying." = "Перед повторной попыткой освободите ещё не менее %@.";
+"The available space meets this estimate. You can try again." = "По этой оценке свободного места достаточно. Можно повторить попытку.";
+"The estimate includes temporary compilation files. Actual space needed can vary." = "Оценка включает временные файлы компиляции. Фактически необходимый объём может отличаться.";
+"Technical details" = "Технические сведения";
+"Ready to retry voice preparation." = "Можно повторить подготовку голоса.";
+"Check working space for voice preparation." = "Проверьте место на диске для подготовки голоса.";

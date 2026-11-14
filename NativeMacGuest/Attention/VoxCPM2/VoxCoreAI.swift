@@ -6,6 +6,7 @@ struct VoxAssetFailure: LocalizedError {
     var asset: String
     var cause: Error
     var cachedFunctionLoad = false
+    var duringSpecialization = false
 
     var errorDescription: String? {
         let underlying = cause as NSError
@@ -61,10 +62,15 @@ enum VoxCoreAI {
         // Core AI rejects an asset directory that is itself a symbolic link.
         let resolved = url.resolvingSymlinksInPath()
         probeCacheLookup(resolved)
+        // A warm load does not need compilation working space. Check before a
+        // cache miss can start the much larger ANE compiler scratch allocation.
+        if (try? cache.model(for: resolved, options: options)) == nil {
+            try VoicePreparationStorage.ensureSpace(at: resolved.deletingLastPathComponent())
+        }
         do {
             return try await AIModel.specialize(contentsOf: resolved, options: options, cache: cache, cachePolicy: cachePolicy)
         } catch {
-            throw VoxAssetFailure(asset: resolved.lastPathComponent, cause: error)
+            throw VoxAssetFailure(asset: resolved.lastPathComponent, cause: error, duringSpecialization: true)
         }
     }
 
@@ -77,6 +83,8 @@ enum VoxCoreAI {
               target.deletingLastPathComponent().path == root.path, target.lastPathComponent == asset else {
             throw VoxError.format("unexpected specialization asset")
         }
+        // Do not remove even a known stale entry until rebuilding is feasible.
+        try VoicePreparationStorage.ensureSpace(at: root)
         // A miss will naturally specialize. Preserve every other asset/options entry.
         do {
             if try cache.model(for: target, options: options) == nil { return false }

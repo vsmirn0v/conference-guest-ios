@@ -2877,3 +2877,16 @@
 "Ready to switch after active transcription finishes." = "Ready to switch after active transcription finishes.";
 "Remembered. You can review or delete it in Settings → Assistant → Memory and privacy." = "Remembered. You can review or delete it in Settings → Assistant → Memory and privacy.";
 "Notes need attention. Open notes to see recovery options." = "Notes need attention. Open notes to see recovery options.";
+"Not enough working space to prepare your voice." = "Not enough working space to prepare your voice.";
+"Preparing the voice model needs extra working space. Your downloaded model and saved voice will be kept." = "Preparing the voice model needs extra working space. Your downloaded model and saved voice will be kept.";
+"Neural Engine model compilation failed." = "Neural Engine model compilation failed.";
+"Check the working space below, then try again. If preparation fails again, collect diagnostics." = "Check the working space below, then try again. If preparation fails again, collect diagnostics.";
+"Your downloaded model and saved voice will be kept." = "Your downloaded model and saved voice will be kept.";
+"Available for preparation: %@." = "Available for preparation: %@.";
+"Estimated free space needed for preparation: %@." = "Estimated free space needed for preparation: %@.";
+"Free at least %@ more before retrying." = "Free at least %@ more before retrying.";
+"The available space meets this estimate. You can try again." = "The available space meets this estimate. You can try again.";
+"The estimate includes temporary compilation files. Actual space needed can vary." = "The estimate includes temporary compilation files. Actual space needed can vary.";
+"Technical details" = "Technical details";
+"Ready to retry voice preparation." = "Ready to retry voice preparation.";
+"Check working space for voice preparation." = "Check working space for voice preparation.";
