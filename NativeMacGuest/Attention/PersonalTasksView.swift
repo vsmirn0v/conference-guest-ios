@@ -56,6 +56,8 @@ struct PersonalTasksView: View {
             if !assistant.taskProfile.isConfigured {
                 VStack(spacing: 10) {
                     Text(L("Set the names used to assign tasks to you.")).foregroundStyle(.secondary)
+                    Text(L("Only tasks assigned to names you confirm appear here."))
+                        .font(.caption).foregroundStyle(.secondary)
                     Button(L("My names in tasks…"), action: editAliases)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
             } else {
@@ -64,7 +66,17 @@ struct PersonalTasksView: View {
                     ForEach(filtered) { row in taskRow(row, archived: false) }
                 }.overlay {
                     if filtered.isEmpty {
-                        Text(L("No tasks in this view.")).foregroundStyle(.secondary)
+                        VStack(spacing: 8) {
+                            if PersonalTaskQuery.rows(rows, filter: .all, calendar: displayCalendar).isEmpty {
+                                Text(L("No active tasks assigned to your confirmed names."))
+                                if rows.contains(where: { $0.archivedAt != nil }) {
+                                    Text(L("Archived tasks are available in Task options.")).font(.caption)
+                                }
+                            } else {
+                                Text(L("No tasks match this filter."))
+                                Button(L("Show all tasks")) { filter = .all }
+                            }
+                        }.foregroundStyle(.secondary)
                     }
                 }
             }

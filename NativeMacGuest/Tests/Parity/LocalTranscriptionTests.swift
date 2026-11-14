@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import CryptoKit
 import XCTest
 @testable import RockNativeDesktop
@@ -147,6 +148,192 @@ import XCTest
         for _ in 0..<200 where !store.state(model).installed { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(store.state(model), .installed)
         XCTAssertEqual(try Data(contentsOf: store.folder(model).appendingPathComponent(file.name)), contents)
+    }
+
+    func testModelSwitchKeepsWorkingSelectionAcrossFailureCancelAndRelaunch() async throws {
+        let source = temporaryFolder(), root = temporaryFolder()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        func model(_ id: String, role: String = "listen", badHash: Bool = false) throws -> ListenModelCatalog.Model {
+            let url = source.appendingPathComponent("\(id).bin")
+            let bytes = Data(id.utf8); try bytes.write(to: url)
+            let file = ListenModelCatalog.File(name: "\(id).bin", size: Int64(bytes.count), url: url,
+                sha256: badHash ? String(repeating: "0", count: 64) : try ListenModelStore.sha256(of: url))
+            return .init(id: id, role: role, title: id, kind: role == "vad" ? "silero_vad" : "nemo_ctc", featureDim: nil, languages: [],
+                         licence: "test", source: source, files: [file], config: role == "vad" ? ["model": file.name] : ["model": file.name, "tokens": file.name])
+        }
+        let old = try model("old"), replacement = try model("replacement"), bad = try model("bad", badHash: true)
+        let vad = try model("vad", role: "vad")
+        let catalog = ListenModelCatalog(schemaVersion: 1, runtime: "test", models: [old, replacement, bad, vad])
+        let defaults = UserDefaults(suiteName: "listen-switch-\(UUID())")!
+        defaults.set(old.id, forKey: ListenModelStore.modelKey)
+        let store = ListenModelStore(catalog: catalog, root: root, defaults: defaults)
+        store.enabled = true
+        store.download(old)
+        for _ in 0..<200 where !store.ready { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(store.ready)
+
+        store.selectModel(bad)
+        for _ in 0..<200 { if case .failed = store.state(bad) { break }; try await Task.sleep(for: .milliseconds(20)) }
+        guard case .failed = store.state(bad) else { return XCTFail("A bad checksum must fail") }
+        XCTAssertEqual(store.selectedID, old.id)
+        XCTAssertEqual(store.pendingID, bad.id)
+        XCTAssertTrue(store.ready, "A failed replacement must not interrupt the installed model")
+
+        let restarted = ListenModelStore(catalog: catalog, root: root, defaults: defaults)
+        XCTAssertEqual(restarted.selectedID, old.id)
+        XCTAssertEqual(restarted.pendingID, bad.id)
+        XCTAssertEqual(restarted.state(bad), .absent, "A relaunch must not silently restart a download")
+        restarted.cancelPendingSelection()
+        XCTAssertNil(restarted.pendingID)
+        XCTAssertEqual(restarted.selectedID, old.id)
+
+        restarted.selectModel(replacement)
+        restarted.cancelPendingSelection()
+        XCTAssertEqual(restarted.selectedID, old.id)
+        XCTAssertNil(restarted.pendingID)
+        restarted.selectModel(replacement)
+        for _ in 0..<200 where restarted.selectedID != replacement.id { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(restarted.selectedID, replacement.id)
+        XCTAssertNil(restarted.pendingID)
+        XCTAssertTrue(restarted.state(old).installed)
+        XCTAssertTrue(restarted.ready)
+    }
+
+    func testPendingModelWaitsForFailedDetectorThenActivatesOnRetry() async throws {
+        let source = temporaryFolder(), root = temporaryFolder()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        func model(_ id: String, role: String, available: Bool = true) throws -> ListenModelCatalog.Model {
+            let bytes = Data(id.utf8), url = source.appendingPathComponent("\(id).bin")
+            let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            if available { try bytes.write(to: url) }
+            let file = ListenModelCatalog.File(name: "\(id).bin", size: Int64(bytes.count), url: url, sha256: digest)
+            return .init(id: id, role: role, title: id, kind: role == "vad" ? "silero_vad" : "nemo_ctc", featureDim: nil, languages: [],
+                         licence: "test", source: source, files: [file], config: role == "vad" ? ["model": file.name] : ["model": file.name, "tokens": file.name])
+        }
+        let replacement = try model("new", role: "listen")
+        let vad = try model("vad", role: "vad", available: false)
+        let defaults = UserDefaults(suiteName: "listen-detector-\(UUID())")!
+        defaults.set("previous", forKey: ListenModelStore.modelKey)
+        let previous = try model("previous", role: "listen")
+        let replacementFolder = root.appendingPathComponent(replacement.id, isDirectory: true)
+        try FileManager.default.createDirectory(at: replacementFolder, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: replacement.files[0].url, to: replacementFolder.appendingPathComponent(replacement.files[0].name))
+        try "\(replacement.files[0].name) \(replacement.files[0].sha256)".write(
+            to: replacementFolder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        let store = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: [previous, replacement, vad]),
+                                     root: root, defaults: defaults)
+        XCTAssertTrue(store.state(replacement).installed)
+        store.selectModel(replacement)
+        for _ in 0..<200 {
+            if store.state(replacement).installed, case .failed = store.state(vad) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(store.state(replacement).installed)
+        guard case .failed = store.state(vad) else { return XCTFail("The missing detector must fail") }
+        XCTAssertEqual(store.selectedID, previous.id)
+        XCTAssertEqual(store.pendingID, replacement.id)
+        try Data("vad".utf8).write(to: vad.files[0].url)
+        store.download(vad)
+        for _ in 0..<200 where store.pendingID != nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(store.pendingID)
+        XCTAssertEqual(store.selectedID, replacement.id)
+    }
+
+    func testInstalledReplacementCannotActivateWithoutDetectorInCatalog() throws {
+        let source = temporaryFolder(), root = temporaryFolder()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let bytes = Data("weights".utf8), url = source.appendingPathComponent("model.bin")
+        try bytes.write(to: url)
+        let file = ListenModelCatalog.File(name: "model.bin", size: Int64(bytes.count), url: url,
+                                           sha256: try ListenModelStore.sha256(of: url))
+        func model(_ id: String) -> ListenModelCatalog.Model {
+            .init(id: id, role: "listen", title: id, kind: "nemo_ctc", featureDim: nil, languages: [],
+                  licence: "test", source: source, files: [file], config: ["model": file.name, "tokens": file.name])
+        }
+        let previous = model("previous"), replacement = model("replacement")
+        let folder = root.appendingPathComponent(replacement.id, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try bytes.write(to: folder.appendingPathComponent(file.name))
+        try "\(file.name) \(file.sha256)".write(to: folder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        let defaults = UserDefaults(suiteName: "listen-no-vad-\(UUID())")!
+        defaults.set(previous.id, forKey: ListenModelStore.modelKey)
+        let store = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: [previous, replacement]),
+                                     root: root, defaults: defaults)
+        store.selectModel(replacement)
+        XCTAssertEqual(store.selectedID, previous.id)
+        XCTAssertEqual(store.pendingID, replacement.id)
+        store.refresh()
+        XCTAssertEqual(store.selectedID, previous.id)
+        XCTAssertEqual(store.pendingID, replacement.id)
+    }
+
+    func testReadyReplacementWaitsForSharedRecognizerToBecomeIdle() async throws {
+        let source = temporaryFolder(), root = temporaryFolder()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let bytes = Data("fixture".utf8), url = source.appendingPathComponent("weights")
+        try bytes.write(to: url)
+        let file = ListenModelCatalog.File(name: "weights", size: Int64(bytes.count), url: url,
+                                           sha256: try ListenModelStore.sha256(of: url))
+        func model(_ id: String, role: String) -> ListenModelCatalog.Model {
+            .init(id: id, role: role, title: id, kind: role == "vad" ? "silero_vad" : "nemo_ctc", featureDim: nil,
+                  languages: [], licence: "test", source: source, files: [file],
+                  config: role == "vad" ? ["model": file.name] : ["model": file.name, "tokens": file.name])
+        }
+        let old = model("old", role: "listen"), replacement = model("new", role: "listen"), vad = model("vad", role: "vad")
+        for item in [old, replacement, vad] {
+            let folder = root.appendingPathComponent(item.id, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try bytes.write(to: folder.appendingPathComponent(file.name))
+            try "\(file.name) \(file.sha256)".write(to: folder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        }
+        let defaults = UserDefaults(suiteName: "listen-busy-\(UUID())")!
+        defaults.set(old.id, forKey: ListenModelStore.modelKey)
+        let users = CurrentValueSubject<Int, Never>(1)
+        let store = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: [old, replacement, vad]),
+                                     root: root, defaults: defaults, recognizerUserCount: { users.value },
+                                     recognizerUserChanges: users.eraseToAnyPublisher())
+        store.enabled = true
+        store.selectModel(replacement)
+        XCTAssertEqual(store.selectedID, old.id)
+        XCTAssertEqual(store.pendingID, replacement.id)
+        XCTAssertTrue(store.ready)
+        users.send(0)
+        for _ in 0..<100 where store.pendingID != nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(store.selectedID, replacement.id)
+        XCTAssertNil(store.pendingID)
+    }
+
+    func testInvalidDownloadedModelOrDetectorNeverActivates() throws {
+        let source = temporaryFolder(), root = temporaryFolder()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let bytes = Data("fixture".utf8), url = source.appendingPathComponent("weights")
+        try bytes.write(to: url)
+        let file = ListenModelCatalog.File(name: "weights", size: Int64(bytes.count), url: url,
+                                           sha256: try ListenModelStore.sha256(of: url))
+        func model(_ id: String, role: String, config: [String: String]) -> ListenModelCatalog.Model {
+            .init(id: id, role: role, title: id, kind: role == "vad" ? "silero_vad" : "nemo_ctc", featureDim: nil,
+                  languages: [], licence: "test", source: source, files: [file], config: config)
+        }
+        let old = model("old", role: "listen", config: ["model": "weights", "tokens": "weights"])
+        let invalid = model("invalid", role: "listen", config: ["model": "weights", "tokens": "not-pinned"])
+        let vad = model("vad", role: "vad", config: ["model": "not-pinned"])
+        for item in [old, invalid, vad] {
+            let folder = root.appendingPathComponent(item.id, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try bytes.write(to: folder.appendingPathComponent(file.name))
+            try "\(file.name) \(file.sha256)".write(to: folder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        }
+        let defaults = UserDefaults(suiteName: "listen-config-\(UUID())")!
+        defaults.set(old.id, forKey: ListenModelStore.modelKey)
+        let store = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: [old, invalid, vad]),
+                                     root: root, defaults: defaults)
+        store.enabled = true
+        XCTAssertFalse(store.detectorConfigurationReady)
+        XCTAssertFalse(store.ready)
+        XCTAssertFalse(store.modelConfigurationReady(invalid))
+        store.selectModel(invalid)
+        XCTAssertEqual(store.selectedID, old.id)
+        XCTAssertEqual(store.pendingID, invalid.id)
     }
 
     /// Sound off normally stops output; local transcription keeps it running so

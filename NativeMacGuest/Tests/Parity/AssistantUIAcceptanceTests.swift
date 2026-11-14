@@ -119,6 +119,49 @@ import XCTest
         return try await body()
     }
 
+    func testDisabledTranscriptionShowsPendingDetectorRecovery() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pending-detector-ui-\(UUID())", isDirectory: true)
+        let suite = "pending-detector-ui-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let file = ListenModelCatalog.File(name: "missing.bin", size: 10,
+            url: root.appendingPathComponent("missing.bin"), sha256: String(repeating: "a", count: 64))
+        func model(_ id: String, role: String, kind: String) -> ListenModelCatalog.Model {
+            .init(id: id, role: role, title: id, kind: kind, featureDim: nil, languages: [], licence: "",
+                  source: root, files: [file], config: ["model": "missing.bin"])
+        }
+        let old = model("Old", role: "listen", kind: "nemo_ctc")
+        let replacement = model("Replacement", role: "listen", kind: "nemo_ctc")
+        let vad = model("Detector", role: "vad", kind: "silero_vad")
+        defaults.set(old.id, forKey: ListenModelStore.modelKey)
+        let listen = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "fixture", models: [old, replacement, vad]),
+                                      root: root, defaults: defaults)
+        listen.selectModel(replacement)
+        XCTAssertFalse(listen.enabled)
+        XCTAssertEqual(listen.pendingID, replacement.id)
+        let rendered = await present(NativeDesktopTranscriptionSettings(store: listen),
+                                     size: NSSize(width: 760, height: 760), name: "transcription-pending-detector")
+        XCTAssertTrue(containsText(rendered, L("Voice detector")))
+        listen.cancel(replacement); listen.cancel(vad)
+    }
+
+    func testAssistantSettingsNavigationAndPrivacyCopyInRussian() async throws {
+        try await withRussianBundle {
+            let store = store()
+            let coordinator = AttentionCoordinator(store: store)
+            let rendered = await present(AssistantSettingsHarness(store: store, attention: coordinator),
+                                         size: NSSize(width: 760, height: 760), name: "assistant-settings-sections",
+                                         minSize: NSSize(width: 620, height: 500))
+            XCTAssertNotNil(element(rendered, identifier: "assistant.settings.privacy"))
+            XCTAssertTrue(containsText(rendered, "Когда микрофон включён"))
+            try capture(rendered)
+            try await press(rendered, identifier: "assistant.settings.privacy")
+            XCTAssertTrue(containsText(rendered, "Когда микрофон включён, звук отправляется участникам встречи"))
+            XCTAssertFalse(containsText(rendered, "Звук никогда не покидает этот Mac"))
+            try capture(.init(window: rendered.window, hosting: rendered.hosting, name: "assistant-settings-privacy"))
+        }
+    }
+
     func testRussianVoiceRecoveryOffersRepairWithoutRemovingVoiceOrModel() async throws {
         try await withRussianBundle {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("voice-ui-\(UUID())", isDirectory: true)
@@ -1262,6 +1305,13 @@ private final class OutcomeFixtureCalendarStorage: RoomHistoryStorage {
     private var data: Data?
     func read() -> Data? { data }
     func write(_ data: Data) throws { self.data = data }
+}
+
+private struct AssistantSettingsHarness: View {
+    @ObservedObject var store: AttentionStore
+    @ObservedObject var attention: AttentionCoordinator
+    @State private var area: NativeDesktopAssistantSettingsArea = .overview
+    var body: some View { NativeDesktopIntelligenceSettings(store: store, attention: attention, area: $area) }
 }
 
 private actor AssistantVoiceUIWorker: ClonedVoiceWorkerConnection {

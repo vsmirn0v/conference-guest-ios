@@ -67,7 +67,7 @@ struct AttentionProvider: Codable, Equatable, Sendable {
     ]
     var title: String {
         switch kind {
-        case .openAI: "OpenAI"; case .openRouter: "OpenRouter"; case .rapidMLX: L("Rapid-MLX on this Mac"); case .apple: L("Apple on this Mac")
+        case .openAI: "OpenAI"; case .openRouter: "OpenRouter"; case .rapidMLX: onThisMac ? L("Rapid-MLX on this Mac") : L("Rapid-MLX server"); case .apple: L("Apple on this Mac")
         case .local: L("Server on this network"); case .custom: L("Other")
         }
     }

@@ -1,6 +1,8 @@
 import AppKit
+import ApplicationServices
 import ConferenceCore
 import LiveKitWebRTC
+import SwiftUI
 import XCTest
 @testable import RockNativeDesktop
 
@@ -98,6 +100,149 @@ private final class UpdateAdmissionNoNetwork: URLProtocol {
 
 @MainActor final class UpdateAdmissionTests: XCTestCase {
     private let invitation = URL(string: "https://example.test/calls/update-admission")!
+
+    /// Render the actual SwiftUI surfaces using isolated, no-network fixtures.
+    /// Screenshots remain in the xcresult for visual review.
+    func testRedesignedHomeAndSettingsNavigationAtBothWidths() async throws {
+        let fixture = fixture(), workspace = fixture.workspace, library = fixture.library
+        let host = NSHostingView(rootView: AnyView(NativeDesktopHomeView(workspace: workspace, library: library)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "Home and settings acceptance \(UUID().uuidString)"
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        addTeardownBlock { window.close() }
+        await settleUI(host)
+        XCTAssertNotNil(accessibilityButton(in: window, title: L("Open meeting history")))
+        try attachScreenshot(host, name: "home-normal")
+
+        window.setContentSize(NSSize(width: 900, height: 560))
+        await settleUI(host)
+        XCTAssertNotNil(accessibilityButton(in: window, title: L("Open meeting history")))
+        try attachScreenshot(host, name: "home-narrow")
+
+        workspace.selection = .calendar
+        await settleUI(host)
+        let choose = try XCTUnwrap(accessibilityButton(in: window, title: L("Choose calendars")))
+        XCTAssertEqual(AXUIElementPerformAction(choose, kAXPressAction as CFString), .success)
+        await settleUI(host)
+        XCTAssertEqual(workspace.selection, .settings)
+        XCTAssertEqual(workspace.settingsTab, 1)
+        try attachScreenshot(host, name: "settings-calendar-narrow")
+
+        window.setContentSize(NSSize(width: 1200, height: 760))
+        await settleUI(host)
+        let assistant = try XCTUnwrap(accessibilityButton(in: window, title: L("Assistant")))
+        XCTAssertEqual(AXUIElementPerformAction(assistant, kAXPressAction as CFString), .success)
+        await settleUI(host)
+        XCTAssertEqual(workspace.settingsTab, 6)
+        XCTAssertEqual(workspace.assistantSettingsArea, .overview)
+        try attachScreenshot(host, name: "settings-assistant-normal")
+        let voice = try XCTUnwrap(accessibilityButton(in: window, title: L("Voice")))
+        XCTAssertEqual(AXUIElementPerformAction(voice, kAXPressAction as CFString), .success)
+        await settleUI(host)
+        XCTAssertEqual(workspace.assistantSettingsArea, .voice)
+        XCTAssertEqual(fixture.calls.detections, 0)
+        XCTAssertEqual(fixture.calls.models, 0)
+
+        // Exercise the compact settings-specific layout independent of the
+        // app's outer split-view minimum width.
+        host.rootView = AnyView(NativeDesktopSettingsView(library: library, meeting: nil,
+            tab: Binding(get: { workspace.settingsTab }, set: { workspace.settingsTab = $0 }),
+            assistantArea: Binding(get: { workspace.assistantSettingsArea }, set: { workspace.assistantSettingsArea = $0 }),
+            attention: workspace.attention))
+        workspace.settingsTab = 6; workspace.assistantSettingsArea = .overview
+        window.setContentSize(NSSize(width: 560, height: 650))
+        await settleUI(host)
+        XCTAssertNotNil(accessibilityElement(in: window, identifier: "settings.search"))
+        try attachScreenshot(host, name: "settings-compact")
+
+    }
+
+    private func settleUI(_ host: NSView) async {
+        for _ in 0..<4 {
+            await Task.yield()
+            host.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+    }
+
+    private func attachScreenshot(_ host: NSView, name: String) throws {
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func accessibilityValue(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success else { return nil }
+        return value
+    }
+
+    private func accessibilityNodes(in window: NSWindow) -> [AXUIElement] {
+        func children(_ root: AXUIElement) -> [AXUIElement] {
+            (accessibilityValue(root, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+        }
+        func walk(_ root: AXUIElement) -> [AXUIElement] { [root] + children(root).flatMap(walk) }
+        let app = AXUIElementCreateApplication(getpid())
+        guard let target = children(app).first(where: { accessibilityValue($0, kAXTitleAttribute) as? String == window.title }) else { return [] }
+        return walk(target)
+    }
+
+    private func accessibilityButton(in window: NSWindow, title: String) -> AXUIElement? {
+        accessibilityNodes(in: window).first { element in
+            guard accessibilityValue(element, kAXRoleAttribute) as? String == kAXButtonRole else { return false }
+            return [kAXTitleAttribute, kAXDescriptionAttribute, "AXLabel", "AXAccessibilityLabel"]
+                .contains { accessibilityValue(element, $0) as? String == title }
+        }
+    }
+
+    private func accessibilityElement(in window: NSWindow, identifier: String) -> AXUIElement? {
+        accessibilityNodes(in: window).first { accessibilityValue($0, kAXIdentifierAttribute) as? String == identifier }
+    }
+
+    func testCalendarAndHistoryLinksOpenTheirExactDestinations() {
+        let fixture = fixture(), workspace = fixture.workspace
+        workspace.settingsTab = 8
+        workspace.selection = .calendar
+        workspace.openCalendarSettings()
+        XCTAssertEqual(workspace.selection, .settings)
+        XCTAssertEqual(workspace.settingsTab, 1)
+        workspace.workspaceViewState.destination = .live
+        workspace.openMeetingHistory()
+        XCTAssertEqual(workspace.selection, .workspace)
+        XCTAssertEqual(workspace.workspaceViewState.destination, .review)
+        XCTAssertEqual(fixture.calls.detections, 0)
+        XCTAssertEqual(fixture.calls.models, 0)
+    }
+
+    func testHomeTodayAndRoomSearchKeepTheirActualScopes() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 12))!
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: now)!
+        let meeting = CalendarMeeting(id: "later", seriesID: "s", calendarID: "c", calendarTitle: "Work",
+                                      title: "Tomorrow", start: tomorrow, end: tomorrow.addingTimeInterval(1800))
+        XCTAssertTrue(NativeDesktopHomePresentation.today([meeting], now: now, calendar: calendar).isEmpty)
+        let first = RecentRoom(invitationURL: URL(string: "https://one.test/rooms/alpha")!, title: "Weekly", identifier: "alpha", lastJoined: now)
+        let second = RecentRoom(invitationURL: URL(string: "https://two.test/rooms/beta")!, title: "Planning", identifier: "beta", lastJoined: now)
+        XCTAssertEqual(NativeDesktopHomePresentation.rooms([first, second], matching: " weekly ").map(\.id), [first.id])
+        XCTAssertEqual(NativeDesktopHomePresentation.rooms([first, second], matching: "TWO.TEST").map(\.id), [second.id])
+        XCTAssertEqual(NativeDesktopHomePresentation.rooms([first, second], matching: "  ").count, 2)
+    }
+
+    func testSettingsSearchFindsAssistantDestinations() {
+        XCTAssertTrue(NativeDesktopSettingsSearch.assistantAreas(matching: "voice").contains(.voice))
+        XCTAssertTrue(NativeDesktopSettingsSearch.assistantAreas(matching: "provider").contains(.models))
+        XCTAssertTrue(NativeDesktopSettingsSearch.assistantAreas(matching: "agent").contains(.replies))
+        XCTAssertTrue(NativeDesktopSettingsSearch.assistantAreas(matching: "memory").contains(.privacy))
+        XCTAssertTrue(NativeDesktopSettingsSearch.assistantAreas(matching: "  ").isEmpty)
+    }
     private final class Calls { var detections = 0; var models = 0 }
     private struct Fixture {
         let workspace: NativeDesktopWorkspace

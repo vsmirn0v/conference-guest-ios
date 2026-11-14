@@ -316,6 +316,9 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
         } else {
             return replacing(base, readiness: .setupNeeded(L("The voice detector is missing from the model catalog.")), residency: .notApplicable)
         }
+        guard listenStore.detectorConfigurationReady else {
+            return replacing(base, readiness: .setupNeeded(L("The installed voice detector has an invalid configuration. Check for an app update.")), residency: .unloaded)
+        }
 
         switch listenStore.state(selected) {
         case .absent:
@@ -327,8 +330,8 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
         case .installed: break
         }
 
-        guard let runtimeModel = listenStore.recognizerModel() else {
-            return replacing(base, readiness: .setupNeeded(L("The installed speech model is incomplete.")), residency: .unloaded)
+        guard listenStore.modelConfigurationReady(selected), let runtimeModel = listenStore.recognizerModel() else {
+            return replacing(base, readiness: .setupNeeded(L("The selected speech model has an invalid configuration. Choose another model or check for an app update.")), residency: .unloaded)
         }
         let runtimeMatches = speechRuntime.model == runtimeModel
         let prepared = speechRuntime.preparedModel == runtimeModel

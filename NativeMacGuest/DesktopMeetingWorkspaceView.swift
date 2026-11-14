@@ -62,6 +62,17 @@ final class MeetingWorkspaceViewState: ObservableObject {
         }
     }
 
+    /// Taking over cancels pending outbound replies and leaves any pause in
+    /// place. Only a subsequent explicit resume may restore a prior mode.
+    @discardableResult func beginTakeover(_ model: NativeDesktopMeetingModel, attention: AttentionCoordinator) -> Pause? {
+        guard model.connected, !model.isClosed else { return nil }
+        let token = pause(model, attention: attention)
+        model.participation.yieldToUser()
+        restorePauses[model.sessionID] = nil
+        model.workspaceJournal?.recordAction(sessionID: model.sessionID, text: L("You took over"), source: "takeover")
+        return token
+    }
+
     func toggleAll(_ models: [NativeDesktopMeetingModel], attention: AttentionCoordinator) {
         if restorePauses.isEmpty {
             var paused: [UUID: Pause] = [:]

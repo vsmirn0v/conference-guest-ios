@@ -584,10 +584,28 @@ private struct HeadphoneApproval: View {
     }
 }
 
+/// Task-focused Assistant settings destinations. Kept in the workspace so deep
+/// links, such as the voice-model status indicator, open the intended section.
+enum NativeDesktopAssistantSettingsArea: String, CaseIterable, Identifiable {
+    case overview, attention, voice, models, replies, privacy
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .overview: L("Overview")
+        case .attention: L("Attention")
+        case .voice: L("Voice")
+        case .models: L("Models")
+        case .replies: L("Replies")
+        case .privacy: L("Memory and privacy")
+        }
+    }
+}
+
 /// Settings → Assistant: attention, models, memory, voice and what leaves this Mac.
 struct NativeDesktopIntelligenceSettings: View {
     @ObservedObject var store: AttentionStore
     @ObservedObject var attention: AttentionCoordinator
+    @Binding var area: NativeDesktopAssistantSettingsArea
     @State private var key = ""
     @State private var writerKey = ""
     @State private var escalationKey = ""
@@ -608,7 +626,8 @@ struct NativeDesktopIntelligenceSettings: View {
 
     /// Provider and model as one line; the Apple judge has no model name to show.
     private func describe(_ provider: AttentionProvider) -> String {
-        provider.kind == .apple || provider.model.trimmed.isEmpty ? provider.title : provider.title + " · " + provider.model
+        let title = provider.kind == .rapidMLX && !provider.onThisMac ? L("Rapid-MLX server") : provider.title
+        return provider.kind == .apple || provider.model.trimmed.isEmpty ? title : title + " · " + provider.model
     }
     private func roleRow(_ role: String, _ value: String, local: Bool, detail: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline) {
@@ -618,7 +637,7 @@ struct NativeDesktopIntelligenceSettings: View {
                 if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
             }
             Spacer()
-            Text(local ? L("On this Mac") : L("Cloud")).font(.caption2.weight(.semibold))
+            Text(local ? L("On this Mac") : L("External")).font(.caption2.weight(.semibold))
                 .padding(.horizontal, 7).padding(.vertical, 2)
                 .foregroundStyle(local ? Color.green : Color.blue)
                 .overlay(Capsule().stroke(local ? Color.green : Color.blue, lineWidth: 1))
@@ -645,14 +664,63 @@ struct NativeDesktopIntelligenceSettings: View {
     private var voiceTitle: String {
         switch store.voiceEngine {
         case .system: L("The macOS voice")
-        case .rapidMLX: L("Rapid-MLX on this Mac") + " · " + store.voiceModel
+        case .rapidMLX: (voiceOnThisMac ? L("Rapid-MLX on this Mac") : L("Rapid-MLX voice server")) + " · " + store.voiceModel
         case .personal: L("Your Personal Voice")
         case .cloned: L("Your voice, on the Neural Engine")
         }
     }
 
+    private var voiceSummary: String {
+        guard store.voiceEngine == .cloned else { return voiceTitle }
+        switch clone.preparation {
+        case .failed: return voiceTitle + " · " + L("Needs attention")
+        case .preparing: return voiceTitle + " · " + L("Preparing…")
+        case .ready: return voiceTitle + " · " + (clone.ready ? L("Ready") : L("Setup needed"))
+        case .idle: return voiceTitle
+        }
+    }
+
+    private var voiceOnThisMac: Bool {
+        guard store.voiceEngine == .rapidMLX else { return true }
+        guard let host = URL(string: store.voiceBaseURL.trimmed)?.host?.lowercased() else { return false }
+        return ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
+    }
+
+    private func settingsLink(_ destination: NativeDesktopAssistantSettingsArea, detail: String) -> some View {
+        Button { area = destination } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(destination.title)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain)
+            .accessibilityLabel(destination.title)
+            .accessibilityHint(detail)
+            .accessibilityIdentifier("assistant.settings." + destination.rawValue)
+    }
+
     var body: some View {
         Form {
+            Section {
+                Picker(L("Assistant settings"), selection: $area) {
+                    ForEach(NativeDesktopAssistantSettingsArea.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }.pickerStyle(.menu).accessibilityIdentifier("assistant.settings.section")
+                if area == .overview {
+                    settingsLink(.attention, detail: L("When to notify you and which meetings to follow"))
+                    settingsLink(.voice, detail: voiceSummary)
+                    settingsLink(.models, detail: describe(store.provider))
+                    settingsLink(.replies, detail: L("Drafts, agent and meeting actions"))
+                    settingsLink(.privacy, detail: L("Memory, retention and data destinations"))
+                    Text(L("Meeting audio goes to participants when your microphone is on. Depending on your settings, meeting text may also go to configured providers."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if area == .attention {
             Section(L("Attention")) {
                 Toggle(L("Tell me when a meeting needs me"), isOn: $store.enabled).accessibilityIdentifier("attention.enabled")
                 Text(L("While you are in several meetings, a judge model reads the last three minutes of each meeting you are not looking at and shows a card when one needs you. It needs a transcript: turn on Transcription, or use the meeting's own.")).font(.caption).foregroundStyle(.secondary)
@@ -679,6 +747,8 @@ struct NativeDesktopIntelligenceSettings: View {
                     .fixedSize(horizontal: false, vertical: true)
             } header: { Text(L("Attention by situation")) }
                 .disabled(!store.enabled)
+            }
+            if area == .models {
             Section(L("On-device models")) {
                 LocalModelStatusIndicator(models: attention.localModels)
                 Text(L("Readiness and memory of the speech and voice models that run on this Mac. A model can be ready while not loaded; it loads when a meeting needs it."))
@@ -692,14 +762,18 @@ struct NativeDesktopIntelligenceSettings: View {
                     roleRow(L("When unsure"), describe(strong), local: strong.onThisMac)
                 }
                 roleRow(L("Write"), describe(store.effectiveWriter), local: store.effectiveWriter.onThisMac)
-                roleRow(L("Voice"), voiceTitle, local: true)
+                roleRow(L("Voice"), voiceTitle, local: voiceOnThisMac)
             }
+            }
+            if area == .attention {
             Section(L("About you")) {
                 TextField(L("Your name"), text: $store.profile.name, prompt: Text(L("As people say it in meetings")))
                 TextField(L("Other names"), text: $aliases, prompt: Text(L("Nicknames, separated by commas")))
                     .onSubmit(saveAliases).onChange(of: aliases) { _ in saveAliases() }
                 TextField(L("Your role"), text: $store.profile.role, prompt: Text(L("For example: infrastructure lead, owns DNS and certificates")))
             }
+            }
+            if area == .models {
             Section(L("Models")) {
                 Picker(L("Provider"), selection: Binding(get: { store.provider.kind }, set: { kind in
                     if kind != store.provider.kind { store.provider = AttentionProvider.defaults[kind] ?? store.provider }
@@ -711,6 +785,10 @@ struct NativeDesktopIntelligenceSettings: View {
                 } else {
                     TextField(L("Address"), text: $store.provider.baseURL)
                     if store.provider.endpoint == nil { Text(L("Enter an http or https address.")).font(.caption).foregroundStyle(.red) }
+                    else if !store.provider.onThisMac {
+                        Text(L("When enabled, Assistant may send meeting text to %@.", store.provider.host))
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack {
                         TextField(L("Model"), text: Binding(get: { store.provider.model },
                             set: { store.provider.adoptTyped($0) }))
@@ -755,6 +833,8 @@ struct NativeDesktopIntelligenceSettings: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            }
+            if area == .replies {
             Section(L("Replies")) {
                 Toggle(L("Draft chat replies and reactions on cards"), isOn: $store.draftReplies).accessibilityIdentifier("attention.replies")
                 Text(L("When a meeting that needs you accepts chat or reactions, the card offers a short reply written by the same model. Nothing is sent until you press Send or a reaction, and you can edit the text first.")).font(.caption).foregroundStyle(.secondary)
@@ -786,9 +866,6 @@ struct NativeDesktopIntelligenceSettings: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Section(L("Memory")) {
-                AssistantMemorySettings(attention: attention)
-            }
             Section(L("Agent")) {
                 Toggle(L("Answer with the bounded agent (typed tools, grounded sources)"), isOn: $store.agentAssistantEnabled)
                     .accessibilityIdentifier("assistant.agent.enabled")
@@ -806,6 +883,11 @@ struct NativeDesktopIntelligenceSettings: View {
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
+            }
+            if area == .privacy {
+                Section(L("Memory")) { AssistantMemorySettings(attention: attention) }
+            }
+            if area == .voice {
             Section(L("Voice")) {
                 Toggle(L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk)
                     .accessibilityIdentifier("assistant.pushToTalk")
@@ -819,7 +901,7 @@ struct NativeDesktopIntelligenceSettings: View {
                 HeadphoneApproval(store: store, output: headphones.output)
                 Picker(L("Speak replies with"), selection: $store.voiceEngine) {
                     Text(L("The macOS voice")).tag(VoiceEngine.system)
-                    Text(L("Rapid-MLX on this Mac")).tag(VoiceEngine.rapidMLX)
+                    Text(L("Rapid-MLX voice server")).tag(VoiceEngine.rapidMLX)
                     Text(L("Your Personal Voice")).tag(VoiceEngine.personal)
                     if clone.available || store.voiceEngine == .cloned {
                         Text(L("Your voice, on the Neural Engine")).tag(VoiceEngine.cloned)
@@ -843,6 +925,10 @@ struct NativeDesktopIntelligenceSettings: View {
                     TextField(L("Voice model"), text: $store.voiceModel)
                     TextField(L("How the voice sounds"), text: $store.voiceDescription, axis: .vertical).lineLimit(1...3)
                     TextField(L("Address"), text: $store.voiceBaseURL)
+                    if let host = store.voiceConfiguration.speechHost {
+                        Text(L("Text for spoken replies is sent to the configured voice server at %@.", host))
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                     Text(L("Start Rapid-MLX with --enable-audio. The first reply loads the voice model and takes longer.")).font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
@@ -852,6 +938,8 @@ struct NativeDesktopIntelligenceSettings: View {
                 Text(L("“Say it” on a card speaks the reply into that meeting while your microphone is held back. Listen plays only on this Mac.")).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            }
+            if area == .privacy {
             Section(L("What leaves this Mac")) {
                 if store.provider.onThisMac {
                     Label(store.provider.kind == .apple ? L("The judge runs on this Mac: meeting text, instructions and your profile stay here.")
@@ -884,9 +972,14 @@ struct NativeDesktopIntelligenceSettings: View {
                 if !store.provider.onThisMac {
                     Label(L("Typed and locally recognized commands send your request and current meeting and Moment names to %@.", store.provider.host), systemImage: "arrow.up.forward")
                 }
-                Label(L("Audio never leaves this Mac."), systemImage: "lock")
+                Label(L("Meeting audio is sent to participants when your microphone is on. Spoken replies can also be sent to a meeting."), systemImage: "mic")
+                if store.voiceEngine == .rapidMLX, let host = store.voiceConfiguration.speechHost {
+                    Label(L("Text for spoken replies is sent to the configured voice server at %@.", host), systemImage: "arrow.up.forward")
+                }
                 Label(L("Decisions are kept on this Mac for 30 days so you can see why a card appeared."), systemImage: "clock")
             }.font(.callout)
+            }
+            if area == .attention {
             Section(L("Meeting instructions")) {
                 if store.presets.isEmpty { Text(L("Add instructions from a meeting's or favorite's menu.")).foregroundStyle(.secondary) }
                 ForEach(store.presets) { preset in
@@ -906,6 +999,7 @@ struct NativeDesktopIntelligenceSettings: View {
                 }
                 if let warning = store.persistenceWarning { Text(warning).font(.caption).foregroundStyle(.red) }
             }
+            }
         }.formStyle(.grouped)
             .onAppear { aliases = store.profile.aliases.joined(separator: ", ") }
             .onChange(of: clone.preparation) { preparation in
@@ -921,6 +1015,15 @@ struct NativeDesktopIntelligenceSettings: View {
             .onChange(of: store.voiceEngine) { _ in
                 voicePreviewGeneration = UUID()
                 voiceMessage = nil; voiceFailed = false
+            }
+            .onChange(of: area) { destination in
+                if destination != .voice {
+                    voicePreviewGeneration = UUID()
+                    voiceMessage = nil; voiceFailed = false
+                }
+            }
+            .onDisappear {
+                voicePreviewGeneration = UUID()
             }
             .sheet(isPresented: $choosingModel) { AttentionModelPicker(store: store) }
             .sheet(isPresented: $comparing) { AttentionComparisonView(store: store) }

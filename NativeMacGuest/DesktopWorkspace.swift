@@ -6,10 +6,10 @@ import UserNotifications
 
 @MainActor final class NativeDesktopWorkspace: NSObject, ObservableObject, NSWindowDelegate {
     enum Section: String, CaseIterable, Identifiable {
-        case home = "Home", workspace = "Meeting workspace", assistant = "Assistant", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
+        case home = "Home", workspace = "Meeting workspace", assistant = "Assistant", tasks = "My Tasks", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
         var id: Self { self }
         var symbol: String {
-            switch self { case .home: "house"; case .workspace: "rectangle.split.3x1"; case .assistant: "tray"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
+            switch self { case .home: "house"; case .workspace: "rectangle.split.3x1"; case .assistant: "tray"; case .tasks: "checklist"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
         }
     }
     let library: NativeDesktopLibrary
@@ -34,6 +34,7 @@ import UserNotifications
     }
     @Published var invitation = ""
     @Published var settingsTab = 0
+    @Published var assistantSettingsArea: NativeDesktopAssistantSettingsArea = .overview
     @Published var error: String?
     /// An informational alert, such as a meeting the organizer ended.
     @Published var notice: (title: String, message: String)?
@@ -194,6 +195,16 @@ import UserNotifications
         content.threadIdentifier = "attention"
         content.interruptionLevel = .timeSensitive
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "attention-" + card.id.uuidString, content: content, trigger: nil))
+    }
+
+    func openCalendarSettings() {
+        settingsTab = 1
+        selection = .settings
+    }
+
+    func openMeetingHistory() {
+        workspaceViewState.destination = .review
+        selection = .workspace
     }
 
     func show(section: Section? = nil) {

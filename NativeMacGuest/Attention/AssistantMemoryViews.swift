@@ -86,6 +86,7 @@ struct AssistantMemorySettings: View {
                     }.frame(maxWidth: 360)
                     Text(L("Deleting memory also removes outcomes and pending suggestions on this Mac. Decision journals and meeting instructions are managed separately."))
                         .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack {
                         Button(L("Export memory…")) { export() }
                         Button(L("Delete all assistant memory…"), role: .destructive) { confirmingDelete = true }

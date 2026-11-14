@@ -100,8 +100,24 @@ import XCTest
         XCTAssertNil(VoiceCloneStore(model: nil, listen: listen, folder: folder).stored)
 
         let store = VoiceCloneStore(model: nil, listen: listen, folder: folder)
-        store.deleteVoice()
+        try store.deleteVoice()
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testFailedVoiceDeletionKeepsStoredVoiceAndFile() throws {
+        let voice = VoxVoice(mode: .clone, transcript: "Hello", reference: nil, continuation: nil, patches: 0)
+        let saved = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 12)
+        let url = folder.appendingPathComponent("voxcpm2-voice.json")
+        let bytes = try JSONEncoder().encode(saved)
+        try bytes.write(to: url)
+        let listen = ListenModelStore(catalog: .empty, root: folder.appendingPathComponent("Models"),
+                                      defaults: UserDefaults(suiteName: "voice-delete-\(UUID().uuidString)")!)
+        let store = VoiceCloneStore(model: nil, listen: listen, folder: folder, removeVoiceFile: { _ in
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(POSIXErrorCode.EACCES.rawValue))
+        })
+        XCTAssertThrowsError(try store.deleteVoice())
+        XCTAssertEqual(store.stored, saved)
+        XCTAssertEqual(try Data(contentsOf: url), bytes)
     }
 
     func testTrimSilenceKeepsSpeechWithMargin() {

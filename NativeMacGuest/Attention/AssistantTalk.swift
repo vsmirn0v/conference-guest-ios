@@ -273,7 +273,7 @@ import SwiftUI
             return L("Reminder set for %@.", at.formatted(date: .abbreviated, time: .shortened))
         case .remember:
             attention.store.assistant.remember(command.text, kind: .you)
-            return L("Remembered. You can review or delete it in Settings → Assistant → Memory.")
+            return L("Remembered. You can review or delete it in Settings → Assistant → Memory and privacy.")
         }
     }
 
@@ -972,6 +972,15 @@ struct AssistantTalkView: View {
                         }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }.padding(.horizontal, 12).padding(.top, 8)
+                if let targetMeeting {
+                    Text(talk.sendsWithoutAsking(targetMeeting.sessionID)
+                         ? L("Direct chat, spoken replies, and reactions may be sent immediately to “%@”.", targetMeeting.title)
+                         : L("Chat, spoken replies, and reactions to “%@” ask before sending.", targetMeeting.title))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12).padding(.top, 3)
+                        .accessibilityIdentifier("assistant.meeting-send-policy")
+                }
             }
             HStack(spacing: 8) {
                 TextField(inputPrompt, text: $input)

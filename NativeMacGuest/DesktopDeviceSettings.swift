@@ -260,11 +260,6 @@ struct NativeDesktopDeviceSettings: View {
     var body: some View {
         Form {
             Section(L("Audio devices")) {
-                Picker(L("Audio profile"), selection: $profile) {
-                    Text(L("Speech")).tag(GuestAudioProfile.speech.rawValue)
-                    Text(L("Music")).tag(GuestAudioProfile.music.rawValue)
-                }
-                Text(L("Speech uses echo cancellation, noise suppression and automatic gain. Music keeps software echo cancellation and removes noise suppression and automatic gain; room noise and level changes are more audible. Applies to the next meeting.")).font(.caption).foregroundStyle(.secondary)
                 Picker(L("Microphone"), selection: Binding(get: { model.audioSnapshot.inputID }, set: { model.selectAudio($0, direction: .input) })) {
                     if model.audioSnapshot.inputID == 0 { Text(L("System default")).tag(UInt32(0)) }
                     ForEach(model.audioSnapshot.devices(for: .input), id: \.id) { Text($0.name).tag($0.id) }
@@ -273,11 +268,6 @@ struct NativeDesktopDeviceSettings: View {
                     if model.audioSnapshot.outputID == 0 { Text(L("System default")).tag(UInt32(0)) }
                     ForEach(model.audioSnapshot.devices(for: .output), id: \.id) { Text($0.name).tag($0.id) }
                 }
-                readinessPicker(L("Microphone readiness"), selection: Binding(
-                    get: { NativeDesktopJoinReadinessPolicy.current().microphone },
-                    set: { microphoneReadiness = $0.rawValue }))
-                Text(L("Prepares the muted microphone while the app is active with a visible window, so native Guest meetings can reuse it for faster unmuting and headset controls. Muted audio is never sent. Uses extra energy. Bluetooth headsets may switch to call audio quality. Preparation stops shortly after the app becomes inactive. Power changes do not interrupt an active meeting.")).font(.caption).foregroundStyle(.secondary)
-                Text(L("Low Power Mode prevents automatic microphone and camera preparation. Preparation uses existing permission. Defaults apply to native Guest meetings; explicit microphone choices also apply to supported headset controls in other meetings.")).font(.caption).foregroundStyle(.secondary)
                 Text(L("Device choices follow the Mac’s system audio routes.")).font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button(model.checkingAudio ? L("Stop microphone check") : L("Check microphone privately")) {
@@ -290,14 +280,20 @@ struct NativeDesktopDeviceSettings: View {
                     ProgressView(value: Double(model.audioLevel), total: 1).accessibilityLabel(L("Microphone level"))
                     Text(L("Checking uses the meeting’s microphone when connected. Your mute setting stays unchanged. No recording is saved.")).font(.caption).foregroundStyle(.secondary)
                 }
+                DisclosureGroup(L("Advanced audio settings")) {
+                Picker(L("Audio profile"), selection: $profile) {
+                    Text(L("Speech")).tag(GuestAudioProfile.speech.rawValue)
+                    Text(L("Music")).tag(GuestAudioProfile.music.rawValue)
+                }
+                Text(L("Speech uses echo cancellation, noise suppression and automatic gain. Music keeps software echo cancellation and removes noise suppression and automatic gain; room noise and level changes are more audible. Applies to the next meeting.")).font(.caption).foregroundStyle(.secondary)
+                readinessPicker(L("Microphone readiness"), selection: Binding(
+                    get: { NativeDesktopJoinReadinessPolicy.current().microphone },
+                    set: { microphoneReadiness = $0.rawValue }))
+                Text(L("Prepares the muted microphone while the app is active with a visible window, so native Guest meetings can reuse it for faster unmuting and headset controls. Muted audio is never sent. Uses extra energy. Bluetooth headsets may switch to call audio quality. Preparation stops shortly after the app becomes inactive. Power changes do not interrupt an active meeting.")).font(.caption).foregroundStyle(.secondary)
+                Text(L("Low Power Mode prevents automatic microphone and camera preparation. Preparation uses existing permission. Defaults apply to native Guest meetings; explicit microphone choices also apply to supported headset controls in other meetings.")).font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section(L("Camera")) {
-                readinessPicker(L("Camera readiness"), selection: Binding(
-                    get: { NativeDesktopJoinReadinessPolicy.current().camera },
-                    set: { cameraReadiness = $0.rawValue }))
-                Text(L("Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.")).font(.caption).foregroundStyle(.secondary)
-                Toggle(L("Share camera reactions"), isOn: $shareCameraReactions)
-                Text(L("System heart, thumbs and celebration effects also send matching meeting reactions when your camera is shared.")).font(.caption).foregroundStyle(.secondary)
                 Picker(L("Camera"), selection: Binding(get: { model.cameraID }, set: { model.selectCamera($0) })) {
                     Text(L("Automatic")).tag("")
                     ForEach(model.cameras, id: \.uniqueID) { Text($0.localizedName).tag($0.uniqueID) }
@@ -312,6 +308,14 @@ struct NativeDesktopDeviceSettings: View {
                     Spacer(); Label(L("Only you"), systemImage: "lock").foregroundStyle(.secondary)
                 } }
                 Text(L("This preview is never sent to a meeting. System camera effects use the camera’s native orientation.")).font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup(L("Advanced camera settings")) {
+                Toggle(L("Share camera reactions"), isOn: $shareCameraReactions)
+                Text(L("System heart, thumbs and celebration effects also send matching meeting reactions when your camera is shared.")).font(.caption).foregroundStyle(.secondary)
+                readinessPicker(L("Camera readiness"), selection: Binding(
+                    get: { NativeDesktopJoinReadinessPolicy.current().camera },
+                    set: { cameraReadiness = $0.rawValue }))
+                Text(L("Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.")).font(.caption).foregroundStyle(.secondary)
+                }
             }
             if let error = model.error { Text(error).foregroundStyle(.red) }
         }.onDisappear { Task { await model.stop() } }

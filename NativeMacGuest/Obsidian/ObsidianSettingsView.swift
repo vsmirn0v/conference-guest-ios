@@ -14,7 +14,7 @@ struct ObsidianSettingsView: View {
                     get: { coordinator.saveAfterMeeting }, set: coordinator.setSaveAfterMeeting))
                 Text(L("The first completed outcome includes notes saved before it becomes available."))
                     .font(.caption).foregroundStyle(.secondary)
-                Toggle(L("Automatically sync changes"), isOn: Binding(
+                Toggle(L("Automatically export updates to Obsidian"), isOn: Binding(
                     get: { coordinator.syncChanges }, set: coordinator.setSyncChanges))
                 Text(L("Changes to outcomes, notes and tasks are sent from Rock’N’Roll to Obsidian."))
                     .font(.caption).foregroundStyle(.secondary)

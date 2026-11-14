@@ -15,9 +15,13 @@ struct NativeDesktopTranscriptionSettings: View {
                 Text(L("When a meeting is not transcribed by its service, other participants' speech is turned into text here, for Live text and Catch up. It keeps working while the meeting's sound is off."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if store.enabled, !store.ready {
-                    Label(store.selected.map { store.state($0).installed } == true
-                          ? L("Downloading the voice detector…") : L("Download a speech model below to start."), systemImage: "arrow.down.circle")
-                        .font(.caption).foregroundStyle(.orange)
+                    if store.selected.map({ store.state($0).installed }) != true {
+                        Label(L("Download a speech model below to start."), systemImage: "arrow.down.circle")
+                            .font(.caption).foregroundStyle(.orange)
+                    } else if let selected = store.selected, !store.modelConfigurationReady(selected) {
+                        Label(L("The selected speech model has an invalid configuration. Choose another model or check for an app update."), systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 }
                 Toggle(L("Include my microphone"), isOn: $store.includesMicrophone).disabled(!store.enabled)
                     .accessibilityIdentifier("transcription.local.microphone")
@@ -35,9 +39,18 @@ struct NativeDesktopTranscriptionSettings: View {
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section(L("Speech model")) {
+                if let pending = store.pendingID.flatMap(store.catalog.model) {
+                    Text(L("Switching to %@ when it and the voice detector are ready. The current model stays selected in the meantime.", pending.title))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 ForEach(store.catalog.listen) { model in row(model) }
+                Text(L("The selected model is used when transcription next starts. Meetings already transcribing continue with their current model."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Text(L("Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if store.enabled || store.pendingID != nil {
+                Section(L("Voice detector")) { voiceDetectorStatus }
             }
             if let models {
                 Section(L("On-device models")) {
@@ -47,7 +60,7 @@ struct NativeDesktopTranscriptionSettings: View {
                 }
             }
             Section(L("Privacy")) {
-                Label(L("Audio is processed in memory and never recorded or sent anywhere."), systemImage: "lock")
+                Label(L("Local transcription processes audio in memory and does not send audio to a transcription provider. Your unmuted microphone audio is still sent to your meeting participants."), systemImage: "lock")
                 Label(L("The app does not tell other participants. Let them know if your organisation requires it."), systemImage: "person.2")
                 Label(L("Your microphone is transcribed only while you are unmuted in a meeting."), systemImage: "mic")
             }.font(.callout)
@@ -55,10 +68,47 @@ struct NativeDesktopTranscriptionSettings: View {
             .onAppear { store.refresh() }
     }
 
+    @ViewBuilder private var voiceDetectorStatus: some View {
+        if let vad = store.catalog.vad {
+            switch store.state(vad) {
+            case .installed:
+                if store.detectorConfigurationReady {
+                    Label(L("Voice detector ready"), systemImage: "checkmark.circle").foregroundStyle(.green)
+                } else {
+                    Label(L("The installed voice detector has an invalid configuration. Check for an app update."), systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+            case .downloading(let progress):
+                HStack {
+                    ProgressView(value: progress) { Text(L("Downloading the voice detector…")) }
+                    Button(L("Cancel")) { store.cancel(vad) }
+                }
+            case .absent:
+                HStack {
+                    Label(L("Voice detector is not downloaded."), systemImage: "exclamationmark.triangle")
+                    Spacer()
+                    Button(L("Download")) { store.download(vad) }
+                }
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Label(L("Voice detector download failed."), systemImage: "exclamationmark.triangle")
+                        Spacer()
+                        Button(L("Try Again")) { store.download(vad) }
+                    }
+                    Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } else {
+            Label(L("Voice detector is unavailable in this model catalog."), systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        }
+    }
+
     @ViewBuilder private func row(_ model: ListenModelCatalog.Model) -> some View {
-        let state = store.state(model), chosen = store.selectedID == model.id
+        let state = store.state(model), chosen = store.selectedID == model.id, pending = store.pendingID == model.id
         HStack(alignment: .top, spacing: 10) {
-            Button { store.selectedID = model.id } label: {
+            Button { store.selectModel(model) } label: {
                 Image(systemName: chosen ? "largecircle.fill.circle" : "circle").foregroundStyle(chosen ? Color.accentColor : .secondary)
             }.buttonStyle(.plain).accessibilityLabel(L("Use %@", model.title))
             VStack(alignment: .leading, spacing: 3) {
@@ -68,6 +118,22 @@ struct NativeDesktopTranscriptionSettings: View {
                         .padding(.horizontal, 6).padding(.vertical, 1).background(Color.green.opacity(0.18), in: Capsule()) }
                 }
                 Text(detail(model)).font(.caption).foregroundStyle(.secondary)
+                if pending {
+                    switch state {
+                    case .installed:
+                        if !store.modelConfigurationReady(model) {
+                            Text(L("The downloaded model has an invalid configuration. Choose another model or check for an app update."))
+                                .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        } else if !store.detectorConfigurationReady {
+                            Text(L("Downloaded; waiting for the voice detector.")).font(.caption).foregroundStyle(.secondary)
+                        } else if store.activeRecognizerUsers > 0 {
+                            Text(L("Ready to switch after active transcription finishes.")).font(.caption).foregroundStyle(.secondary)
+                        }
+                    case .absent:
+                        Text(L("Download interrupted. Retry to continue." )).font(.caption).foregroundStyle(.secondary)
+                    default: EmptyView()
+                    }
+                }
                 switch state {
                 case .downloading(let progress):
                     ProgressView(value: progress).frame(maxWidth: 240)
@@ -79,11 +145,13 @@ struct NativeDesktopTranscriptionSettings: View {
             Spacer(minLength: 8)
             switch state {
             case .installed:
-                Button(L("Delete")) { store.delete(model) }.buttonStyle(.borderless).foregroundStyle(.red)
+                if pending { Button(L("Cancel Switch")) { store.cancelPendingSelection() } }
+                else { Button(L("Delete")) { store.delete(model) }.buttonStyle(.borderless).foregroundStyle(.red) }
             case .downloading:
                 Button(L("Cancel")) { store.cancel(model) }.buttonStyle(.borderless)
             case .absent, .failed:
-                Button(L("Download")) { store.selectedID = model.id; store.download(model) }
+                if pending { Button(L("Cancel Switch")) { store.cancelPendingSelection() } }
+                Button(pending ? L("Try Again") : L("Download")) { store.selectModel(model) }
             }
         }.padding(.vertical, 2).contentShape(Rectangle())
     }

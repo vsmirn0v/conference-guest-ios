@@ -94,6 +94,7 @@ struct StoredClonedVoice: Codable, Equatable {
     private let identity: String?
     private let engine: ClonedVoiceEngine
     private let currentTime: () -> Date
+    private let removeVoiceFile: (URL) throws -> Void
     private var observation: AnyCancellable?
     private var prepareTask: Task<Void, Never>?
     private var waitingForOwner: Task<Void, Never>?
@@ -101,11 +102,13 @@ struct StoredClonedVoice: Codable, Equatable {
 
     init(model: ListenModelCatalog.Model? = VoiceCloneSupport.model, listen: ListenModelStore = .shared, folder: URL? = nil,
          engine: ClonedVoiceEngine = .shared, osBuild: String = ClonedVoicePreparation.systemBuild,
-         now: @escaping () -> Date = Date.init) {
+         now: @escaping () -> Date = Date.init,
+         removeVoiceFile: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
         self.model = model
         self.listen = listen
         self.engine = engine
         self.currentTime = now
+        self.removeVoiceFile = removeVoiceFile
         identity = model.map { ClonedVoicePreparation.identity(for: $0, osBuild: osBuild) }
         voiceURL = (folder ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
             FileManager.default.temporaryDirectory).appendingPathComponent("Voices", isDirectory: true))
@@ -391,8 +394,15 @@ struct StoredClonedVoice: Codable, Equatable {
         probeLog("voice-clone-recorded", ["seconds": Int(seconds)])
     }
 
-    func deleteVoice() {
-        try? FileManager.default.removeItem(at: voiceURL)
+    func deleteVoice() throws {
+        do { try removeVoiceFile(voiceURL) }
+        catch {
+            let failure = error as NSError
+            let missing = (failure.domain == NSCocoaErrorDomain &&
+                           (failure.code == NSFileNoSuchFileError || failure.code == NSFileReadNoSuchFileError)) ||
+                          (failure.domain == NSPOSIXErrorDomain && failure.code == Int(POSIXErrorCode.ENOENT.rawValue))
+            guard missing else { throw error }
+        }
         stored = nil
     }
 

@@ -36,12 +36,31 @@ import XCTest
     }
 
     private func speechFixtures(kind: String = "nemo_ctc") -> (ListenModelStore, ListenRecognizerModel) {
-        let vad = catalogModel(id: "silero", role: "vad", kind: "silero_vad", config: ["model": "m.onnx"])
         let config = kind == ListenModelStore.coreMLGigaAMKind
             ? ["encoder": "e.mlpackage", "decoder": "d.onnx", "joint": "j.onnx", "tokens": "tokens.txt"]
             : ["model": "m.onnx", "tokens": "tokens.txt"]
-        let model = catalogModel(id: "listen-model", role: "listen", kind: kind, config: config)
+        func model(_ id: String, role: String, kind: String, config: [String: String]) -> ListenModelCatalog.Model {
+            let names = Set(config.values.map { $0.hasSuffix(".mlpackage") ? $0 + "/Manifest.json" : $0 }).sorted()
+            let files = names.map { ListenModelCatalog.File(name: $0, size: 1,
+                url: URL(string: "https://example.test/file")!, sha256: String(repeating: "a", count: 64)) }
+            return .init(id: id, role: role, title: id, kind: kind, featureDim: nil, languages: ["ru"],
+                         licence: "MIT", source: URL(string: "https://example.test/model")!, files: files, config: config)
+        }
+        let vad = model("silero", role: "vad", kind: "silero_vad", config: ["model": "m.onnx"])
+        let model = model("listen-model", role: "listen", kind: kind, config: config)
         let listen = listenStore(models: [vad, model])
+        for item in [vad, model] {
+            let directory = listen.folder(item)
+            try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for file in item.files {
+                let url = directory.appendingPathComponent(file.name)
+                try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try! Data("x".utf8).write(to: url)
+            }
+            try! item.files.map { "\($0.name) \($0.sha256)" }.joined(separator: "\n")
+                .write(to: directory.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        }
+        listen.refresh()
         listen.selectedID = model.id
         return (listen, listen.recognizerModel()!)
     }
@@ -55,8 +74,9 @@ import XCTest
     }
 
     private func attentionStore(voiceEngine: VoiceEngine = .cloned) -> AttentionStore {
+        let suite = "local-models-\(UUID().uuidString)"
         let store = AttentionStore(root: folder.appendingPathComponent("Store-\(UUID().uuidString)"),
-                                   defaults: UserDefaults(suiteName: "local-models-\(UUID().uuidString)")!)
+                                   defaults: UserDefaults(suiteName: suite)!, keychain: .init(service: suite))
         store.voiceEngine = voiceEngine
         store.pushToTalk = false
         closeLibraryAtTeardown(store)
@@ -152,6 +172,33 @@ import XCTest
         store.refreshForTesting(asr: .init(model: nil, phase: .unloaded, preparedModel: runtimeModel))
         XCTAssertEqual(store.speechStatus.readiness, .ready, "a successful warm-up keeps readiness without residency")
         XCTAssertEqual(store.speechStatus.residency, .unloaded)
+    }
+
+    func testInvalidInstalledDetectorOrSpeechModelCannotReportReady() throws {
+        let (listen, runtimeModel) = speechFixtures()
+        let (_, voice) = try voiceFixtures()
+        let vad = try XCTUnwrap(listen.catalog.vad)
+        let detectorFile = listen.folder(vad).appendingPathComponent(try XCTUnwrap(vad.config["model"]))
+        let detectorBytes = try Data(contentsOf: detectorFile)
+        try FileManager.default.removeItem(at: detectorFile)
+        XCTAssertTrue(listen.state(vad).installed, "The published marker may be stale until refresh")
+        let store = statusStore(listen: listen, voice: voice, attention: attentionStore())
+        store.refreshForTesting(asr: .init(model: runtimeModel, phase: .loaded, preparedModel: runtimeModel))
+        guard case .setupNeeded(let detectorReason) = store.speechStatus.readiness else {
+            return XCTFail("An unusable detector must not appear ready")
+        }
+        XCTAssertEqual(detectorReason, L("The installed voice detector has an invalid configuration. Check for an app update."))
+
+        try detectorBytes.write(to: detectorFile)
+        let speech = try XCTUnwrap(listen.selected)
+        let tokens = listen.folder(speech).appendingPathComponent(try XCTUnwrap(speech.config["tokens"]))
+        try FileManager.default.removeItem(at: tokens)
+        XCTAssertTrue(listen.state(speech).installed)
+        store.refreshForTesting(asr: .init(model: runtimeModel, phase: .loaded, preparedModel: runtimeModel))
+        guard case .setupNeeded(let modelReason) = store.speechStatus.readiness else {
+            return XCTFail("An unusable speech model must not appear ready")
+        }
+        XCTAssertEqual(modelReason, L("The selected speech model has an invalid configuration. Choose another model or check for an app update."))
     }
 
     func testLoadedModelShowsActiveResidencyAndMemory() throws {

@@ -187,6 +187,59 @@ struct MeetingNotesView: View {
     }
 }
 
+/// Derived only from an already-open draft: inspecting the toolbar must not
+/// load notes, claim an editor, or change the underlying saved data.
+enum MeetingNotesEntryStatus: Equatable {
+    case unknown, saving, saved, failed
+
+    init(draft: MeetingNotesController.Draft?) {
+        guard let draft else { self = .unknown; return }
+        if draft.saveError != nil { self = .failed }
+        else if draft.isDirty { self = .saving }
+        else if draft.savedText?.isEmpty == false || (draft.revision ?? 0) > 0 { self = .saved }
+        else { self = .unknown }
+    }
+}
+
+/// The status is attached to the existing Notes action, so its error opens the
+/// same editor that already provides retry and export-draft recovery.
+struct MeetingNotesEntryButton: View {
+    @ObservedObject var notes: MeetingNotesController
+    let sessionID: UUID
+    let open: () -> Void
+
+    private var status: MeetingNotesEntryStatus { .init(draft: notes.draft(sessionID: sessionID)) }
+    private var detail: String {
+        switch status {
+        case .unknown: L("Notes")
+        case .saving: L("Saving locally…")
+        case .saved: L("Saved on this Mac")
+        case .failed: L("Notes need attention. Open notes to see recovery options.")
+        }
+    }
+
+    var body: some View {
+        Button(action: open) {
+            Image(systemName: "note.text").frame(width: 32, height: 30)
+                .overlay(alignment: .bottomTrailing) {
+                    switch status {
+                    case .failed:
+                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
+                            .foregroundStyle(.red).accessibilityHidden(true)
+                    case .saving:
+                        ProgressView().controlSize(.mini).scaleEffect(0.7).accessibilityHidden(true)
+                    case .unknown, .saved: EmptyView()
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .help(detail)
+        .accessibilityLabel(L("Notes"))
+        .accessibilityValue(detail)
+        .accessibilityIdentifier("meeting.notes.entry")
+    }
+}
+
 /// Adapts the in-call panel to the session editor without giving the editor control of media.
 struct LiveMeetingNotes: View {
     @ObservedObject var model: NativeDesktopMeetingModel

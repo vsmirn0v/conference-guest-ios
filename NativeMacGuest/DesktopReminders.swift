@@ -46,7 +46,14 @@ struct NativeDesktopReminderTimingEditor: View {
     var body: some View {
         Toggle(L("Before start"), isOn: Binding(get: { timing.before != nil }, set: { timing.before = $0 ? timing.rememberedBefore : nil }))
         if timing.before != nil {
-            Stepper(value: Binding(get: { timing.before ?? 120 }, set: { timing.before = $0; timing.rememberedBefore = $0 }), in: 1...86400) { Text(L("Before: %d seconds", timing.before ?? 120)) }
+            HStack {
+                Stepper(value: Binding(get: { timing.before ?? 120 }, set: { timing.before = $0; timing.rememberedBefore = $0 }), in: 1...86400) { Text(L("Before: %d seconds", timing.before ?? 120)) }
+                Menu(L("Common times")) {
+                    ForEach([1, 2, 5, 10, 15], id: \.self) { minutes in
+                        Button(minutes == 1 ? L("1 minute") : L("%ld minutes", minutes)) { timing.before = minutes * 60; timing.rememberedBefore = minutes * 60 }
+                    }
+                }
+            }
         }
         Toggle(L("At start"), isOn: $timing.atStart)
         Picker(L("After start"), selection: $timing.followUp.mode) {
@@ -55,7 +62,14 @@ struct NativeDesktopReminderTimingEditor: View {
             Text(L("Always")).tag(ReminderFollowUp.Mode.always)
         }
         if timing.followUp.mode != .off {
-            Stepper(value: $timing.followUp.delay, in: 1...3600) { Text(L("Delay: %d seconds", timing.followUp.delay)) }
+            HStack {
+                Stepper(value: $timing.followUp.delay, in: 1...3600) { Text(L("Delay: %d seconds", timing.followUp.delay)) }
+                Menu(L("Common times")) {
+                    ForEach([1, 2, 5, 10, 15], id: \.self) { minutes in
+                        Button(minutes == 1 ? L("1 minute") : L("%ld minutes", minutes)) { timing.followUp.delay = minutes * 60 }
+                    }
+                }
+            }
         }
     }
 }

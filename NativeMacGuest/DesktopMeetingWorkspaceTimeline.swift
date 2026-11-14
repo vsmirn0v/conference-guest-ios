@@ -1,4 +1,90 @@
+import AppKit
 import SwiftUI
+
+/// Keep follow mode stable across layout and programmatic scroll changes; only
+/// a user's movement towards earlier content pauses it.
+enum WorkspaceScrollFollowPolicy {
+    static func movedTowardEarlier(previous: CGFloat, current: CGFloat, flipped: Bool, userInitiated: Bool) -> Bool {
+        guard userInitiated else { return false }
+        return flipped ? current < previous - 1 : current > previous + 1
+    }
+}
+
+/// SwiftUI's macOS 13 scroll view has no scroll-position change callback. This
+/// observer leaves the scroll view and its event handling intact and watches the
+/// enclosing clip view. It never consumes mouse, wheel or keyboard events.
+private struct WorkspaceTimelineScrollObserver: NSViewRepresentable {
+    var onScrollBack: () -> Void
+
+    func makeNSView(context: Context) -> WorkspaceTimelineScrollProbe {
+        let view = WorkspaceTimelineScrollProbe()
+        view.onScrollBack = onScrollBack
+        return view
+    }
+
+    func updateNSView(_ view: WorkspaceTimelineScrollProbe, context: Context) {
+        view.onScrollBack = onScrollBack
+        view.connect()
+    }
+
+    static func dismantleNSView(_ view: WorkspaceTimelineScrollProbe, coordinator: ()) { view.disconnect() }
+}
+
+private final class WorkspaceTimelineScrollProbe: NSView {
+    var onScrollBack: () -> Void = {}
+    private weak var observedScroll: NSScrollView?
+    private var boundsObserver: NSObjectProtocol?
+    private var lastY: CGFloat?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        connect()
+    }
+
+    func connect() {
+        guard let scroll = enclosingScrollView else { disconnect(); return }
+        guard observedScroll !== scroll else { return }
+        disconnect()
+        observedScroll = scroll
+        let clip = scroll.contentView
+        lastY = clip.bounds.origin.y
+        clip.postsBoundsChangedNotifications = true
+        boundsObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification,
+            object: clip, queue: .main) { [weak self] _ in self?.boundsChanged() }
+    }
+
+    func disconnect() {
+        if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
+        boundsObserver = nil
+        observedScroll = nil
+        lastY = nil
+    }
+
+    private func boundsChanged() {
+        guard let scroll = observedScroll else { return }
+        let current = scroll.contentView.bounds.origin.y
+        defer { lastY = current }
+        guard let previous = lastY else { return }
+        let event = NSApp.currentEvent
+        let fromUser: Bool
+        switch event?.type {
+        case .scrollWheel, .leftMouseDragged:
+            fromUser = event?.window === scroll.window && event.map {
+                scroll.bounds.contains(scroll.convert($0.locationInWindow, from: nil))
+            } == true
+        case .keyDown:
+            fromUser = (scroll.window?.firstResponder as? NSView)?.isDescendant(of: scroll) == true
+        default:
+            fromUser = false
+        }
+        if WorkspaceScrollFollowPolicy.movedTowardEarlier(previous: previous, current: current,
+                flipped: scroll.documentView?.isFlipped ?? true, userInitiated: fromUser) {
+            onScrollBack()
+        }
+    }
+
+    deinit { disconnect() }
+}
 
 extension MeetingWorkspaceSession {
     var visibleEvents: [MeetingWorkspaceEvent] {
@@ -96,6 +182,7 @@ struct WorkspaceTimeline: View {
     let selectedID: String?
     let onSelect: (String) -> Void
     let onBookmark: (String) -> Void
+    var onScrollBack: () -> Void = {}
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -112,6 +199,9 @@ struct WorkspaceTimeline: View {
                     }
                 }
                 .padding(.trailing, 5)
+                .background {
+                    if live && followsLatest { WorkspaceTimelineScrollObserver(onScrollBack: onScrollBack) }
+                }
             }
             .onAppear { scrollIfFollowing(proxy) }
             .onChange(of: followsLatest) { _ in scrollIfFollowing(proxy) }

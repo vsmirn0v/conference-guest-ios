@@ -49,7 +49,7 @@ struct MeetingWorkspaceReview: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
                 Text(L("Saved meetings")).font(.headline)
-                TextField(L("Search meetings"), text: $meetingQuery).textFieldStyle(.roundedBorder)
+                TextField(L("Search meeting titles"), text: $meetingQuery).textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("meetingWorkspace.findMeeting")
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
@@ -225,7 +225,7 @@ private struct WorkspaceSessionReview: View {
                 Text(session.title).font(.title2.weight(.semibold)).lineLimit(2).help(session.title)
                 Text(workspaceDate(session.startedAt, style: .long))
                     .font(.caption).foregroundStyle(.secondary)
-                Label(session.interrupted ? L("Recording interrupted") : L("Saved on this Mac"),
+                Label(session.interrupted ? L("Conversation history interrupted") : L("Saved on this Mac"),
                       systemImage: session.interrupted ? "exclamationmark.triangle" : "internaldrive")
                     .font(.caption).foregroundStyle(session.interrupted ? .orange : .secondary)
             }
@@ -270,7 +270,7 @@ private struct WorkspaceSessionReview: View {
     }
 
     private var searchField: some View {
-        TextField(L("Find in conversation"), text: $query)
+        TextField(L("Search within this conversation"), text: $query)
             .textFieldStyle(.roundedBorder).accessibilityIdentifier("meetingWorkspace.findConversation")
     }
 }

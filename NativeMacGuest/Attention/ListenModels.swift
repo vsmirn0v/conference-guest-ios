@@ -1,4 +1,5 @@
 import CryptoKit
+import Combine
 import Foundation
 import SherpaOnnxKit
 
@@ -116,6 +117,7 @@ struct ListenModelCatalog: Decodable, Equatable {
     static let externalKey = "attention.transcribeExternal"
     static let rockKey = "attention.transcribeRock"
     static let modelKey = "attention.listenModel"
+    static let pendingModelKey = "attention.listenModelPending"
     /// Neural Engine GigaAM: same accuracy as the CPU models at a fraction of the processor time.
     static let defaultModel = "gigaam-v3-e2e-rnnt-coreml"
     /// The default before the Neural Engine model; kept for people who already downloaded it.
@@ -135,26 +137,52 @@ struct ListenModelCatalog: Decodable, Equatable {
     /// Rock jam sessions are mostly music, so they are transcribed only when chosen.
     @Published var transcribesRock: Bool { didSet { defaults.set(transcribesRock, forKey: Self.rockKey) } }
     @Published var selectedID: String { didSet { defaults.set(selectedID, forKey: Self.modelKey) } }
+    /// An explicit model change is retained across relaunch, but never starts a
+    /// download until the user asks again. The current choice stays active.
+    @Published private(set) var pendingID: String? {
+        didSet {
+            if let pendingID { defaults.set(pendingID, forKey: Self.pendingModelKey) }
+            else { defaults.removeObject(forKey: Self.pendingModelKey) }
+        }
+    }
+    @Published private(set) var activeRecognizerUsers: Int
     private let defaults: UserDefaults
+    private let recognizerUserCount: () -> Int
+    private var recognizerObservation: AnyCancellable?
     private var downloads: [String: Task<Void, Never>] = [:]
     private var downloadAttempts: [String: UUID] = [:]
 
-    init(catalog: ListenModelCatalog = .current, root: URL? = nil, defaults: UserDefaults = .standard) {
+    init(catalog: ListenModelCatalog = .current, root: URL? = nil, defaults: UserDefaults = .standard,
+         recognizerUserCount: @escaping () -> Int = { LocalSpeechRecognizer.shared.userCount },
+         recognizerUserChanges: AnyPublisher<Int, Never>? = nil) {
         self.catalog = catalog
         self.root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
             FileManager.default.temporaryDirectory).appendingPathComponent("Models", isDirectory: true)
         self.defaults = defaults
+        self.recognizerUserCount = recognizerUserCount
+        activeRecognizerUsers = recognizerUserCount()
         enabled = defaults.bool(forKey: Self.enabledKey)
         includesMicrophone = defaults.object(forKey: Self.microphoneKey) as? Bool ?? true
         transcribesExternal = defaults.object(forKey: Self.externalKey) as? Bool ?? true
         transcribesRock = defaults.bool(forKey: Self.rockKey)
         selectedID = defaults.string(forKey: Self.modelKey).flatMap { catalog.model($0)?.id } ?? Self.defaultModel
+        pendingID = defaults.string(forKey: Self.pendingModelKey).flatMap {
+            guard let model = catalog.model($0), model.role == "listen" else { return nil }
+            return model.id
+        }
         refresh()
         // Someone transcribing with the previous default never chose it explicitly; a new
         // default must not stop their transcription until a 446 MB download. Keep theirs.
         if defaults.string(forKey: Self.modelKey) == nil, let current = catalog.model(Self.defaultModel), !state(current).installed,
            let previous = catalog.model(Self.previousDefaultModel), state(previous).installed {
             selectedID = previous.id
+        }
+        let changes = recognizerUserChanges ?? LocalSpeechRecognizer.shared.runtime.map(\.users).eraseToAnyPublisher()
+        recognizerObservation = changes.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            guard let self else { return }
+            let users = self.recognizerUserCount()
+            if self.activeRecognizerUsers != users { self.activeRecognizerUsers = users }
+            if users == 0 { self.finishPendingSelectionIfReady() }
         }
     }
 
@@ -178,8 +206,8 @@ struct ListenModelCatalog: Decodable, Equatable {
     }
     /// Transcription can run: switched on, and the chosen model and the VAD are installed.
     var ready: Bool {
-        guard enabled, let selected, let vad = catalog.vad else { return false }
-        return state(selected).installed && state(vad).installed
+        guard enabled, let selected else { return false }
+        return modelConfigurationReady(selected) && detectorConfigurationReady
     }
     func folder(_ model: ListenModelCatalog.Model) -> URL { root.appendingPathComponent(model.id, isDirectory: true) }
     private func marker(_ model: ListenModelCatalog.Model) -> URL { folder(model).appendingPathComponent(".verified") }
@@ -195,6 +223,43 @@ struct ListenModelCatalog: Decodable, Equatable {
             states[model.id] = model.pinned && recorded == expected && present ? .installed : (states[model.id].flatMap {
                 if case .failed = $0 { return $0 } else { return nil } } ?? .absent)
         }
+        finishPendingSelectionIfReady()
+    }
+
+    /// Keep a working selection until the replacement and required detector
+    /// are both verified. A pending request is safe to retry after a relaunch.
+    func selectModel(_ model: ListenModelCatalog.Model) {
+        guard model.role == "listen", catalog.model(model.id) == model else { return }
+        if let pendingID, pendingID != model.id, let old = catalog.model(pendingID) {
+            if case .downloading = state(old) { cancel(old) }
+            else { self.pendingID = nil }
+        }
+        if selectedID == model.id {
+            pendingID = nil
+            if !state(model).installed { download(model) }
+            else if let vad = catalog.vad, !state(vad).installed { download(vad) }
+        } else if modelConfigurationReady(model), detectorConfigurationReady, recognizerUserCount() == 0 {
+            pendingID = nil
+            selectedID = model.id
+        } else {
+            pendingID = model.id
+            if state(model).installed {
+                if let vad = catalog.vad { download(vad) }
+            } else { download(model) }
+        }
+    }
+
+    func cancelPendingSelection() {
+        guard let pendingID, let model = catalog.model(pendingID) else { self.pendingID = nil; return }
+        if case .downloading = state(model) { cancel(model) }
+        else { self.pendingID = nil }
+    }
+
+    private func finishPendingSelectionIfReady() {
+        guard let pendingID, let model = catalog.model(pendingID), modelConfigurationReady(model),
+              detectorConfigurationReady, recognizerUserCount() == 0 else { return }
+        selectedID = model.id
+        self.pendingID = nil
     }
 
     /// Downloads a listen model and, when missing, the voice activity detector.
@@ -216,6 +281,7 @@ struct ListenModelCatalog: Decodable, Equatable {
         downloadAttempts[model.id] = nil
         storageFailures[model.id] = nil
         states[model.id] = .absent
+        if pendingID == model.id { pendingID = nil }
     }
 
     func delete(_ model: ListenModelCatalog.Model) {
@@ -304,6 +370,7 @@ struct ListenModelCatalog: Decodable, Equatable {
                 .write(to: marker(model), atomically: true, encoding: .utf8)
             states[model.id] = .installed
             storageFailures[model.id] = nil
+            finishPendingSelectionIfReady()
             probeLog("listen-model-installed", ["model": model.id, "bytes": model.size])
         } catch is CancellationError {
             guard downloadAttempts[model.id] == attempt else { return }
@@ -355,7 +422,12 @@ struct ListenModelCatalog: Decodable, Equatable {
 
     /// Runtime configuration for the chosen model, when installed.
     func recognizerModel(threads: Int = 2) -> ListenRecognizerModel? {
-        guard let model = selected, state(model).installed else { return nil }
+        guard let model = selected, modelConfigurationReady(model) else { return nil }
+        return recognizerModel(for: model, threads: threads)
+    }
+
+    private func recognizerModel(for model: ListenModelCatalog.Model, threads: Int = 2) -> ListenRecognizerModel? {
+        guard state(model).installed else { return nil }
         let folder = folder(model)
         func file(_ key: String) -> URL? { model.config[key].map { folder.appendingPathComponent($0) } }
         guard let tokens = file("tokens") else { return nil }
@@ -381,11 +453,49 @@ struct ListenModelCatalog: Decodable, Equatable {
         }
         return .sherpa(.init(kind: kind, tokens: tokens, featureDimension: model.featureDim ?? 80, threads: threads))
     }
+
+    /// A verified marker is insufficient if a signed catalog points a runtime
+    /// key at a missing or unpinned file. Packages may be directories whose
+    /// pinned files live beneath them.
+    private func pinnedConfigurationPath(_ key: String, model: ListenModelCatalog.Model, directoryAllowed: Bool = false) -> URL? {
+        guard let name = model.config[key], !name.isEmpty, !name.hasPrefix("/"),
+              !name.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return nil }
+        let exact = model.files.contains { $0.name == name }
+        let package = directoryAllowed && model.files.contains { $0.name.hasPrefix(name + "/") }
+        guard exact || package else { return nil }
+        let base = folder(model).resolvingSymlinksInPath()
+        let path = folder(model).appendingPathComponent(name).resolvingSymlinksInPath()
+        guard path.path.hasPrefix(base.path + "/") else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
+              directoryAllowed || !isDirectory.boolValue else { return nil }
+        return path
+    }
+
+    func modelConfigurationReady(_ model: ListenModelCatalog.Model) -> Bool {
+        guard model.role == "listen", recognizerModel(for: model) != nil,
+              pinnedConfigurationPath("tokens", model: model) != nil else { return false }
+        switch model.kind {
+        case Self.coreMLGigaAMKind:
+            return ["encoder", "decoder", "joint"].allSatisfy { pinnedConfigurationPath($0, model: model, directoryAllowed: true) != nil }
+        case "nemo_transducer":
+            return ["encoder", "decoder", "joiner"].allSatisfy { pinnedConfigurationPath($0, model: model) != nil }
+        case "nemo_ctc": return pinnedConfigurationPath("model", model: model) != nil
+        case "whisper": return ["encoder", "decoder"].allSatisfy { pinnedConfigurationPath($0, model: model) != nil }
+        default: return false
+        }
+    }
+
+    var detectorConfigurationReady: Bool {
+        guard let vad = catalog.vad, state(vad).installed, vad.kind == "silero_vad" else { return false }
+        return pinnedConfigurationPath("model", model: vad) != nil
+    }
     /// Native Core ML GigaAM: encoder on the Neural Engine, packages as nested files.
     static let coreMLGigaAMKind = "coreml_gigaam_rnnt"
 
     var vadURL: URL? {
         guard let vad = catalog.vad, state(vad).installed, let name = vad.config["model"] else { return nil }
+        guard detectorConfigurationReady else { return nil }
         return folder(vad).appendingPathComponent(name)
     }
 }

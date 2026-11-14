@@ -20,6 +20,7 @@ struct WorkspaceLiveMeeting: View {
     @State private var takeOver = false
     @State private var movingMicrophone = false
     @State private var followLatest = true
+    @State private var showCaptureDetails = false
     @State private var editing: ParticipationCoordinator.WorkspaceDraft?
     @State private var editText = ""
     @State private var feedback: String?
@@ -141,13 +142,18 @@ struct WorkspaceLiveMeeting: View {
                 Label(model.title, systemImage: "arrow.up.right")
                     .font(.headline).lineLimit(1)
             }.buttonStyle(.plain).help(L("Open focused conversation"))
-            HStack { stateBadge; Spacer(minLength: 0); pauseButton }
+            HStack {
+                stateBadge
+                Spacer(minLength: 0)
+                if !followLatest { jumpToLatestButton }
+                pauseButton
+            }
             HStack { soundButton(compact: true); Spacer(); modesButton(compact: true) }
             captureStatus
             Divider()
             WorkspaceTimeline(events: events, empty: L("Waiting for conversation"), live: true, followsLatest: followLatest,
-                selectedID: selectedReplyID, onSelect: { id in state.liveReplyIDs[sessionID] = id; focus() },
-                onBookmark: toggleBookmark)
+                selectedID: selectedReplyID, onSelect: { id in followLatest = false; state.liveReplyIDs[sessionID] = id; focus() },
+                onBookmark: toggleBookmark, onScrollBack: { followLatest = false })
                 .frame(minHeight: 44)
             if let draft = participation.workspaceQueuedDraft {
                 VStack(alignment: .leading, spacing: 5) {
@@ -191,13 +197,15 @@ struct WorkspaceLiveMeeting: View {
                         Button(L("Open meeting"), systemImage: "video") { workspace.showMeeting(model) }
                             .buttonStyle(.borderless)
                         Spacer(minLength: 4)
-                        Toggle(L("Follow latest"), isOn: $followLatest).toggleStyle(.checkbox).font(.caption)
+                        if followLatest {
+                            Toggle(L("Follow latest"), isOn: $followLatest).toggleStyle(.checkbox).font(.caption)
+                        } else { jumpToLatestButton }
                     }
                     captureStatus
                     Divider()
                     WorkspaceTimeline(events: events, empty: L("Waiting for conversation"), live: true,
-                        followsLatest: followLatest, selectedID: selectedReplyID, onSelect: { state.liveReplyIDs[sessionID] = $0 },
-                        onBookmark: toggleBookmark)
+                        followsLatest: followLatest, selectedID: selectedReplyID, onSelect: { followLatest = false; state.liveReplyIDs[sessionID] = $0 },
+                        onBookmark: toggleBookmark, onScrollBack: { followLatest = false })
                         .frame(minHeight: 36)
                         .frame(height: scrollControls ? max(95, geometry.size.height * 0.35) : nil)
                     if !inspectorInline {
@@ -233,7 +241,33 @@ struct WorkspaceLiveMeeting: View {
         case .failed: key = "Transcription failed"; symbol = "exclamationmark.triangle"
         case nil: key = "Speech transcript unavailable"; symbol = "waveform.slash"
         }
-        return Label(L(key), systemImage: symbol).font(.caption).foregroundStyle(.secondary)
+        return VStack(alignment: .leading, spacing: 3) {
+            Label(L(key), systemImage: symbol)
+            if model.workspaceJournal?.persistenceError != nil {
+                Label(L("Some conversation could not be saved on this Mac."), systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            } else if session != nil {
+                Button { showCaptureDetails = true } label: {
+                    Label(L("Conversation saved on this Mac"), systemImage: "internaldrive")
+                }
+                .buttonStyle(.borderless)
+                .popover(isPresented: $showCaptureDetails) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(L("Conversation history")).font(.headline)
+                        Text(L("Captured conversation, assistant reply evidence, and bookmarks are saved on this Mac. This conversation history does not contain audio or video recordings."))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(L("After leaving, open Meeting workspace → Review to inspect or delete the saved conversation."))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.padding(14).frame(width: 300)
+                }
+            }
+        }.font(.caption).foregroundStyle(.secondary)
+    }
+
+    private var jumpToLatestButton: some View {
+        Button(L("Jump to latest"), systemImage: "arrow.down") { followLatest = true }
+            .buttonStyle(.borderless).font(.caption)
+            .accessibilityIdentifier("meetingWorkspace.jumpToLatest")
     }
 
     private var pauseButton: some View {
@@ -313,11 +347,8 @@ struct WorkspaceLiveMeeting: View {
 
     private func beginTakeover() {
         guard canControl else { return }
-        _ = state.pause(model, attention: attention)
-        participation.yieldToUser()
-        state.restorePauses[sessionID] = nil
+        state.beginTakeover(model, attention: attention)
         takeOver = true
-        recordAction(L("You took over"), source: "takeover")
     }
 
     private var manualComposer: some View {
@@ -325,7 +356,18 @@ struct WorkspaceLiveMeeting: View {
             HStack {
                 Text(L("You’re answering in %@", model.title)).font(.caption.weight(.semibold)).lineLimit(1)
                 Spacer()
-                Button(L("Done")) { takeOver = false }.buttonStyle(.borderless)
+                Button(paused ? L("Done, keep paused") : L("Done")) { takeOver = false }.buttonStyle(.borderless)
+            }
+            if paused {
+                HStack {
+                    Label(L("Assistant paused while you answer"), systemImage: "pause.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Button(L("Resume assistant")) { resumeAssistant() }
+                        .buttonStyle(.borderless).font(.caption)
+                        .disabled(!canControl)
+                        .accessibilityIdentifier("meetingWorkspace.resumeAfterTakeover")
+                }
             }
             Button(action: controlMicrophone) {
                 Label(micAction, systemImage: model.assistantMicrophoneOn ? "mic.fill" : "mic.slash")

@@ -69,22 +69,26 @@ struct NativeDesktopMCPSettings: View {
                     Text(L("Removing a client revokes its token immediately.")).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Section(L("Read-only tools · %d", readOnlyTools.count)) {
-                Text(L("Available to every paired client. They never change anything.")).font(.caption).foregroundStyle(.secondary)
-                ForEach(readOnlyTools, id: \.name) { tool in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tool.name).font(.system(.body, design: .monospaced))
-                        Text(tool.description).font(.caption).foregroundStyle(.secondary)
+            Section(L("Capabilities")) {
+                Text(L("Read-only tools are available to paired clients. Actions that make changes require approval in this app."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                DisclosureGroup(L("Read-only tools · %d", readOnlyTools.count)) {
+                    Text(L("Available to every paired client. They never change anything.")).font(.caption).foregroundStyle(.secondary)
+                    ForEach(readOnlyTools, id: \.name) { tool in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tool.name).font(.system(.body, design: .monospaced))
+                            Text(tool.description).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
-            }
-            Section(L("Tools that ask first · %d", writeTools.count)) {
-                Text(L("A paired client with write scopes can request these; the app shows an Allow/Deny alert before anything happens, and every action is recorded."))
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                ForEach(writeTools, id: \.name) { tool in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tool.name).font(.system(.body, design: .monospaced))
-                        Text(tool.description).font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup(L("Tools that ask first · %d", writeTools.count)) {
+                    Text(L("A paired client with write scopes can request these; the app shows an Allow/Deny alert before anything happens, and every action is recorded."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    ForEach(writeTools, id: \.name) { tool in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tool.name).font(.system(.body, design: .monospaced))
+                            Text(tool.description).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }

@@ -340,7 +340,11 @@ struct NativeDesktopMeetingView: View {
                 if let workspace { NativeDesktopMeetingsButton(workspace: workspace, current: model) }
                 iconButton("person.2", L("Participants")) { togglePanel(.participants) }
                 iconButton("bubble.left", L("Conversation")) { togglePanel(.conversation) }
-                iconButton("note.text", L("Notes")) { togglePanel(.notes) }
+                if let notes = model.notes {
+                    MeetingNotesEntryButton(notes: notes, sessionID: model.sessionID) { togglePanel(.notes) }
+                } else {
+                    iconButton("note.text", L("Notes")) { togglePanel(.notes) }
+                }
                 iconButton("pip.enter", L("Mini meeting"), action: onMini)
                 if let onWindowToggle {
                     iconButton(embedded ? "macwindow.on.rectangle" : "sidebar.left",
@@ -451,45 +455,25 @@ struct NativeDesktopMeetingView: View {
         Button(L("Conversation")) { togglePanel(.conversation) }
         Button(L("Notes")) { togglePanel(.notes) }
         Button(L("Mini meeting"), action: onMini)
+        Divider()
         Button(L("Camera & sound")) { togglePanel(.studio) }
         Button(L("Presenter studio")) { togglePanel(.presenter) }
-        Button(L("Reconnect")) { model.reconnect() }
-        Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
+        Divider()
         if let workspace { Button(L("Attention instructions…")) { workspace.attention.editInstructions(for: model) } }
         if model.supportsVoiceReply {
             Button(L("Play test voice reply")) { model.playTestVoiceReply() }.disabled(model.voiceReplyActive)
         }
+        Button(L("Reconnect")) { model.reconnect() }
+        Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
+        Divider()
         Button(L("Hide controls")) { model.controlsHidden = true }
         if model.showsFocus { Button(model.immersive ? L("Leave immersive view") : L("Immersive view")) { model.immersive.toggle() } }
     }
     private var viewAndMoreMenus: some View {
         Group {
-                Menu {
-                    Picker(L("Show"), selection: $model.display) {
-                        ForEach(model.availableDisplays, id: \.self) { Label($0.title, systemImage: $0.symbol).tag($0) }
-                    }.pickerStyle(.inline)
-                    Picker(L("Layout"), selection: $model.viewMode) {
-                        ForEach(NativeDesktopMeetingModel.ViewMode.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
-                    }.pickerStyle(.inline)
-                    if model.display != .audioOnly {
-                        ForEach(model.participants.filter { $0.sharing == true }) { person in
-                            Button(L("Screen · %@", person.name)) { model.focus(participantID: person.id, source: .screen) }
-                        }
-                    }
-                    if model.pinnedID != nil { Button(L("Unpin")) { model.unpin() } }
-                } label: { Label(viewMenuTitle, systemImage: viewMenuSymbol) }
+                Menu { viewMenuItems } label: { Label(viewMenuTitle, systemImage: viewMenuSymbol) }
                 Divider().frame(height: 18)
-                Menu {
-                    Button(L("Participants")) { togglePanel(.participants) }
-                    Button(L("Conversation")) { togglePanel(.conversation) }
-                    Button(L("Mini meeting"), action: onMini)
-                    Button(L("Camera & sound")) { togglePanel(.studio) }
-                    Button(L("Presenter studio")) { togglePanel(.presenter) }
-                    Button(L("Notes")) { togglePanel(.notes) }
-                    Button(L("Reconnect")) { model.reconnect() }
-                    Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
-                    Button(L("Hide controls")) { model.controlsHidden = true }
-                } label: { Label(L("More"), systemImage: "ellipsis") }
+                Menu { moreMenuItems } label: { Label(L("More"), systemImage: "ellipsis") }
         }
     }
     /// Show modes only reduce received media; tiles, speaking state and layouts stay.

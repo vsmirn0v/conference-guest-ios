@@ -66,6 +66,38 @@ final class MeetingWorkspaceJournalTests: XCTestCase {
     private static let restartReply = "Принято, я запишу итог."
     private static let guestURL = URL(string: "https://workspace-fixture.invalid/meet/archived")!
 
+    @MainActor func testTakeoverLeavesFollowingPausedUntilExplicitResume() async throws {
+        let root = try temporaryRoot()
+        let suite = "workspace-takeover-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = AttentionStore(root: root, defaults: defaults, keychain: .init(service: suite))
+        store.enabled = true
+        let attention = AttentionCoordinator(store: store)
+        let model = NativeDesktopMeetingModel(destination: try .verified(Self.guestURL, engine: .guest),
+            name: "Fixture", title: "Fixture", engine: WorkspaceArchiveTestEngine(),
+            joinReadiness: .init(microphone: .off, camera: .off))
+        attention.meetings = { [model] }
+        try await model.connect()
+        attention.setMode(.watch, for: model)
+        XCTAssertEqual(attention.resolvedMode(model).mode, .watch)
+        let state = MeetingWorkspaceViewState()
+        let pause = try XCTUnwrap(state.beginTakeover(model, attention: attention))
+        XCTAssertEqual(attention.resolvedMode(model).mode, .off)
+        XCTAssertNotNil(attention.workspaceFollowingPauses[model.sessionID])
+        // A global pause/restore cycle must not claim the takeover's pause.
+        XCTAssertNil(state.restorePauses[model.sessionID])
+        state.toggleAll([model], attention: attention)
+        XCTAssertEqual(attention.resolvedMode(model).mode, .off)
+        state.resume(model, pause: pause, attention: attention)
+        XCTAssertEqual(attention.resolvedMode(model).mode, .watch)
+        _ = await model.leave()
+        attention.stop()
+    }
+
     @MainActor func testRestartWriterLeavesThroughWorkspace() async throws {
         let root = try restartRoot()
         let markerURL = root.appendingPathComponent("workspace-restart.json")
