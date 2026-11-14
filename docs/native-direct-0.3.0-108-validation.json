@@ -1,0 +1,243 @@
+{
+  "version": "0.3.0",
+  "build": "108",
+  "channel": "beta",
+  "sourceCommit": "daef0581cbd36b616c1c078d08bd31565a71955e",
+  "sourceState": "Committed and pushed before archive and publication; all 314 build-evidence source hashes matched.",
+  "buildEvidenceSHA256": "fc148015847f8d89399e57ee1234c8f2570d9b52f129ed5cf2efb7474f0c4a00",
+  "archivedExecutableSHA256": "04e6ee6ba54cc36e0dbfbf8ce332e5aa15142cf621735fb6a5e6cdf62bc21567",
+  "privacyManifestSHA256": "5425b94e2067d8835cabcbf6fcd00bc59bee5cdfd8fd1531764bcb46272a7421",
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "108",
+    "file": "RockNRoll-0.3.0-108-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-108-arm64.dmg",
+    "sha256": "d5583e47ec09ffee9c86b9ed6fa96fd53f077ec7e5b6b1fbf3645834b5bdaeec",
+    "length": 29838770,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-108/package/RockNRoll-0.3.0-108-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/voice-recovery-validation/RockNRollNativeGuest-0.3.0-108.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-108/export/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "108",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-108-arm64.dmg",
+      "sha256": "d5583e47ec09ffee9c86b9ed6fa96fd53f077ec7e5b6b1fbf3645834b5bdaeec",
+      "length": 29838770
+    },
+    "state": {
+      "appcastSHA256": "728a333ed09ac2a9ae1708dfd9e6268b0d55ef9927e9fb7cf0d5e7e331e593d6",
+      "inventorySHA256": "a7e56d564e46b9a3afd772ea25b40d3f9b76de4dec5268052a20648990b71c68",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-108-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/2f26c6ece219458ea72804edb85d5602/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "verifiedAt": "2026-11-14T06:23:57.377058+00:00",
+    "version": "0.3.0",
+    "betaBuild": "108",
+    "stableBuild": "53",
+    "expectedBetaSHA256": "d5583e47ec09ffee9c86b9ed6fa96fd53f077ec7e5b6b1fbf3645834b5bdaeec",
+    "expectedStableSHA256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+    "checks": {
+      "immutable": {
+        "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-108-arm64.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-108-arm64.dmg",
+        "httpStatus": 200,
+        "sha256": "d5583e47ec09ffee9c86b9ed6fa96fd53f077ec7e5b6b1fbf3645834b5bdaeec",
+        "length": 29838770,
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "betaAlias": {
+        "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "httpStatus": 200,
+        "sha256": "d5583e47ec09ffee9c86b9ed6fa96fd53f077ec7e5b6b1fbf3645834b5bdaeec",
+        "length": 29838770,
+        "cacheControl": "no-store"
+      },
+      "stableAlias": {
+        "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "httpStatus": 200,
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+        "length": 15947096,
+        "cacheControl": "no-store"
+      },
+      "appcast": {
+        "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "httpStatus": 200,
+        "sha256": "728a333ed09ac2a9ae1708dfd9e6268b0d55ef9927e9fb7cf0d5e7e331e593d6",
+        "length": 6988,
+        "cacheControl": "no-store",
+        "expectedPreparedSHA256": "728a333ed09ac2a9ae1708dfd9e6268b0d55ef9927e9fb7cf0d5e7e331e593d6"
+      },
+      "inventory": {
+        "url": "https://rock.glowsoft.ru/mac/latest.json",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/latest.json",
+        "httpStatus": 200,
+        "sha256": "a7e56d564e46b9a3afd772ea25b40d3f9b76de4dec5268052a20648990b71c68",
+        "length": 489,
+        "cacheControl": "no-store",
+        "expectedPreparedSHA256": "a7e56d564e46b9a3afd772ea25b40d3f9b76de4dec5268052a20648990b71c68"
+      }
+    },
+    "errors": [],
+    "appcastBetaEnclosureVerified": true,
+    "inventoryChannelsVerified": true,
+    "allMatched": true
+  },
+  "validation": {
+    "focusedTests": "68 executed, 0 failures, 1 installed-voice hardware test skipped; .build/voice-preparation-108/recovery-tests-v2.xcresult",
+    "distributionTests": "27 passed",
+    "localizations": "English and Russian property lists passed plutil -lint",
+    "sourceReview": "Independent recovery review found no remaining critical issue.",
+    "signedBuild": "Release build and archive succeeded; app-group and embedded worker launch checks passed.",
+    "installedSparkleUpgrade": "Verified app update 107 to 108 through Sparkle, installed version108 confirmed in UI.",
+    "liveModelRecovery": {
+      "result": "Passed in the installed notarized beta108.",
+      "startedAt": "2026-11-14T09:25:09+03:00",
+      "preparedAt": "2026-11-14T10:10:00+03:00",
+      "durationSeconds": 2690,
+      "sequence": [
+        "Missing base specialization rebuilt successfully.",
+        "Validation detected stale encoder, residual and DiT entries in succession.",
+        "The same explicit Retry automatically repaired each affected entry once, preserving already working entries.",
+        "Final synthetic speech validation passed."
+      ],
+      "evidence": ".analysis/2026-11-14-voice-preparation-0859/beta108-preparation-events.jsonl",
+      "savedVoicePreviewSeconds": 2.0,
+      "freshAppLaunchPreviewSeconds": 3.4,
+      "restartResult": "Prepared receipt survived app quit/relaunch. Fresh worker preview succeeded without re-preparation.",
+      "preservation": "UI still showed the existing downloaded model and the original 12-second voice recorded 2026-11-06 at23:56. No re-download or re-recording was performed."
+    },
+    "limits": [
+      "The 12 GiB preparation headroom is a conservative estimate, not a guarantee for every asset/OS or concurrent disk usage.",
+      "The outer DMG is not independently notarized; the app inside is notarized and Gatekeeper accepted.",
+      "Preview UI confirmed generation and playback initiation; audible voice quality was not independently assessed.",
+      "Live meeting transmission and GPU/CPU fallback were not tested. No alternate inference backend is included in beta108."
+    ]
+  },
+  "diagnosis": {
+    "cause": "ANE compiler F_PREALLOCATE failed with No space left on device while growing a temporary file from 4682940416 to 4955570176 bytes. CoreAI flattened it to a generic compilation error.",
+    "recoverySequence": "Encoder repair succeeded, then stale base cache failed; base repair compilation ran out of disk.",
+    "fix": "Measure immediate free working capacity before cold specialization/cache repair; classify compilation failures; preserve successful repairs in a bounded cascade; allow explicit retries with a 60-second cooldown; record sanitized child failures.",
+    "preservation": "Downloaded model and saved voice are excluded from recovery deletions. Existing working specialization entries remain intact."
+  },
+  "cleanup": {
+    "compilerIntermediatesGiB": 10.6,
+    "preservedArchiveAndTestBundles": 89,
+    "receipt": ".build/voice-preparation-108/old-compiler-cleanup-receipt.json"
+  },
+  "fallbackAssessment": {
+    "assessedAt": "2026-11-14",
+    "scope": "Read-only assessment of fallback options for native Mac VoxCPM2 cloned voice while Neural Engine preparation recovers. No GPU/CPU backend or additional model download was implemented.",
+    "currentRuntime": {
+      "framework": "Public Core AI API on macOS 27; isolated RockClonedVoiceWorker process.",
+      "preference": "SpecializationOptions(preferredComputeUnitKind: .neuralEngine)",
+      "artifact": "Architecture-specific ANE-compiled .aimodelc base, residual, encoder, and diffusion stages; checkpoint contains CPU ancillary and AudioVAE weights.",
+      "catalog": "NativeMacGuest/Attention/VoiceModels.json",
+      "pinnedRevision": "65ebf2867f518c0fe59ca1cf470c9302aa1f194c",
+      "h16gDownloadedBytes": 3057027512,
+      "constraints": [
+        "Apple documents matching runtime compute options to the compute units used for AOT compilation. Changing the preference is not a dependable GPU/CPU recovery path for these ANE assets.",
+        "Core AI compute preference fallback handles incompatible operations during specialization; it does not promise failover from a broken ANE cache.",
+        "A dependable alternate backend needs portable .aimodel assets, separately exported GPU/CPU assets, or an independent runtime and checkpoint."
+      ],
+      "codeReferences": [
+        "NativeMacGuest/Attention/VoxCPM2/VoxCoreAI.swift",
+        "NativeMacGuest/Attention/VoxCPM2/VoxCPM2.swift",
+        "NativeMacGuest/Attention/ClonedVoiceEngine.swift"
+      ]
+    },
+    "savedVoice": {
+      "representation": "Revision-tagged reference and continuation AudioVAE latents (P x 4 x 64), transcript, mode, and patch count.",
+      "recommendation": "Keep the saved voice file unchanged. Implement and validate an adapter for the same VoxCPM2 checkpoint revision rather than asking the user to record again.",
+      "limitation": "Latent reuse is feasible in principle, not validated with an alternate backend; upstream high-level MLX interfaces normally accept reference audio."
+    },
+    "candidate": {
+      "backend": "MLX GPU VoxCPM2",
+      "fourBitDownloadGB": 2.3,
+      "eightBitDownloadGB": 3.23,
+      "sizes": "Current upstream documentation estimates; separate from existing ANE download.",
+      "tradeoffs": [
+        "Additional disk and runtime dependencies",
+        "Higher memory and GPU contention during meetings may matter",
+        "Latency and Russian speech quality need fresh measurements",
+        "No cloud transfer is required for a local implementation"
+      ]
+    },
+    "historicalBenchmarks": {
+      "status": "Historical repository record only; not rerun or independently verified during this assessment.",
+      "source": "docs/remaining-work-plan-2026-11-06.md:149",
+      "date": "2026-11-06",
+      "hardware": "M4 Air, 16 GB",
+      "mlxVoxCPM2EightBit": {
+        "generationSecondsPerAudioSecond": 2.61,
+        "reportedPeakMLXMemoryGB": 5.8
+      },
+      "nativeANEPort": {
+        "generationSecondsPerAudioSecond": 0.57,
+        "reportedProcessMemoryGB": 2.85
+      },
+      "caveat": "Memory measurements are not directly equivalent; this is a warning about possible resource cost, not a current performance prediction."
+    },
+    "recommendation": [
+      "Fix the present preparation and retry mechanism first.",
+      "Prototype an independent GPU backend before enabling automatic fallback; CPU-only VoxCPM2 is unmeasured and should not be promised as a usable live-reply path.",
+      "Use per-backend worker isolation, cache identities, readiness receipts, and bounded failures.",
+      "Switch engines only between utterances; never replay expired or canceled meeting replies.",
+      "Throttle or pause ANE rebuilding while GPU synthesis is active to avoid simultaneous memory and CPU pressure.",
+      "Expose temporary GPU use in status without changing the selected saved voice; return to ANE only after a successful smoke test.",
+      "Offer the built-in macOS voice explicitly when no alternate assets are installed; avoid silently changing speaker identity or downloading gigabytes during a disk-space incident."
+    ],
+    "primarySources": [
+      {
+        "url": "https://developer.apple.com/documentation/coreai/compiling-core-ai-models-ahead-of-time",
+        "supports": "AOT compilation produces architecture-specific .aimodelc; runtime options should match compile-time compute units."
+      },
+      {
+        "url": "https://developer.apple.com/documentation/coreai/specializationoptions/preferredcomputeunitkind",
+        "supports": "Preferred compute unit maximizes use; other allowed units may handle incompatible operations or patterns."
+      },
+      {
+        "url": "https://developer.apple.com/documentation/coreai/specializationoptions",
+        "supports": "Core AI supports CPU-only and preferred compute configurations."
+      },
+      {
+        "url": "https://huggingface.co/wegotomars/VoxCPM2-LUT8-CoreAI-ANE",
+        "supports": "Current ANE conversion stages, CPU ancillary work, architecture-specific downloads."
+      },
+      {
+        "url": "https://github.com/Neywa-Labs/mlx-audio/blob/main/docs/models/tts/voxcpm2.md",
+        "supports": "MLX VoxCPM2 capabilities and variant download sizes."
+      },
+      {
+        "url": "https://huggingface.co/mlx-community/VoxCPM2-4bit/tree/main",
+        "supports": "Published 4-bit checkpoint and approximate 2.3 GB size."
+      },
+      {
+        "url": "https://github.com/OpenBMB/VoxCPM/blob/main/src/voxcpm/model/voxcpm2.py",
+        "supports": "Original VoxCPM2 latent prompt-cache representation and generation path."
+      }
+    ]
+  }
+}
