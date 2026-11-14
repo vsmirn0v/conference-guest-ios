@@ -1,0 +1,114 @@
+{
+  "version": "0.3.0",
+  "build": "109",
+  "channel": "beta",
+  "sourceCommit": "170d0cf0a6ff116908b7bc582f8763213acc7bdf",
+  "sourceState": "Committed and pushed before archive; all 392 build-evidence source hashes matched the workspace.",
+  "buildEvidenceSHA256": "b6fb684eec7fd8ff099726e8386d646f0786b67a68e3cf0ff34b0bfea3477405",
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "109",
+    "file": "RockNRoll-0.3.0-109-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-109-arm64.dmg",
+    "sha256": "f26d336f3e26a8d371bb22fc1ab20ddfe8b2333040d8c08a6d195867e3a2168e",
+    "length": 37721399,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-109/package/RockNRoll-0.3.0-109-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/voice-recovery-validation/RockNRollNativeGuest-0.3.0-109.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-109/export/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "109",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-109-arm64.dmg",
+      "sha256": "f26d336f3e26a8d371bb22fc1ab20ddfe8b2333040d8c08a6d195867e3a2168e",
+      "length": 37721399
+    },
+    "state": {
+      "appcastSHA256": "5213fe44bd9cfdf23f85643154c2f1557d806d51a249401398f29614b6290abf",
+      "inventorySHA256": "009a53f436ffb5bcd5986e9954e1be28e5b7c7f42107e45462db71e9bcfc1789",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-109-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/f958ad8f1ab3453fb00788dda646f7cc/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "verifiedAt": "2026-11-14T08:23:07.683436+00:00",
+    "betaBuild": "109",
+    "stableBuild": "53",
+    "checks": {
+      "immutable": {
+        "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-109-arm64.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-109-arm64.dmg",
+        "httpStatus": 200,
+        "sha256": "f26d336f3e26a8d371bb22fc1ab20ddfe8b2333040d8c08a6d195867e3a2168e",
+        "length": 37721399,
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "betaAlias": {
+        "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+        "httpStatus": 200,
+        "sha256": "f26d336f3e26a8d371bb22fc1ab20ddfe8b2333040d8c08a6d195867e3a2168e",
+        "length": 37721399,
+        "cacheControl": "no-store"
+      },
+      "stableAlias": {
+        "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+        "httpStatus": 200,
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+        "length": 15947096,
+        "cacheControl": "no-store"
+      },
+      "appcast": {
+        "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/appcast.xml",
+        "httpStatus": 200,
+        "sha256": "5213fe44bd9cfdf23f85643154c2f1557d806d51a249401398f29614b6290abf",
+        "length": 6988,
+        "cacheControl": "no-store"
+      },
+      "inventory": {
+        "url": "https://rock.glowsoft.ru/mac/latest.json",
+        "effectiveURL": "https://rock.glowsoft.ru/mac/latest.json",
+        "httpStatus": 200,
+        "sha256": "009a53f436ffb5bcd5986e9954e1be28e5b7c7f42107e45462db71e9bcfc1789",
+        "length": 489,
+        "cacheControl": "no-store"
+      }
+    }
+  },
+  "validation": {
+    "focusedTests": "95 tests passed, covering backend routing, lifecycle, model status, participation, and voice graph; result .build/voice-recovery-validation/Xcode/Logs/Test/Test-RockNRollNativeGuest-2026.11.14_11-00-39-+0300.xcresult",
+    "distributionTests": "27 tests passed.",
+    "checkpoint": "Pinned GPU checkpoint strict parameter and shape verification passed; 75-patch synthetic continuation produced finite 48 kHz audio.",
+    "archive": "Development-signed archive app and GPU helper verified, including sandbox inheritance, hardened runtime, Metal library and notices; .analysis/gpu-voice-research/archive-109-verification.json",
+    "notarizedExport": "Stapled app accepted by Gatekeeper; exported helper signature, entitlements, Metal and notices verified; .analysis/gpu-voice-research/export-109-verification.json",
+    "gpuSandbox": "Byte-identical notarized GPU helper and Metal library produced 53,760 finite 48 kHz samples from synthetic features under a separate sandbox parent; .analysis/gpu-voice-research/release-109-sandbox-probe.log",
+    "syntheticConditioning": "Artificial system-voice sample encoded to GPU features and fed through the saved-voice adapter produced finite, non-silent audio; .analysis/gpu-voice-research/artificial-voice/README.md",
+    "limitations": [
+      "No synthesis or listening test used the user’s saved voice; perceptual identity and intelligibility remain unverified.",
+      "Concurrent GPU synthesis and Neural Engine preparation were not measured under memory or disk pressure.",
+      "The published update was not installed or tested through Sparkle.",
+      "The GPU model is a separate approximately 2.3 GB download and must be installed before automatic fallback is available."
+    ],
+    "exportRetry": "Apple upload succeeded; initial ticket stapling failed with code 65, and finalize retry succeeded without re-uploading."
+  },
+  "recordedAt": "2026-11-14T08:23:31.201258+00:00"
+}
