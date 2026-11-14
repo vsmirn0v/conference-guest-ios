@@ -27,6 +27,34 @@ struct NativeGuestApplication {
             }
             dispatchMain()
         }
+        #if DEBUG
+        if let index = CommandLine.arguments.firstIndex(of: "--check-gpu-voice-worker"),
+           CommandLine.arguments.indices.contains(index + 1) {
+            let folder = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+            Task.detached {
+                do {
+                    let child = try ClonedVoiceWorkerProcess(executable: Bundle.main.url(forAuxiliaryExecutable: "RockClonedVoiceGPUWorker"))
+                    do {
+                        _ = try await child.execute(.init(operation: .prepare, folder: folder), timeout: 180)
+                        let voice = VoxVoice(mode: .clone, transcript: "", reference: (0..<256).map { 0.25 * sin(Float($0) * 0.1) }, continuation: nil, patches: 1)
+                        let result = try await child.execute(.init(operation: .speak, folder: folder, text: "The voice is ready.", voice: voice), timeout: 180)
+                        guard let samples = result.samples else { throw ClonedVoiceWorkerError.protocolFailure }
+                        try ClonedVoiceWire.validatePCM(samples)
+                        print("PASS: sandboxed GPU voice worker synthesized \(samples.count) samples")
+                    } catch {
+                        await child.stop()
+                        throw error
+                    }
+                    await child.stop()
+                    exit(0)
+                } catch {
+                    print("FAIL: sandboxed GPU voice worker (\(error.localizedDescription))")
+                    exit(1)
+                }
+            }
+            dispatchMain()
+        }
+        #endif
         NativeScreenEncoderQuality.prepare()
         if CommandLine.arguments.contains("--check-container") {
             do {

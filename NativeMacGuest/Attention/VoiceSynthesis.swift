@@ -43,13 +43,14 @@ struct AssistantVoiceConfiguration: Equatable, Sendable {
         return url.port.map { "\(host):\($0)" } ?? host
     }
 
-    func synthesize(_ text: String, language: String? = nil, session: URLSession = .shared) async throws -> AVAudioPCMBuffer {
+    func synthesize(_ text: String, language: String? = nil, session: URLSession = .shared,
+                    cloneRequest: UUID = UUID(), cloneDeadline: Date? = nil) async throws -> AVAudioPCMBuffer {
         switch engine {
         case .system: return try await VoiceSynthesis.system(text, language: language)
         case .personal: return try await VoiceSynthesis.personal(text)
         case .cloned:
             guard let cloneRecordedAt else { throw VoiceSynthesisError.cloneVoiceMissing }
-            return try await VoiceSynthesis.cloned(text, recordedAt: cloneRecordedAt)
+            return try await VoiceSynthesis.cloned(text, recordedAt: cloneRecordedAt, request: cloneRequest, expiresAt: cloneDeadline)
         case .rapidMLX:
             return try await VoiceSynthesis.rapidMLX(text, baseURL: baseURL, model: model, description: description, session: session)
         }
@@ -182,10 +183,10 @@ enum VoiceSynthesis {
     }
 
     /// Your cloned voice, generated on this Mac's Neural Engine.
-    static func cloned(_ text: String, recordedAt: Date? = nil) async throws -> AVAudioPCMBuffer {
+    static func cloned(_ text: String, recordedAt: Date? = nil, request: UUID = UUID(), expiresAt: Date? = nil) async throws -> AVAudioPCMBuffer {
         let clean = text.trimmed
         guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
-        let samples = try await VoiceCloneStore.shared.speak(clean, recordedAt: recordedAt)
+        let samples = try await VoiceCloneStore.shared.speak(clean, recordedAt: recordedAt, request: request, expiresAt: expiresAt)
         return try VoiceSampleAudio.buffer(samples, rate: 48_000)
     }
 

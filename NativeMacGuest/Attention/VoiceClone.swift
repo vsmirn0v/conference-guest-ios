@@ -84,31 +84,53 @@ struct StoredClonedVoice: Codable, Equatable {
     static let shared = VoiceCloneStore()
 
     let model: ListenModelCatalog.Model?
+    let gpuModel: ListenModelCatalog.Model?
     let listen: ListenModelStore
     @Published private(set) var stored: StoredClonedVoice?
     @Published private(set) var preparation: Preparation = .idle
     @Published private(set) var preparingSince: Date?
     /// Disk capacity is queried only for local presentation, never persisted.
     @Published private(set) var failure: ClonedVoiceFailure?
+    @Published private(set) var gpuPreparation: Preparation = .idle
+    @Published private(set) var activeSpeechBackend: ClonedVoiceBackendRouter.Backend?
     private let voiceURL: URL
     private let identity: String?
     private let engine: ClonedVoiceEngine
+    private let gpuEngine: ClonedVoiceEngine
+    private let router: ClonedVoiceBackendRouter
     private let currentTime: () -> Date
     private let removeVoiceFile: (URL) throws -> Void
     private let preparationStorage: (URL) -> VoiceStorageSnapshot
     private var observation: AnyCancellable?
     private var prepareTask: Task<Void, Never>?
     private var waitingForOwner: Task<Void, Never>?
+    private var gpuPrepareTask: Task<Void, Never>?
+    private var routerObservation: AnyCancellable?
+    @Published private(set) var gpuDeleting = false
     private var deleting = false
 
     init(model: ListenModelCatalog.Model? = VoiceCloneSupport.model, listen: ListenModelStore = .shared, folder: URL? = nil,
          engine: ClonedVoiceEngine = .shared, osBuild: String = ClonedVoicePreparation.systemBuild,
          now: @escaping () -> Date = Date.init,
          removeVoiceFile: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) },
-         preparationStorage: @escaping (URL) -> VoiceStorageSnapshot = { VoicePreparationStorage.snapshot(at: $0) }) {
+         preparationStorage: @escaping (URL) -> VoiceStorageSnapshot = { VoicePreparationStorage.snapshot(at: $0) },
+         gpuEngine: ClonedVoiceEngine = ClonedVoiceEngine(tracksVoiceMemory: false, connect: {
+             try ClonedVoiceWorkerProcess(executable: Bundle.main.url(forAuxiliaryExecutable: "RockClonedVoiceGPUWorker"))
+         })) {
         self.model = model
+        let gpu = listen.catalog.model(VoxCPM2GPUModelCatalog.id)
+        self.gpuModel = gpu
         self.listen = listen
         self.engine = engine
+        self.gpuEngine = gpuEngine
+        let aneFolder = model.map(listen.folder), gpuFolder = gpu.map(listen.folder)
+        self.router = ClonedVoiceBackendRouter(neuralEngine: { text, voice in
+            guard let aneFolder else { throw ClonedVoiceWorkerError.unavailable }
+            return try await engine.speak(text, voice: voice, folder: aneFolder)
+        }, gpu: { text, voice in
+            guard let gpuFolder else { throw ClonedVoiceWorkerError.unavailable }
+            return try await gpuEngine.speak(text, voice: voice, folder: gpuFolder)
+        }, stopGPU: { await gpuEngine.unload() })
         self.currentTime = now
         self.removeVoiceFile = removeVoiceFile
         self.preparationStorage = preparationStorage
@@ -119,9 +141,13 @@ struct StoredClonedVoice: Codable, Equatable {
         stored = (try? Data(contentsOf: voiceURL)).flatMap { try? JSONDecoder().decode(StoredClonedVoice.self, from: $0) }
             .flatMap { $0.voice.revision == VoxVoice.revision ? $0 : nil }
         restorePreparation()
+        routerObservation = router.changes.receive(on: DispatchQueue.main).sink { [weak self] snapshot in
+            self?.activeSpeechBackend = snapshot.active
+        }
         observation = listen.$states.receive(on: DispatchQueue.main).sink { [weak self] states in
-            guard let self, let model = self.model, states[model.id] == .installed else { return }
-            self.prepareIfNeeded()
+            guard let self else { return }
+            if let model = self.model, states[model.id] == .installed { self.prepareIfNeeded() }
+            self.prepareGPUIfNeeded()
         }
     }
 
@@ -129,7 +155,12 @@ struct StoredClonedVoice: Codable, Equatable {
     var installed: Bool { model.map { listen.state($0).installed } ?? false }
     var bundleFolder: URL? { model.map(listen.folder) }
     var voice: VoxVoice? { stored?.voice }
-    var ready: Bool { installed && stored != nil && preparation == .ready && !deleting }
+    var gpuRuntime: CurrentValueSubject<ClonedVoiceRuntimeSnapshot, Never> { gpuEngine.runtime }
+    var gpuInstalled: Bool { gpuModel.map { listen.state($0).installed } ?? false }
+    var gpuReady: Bool { stored != nil && !gpuDeleting && gpuInstalled && gpuPreparation == .ready }
+    var ready: Bool {
+        gpuReady || (stored != nil && !deleting && installed && preparation == .ready)
+    }
 
     private func display(_ record: ClonedVoicePreparation?) {
         preparingSince = record?.state == .preparing ? record?.startedAt : nil
@@ -145,6 +176,8 @@ struct StoredClonedVoice: Codable, Equatable {
             refreshStorage()
         case nil: failure = nil; preparation = .idle
         }
+        prepareGPUIfNeeded()
+        retireGPUIfANEReady()
     }
 
     /// Historical releases saved only a display string. An exact known opaque
@@ -243,6 +276,74 @@ struct StoredClonedVoice: Codable, Equatable {
 
     func download() { if let model { listen.download(model) } }
     func cancelDownload() { if let model { listen.cancel(model) } }
+
+    func downloadGPU() { if !gpuDeleting, let gpuModel { listen.download(gpuModel) } }
+    func cancelGPUDownload() { if let gpuModel { listen.cancel(gpuModel) } }
+
+    /// Each process verifies its own GPU runtime with a synthetic sample. No
+    /// receipt from ANE, downloaded-file marker, or previous process is proof.
+    func prepareGPU() {
+        guard !gpuDeleting, gpuPrepareTask == nil, gpuInstalled, gpuPreparation != .ready, let gpuModel else { return }
+        let folder = listen.folder(gpuModel)
+        gpuPreparation = .preparing
+        gpuPrepareTask = Task {
+            defer { gpuPrepareTask = nil; retireGPUIfANEReady() }
+            do {
+                try await gpuEngine.prepare(folder)
+                guard !Task.isCancelled, !gpuDeleting, gpuInstalled else { return }
+                gpuPreparation = .ready
+            } catch {
+                guard !Task.isCancelled, !gpuDeleting else { return }
+                gpuPreparation = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func prepareGPUIfNeeded() {
+        if !gpuInstalled {
+            if gpuPrepareTask == nil { gpuPreparation = .idle }
+            return
+        }
+        // Verify the fallback proactively, so a sudden ANE failure does not
+        // first require a cold smoke test before the GPU can be used.
+        guard stored != nil, gpuInstalled, gpuPreparation == .idle else { return }
+        prepareGPU()
+    }
+
+    /// The engine makes the idle check and unload atomic. If synthesis or a
+    /// smoke test is using it, leave the GPU alone and try again on completion.
+    private func retireGPUIfANEReady() {
+        guard preparation == .ready, gpuPrepareTask == nil, gpuPreparation == .ready else { return }
+        Task { [weak self] in
+            guard let self, self.preparation == .ready, self.gpuPrepareTask == nil else { return }
+            await self.gpuEngine.unloadIfIdle()
+        }
+    }
+
+    func deleteGPUModel() {
+        guard !gpuDeleting, let gpuModel else { return }
+        gpuDeleting = true
+        gpuPrepareTask?.cancel()
+        Task {
+            await router.setReadiness(.unavailable, for: .gpu)
+            await gpuEngine.unload()
+            await gpuPrepareTask?.value
+            defer { gpuDeleting = false }
+            do {
+                let folder = listen.folder(gpuModel)
+                let lease = try ClonedVoiceLease(folder: folder, purpose: "worker")
+                try withExtendedLifetime(lease) {
+                    listen.cancel(gpuModel)
+                    if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
+                    listen.refresh()
+                }
+                gpuPreparation = .idle
+            } catch {
+                listen.refresh()
+                gpuPreparation = .failed(error.localizedDescription)
+            }
+        }
+    }
 
     func deleteModel() {
         guard !deleting, let model, let folder = bundleFolder else { return }
@@ -417,10 +518,16 @@ struct StoredClonedVoice: Codable, Equatable {
             return (try codec.makeVoice(samples: samples, rate: rate, transcript: text), seconds)
         }.value
         let value = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: seconds)
+        try persistVoice(value)
+        probeLog("voice-clone-recorded", ["seconds": Int(seconds)])
+    }
+
+    /// Commit an encoded enrollment atomically, then publish the replacement.
+    func persistVoice(_ value: StoredClonedVoice) throws {
         try FileManager.default.createDirectory(at: voiceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(value).write(to: voiceURL, options: [.atomic])
         stored = value
-        probeLog("voice-clone-recorded", ["seconds": Int(seconds)])
+        prepareGPUIfNeeded()
     }
 
     func deleteVoice() throws {
@@ -452,20 +559,57 @@ struct StoredClonedVoice: Codable, Equatable {
         }
     }
 
-    func speak(_ text: String, recordedAt: Date? = nil) async throws -> [Float] {
+    func cancelGPURequest(_ request: UUID) async { await router.cancelGPURequest(request) }
+
+    func speak(_ text: String, recordedAt: Date? = nil, request: UUID = UUID(), expiresAt: Date? = nil) async throws -> [Float] {
         try Task.checkCancellation()
-        if let recordedAt, stored?.recordedAt != recordedAt { throw VoiceSynthesisError.cloneVoiceMissing }
-        let inputs = try synthesisInputs()
-        let receipt = identity.flatMap { ClonedVoicePreparation.read(inputs.folder, identity: $0) }
+        defer { retireGPUIfANEReady() }
+        guard let enrolled = stored, recordedAt == nil || enrolled.recordedAt == recordedAt else {
+            throw VoiceSynthesisError.cloneVoiceMissing
+        }
+        restorePreparation()
+        prepareGPUIfNeeded()
+        let aneReady = !deleting && installed && preparation == .ready
+        let gpuReady = self.gpuReady
+        guard aneReady || gpuReady else {
+            if preparation == .idle { prepareIfNeeded() }
+            if gpuPreparation == .preparing || preparation == .preparing { throw VoiceSynthesisError.clonePreparing }
+            if case .failed = gpuPreparation { throw VoiceSynthesisError.clonePreparationFailed }
+            if case .failed = preparation { throw VoiceSynthesisError.clonePreparationFailed }
+            throw installed ? VoiceSynthesisError.clonePreparing : VoiceSynthesisError.cloneModelMissing
+        }
+        let folder = bundleFolder
+        let receipt = folder.flatMap { folder in identity.flatMap { ClonedVoicePreparation.read(folder, identity: $0) } }
         do {
-            return try await engine.speak(text, voice: inputs.voice, folder: inputs.folder)
+            await router.setReadiness(aneReady ? .ready : .unavailable, for: .neuralEngine)
+            await router.setReadiness(gpuReady ? .ready : .unavailable, for: .gpu)
+            let output = try await withTaskCancellationHandler {
+                try await router.speak(text, voice: enrolled.voice, expiresAt: expiresAt ?? Date().addingTimeInterval(180), request: request)
+            } onCancel: { [router] in
+                Task { await router.cancelGPURequest(request) }
+            }
+            try Task.checkCancellation()
+            guard stored == enrolled else { throw VoiceSynthesisError.cloneVoiceMissing }
+            return output.samples
         } catch is CancellationError {
             throw CancellationError()
-        } catch {
+        } catch let failure as ClonedVoiceBackendRouter.BackendFailure {
+            let error = failure.underlying
             switch error as? ClonedVoiceWorkerError {
             case .busy, .context: break
-            default: recordInferenceFailure(error, folder: inputs.folder, receipt: receipt)
+            default:
+                if failure.backend == .neuralEngine, let folder {
+                    recordInferenceFailure(error, folder: folder, receipt: receipt)
+                } else if failure.backend == .gpu {
+                    gpuPreparation = .failed(error.localizedDescription)
+                }
             }
+            throw error
+        } catch ClonedVoiceBackendRouter.Failure.busy {
+            throw ClonedVoiceWorkerError.busy
+        } catch ClonedVoiceBackendRouter.Failure.expired, ClonedVoiceBackendRouter.Failure.invalidated {
+            throw CancellationError()
+        } catch {
             throw error
         }
     }

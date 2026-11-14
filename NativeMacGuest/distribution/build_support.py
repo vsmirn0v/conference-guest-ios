@@ -84,12 +84,16 @@ def resolve_source_paths(root, spec):
     source = pathlib.Path(root).resolve() / 'NativeMacGuest'
     spec = re.sub(r'(?m)^(\s*(?:- )?path: )(.+)$',
                   lambda match: match[1] + str((source / match[2]).resolve()), spec)
-    for key in ('INFOPLIST_FILE', 'CODE_SIGN_ENTITLEMENTS', 'SWIFT_OBJC_BRIDGING_HEADER'):
+    for key in ('INFOPLIST_FILE', 'SWIFT_OBJC_BRIDGING_HEADER'):
         spec, count = re.subn(r'(?m)^(        ' + key + r': )(.+)$',
                              lambda match: match[1] + str((source / match[2]).resolve()), spec)
         if count != 1:
             raise ValueError(f'Expected one application {key} setting')
-    return re.sub(r'(?m)^(          CODE_SIGN_ENTITLEMENTS: )(.+)$',
+    application_entitlements = re.findall(r'(?m)^        CODE_SIGN_ENTITLEMENTS: (.+)$', spec)
+    if sum(pathlib.Path(path).name == 'NativeGuest.entitlements' for path in application_entitlements) != 1:
+        raise ValueError('Expected one application CODE_SIGN_ENTITLEMENTS setting')
+    # Helpers may set their entitlements at either base or per-configuration indentation.
+    return re.sub(r'(?m)^( {8,10}CODE_SIGN_ENTITLEMENTS: )(.+)$',
                   lambda match: match[1] + str((source / match[2]).resolve()), spec)
 
 
@@ -132,8 +136,9 @@ def configure_distribution(root, spec_dir, spec, distribution):
     info_path.write_bytes(plistlib.dumps(info))
     entitlements_path.write_bytes(plistlib.dumps(entitlements))
     for key, path in [('INFOPLIST_FILE', info_path), ('CODE_SIGN_ENTITLEMENTS', entitlements_path)]:
-        spec, count = re.subn(r'(?m)^(        ' + key + r': ).*$',
-                              lambda match: match[1] + str(path), spec)
+        pattern = (r'(?m)^(        CODE_SIGN_ENTITLEMENTS: ).*NativeGuest\.entitlements$'
+                   if key == 'CODE_SIGN_ENTITLEMENTS' else r'(?m)^(        ' + key + r': ).*$')
+        spec, count = re.subn(pattern, lambda match: match[1] + str(path), spec)
         if count != 1:
             raise ValueError(f'Expected one application {key} setting')
     anchor = '        product: LiveKitWebRTC\n'

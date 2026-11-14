@@ -102,7 +102,7 @@ struct ListenModelCatalog: Decodable, Equatable {
               let data = try? Data(contentsOf: url),
               let value = try? JSONDecoder().decode(ListenModelCatalog.self, from: data) else { return .empty }
         // The voice model for this Mac's chip downloads, verifies and deletes like the listen models.
-        return value.including(VoiceCloneSupport.model)
+        return value.including(VoiceCloneSupport.model).including(VoxCPM2GPUModelCatalog.model)
     }()
 }
 

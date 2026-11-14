@@ -49,11 +49,13 @@ class DistributionConfigurationTests(unittest.TestCase):
     def test_direct_license_is_added_after_builder_resolves_source_paths(self):
         source = (ROOT / 'NativeMacGuest/project.yml').read_text()
         resolved = support.resolve_source_paths(ROOT, source)
+        self.assertEqual(resolved.count(f'CODE_SIGN_ENTITLEMENTS: {ROOT / "NativeMacGuest/VoiceWorker/Worker.entitlements"}'), 3)
         anchor = f'      - path: {ROOT / "Experiments/NativeGuest"}\n'
         license_resource = (f'      - path: {ROOT / "NativeMacGuest/distribution/Sparkle-LICENSE.txt"}\n'
                             '        buildPhase: resources\n')
         with tempfile.TemporaryDirectory() as temp:
             spec, _, _ = support.configure_distribution(ROOT, pathlib.Path(temp), resolved, 'direct')
+            self.assertEqual(spec.count(f'CODE_SIGN_ENTITLEMENTS: {ROOT / "NativeMacGuest/VoiceWorker/Worker.entitlements"}'), 3)
             self.assertEqual(spec.count(license_resource), 1)
             self.assertIn(license_resource + anchor, spec)
             for invalid in [resolved.replace(anchor, ''), resolved + anchor]:
@@ -105,7 +107,7 @@ class DistributionConfigurationTests(unittest.TestCase):
                 self.assertIn(ROOT / 'Experiments/NativeGuest', group_paths)
                 package_paths = {(project_dir / value['relativePath']).resolve() for value in objects.values()
                                  if value.get('isa') == 'XCLocalSwiftPackageReference'}
-                self.assertEqual(package_paths, packages | {ROOT / 'ConferenceCore', ROOT / 'Dependencies/SherpaOnnxKit'})
+                self.assertEqual(package_paths, packages | {ROOT / 'ConferenceCore', ROOT / 'Dependencies/SherpaOnnxKit', ROOT / 'Dependencies/MLXAudioVoice'})
                 self.assertNotIn('$(SRCROOT)/../../../', project.read_text())
 
 

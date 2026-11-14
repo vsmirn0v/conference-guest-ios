@@ -13,6 +13,8 @@ packages:
     path: ../.build/native-desktop-dependencies/webrtc-xcframework
   SherpaOnnxKit:
     path: ../Dependencies/SherpaOnnxKit
+  MLXAudioVoice:
+    path: ../Dependencies/MLXAudioVoice
 targets:
   RockNRollNativeGuest:
     type: application
@@ -26,7 +28,12 @@ targets:
         # no production code references either harness.
         excludes: ['*.yml', '*.py', '*.md', '*.sh', Tests, __pycache__, NativeGuest.entitlements, Info.plist',
                    MicrophoneActivationExperiment.swift, AcousticValidationExperiment.swift,
-                   StartupCaptureReceiver.swift, VoiceWorker]
+                   StartupCaptureReceiver.swift, VoiceWorker, VoiceGPUWorker, ThirdPartyNotices]
+      - path: ThirdPartyNotices
+        type: folder
+        buildPhase: resources
+      - path: ../Dependencies/MLXAudioVoice/LICENSE
+        buildPhase: resources
       - path: ../Experiments/NativeGuest
         excludes: [Main.swift, GuestCompanionPeer.swift, '*.py', '*.md', '*.sh', '*.patch', __pycache__]
       - path: ../Shared/NativeGuestCompanionProtocol.swift
@@ -94,6 +101,21 @@ targets:
         link: false
         copy:
           destination: executables
+      - target: RockClonedVoiceGPUWorker
+        embed: true
+        codeSign: true
+        link: false
+        copy:
+          destination: executables
+    postBuildScripts:
+      - name: Bundle MLX Metal library
+        script: |
+          set -eu
+          src="${BUILT_PRODUCTS_DIR}/mlx-swift_Cmlx.bundle"
+          dest="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/mlx-swift_Cmlx.bundle"
+          test -f "${src}/Contents/Resources/default.metallib"
+          /usr/bin/ditto "${src}" "${dest}"
+        basedOnDependencyAnalysis: false
     settings:
       configs:
         Debug:
@@ -158,6 +180,35 @@ targets:
           SWIFT_COMPILATION_MODE: wholemodule
         Release:
           CODE_SIGN_ENTITLEMENTS: VoiceWorker/Worker.entitlements
+  RockClonedVoiceGPUWorker:
+    type: tool
+    platform: macOS
+    deploymentTarget: '27.0'
+    sources:
+      - path: VoiceGPUWorker/Main.swift
+      - path: Attention/VoxCPM2
+      - path: Attention/ClonedVoiceWire.swift
+      - path: Attention/VoiceStorage.swift
+      - path: Attention/ProcessMemoryProbe.swift
+      - path: ../Experiments/NativeGuest/ProbeLog.swift
+    dependencies:
+      - package: MLXAudioVoice
+        product: MLXAudioTTS
+      - package: MLXAudioVoice
+        product: MLXAudioCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.nativeguest.gpu-voice-worker
+        DEVELOPMENT_TEAM: 5V64BP2H3P
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        CODE_SIGN_ENTITLEMENTS: VoiceWorker/Worker.entitlements
+        OTHER_CODE_SIGN_FLAGS: '$(inherited) -i $(PRODUCT_BUNDLE_IDENTIFIER)'
+        SKIP_INSTALL: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_VERSION: '5.0'
+        OTHER_LDFLAGS: ['$(inherited)', '-weak_framework', 'CoreAI']
+        ARCHS: arm64
   NativeDesktopTests:
     type: bundle.unit-test
     platform: macOS

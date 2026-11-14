@@ -48,6 +48,8 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
     /// shown only when there is no live estimate. Never mixed into it.
     var memoryLastKnown: ModelMemoryRecord? = nil
     let memoryContended: Bool
+    /// ANE status remains available for repair while the GPU fallback is usable.
+    var neuralEngineReadiness: LocalModelReadiness? = nil
 }
 
 /// Reduces model stores and engine runtime snapshots into the surface shown in
@@ -72,6 +74,7 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
     private let memoryTracker: LocalModelMemoryTracker
     private var speechRuntime = LocalSpeechRecognizerRuntimeSnapshot()
     private var voiceRuntime = ClonedVoiceRuntimeSnapshot()
+    private var gpuVoiceRuntime = ClonedVoiceRuntimeSnapshot()
     private var memory = LocalModelMemoryRuntimeState()
     private var subscriptions = Set<AnyCancellable>()
     private var systemTask: Task<Void, Never>?
@@ -154,9 +157,11 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
     /// Deterministic entry used by parity tests without touching real engines.
     func refreshForTesting(asr: LocalSpeechRecognizerRuntimeSnapshot? = nil,
                            voice: ClonedVoiceRuntimeSnapshot? = nil,
+                           gpuVoice: ClonedVoiceRuntimeSnapshot? = nil,
                            memory: LocalModelMemoryRuntimeState? = nil) {
         if let asr { speechRuntime = asr }
         if let voice { voiceRuntime = voice }
+        if let gpuVoice { gpuVoiceRuntime = gpuVoice }
         if let memory { self.memory = memory }
         rebuildStatuses()
     }
@@ -174,6 +179,10 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
         }.store(in: &subscriptions)
         voiceEngine.runtime.receive(on: DispatchQueue.main).sink { [weak self] snapshot in
             self?.voiceRuntime = snapshot
+            self?.rebuildStatuses()
+        }.store(in: &subscriptions)
+        voiceStore.gpuRuntime.receive(on: DispatchQueue.main).sink { [weak self] snapshot in
+            self?.gpuVoiceRuntime = snapshot
             self?.rebuildStatuses()
         }.store(in: &subscriptions)
         memoryTracker.runtime.receive(on: DispatchQueue.main).sink { [weak self] state in
@@ -375,6 +384,34 @@ struct LocalModelStatusSnapshot: Equatable, Sendable {
             return managedVoice(L("Rapid-MLX"), detail: L("The model runs in Rapid-MLX, a separate process on this Mac."))
         case .cloned: break
         }
+
+        let aneStatus = makeNeuralEngineVoiceStatus()
+        let usingGPU = voiceStore.gpuReady && (aneStatus.readiness != .ready || voiceStore.activeSpeechBackend == .gpu)
+        guard usingGPU, let gpuModel = voiceStore.gpuModel else { return aneStatus }
+        let runtime = gpuVoiceRuntime.folder == voiceStore.listen.folder(gpuModel) ? gpuVoiceRuntime : .init()
+        return Self.gpuFallbackStatus(aneStatus: aneStatus, modelName: gpuModel.title, runtime: runtime)
+    }
+
+    /// Keep fallback presentation independent from ANE residency and estimates.
+    static func gpuFallbackStatus(aneStatus: LocalModelStatusSnapshot, modelName: String,
+                                  runtime: ClonedVoiceRuntimeSnapshot) -> LocalModelStatusSnapshot {
+        let residency: LocalModelResidency
+        switch runtime.phase {
+        case .loading: residency = .loading
+        case .loaded: residency = .loaded(active: runtime.activeSpeeches > 0)
+        case .unloading: residency = .unloading
+        case .unloaded, .failed: residency = .unloaded
+        }
+        return .init(role: .voice, title: aneStatus.title, modelName: modelName,
+                     readiness: .ready, residency: residency,
+                     computePath: .init(summary: L("GPU + CPU"),
+                         detail: aneStatus.readiness == .ready
+                            ? L("Voice is finishing on the GPU; the Neural Engine is ready for the next reply.")
+                            : L("Voice uses the GPU while Neural Engine preparation recovers.")),
+                     memory: nil, memoryContended: false, neuralEngineReadiness: aneStatus.readiness)
+    }
+
+    private func makeNeuralEngineVoiceStatus() -> LocalModelStatusSnapshot {
 
         let base = LocalModelStatusSnapshot(role: .voice, title: L("Voice synthesis"), modelName: voiceStore.model?.title,
             readiness: .unavailable, residency: .notApplicable,

@@ -16,8 +16,9 @@ struct VoiceCloneSettingsView: View {
             if let model = clone.model {
                 setupProgress(model)
                 modelRow(model)
+                gpuFallbackRow
                 voiceRow
-                Text(L("VoxCPM2 (OpenBMB, Apache-2.0) speaks in your voice from a short recording. It runs on this Mac's Neural Engine; the model and your voice never leave this Mac."))
+                Text(L("VoxCPM2 speaks in your saved voice on this Mac. The GPU fallback uses the same saved voice when Neural Engine preparation needs attention. Your voice never leaves this Mac."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     .sheet(isPresented: $enrolling) { VoiceEnrollmentView(clone: clone) }
             }
@@ -35,6 +36,60 @@ struct VoiceCloneSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // A user can free space in System Settings while this view stays open.
             refreshStorage()
+        }
+    }
+
+    /// The GPU checkpoint is independent of the ANE model. Downloading it is
+    /// explicit because it is large; selection between available backends is
+    /// automatic and never changes the saved voice.
+    @ViewBuilder private var gpuFallbackRow: some View {
+        if let model = clone.gpuModel {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L("GPU voice fallback")).font(.headline)
+                Text(L("Keeps your saved voice available while the Neural Engine is preparing. GPU speech may take longer."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(L("The GPU model needs additional disk space and several GB of memory while speaking. Keep enough free disk space for Neural Engine preparation too."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                switch listen.state(model) {
+                case .absent:
+                    Button(L("Download GPU model (%@)", ByteCountFormatter.string(fromByteCount: model.size, countStyle: .file))) { clone.downloadGPU() }
+                case .downloading(let progress):
+                    HStack {
+                        ProgressView(value: progress) { Text(L("Downloading GPU model…")).font(.caption) }
+                        Button(L("Cancel")) { clone.cancelGPUDownload() }
+                    }
+                case .failed:
+                    if let storage = listen.storageFailure(model) {
+                        Label(L("Not enough disk space to download the voice model."), systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        storageDetails(storage)
+                        storageActions { clone.downloadGPU() }
+                    } else {
+                        Label(L("The GPU model could not be downloaded."), systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        Button(L("Try Again")) { clone.downloadGPU() }
+                    }
+                case .installed:
+                    HStack(alignment: .firstTextBaseline) {
+                        switch clone.gpuPreparation {
+                        case .idle: Text(L("GPU model downloaded; it will prepare when needed."))
+                        case .preparing: ProgressView(L("Preparing GPU voice…")).controlSize(.small)
+                        case .ready:
+                            Label(clone.activeSpeechBackend == .gpu ? L("Using GPU fallback") :
+                                    (clone.preparation == .ready ? L("GPU fallback ready") : L("GPU fallback available")), systemImage: "checkmark.circle")
+                                .foregroundStyle(.green)
+                        case .failed(let message):
+                            VStack(alignment: .leading) {
+                                Label(L("GPU fallback needs attention."), systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                                Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                Button(L("Try Again")) { clone.prepareGPU() }
+                            }
+                        }
+                        Spacer()
+                        Button(L("Remove GPU model"), role: .destructive) { clone.deleteGPUModel() }.buttonStyle(.borderless)
+                    }
+                }
+            }
+            .disabled(clone.gpuDeleting)
+            .accessibilityIdentifier("voiceModel.gpuFallback")
         }
     }
 

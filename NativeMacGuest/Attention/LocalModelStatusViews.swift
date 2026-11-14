@@ -195,6 +195,7 @@ private struct LocalModelStatusRow: View {
             }
             memoryBlock
             actions
+            neuralEngineRecovery
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(status.role == .speech ? "local-models.speech" : "local-models.voice")
@@ -250,6 +251,32 @@ private struct LocalModelStatusRow: View {
         }
     }
 
+    @ViewBuilder private var neuralEngineRecovery: some View {
+        if let readiness = status.neuralEngineReadiness {
+            switch readiness {
+            case .failed, .preparationNeeded:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L("Neural Engine preparation needs attention."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button(L("Try Neural Engine again")) { action(.retry) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+            case .preparing, .loading:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L("Preparing Neural Engine…"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            case .notInstalled:
+                if let onOpenSettings {
+                    Button(L("Set up Neural Engine…")) { onOpenSettings() }.controlSize(.small)
+                }
+            default:
+                EmptyView()
+            }
+        }
+    }
+
     private var readinessTitle: String {
         switch status.readiness {
         case .off: return L("Off")
@@ -302,7 +329,10 @@ private struct LocalModelStatusRow: View {
     /// loaded, ghost last-known otherwise, honest "not measured" text otherwise.
     /// Managed and not-applicable models render no block at all.
     @ViewBuilder private var memoryBlock: some View {
-        if status.residency == .notApplicable {
+        if status.neuralEngineReadiness != nil {
+            Text(L("GPU model memory is not measured."))
+                .font(.caption).foregroundStyle(.secondary)
+        } else if status.residency == .notApplicable {
             EmptyView()
         } else if case .loading = status.residency {
             Label(status.memoryContended

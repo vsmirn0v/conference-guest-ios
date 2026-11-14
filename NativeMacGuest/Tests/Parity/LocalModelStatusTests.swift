@@ -292,6 +292,31 @@ import XCTest
         XCTAssertEqual(store.voiceStatus.memory, estimate)
     }
 
+    func testGPUFallbackReportsGPUResidencyWithoutReusingANEMemory() {
+        let estimate = ModelMemoryEstimate(bytes: 900, measuredAt: Date(), afterInference: true)
+        let record = ModelMemoryRecord(bytes: 850, measuredAt: Date(), build: "test", afterInference: false)
+        let ane = LocalModelStatusSnapshot(role: .voice, title: "Voice", modelName: "ANE",
+            readiness: .failed("specialization failed"), residency: .loaded(active: true),
+            computePath: .init(summary: "ANE", detail: ""), memory: estimate,
+            memoryLastKnown: record, memoryContended: true)
+        for (phase, active, expected) in [
+            (ClonedVoiceEnginePhase.unloaded, 0, LocalModelResidency.unloaded),
+            (.loading, 0, .loading), (.loaded, 0, .loaded(active: false)),
+            (.loaded, 1, .loaded(active: true)), (.unloading, 0, .unloading),
+            (.failed, 0, .unloaded)
+        ] {
+            let gpu = LocalModelStatusStore.gpuFallbackStatus(aneStatus: ane, modelName: "GPU",
+                runtime: .init(phase: phase, activeSpeeches: active))
+            XCTAssertEqual(gpu.readiness, .ready)
+            XCTAssertEqual(gpu.neuralEngineReadiness, .failed("specialization failed"))
+            XCTAssertEqual(gpu.residency, expected)
+            XCTAssertEqual(gpu.modelName, "GPU")
+            XCTAssertNil(gpu.memory)
+            XCTAssertNil(gpu.memoryLastKnown)
+            XCTAssertFalse(gpu.memoryContended)
+        }
+    }
+
     // MARK: Last-known estimates (iteration 2)
 
     func testLastKnownShownWhenUnloaded() throws {

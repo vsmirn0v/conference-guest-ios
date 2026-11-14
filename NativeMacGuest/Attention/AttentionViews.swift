@@ -672,6 +672,9 @@ struct NativeDesktopIntelligenceSettings: View {
 
     private var voiceSummary: String {
         guard store.voiceEngine == .cloned else { return voiceTitle }
+        if clone.gpuReady, clone.preparation != .ready {
+            return L("Your voice") + " · " + L("GPU fallback available")
+        }
         switch clone.preparation {
         case .failed: return voiceTitle + " · " + L("Needs attention")
         case .preparing: return voiceTitle + " · " + L("Preparing…")
@@ -1040,11 +1043,15 @@ struct NativeDesktopIntelligenceSettings: View {
                 let text = L("I'm in another meeting right now, I'll answer in a couple of minutes.")
                 let buffer: AVAudioPCMBuffer
                 if store.voiceEngine == .cloned {
-                    // The worker keeps its operation after this preview deadline.
-                    // A late result is discarded, so it cannot play over another preview.
+                    // ANE specialization can ignore cancellation; a GPU worker can
+                    // be stopped safely when its preview expires.
                     let synthesis = Task { try await attention.synthesize(text) }
-                    guard let result = await VoicePreviewWait.result(of: synthesis, timeoutNanoseconds: 30_000_000_000) else {
-                        probeLog("voice-preview-deadline", ["seconds": 30])
+                    // GPU fallback can take substantially longer than the
+                    // warm Neural Engine for the same saved-voice utterance.
+                    let seconds: UInt64 = clone.preparation != .ready && clone.gpuReady ? 120 : 30
+                    guard let result = await VoicePreviewWait.result(of: synthesis, timeoutNanoseconds: seconds * 1_000_000_000) else {
+                        if clone.activeSpeechBackend == .gpu { synthesis.cancel() }
+                        probeLog("voice-preview-deadline", ["seconds": seconds])
                         throw VoiceSynthesisError.clonePreviewWaiting
                     }
                     buffer = try result.get()
@@ -1058,7 +1065,7 @@ struct NativeDesktopIntelligenceSettings: View {
             } catch {
                 guard generation == voicePreviewGeneration else { return }
                 // The model row already owns its actionable, localized failure.
-                if store.voiceEngine == .cloned, case .failed = clone.preparation {
+                if store.voiceEngine == .cloned, !clone.ready, case .failed = clone.preparation {
                     voiceFailed = false; voiceMessage = nil
                 } else {
                     voiceFailed = true; voiceMessage = error.localizedDescription

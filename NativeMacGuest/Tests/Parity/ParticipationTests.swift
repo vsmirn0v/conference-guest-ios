@@ -5,6 +5,21 @@ import XCTest
 @testable import RockNativeDesktop
 
 final class ParticipationTests: XCTestCase {
+    @MainActor
+    func testVoiceSynthesisDeadlineFiresOnlyWhileTimerIsActive() async throws {
+        var expired = false
+        let active = GuestVoiceSynthesisDeadline.schedule(Date().addingTimeInterval(0.03)) { expired = true }
+        await active.value
+        XCTAssertTrue(expired)
+
+        var afterCompletion = false
+        let completed = GuestVoiceSynthesisDeadline.schedule(Date().addingTimeInterval(0.03)) { afterCompletion = true }
+        completed.cancel()
+        await completed.value
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(afterCompletion, "a completed synthesis must not cancel later playback")
+    }
+
     func testDispatchPermitCannotStartAfterCancellationOrExpiry() async {
         let stopped = GuestChatDispatchPermit(deadline: .distantFuture)
         let ready = await stopped.preflight()

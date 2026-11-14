@@ -347,6 +347,197 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         XCTAssertNil(unsafe.diagnosticFields["domain"])
     }
 
+    func testGPUFallbackUsesSavedVoiceWhileANEPreparesThenSwitchesBack() async throws {
+        let fixtures = try modelFixture(includeGPU: true)
+        let enrolled = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5)
+        let voiceURL = fixtures.root.appendingPathComponent("voxcpm2-voice.json")
+        let saved = try JSONEncoder().encode(enrolled); try saved.write(to: voiceURL)
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .failed, startedAt: Date(), recentStarts: []).write(fixtures.modelFolder)
+        let ane = FixtureWorker(pcm: pcm), gpu = FixtureWorker(pcm: pcm)
+        await ane.block()
+        let store = fixtures.store(ane, gpuWorker: gpu)
+        let suite = "voice-fallback-status-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let attention = AttentionStore(root: fixtures.root.appendingPathComponent("status-store"),
+                                       defaults: defaults, keychain: .init(service: suite))
+        attention.voiceEngine = .cloned
+        closeLibraryAtTeardown(attention)
+        let status = LocalModelStatusStore(store: attention, listen: fixtures.listen, voice: store,
+            speechRecognizer: LocalSpeechRecognizer(), voiceEngine: ClonedVoiceEngine(connect: { ane }), defaults: defaults)
+        try await waitUntil { store.gpuPreparation == .ready }
+        XCTAssertTrue(store.ready)
+        store.prepare()
+        try await waitUntil { store.preparation == .preparing }
+        try await waitUntil { status.voiceStatus.readiness == .ready && status.voiceStatus.neuralEngineReadiness == .preparing }
+        await gpu.block()
+        let duringTask = Task { try await store.speak("during recovery", recordedAt: enrolled.recordedAt) }
+        try await waitUntil { await gpu.requests.count == 2 }
+        let gpuRequests = await gpu.requests
+        XCTAssertEqual(gpuRequests.map(\.operation), [.prepare, .speak])
+        XCTAssertEqual(gpuRequests.last?.voice, enrolled.voice)
+        await ane.release()
+        try await waitUntil { store.preparation == .ready }
+        try await waitUntil { status.voiceStatus.neuralEngineReadiness == .ready && store.activeSpeechBackend == .gpu }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let stopsWhileSpeaking = await gpu.stops
+        XCTAssertEqual(stopsWhileSpeaking, 0, "switchback must not interrupt the GPU utterance")
+        await gpu.release()
+        let during = try await duringTask.value
+        XCTAssertEqual(during, pcm)
+        try await waitUntil { await gpu.stops == 1 }
+        try await waitUntil { status.voiceStatus.readiness == .ready && status.voiceStatus.neuralEngineReadiness == nil }
+        let after = try await store.speak("after recovery", recordedAt: enrolled.recordedAt)
+        XCTAssertEqual(after, pcm)
+        let aneRequests = await ane.requests
+        XCTAssertEqual(aneRequests.map(\.operation), [.prepare, .speak])
+        XCTAssertEqual(try Data(contentsOf: voiceURL), saved)
+    }
+
+    func testFailedGPUSmokeDoesNotEnableFallback() async throws {
+        let fixtures = try modelFixture(includeGPU: true)
+        try JSONEncoder().encode(StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5))
+            .write(to: fixtures.root.appendingPathComponent("voxcpm2-voice.json"))
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .failed, startedAt: Date(), recentStarts: []).write(fixtures.modelFolder)
+        let ane = FixtureWorker(pcm: pcm), gpu = FixtureWorker(pcm: pcm)
+        await gpu.fail(.runtime("GPU smoke failed"))
+        let store = fixtures.store(ane, gpuWorker: gpu)
+        try await waitUntil { if case .failed = store.gpuPreparation { return true }; return false }
+        XCTAssertFalse(store.ready)
+        do { _ = try await store.speak("do not play"); XCTFail("unverified GPU was used") }
+        catch { XCTAssertEqual(error as? VoiceSynthesisError, .clonePreparationFailed) }
+        let requests = await gpu.requests
+        XCTAssertEqual(requests.map(\.operation), [.prepare])
+    }
+
+    func testGPUIsVerifiedBeforeANEFailureAndCanTakeTheNextUtterance() async throws {
+        let fixtures = try modelFixture(includeGPU: true)
+        let enrolled = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5)
+        try JSONEncoder().encode(enrolled).write(to: fixtures.root.appendingPathComponent("voxcpm2-voice.json"))
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .ready, startedAt: Date(), recentStarts: []).write(fixtures.modelFolder)
+        let ane = FixtureWorker(pcm: pcm), gpu = FixtureWorker(pcm: pcm)
+        let store = fixtures.store(ane, gpuWorker: gpu)
+        try await waitUntil { store.gpuPreparation == .ready }
+        XCTAssertEqual(store.preparation, .ready)
+        try await waitUntil { await gpu.stops == 1 }
+        await ane.fail(.runtime("ANE failed"))
+        do { _ = try await store.speak("failed request", recordedAt: enrolled.recordedAt); XCTFail("expected ANE failure") }
+        catch { XCTAssertEqual(error as? ClonedVoiceWorkerError, .runtime("ANE failed")) }
+        guard case .failed = store.preparation else { return XCTFail("ANE failure was not recorded") }
+        let samples = try await store.speak("next request", recordedAt: enrolled.recordedAt)
+        XCTAssertEqual(samples, pcm)
+        let requests = await gpu.requests
+        XCTAssertEqual(requests.map(\.operation), [.prepare, .speak])
+        XCTAssertEqual(requests.last?.voice, enrolled.voice)
+    }
+
+    func testGPURemainsUsableAndVisibleWhenANEModelIsNotInstalled() async throws {
+        let fixtures = try modelFixture(includeGPU: true)
+        let enrolled = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5)
+        try JSONEncoder().encode(enrolled).write(to: fixtures.root.appendingPathComponent("voxcpm2-voice.json"))
+        try FileManager.default.removeItem(at: fixtures.modelFolder)
+        fixtures.listen.refresh()
+        let ane = FixtureWorker(pcm: pcm), gpu = FixtureWorker(pcm: pcm)
+        let store = fixtures.store(ane, gpuWorker: gpu)
+        let suite = "voice-fallback-status-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let attention = AttentionStore(root: fixtures.root.appendingPathComponent("status-store"),
+                                       defaults: defaults, keychain: .init(service: suite))
+        attention.voiceEngine = .cloned
+        closeLibraryAtTeardown(attention)
+        let status = LocalModelStatusStore(store: attention, listen: fixtures.listen, voice: store,
+            speechRecognizer: LocalSpeechRecognizer(), voiceEngine: ClonedVoiceEngine(connect: { ane }), defaults: defaults)
+        try await waitUntil { store.gpuReady && status.voiceStatus.readiness == .ready && status.voiceStatus.neuralEngineReadiness == .notInstalled }
+        XCTAssertTrue(store.ready)
+        let samples = try await store.speak("GPU only", recordedAt: enrolled.recordedAt)
+        XCTAssertEqual(samples, pcm)
+        let gpuRequests = await gpu.requests, aneRequests = await ane.requests
+        XCTAssertEqual(gpuRequests.map(\.operation), [.prepare, .speak])
+        XCTAssertTrue(aneRequests.isEmpty)
+    }
+
+    func testChangingSavedVoiceDiscardsAnInFlightGPUReply() async throws {
+        let fixtures = try modelFixture(includeGPU: true)
+        let enrolled = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5)
+        try JSONEncoder().encode(enrolled).write(to: fixtures.root.appendingPathComponent("voxcpm2-voice.json"))
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .failed, startedAt: Date(), recentStarts: []).write(fixtures.modelFolder)
+        let gpu = FixtureWorker(pcm: pcm)
+        let store = fixtures.store(FixtureWorker(pcm: pcm), gpuWorker: gpu)
+        try await waitUntil { store.gpuPreparation == .ready }
+        await gpu.block()
+        let pending = Task { try await store.speak("outdated", recordedAt: enrolled.recordedAt) }
+        try await waitUntil { await gpu.requests.count == 2 }
+        try store.deleteVoice()
+        await gpu.release()
+        do { _ = try await pending.value; XCTFail("returned speech after the saved voice was removed") }
+        catch { XCTAssertEqual(error as? VoiceSynthesisError, .cloneVoiceMissing) }
+    }
+
+    func testCancellingGPUReplyStopsHelperWithoutMarkingFallbackFailed() async throws {
+        let fixtures = try modelFixture(includeGPU: true)
+        let enrolled = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5)
+        try JSONEncoder().encode(enrolled).write(to: fixtures.root.appendingPathComponent("voxcpm2-voice.json"))
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .failed, startedAt: Date(), recentStarts: []).write(fixtures.modelFolder)
+        let gpu = FixtureWorker(pcm: pcm)
+        let store = fixtures.store(FixtureWorker(pcm: pcm), gpuWorker: gpu)
+        try await waitUntil { store.gpuReady }
+        await gpu.block()
+        let pending = Task { try await store.speak("cancelled", recordedAt: enrolled.recordedAt) }
+        try await waitUntil { await gpu.requests.count == 2 }
+        pending.cancel()
+        do { _ = try await pending.value; XCTFail("returned cancelled audio") }
+        catch is CancellationError {}
+        try await waitUntil { await gpu.stops == 1 }
+        XCTAssertTrue(store.gpuReady)
+        XCTAssertEqual(store.gpuPreparation, .ready)
+    }
+
+    func testReenrollmentDiscardsInFlightGPUReplyAndUsesNewVoiceForNextRequest() async throws {
+        let fixtures = try modelFixture(includeGPU: true)
+        let original = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5)
+        try JSONEncoder().encode(original).write(to: fixtures.root.appendingPathComponent("voxcpm2-voice.json"))
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .failed, startedAt: Date(), recentStarts: []).write(fixtures.modelFolder)
+        let gpu = FixtureWorker(pcm: pcm)
+        let store = fixtures.store(FixtureWorker(pcm: pcm), gpuWorker: gpu)
+        try await waitUntil { store.gpuPreparation == .ready }
+        await gpu.block()
+        let pending = Task { try await store.speak("old enrollment", recordedAt: original.recordedAt) }
+        try await waitUntil { await gpu.requests.count == 2 }
+        let newVoice = VoxVoice(mode: .clone, transcript: "", reference: [0.25], continuation: nil, patches: 1)
+        let replacement = StoredClonedVoice(voice: newVoice, recordedAt: original.recordedAt.addingTimeInterval(1), seconds: 6)
+        try store.persistVoice(replacement)
+        await gpu.release()
+        do { _ = try await pending.value; XCTFail("returned speech from the previous enrollment") }
+        catch { XCTAssertEqual(error as? VoiceSynthesisError, .cloneVoiceMissing) }
+        let samples = try await store.speak("new enrollment", recordedAt: replacement.recordedAt)
+        XCTAssertEqual(samples, pcm)
+        XCTAssertEqual(store.stored, replacement)
+        let requests = await gpu.requests
+        XCTAssertEqual(requests.last?.voice, newVoice)
+        let persisted = try JSONDecoder().decode(StoredClonedVoice.self, from: Data(contentsOf: fixtures.root.appendingPathComponent("voxcpm2-voice.json")))
+        XCTAssertEqual(persisted, replacement)
+    }
+
+    func testRemovingGPUAssetsPreservesANEModelAndSavedVoice() async throws {
+        let fixtures = try modelFixture(includeGPU: true)
+        let voiceURL = fixtures.root.appendingPathComponent("voxcpm2-voice.json")
+        let data = try JSONEncoder().encode(StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5))
+        try data.write(to: voiceURL)
+        let aneModel = try Data(contentsOf: fixtures.modelFolder.appendingPathComponent("model.json"))
+        let store = fixtures.store(FixtureWorker(pcm: pcm), gpuWorker: FixtureWorker(pcm: pcm))
+        let gpuModel = try XCTUnwrap(store.gpuModel)
+        store.deleteGPUModel()
+        try await waitUntil { !store.gpuInstalled }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixtures.listen.folder(gpuModel).path))
+        XCTAssertEqual(try Data(contentsOf: voiceURL), data)
+        XCTAssertEqual(try Data(contentsOf: fixtures.modelFolder.appendingPathComponent("model.json")), aneModel)
+    }
+
     func testGenericCoreAIErrorCannotTriggerRepair() {
         let asset = "base-0.h16g.aimodelc"
         let missing = NSError(domain: "com.apple.appleneuralengine", code: 16)
@@ -380,13 +571,14 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         let listen: ListenModelStore
         let root: URL
         var modelFolder: URL { listen.folder(model) }
-        func store(_ worker: FixtureWorker, now: @escaping () -> Date = Date.init) -> VoiceCloneStore {
+        func store(_ worker: FixtureWorker, now: @escaping () -> Date = Date.init, gpuWorker: FixtureWorker? = nil) -> VoiceCloneStore {
             VoiceCloneStore(model: model, listen: listen, folder: root,
-                            engine: ClonedVoiceEngine(connect: { worker }), osBuild: "fixture", now: now)
+                            engine: ClonedVoiceEngine(connect: { worker }), osBuild: "fixture", now: now,
+                            gpuEngine: ClonedVoiceEngine(tracksVoiceMemory: false, connect: { gpuWorker ?? worker }))
         }
     }
 
-    private func modelFixture(assets: [String] = []) throws -> ModelFixture {
+    private func modelFixture(assets: [String] = [], includeGPU: Bool = false) throws -> ModelFixture {
         let root = try temporaryFolder()
         let file = ListenModelCatalog.File(name: "model.json", size: 2, url: URL(fileURLWithPath: "/fixture"),
                                            sha256: String(repeating: "a", count: 64))
@@ -395,7 +587,10 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         let model = ListenModelCatalog.Model(id: "voice-fixture", role: VoiceCloneSupport.role, title: "Fixture",
             kind: VoiceCloneSupport.kind, featureDim: nil, languages: ["en"], licence: "",
             source: URL(fileURLWithPath: "/fixture"), files: files, config: ["architecture": "test"])
-        let catalog = ListenModelCatalog(schemaVersion: 1, runtime: "fixture", models: [model])
+        let gpu = ListenModelCatalog.Model(id: VoxCPM2GPUModelCatalog.id, role: VoiceCloneSupport.role, title: "GPU fixture",
+            kind: VoxCPM2GPUModelCatalog.kind, featureDim: nil, languages: ["en"], licence: "", source: URL(fileURLWithPath: "/fixture"),
+            files: [file], config: [:])
+        let catalog = ListenModelCatalog(schemaVersion: 1, runtime: "fixture", models: includeGPU ? [model, gpu] : [model])
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "voice-fixture-\(UUID())"))
         let listen = ListenModelStore(catalog: catalog, root: root, defaults: defaults)
         let folder = listen.folder(model)
@@ -406,6 +601,12 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
             try "{}".write(to: path, atomically: true, encoding: .utf8)
         }
         try files.map { "\($0.name) \($0.sha256)" }.joined(separator: "\n").write(to: folder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        if includeGPU {
+            let gpuFolder = listen.folder(gpu)
+            try FileManager.default.createDirectory(at: gpuFolder, withIntermediateDirectories: true)
+            try "{}".write(to: gpuFolder.appendingPathComponent(file.name), atomically: true, encoding: .utf8)
+            try "\(file.name) \(file.sha256)".write(to: gpuFolder.appendingPathComponent(".verified"), atomically: true, encoding: .utf8)
+        }
         listen.refresh()
         return .init(model: model, listen: listen, root: root)
     }

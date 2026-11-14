@@ -68,7 +68,10 @@ with tempfile.NamedTemporaryFile(mode='w', prefix='.native-guest-build-', suffix
     generated_spec = pathlib.Path(spec_file.name)
 try:
     subprocess.run(['xcodegen','generate','--spec',str(generated_spec),'--project',str(project)],env=env,check=True)
-    cmd = ['xcodebuild','-project',str(project/'RockNativeGuest.xcodeproj'),'-scheme','RockNRollNativeGuest',
+    resolved = project/'RockNativeGuest.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT/'NativeMacGuest/Package.resolved', resolved)
+    cmd = ['xcodebuild','-disableAutomaticPackageResolution','-project',str(project/'RockNativeGuest.xcodeproj'),'-scheme','RockNRollNativeGuest',
            '-configuration',a.configuration,'-destination','platform=macOS,arch=arm64','-derivedDataPath',str(build/'Xcode'),
            '-jobs','4',
            'MARKETING_VERSION='+a.version,'CURRENT_PROJECT_VERSION='+a.build_number]
@@ -84,8 +87,10 @@ finally:
     generated_spec.unlink(missing_ok=True)
 app = build/'Xcode/Build/Products'/a.configuration/APP_BUNDLE_NAME
 voice_worker_path = pathlib.Path('Contents/MacOS/RockClonedVoiceWorker')
-if not (app / voice_worker_path).is_file():
-    raise SystemExit('The cloned voice worker is missing from the application')
+gpu_voice_worker_path = pathlib.Path('Contents/MacOS/RockClonedVoiceGPUWorker')
+for worker_path in (voice_worker_path, gpu_voice_worker_path):
+    if not (app / worker_path).is_file():
+        raise SystemExit(f'The voice worker is missing from the application: {worker_path.name}')
 if a.compile_only:
     print('Unsigned compile check passed: ' + str(app))
     raise SystemExit(0)
@@ -110,7 +115,7 @@ for source in re.findall(r'(?m)^      - path: (\.\./.+)$', (ROOT/'NativeMacGuest
     elif path.is_dir(): sources += sorted(x for x in path.rglob('*') if x.is_file() and '__pycache__' not in x.parts)
 sources += sorted((ROOT/'ConferenceCore/Sources').rglob('*.swift'))+[ROOT/'ConferenceCore/Package.swift']
 sources = sorted(set(sources))
-sources += [ROOT/'NativeMacGuest/VoiceWorker/Worker.entitlements']
+sources += [ROOT/'NativeMacGuest/VoiceWorker/Worker.entitlements', ROOT/'NativeMacGuest/Package.resolved']
 sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/PrivacyInfo.xcprivacy',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
 sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-livekit.json']
 sources += sorted((ROOT/'Dependencies/native-macos/livekit-patches').glob('*.patch'))
@@ -120,17 +125,26 @@ if a.distribution == 'direct':
     sources += [ROOT/'Experiments/WebRTCM156'/(name+'.patch') for name in AUDIO_ROUTE_RECOVERY_PATCHES]
 sources += [ROOT/'NativeMacGuest/prepare-sherpa.py', ROOT/'Dependencies/native-macos/sherpa-onnx.lock.json']
 sources += sorted(x for x in (ROOT/'Dependencies/SherpaOnnxKit').rglob('*') if x.is_file() and x.suffix in {'.swift'} and '.build' not in x.parts)
+sources += sorted(x for x in (ROOT/'Dependencies/MLXAudioVoice').rglob('*') if x.is_file() and '.build' not in x.parts)
+resolved_packages = project/'RockNativeGuest.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+if not resolved_packages.is_file() or json.loads(resolved_packages.read_text()) != json.loads((ROOT/'NativeMacGuest/Package.resolved').read_text()):
+    raise SystemExit('Swift package resolution differs from the checked-in lock')
 sources += [ROOT/'Dependencies/SherpaOnnxKit/Artifacts/evidence.json']
 sources += sorted(x for x in (ROOT/'NativeMacGuest/distribution').rglob('*')
                   if x.is_file() and x.suffix in {'.py', '.txt'} and '__pycache__' not in x.parts) + distribution_inputs
+sources += sorted(x for x in (ROOT/'NativeMacGuest/ThirdPartyNotices').rglob('*') if x.is_file())
 sources += sorted(x for x in (ROOT/'NativeMacGuest/Assets.xcassets').rglob('*') if x.is_file())
 sources += sorted(x for x in (ROOT/'RockNRoll/Assets.xcassets/AdditionalRootCA.dataset').rglob('*') if x.is_file())
-artifacts = [executable, app / voice_worker_path, app/'Contents/MacOS'/(EXECUTABLE_NAME+'.debug.dylib'), app/'Contents/Info.plist']
+metal_library = pathlib.Path('Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib')
+if not (app / metal_library).is_file():
+    raise SystemExit('The GPU voice Metal library is missing from the application')
+artifacts = [executable, app / voice_worker_path, app / gpu_voice_worker_path, app / metal_library, app/'Contents/MacOS'/(EXECUTABLE_NAME+'.debug.dylib'), app/'Contents/Info.plist']
 artifacts += [app/'Contents/Resources/Assets.car', app/'Contents/Resources/AppIcon.icns']
 artifacts += [x for x in (app/'Contents/Frameworks').rglob('LiveKitWebRTC') if x.is_file() and not x.is_symlink()]
 if sparkle_evidence:
     artifacts += [x for x in (app/'Contents/Frameworks/Sparkle.framework').rglob('*') if x.is_file() and not x.is_symlink()]
 manifest = {'artifacts':{str(x.relative_to(app)):hashlib.sha256(x.read_bytes()).hexdigest() for x in artifacts if x.exists()}, 'bundleIdentifier' :'dev.vsmirn0v.conferenceguest.nativeguest',
+            'swiftPackages': json.loads(resolved_packages.read_text()),
             'configuration':a.configuration, 'distribution':a.distribution, 'version':a.version, 'buildNumber':a.build_number,
             'nativeFramework':framework_evidence,
             'sources':{str(x.relative_to(ROOT)):hashlib.sha256(x.read_bytes()).hexdigest() for x in sources},
@@ -145,7 +159,7 @@ if archive is not None:
         archived_info.get('LSApplicationCategoryType') != 'public.app-category.video' or
         any(archived_info.get(key) != APP_NAME for key in ('CFBundleName', 'CFBundleDisplayName'))):
         raise SystemExit('Archived app identity or Mac category differs from the requested build')
-    archived_files = [str(voice_worker_path), str(application_executable(archived_app).relative_to(archived_app)), 'Contents/Info.plist',
+    archived_files = [str(voice_worker_path), str(gpu_voice_worker_path), str(metal_library), str(application_executable(archived_app).relative_to(archived_app)), 'Contents/Info.plist',
         'Contents/Resources/AppIcon.icns', 'Contents/Resources/Assets.car',
         'Contents/Frameworks/LiveKitWebRTC.framework/LiveKitWebRTC']
     subprocess.run(['codesign','--verify','--deep','--strict',str(archived_app)],check=True)

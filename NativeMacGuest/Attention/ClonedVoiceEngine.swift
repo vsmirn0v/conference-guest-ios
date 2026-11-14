@@ -37,15 +37,17 @@ actor ClonedVoiceEngine {
     nonisolated let runtime = CurrentValueSubject<ClonedVoiceRuntimeSnapshot, Never>(.init())
     private let idleNanoseconds: UInt64
     private let connect: @Sendable () throws -> any ClonedVoiceWorkerConnection
+    private let tracksVoiceMemory: Bool
     private var worker: (any ClonedVoiceWorkerConnection)?
     private var operation: (request: ClonedVoiceWire.Request, task: Task<ClonedVoiceWorkerOutput, Error>)?
     private var idle: Task<Void, Never>?
     private var stopping: Task<Void, Never>?
     private var runtimeState = ClonedVoiceRuntimeSnapshot()
 
-    init(idleNanoseconds: UInt64 = ClonedVoiceEngine.idleNanoseconds,
+    init(idleNanoseconds: UInt64 = ClonedVoiceEngine.idleNanoseconds, tracksVoiceMemory: Bool = true,
          connect: @escaping @Sendable () throws -> any ClonedVoiceWorkerConnection = { try ClonedVoiceWorkerProcess() }) {
         self.idleNanoseconds = idleNanoseconds
+        self.tracksVoiceMemory = tracksVoiceMemory
         self.connect = connect
     }
 
@@ -84,16 +86,25 @@ actor ClonedVoiceEngine {
         await completion.value
     }
 
+    @discardableResult func unloadIfIdle() async -> Bool {
+        guard operation == nil, stopping == nil else { return false }
+        await unload()
+        return true
+    }
+
     private func unloaded(generation: Int) {
         runtimeState = .init(generation: generation)
         stopping = nil
-        LocalModelMemoryTracker.shared.clear(.voice)
+        if tracksVoiceMemory { LocalModelMemoryTracker.shared.clear(.voice) }
         publish()
     }
 
     private func execute(_ request: ClonedVoiceWire.Request) async throws -> ClonedVoiceWorkerOutput {
         try Task.checkCancellation()
-        guard stopping == nil else { throw ClonedVoiceWorkerError.busy }
+        if let stopping {
+            await stopping.value
+            return try await execute(request)
+        }
         if let operation {
             guard operation.request == request else { throw ClonedVoiceWorkerError.busy }
             return try await operation.task.value
@@ -125,7 +136,7 @@ actor ClonedVoiceEngine {
                 operation = nil
                 runtimeState.phase = .loaded
                 runtimeState.activeSpeeches = 0
-                if let bytes = output.memoryBytes { LocalModelMemoryTracker.shared.recordVoiceWorker(bytes: bytes) }
+                if tracksVoiceMemory, let bytes = output.memoryBytes { LocalModelMemoryTracker.shared.recordVoiceWorker(bytes: bytes) }
                 scheduleIdleUnload(generation: generation)
                 return output
             } catch {
@@ -143,7 +154,7 @@ actor ClonedVoiceEngine {
                     runtimeState.activeSpeeches = 0
                     runtimeState.phase = .failed
                     runtimeState.error = error.localizedDescription
-                    LocalModelMemoryTracker.shared.clear(.voice)
+                    if tracksVoiceMemory { LocalModelMemoryTracker.shared.clear(.voice) }
                     publish()
                 }
                 throw error

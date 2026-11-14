@@ -3,6 +3,19 @@ import Combine
 import ConferenceCore
 import Foundation
 
+/// Bounds only synthesis; the owner cancels the timer as soon as it completes.
+@MainActor
+enum GuestVoiceSynthesisDeadline {
+    static func schedule(_ deadline: Date, onExpiry: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        Task {
+            do { try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow))) }
+            catch { return }
+            guard !Task.isCancelled else { return }
+            onExpiry()
+        }
+    }
+}
+
 struct ParticipationAudience: Equatable {
     let sessionID: UUID
     let room: MeetingRoomIdentity
@@ -1174,8 +1187,21 @@ final class ParticipationCoordinator: ObservableObject {
         let language = VoiceSynthesis.language(of: draft) ?? Locale.preferredLanguages.first ?? "en-US"
         let buffer: AVAudioPCMBuffer
         noteDecision(.checking, at: .synthesis, trace)
+        guard Date() < expiry else {
+            noteDecision(.expired, at: .synthesis, trace)
+            setVoiceStatus(.textOnly, for: id)
+            return
+        }
+        let synthesisRequest = UUID()
+        let synthesisExpiry: Task<Void, Never>? = grant.setup.voice.engine == .cloned
+            ? GuestVoiceSynthesisDeadline.schedule(expiry) { [weak self, weak permit] in
+                guard let self, let permit, self.voicePlayback === permit, !permit.started else { return }
+                Task { await VoiceCloneStore.shared.cancelGPURequest(synthesisRequest) }
+            } : nil
         do {
-            buffer = try await grant.setup.voice.synthesize(draft, language: language, session: ParticipationNoRedirect.session)
+            defer { synthesisExpiry?.cancel() }
+            buffer = try await grant.setup.voice.synthesize(draft, language: language, session: ParticipationNoRedirect.session,
+                                                             cloneRequest: synthesisRequest, cloneDeadline: expiry)
             try Task.checkCancellation()
         } catch {
             if Task.isCancelled || !permit.canStart {
