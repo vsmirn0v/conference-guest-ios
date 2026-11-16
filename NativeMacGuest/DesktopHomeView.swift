@@ -101,7 +101,10 @@ struct NativeDesktopHomeView: View {
                     Section(L("Favorites")) {
                         ForEach(library.favorites) { room in
                             Button { library.open(room) } label: {
-                                Label(room.displayTitle, systemImage: "star.fill").lineLimit(1)
+                                Label(room.displayTitle, systemImage: "star.fill")
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                             }.buttonStyle(.plain).contextMenu { roomMenu(room) }
                         }.onMove { library.moveFavorites(from: $0, to: $1) }
                     }
@@ -673,6 +676,7 @@ struct NativeDesktopSettingsView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.horizontal, 10).padding(.vertical, 7)
                                         .background(selectedDestination == item.id ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                                        .contentShape(Rectangle())
                                 }.buttonStyle(.plain).accessibilityValue(selectedDestination == item.id ? L("Selected") : "")
                             }
                         }

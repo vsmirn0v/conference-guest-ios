@@ -196,7 +196,7 @@ enum NativeSettingsResultPresentation {
                 if let value = currentValue {
                     Text(value).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
                 }
-            }.contentShape(Rectangle()).padding(10)
+            }.padding(10).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityIdentifier("settings.result.\(entry.id)")
             .onReceive(storeChanges) { _ in changeGeneration &+= 1 }
             .onReceive(obsidianChanges) { _ in changeGeneration &+= 1 }

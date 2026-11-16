@@ -111,6 +111,50 @@ private struct CompactSettingsFixture: View {
 @MainActor final class UpdateAdmissionTests: XCTestCase {
     private let invitation = URL(string: "https://example.test/calls/update-admission")!
 
+    func testSettingsSidebarRowsRespondToClicksInTrailingBlankArea() async throws {
+        let fixture = fixture(), workspace = fixture.workspace
+        let host = NSHostingView(rootView: AnyView(CompactSettingsFixture(workspace: workspace, library: fixture.library)))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 900, height: 700),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "Settings row hit testing \(UUID().uuidString)"
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        addTeardownBlock { window.close() }
+        await settleUI(host)
+
+        for (title, expectedTab) in [("Calendars", 1), ("Camera & sound", 3)] {
+            let row = try XCTUnwrap(accessibilityButton(in: window, title: L(title)))
+            try clickTrailingArea(row, in: window)
+            await settleUI(host)
+            XCTAssertEqual(workspace.settingsTab, expectedTab, "Trailing area did not select \(title)")
+        }
+    }
+
+    func testFavoriteSidebarRowRespondsToClickInTrailingBlankArea() async throws {
+        let fixture = fixture(), workspace = fixture.workspace, library = fixture.library
+        try library.createFavorite(invitation: "https://meeting.example.test/calls/favorite", title: "Fixture favorite")
+        var openCount = 0
+        library.onOpenMeeting = { _, _, _, _ in openCount += 1 }
+        let host = NSHostingView(rootView: AnyView(NativeDesktopHomeView(workspace: workspace, library: library)))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1100, height: 700),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "Favorite row hit testing \(UUID().uuidString)"
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        addTeardownBlock { window.close() }
+        await settleUI(host)
+
+        let favorite = try XCTUnwrap(accessibilityButton(in: window, title: "Fixture favorite"))
+        try clickTrailingArea(favorite, in: window)
+        await settleUI(host)
+        XCTAssertEqual(openCount, 1)
+        XCTAssertEqual(fixture.calls.detections, 0)
+    }
+
     /// Render the actual SwiftUI surfaces using isolated, no-network fixtures.
     /// Screenshots remain in the xcresult for visual review.
     func testRedesignedHomeAndSettingsNavigationAtBothWidths() async throws {
@@ -252,6 +296,26 @@ private struct CompactSettingsFixture: View {
         accessibilityNodes(in: window).first { accessibilityValue($0, kAXIdentifierAttribute) as? String == identifier }
     }
 
+    private func clickTrailingArea(_ element: AXUIElement, in window: NSWindow, bottomInset: CGFloat? = nil) throws {
+        let position = try XCTUnwrap(accessibilityValue(element, kAXPositionAttribute)) as! AXValue
+        let size = try XCTUnwrap(accessibilityValue(element, kAXSizeAttribute)) as! AXValue
+        var origin = CGPoint.zero
+        var dimensions = CGSize.zero
+        XCTAssertTrue(AXValueGetValue(position, .cgPoint, &origin))
+        XCTAssertTrue(AXValueGetValue(size, .cgSize, &dimensions))
+        XCTAssertGreaterThan(dimensions.width, 150)
+        let y = origin.y + (bottomInset.map { dimensions.height - $0 } ?? dimensions.height / 2)
+        let screenPoint = NSPoint(x: origin.x + dimensions.width - 5, y: NSScreen.screens[0].frame.maxY - y)
+        let point = window.convertPoint(fromScreen: screenPoint)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                                                          timestamp: ProcessInfo.processInfo.systemUptime,
+                                                          windowNumber: window.windowNumber, context: nil,
+                                                          eventNumber: 0, clickCount: 1, pressure: 1))
+            window.sendEvent(event)
+        }
+    }
+
     func testCalendarAndHistoryLinksOpenTheirExactDestinations() {
         let fixture = fixture(), workspace = fixture.workspace
         workspace.settingsTab = 8
@@ -316,7 +380,7 @@ private struct CompactSettingsFixture: View {
         }
         await settleUI(host)
         let result = try XCTUnwrap(accessibilityElement(in: window, identifier: "settings.result.settings.display-name"))
-        XCTAssertEqual(AXUIElementPerformAction(result, kAXPressAction as CFString), .success)
+        try clickTrailingArea(result, in: window, bottomInset: 5)
         try await Task.sleep(nanoseconds: 500_000_000)
         await settleUI(host)
         XCTAssertEqual(workspace.settingsTab, 0)
