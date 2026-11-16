@@ -1,0 +1,134 @@
+{
+  "version": "0.3.0",
+  "build": "112",
+  "channel": "beta",
+  "sourceCommit": "0fa7a7878ce73ae8ea8ea8c290462587c6545ec7",
+  "sourceState": "Built from an isolated git-archive snapshot of the pushed commit. Before retry, all 1,786 archived files and symlinks and executable modes matched the commit. The first failed-source snapshot is separately preserved.",
+  "sourceManifest": {
+    "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/source/.build/release-112/build-evidence.json",
+    "sha256": "ceb7f1b72d810207e377e52e8b383671d1bf7b9b0a73c47823d7a55177de9bb5",
+    "recordedSources": 339,
+    "trackedSourcesMatchingCommit": 335,
+    "otherSources": "Four generated configuration or pinned dependency evidence files matched isolated build inputs.",
+    "snapshotVerification": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/snapshot-verification-attempt2.json"
+  },
+  "archive": {
+    "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/source/.build/release-112/RockNRollNativeGuest-0.3.0-112.xcarchive",
+    "distribution": "direct",
+    "configuration": "Release",
+    "appGroupCheckPassed": true,
+    "embeddedVoiceWorkerCheckPassed": true,
+    "attempt1": {
+      "sourceCommit": "cf3f64db49c3d551fd9d4789ba1698f2622aa02f",
+      "outcome": "Release compiler type-check timeout; logs and source retained. Favorites row was extracted before retry.",
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/archive-build.log",
+      "status": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/archive-status.json",
+      "sourceSnapshot": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/failed-source-cf3f64db"
+    },
+    "successfulRetry": {
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/archive-build-attempt2.log",
+      "status": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/archive-status-attempt2.json"
+    }
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/source/.build/release-112/RockNRollNativeGuest-0.3.0-112.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/export/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "112",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "112",
+    "file": "RockNRoll-0.3.0-112-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-112-arm64.dmg",
+    "sha256": "807e55e6ea8ac5c5ca6cc733832a9e2744d43d09c58037d41a6d5082aa7f53f1",
+    "length": 37850758,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/package/RockNRoll-0.3.0-112-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "evidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/publication.json",
+    "httpsVerified": true,
+    "state": {
+      "appcastSHA256": "7edb95aa8ab937e01c891db2a9ea45b50d33f0f51b581216e45e3f7d619453a2",
+      "inventorySHA256": "ef66acdc667d8bd8acd71b6785f400a3171e60961dcf115c6198c2c0f9309585",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-112-arm64.dmg"
+    }
+  },
+  "independentHTTPSReadback": {
+    "evidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/readback/verification.json",
+    "checks": {
+      "immutableMatchesPackage": true,
+      "betaMatchesImmutable": true,
+      "stableMatchesPrevious": true,
+      "stableInventoryUnchanged": true,
+      "betaInventoryCorrect": true,
+      "signedAppcastMatchesPrepared": true,
+      "inventoryMatchesPrepared": true,
+      "appcastBetaEntry": true,
+      "publicAppcastSignatureVerified": true,
+      "downloadedEnclosureSignatureVerified": true
+    },
+    "hashes": {
+      "immutable.dmg": "807e55e6ea8ac5c5ca6cc733832a9e2744d43d09c58037d41a6d5082aa7f53f1",
+      "beta.dmg": "807e55e6ea8ac5c5ca6cc733832a9e2744d43d09c58037d41a6d5082aa7f53f1",
+      "stable.dmg": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+      "appcast.xml": "7edb95aa8ab937e01c891db2a9ea45b50d33f0f51b581216e45e3f7d619453a2",
+      "latest.json": "ef66acdc667d8bd8acd71b6785f400a3171e60961dcf115c6198c2c0f9309585"
+    },
+    "inventory": {
+      "schemaVersion": 1,
+      "stable": {
+        "version": "0.3.0",
+        "build": "53",
+        "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-53-arm64.dmg",
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009"
+      },
+      "beta": {
+        "version": "0.3.0",
+        "build": "112",
+        "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-112-arm64.dmg",
+        "sha256": "807e55e6ea8ac5c5ca6cc733832a9e2744d43d09c58037d41a6d5082aa7f53f1"
+      }
+    }
+  },
+  "validation": {
+    "settingsTests": {
+      "passed": 66,
+      "failed": 0,
+      "runtimeWarnings": 0,
+      "resultBundle": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-settings-redesign-validation/settings-regression-beta112-final.xcresult",
+      "auditoryVoiceOverReview": "Excluded per user request."
+    },
+    "updateSafety": {
+      "passed": 16,
+      "failed": 0,
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-settings-redesign-validation/update-safety-beta112.log"
+    },
+    "distributionTooling": {
+      "passed": 27,
+      "failed": 0,
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-112/distribution-tests.log"
+    },
+    "pointerHitAreas": {
+      "resultBundle": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-settings-redesign-validation/row-hit-target-tests.xcresult",
+      "notes": "Actual mouse events hit the blank area of settings and Favorites rows, and search-result padding. A separate probe observed old=0 and fixed=1."
+    },
+    "limitations": [
+      "An installed Sparkle upgrade to build 112 was not tested.",
+      "Auditory VoiceOver review was excluded at user request.",
+      "The app inside the DMG is notarized and stapled; the outer DMG was not separately notarized."
+    ]
+  },
+  "recordedAt": "2026-11-16T17:20:21.044734+00:00"
+}
