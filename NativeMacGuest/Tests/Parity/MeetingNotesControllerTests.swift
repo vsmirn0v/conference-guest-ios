@@ -618,6 +618,62 @@ import XCTest
         }
     }
 
+    func testOutOfBoundsMarkdownPositionsAreRejected() {
+        let offsets = MeetingMarkdownPreview.SourceOffsets("1. a\n2")
+        typealias Position = AttributedString.MarkdownSourcePosition
+        XCTAssertNil(offsets.range(Position(startLine: 2, startColumn: 4, endLine: 2, endColumn: 4)))
+        XCTAssertNil(offsets.range(Position(startLine: 3, startColumn: 1, endLine: 3, endColumn: 1)))
+        XCTAssertNil(offsets.range(Position(startLine: 1, startColumn: 1, endLine: 2, endColumn: 2)))
+        XCTAssertNil(offsets.range(Position(startLine: 2, startColumn: 1, endLine: 1, endColumn: 1)))
+    }
+
+    func testPreviewSurvivesIntermediateListAndHardBreakEdits() {
+        for source in ["1. a\n2", "1. a\n2.", "1. a\n2. ", "- ~", "\\\na", "\\\n1. ", "\\\n[x] "] {
+            let lines = MeetingMarkdownPreview.lines(in: source)
+            let length = (source as NSString).length
+            for line in lines {
+                XCTAssertLessThanOrEqual(NSMaxRange(line.range), length, source)
+                for span in line.spans { XCTAssertLessThanOrEqual(NSMaxRange(span.range), length, source) }
+            }
+        }
+        let lines = MeetingMarkdownPreview.lines(in: "1. a\n2")
+        XCTAssertTrue(lines.contains { $0.spans.contains { $0.style == .listMarker } })
+        let laterLines = MeetingMarkdownPreview.lines(in: "- ~\n- [ ] good")
+        XCTAssertTrue(laterLines.contains { $0.checklist != nil })
+    }
+
+    func testHardBreakPreviewKeepsFormattingAndOriginalRanges() {
+        let cases: [(String, String)] = [
+            ("Hello\\\n**bold**", "bold"),
+            ("Hello \\\n**bold**", "bold"),
+            ("Hello  \n**bold**", "bold"),
+            ("- first\\\n  **bold**", "bold"),
+            ("> first\\\n> **жирный**", "жирный"),
+            ("😀\\\r\n**ёж**", "ёж"),
+            ("a\\\nb\\\n**bold**", "bold"),
+            ("\\\\\\\n**bold**", "bold"),
+            ("```\nx\\\ny\n```\n\nHello\\\n**bold**", "bold"),
+            ("`x\\\ny`\n\nHello\\\n**bold**", "bold")
+        ]
+        for (source, expected) in cases {
+            let spans = MeetingMarkdownPreview.lines(in: source).flatMap(\.spans).filter { $0.style == .bold }
+            XCTAssertTrue(spans.contains { (source as NSString).substring(with: $0.range) == expected }, source.debugDescription)
+        }
+        let multiline = "**before\\\nafter**"
+        let spans = MeetingMarkdownPreview.lines(in: multiline).flatMap(\.spans).filter { $0.style == .bold }
+        XCTAssertEqual(spans.map { (multiline as NSString).substring(with: $0.range) }, ["before", "after"])
+
+        // A backslash in a reference definition is not interchangeable with a
+        // hard break: replacing it would make this otherwise unresolved link resolve.
+        let reference = "[x\\\ny]: https://x.com\n\n[x y]"
+        XCTAssertFalse(MeetingMarkdownPreview.lines(in: reference).flatMap(\.spans).contains { $0.style == .link })
+        XCTAssertEqual(MeetingMarkdownPreview.previewSource("\\\\\n"), "\\\\\n")
+
+        let large = String(repeating: "ordinary text ", count: 8_000) + "\n\n```\nx\\\ny\n```\n\nHello\\\n**bold**"
+        let largeSpans = MeetingMarkdownPreview.lines(in: large).flatMap(\.spans).filter { $0.style == .bold }
+        XCTAssertTrue(largeSpans.contains { (large as NSString).substring(with: $0.range) == "bold" })
+    }
+
     func testRangeReplacementPreservesComposedSequencesAndCanonicalSource() {
         for (old, new) in [
             ("a 😀 end", "a 😁 end"),

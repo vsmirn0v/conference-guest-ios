@@ -1,6 +1,6 @@
 import AppKit
 
-/// Foundation's CommonMark parser supplies UTF-16 positions in the original source.
+/// Foundation's CommonMark parser supplies source positions in the original source.
 enum MeetingMarkdownPreview {
     struct Line: Equatable {
         var range: NSRange
@@ -91,6 +91,64 @@ enum MeetingMarkdownPreview {
         }
     }
 
+    /// Foundation can assign later runs to the wrong source line after a
+    /// backslash hard break. Parse a same-length shadow with those breaks
+    /// converted to soft breaks; neither the displayed nor saved source changes.
+    /// Escaped backslashes are left alone. ASCII substitution preserves both
+    /// UTF-8 columns and UTF-16 offsets, including for surrounding Unicode.
+    static func previewSource(_ markdown: String) -> String {
+        guard markdown.utf8.contains(92) else { return markdown }
+        var bytes = Array(markdown.utf8)
+        var slashCount = 0
+        for index in bytes.indices {
+            if bytes[index] == 92 {
+                slashCount += 1
+                continue
+            }
+            if (bytes[index] == 10 || bytes[index] == 13), !slashCount.isMultiple(of: 2) {
+                bytes[index - 1] = 32
+            }
+            slashCount = 0
+        }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    /// Only use shadow positions when it parses to the same presentation.
+    /// Backslashes in code or link definitions are not necessarily hard breaks.
+    private static func equivalentPresentation(_ original: AttributedString, _ shadow: AttributedString) -> Bool {
+        let first = Array(original.runs), second = Array(shadow.runs)
+        guard first.count == second.count else { return false }
+        let breaks: InlinePresentationIntent = [.lineBreak, .softBreak]
+        return first.indices.allSatisfy { index in
+            let lhs = first[index], rhs = second[index]
+            let leftIntent = lhs.inlinePresentationIntent ?? []
+            let rightIntent = rhs.inlinePresentationIntent ?? []
+            guard leftIntent.subtracting(breaks) == rightIntent.subtracting(breaks),
+                  lhs.presentationIntent == rhs.presentationIntent, lhs.link == rhs.link else { return false }
+            let left = String(original[lhs.range].characters)
+            let right = String(shadow[rhs.range].characters)
+            if !leftIntent.intersection(breaks).isEmpty && !rightIntent.intersection(breaks).isEmpty {
+                return true
+            }
+            let codeBlock = lhs.presentationIntent?.components.contains {
+                if case .codeBlock = $0.kind { return true }; return false
+            } == true
+            if leftIntent.contains(.code) || codeBlock {
+                let originalScalars = Array(left.unicodeScalars), shadowScalars = Array(right.unicodeScalars)
+                return originalScalars.count == shadowScalars.count && zip(originalScalars, shadowScalars).allSatisfy { first, second in
+                    first == second || (first.value == 92 && second.value == 32)
+                }
+            }
+            if index + 1 < first.count,
+               !(first[index + 1].inlinePresentationIntent ?? []).intersection(breaks).isEmpty,
+               !(second[index + 1].inlinePresentationIntent ?? []).intersection(breaks).isEmpty {
+                return left.reversed().drop(while: { $0 == " " || $0 == "\t" })
+                    .elementsEqual(right.reversed().drop(while: { $0 == " " || $0 == "\t" }))
+            }
+            return left == right
+        }
+    }
+
     static func lines(in input: String) -> [Line] {
         // NSTextView supplies an NSString-backed Swift value. Foundation resolves
         // each parser position against UTF-8, so repeated offset lookup needs native
@@ -98,8 +156,49 @@ enum MeetingMarkdownPreview {
         var markdown = input
         markdown.makeContiguousUTF8()
         let source = markdown as NSString
-        guard source.length > 0, let parsed = try? AttributedString(markdown: markdown, options: .init(
-            appliesSourcePositionAttributes: true)) else { return [] }
+        guard source.length > 0 else { return [] }
+        let options = AttributedString.MarkdownParsingOptions(appliesSourcePositionAttributes: true)
+        guard let original = try? AttributedString(markdown: markdown, options: options) else { return [] }
+        var shadowSource = previewSource(markdown)
+        var parsed = original
+        if !shadowSource.utf8.elementsEqual(markdown.utf8) {
+            if let shadow = try? AttributedString(markdown: shadowSource, options: options),
+               equivalentPresentation(original, shadow) {
+                parsed = shadow
+            } else {
+                // A literal backslash in a code span or reference definition can
+                // change parsing semantics. Keep safe substitutions elsewhere,
+                // splitting rejected groups with a bounded amount of extra work.
+                let bytes = Array(markdown.utf8), proposed = Array(shadowSource.utf8)
+                let changes = bytes.indices.filter { bytes[$0] != proposed[$0] }
+                var accepted = bytes
+                var budget = bytes.count > 100_000 ? 4 : 12
+                func consider(_ group: ArraySlice<Int>) {
+                    guard !group.isEmpty, budget > 0, !Task.isCancelled else { return }
+                    budget -= 1
+                    var candidate = accepted
+                    for index in group { candidate[index] = proposed[index] }
+                    let text = String(decoding: candidate, as: UTF8.self)
+                    if let result = try? AttributedString(markdown: text, options: options),
+                       equivalentPresentation(original, result) {
+                        accepted = candidate
+                        parsed = result
+                    } else if group.count > 1 {
+                        let middle = group.index(group.startIndex, offsetBy: group.count / 2)
+                        consider(group[..<middle])
+                        consider(group[middle...])
+                    }
+                }
+                if changes.count > 1 {
+                    let middle = changes.count / 2
+                    consider(changes[..<middle])
+                    consider(changes[middle...])
+                }
+                shadowSource = String(decoding: accepted, as: UTF8.self)
+            }
+        }
+        let usingShadow = !shadowSource.utf8.elementsEqual(markdown.utf8)
+        let shadow = shadowSource as NSString
         let offsets = SourceOffsets(markdown)
         var lines: [Int: Line] = [:]
         var tableRows: [Int: Set<Int>] = [:]
@@ -108,8 +207,11 @@ enum MeetingMarkdownPreview {
         for run in parsed.runs {
             if Task.isCancelled { return [] }
             let components = run.presentationIntent?.components ?? []
+            // Foundation can report positions outside the source for intermediate
+            // edits. Its Range initializer may trap on those positions, so only
+            // use the bounds-checked mapping and leave invalid runs unstyled.
             guard let position = run.markdownSourcePosition,
-                  let range = offsets.range(position) ?? Range(position, in: markdown).map({ NSRange($0, in: markdown) }),
+                  let range = offsets.range(position),
                   range.location <= source.length, range.length <= source.length - range.location else {
                 if components.contains(where: { if case .thematicBreak = $0.kind { return true }; return false }) {
                     ruleCount += 1
@@ -157,8 +259,17 @@ enum MeetingMarkdownPreview {
                             styleList(source, prefix: prefix, content: range, into: &line, marker: marker)
                         }
                     }
-                    let content = NSIntersectionRange(range, lineRange)
+                    var content = NSIntersectionRange(range, lineRange)
                     let inline = run.inlinePresentationIntent ?? []
+                    // The shadow's replacement space may be included in an
+                    // otherwise styled run. The original backslash is syntax.
+                    if usingShadow, !inline.contains(.code), content.length > 0,
+                       content.upperBound < source.length,
+                       [10, 13].contains(source.character(at: content.upperBound)),
+                       source.character(at: content.upperBound - 1) == 92,
+                       shadow.character(at: content.upperBound - 1) == 32 {
+                        content.length -= 1
+                    }
                     if inline.contains(.code) {
                         line.spans.append(Span(range: content, style: .code))
                         hideDelimiters(in: source, around: content, on: lineRange, marker: "`", into: &line)
