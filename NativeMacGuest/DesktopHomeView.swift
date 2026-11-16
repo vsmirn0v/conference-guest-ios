@@ -77,6 +77,14 @@ struct NativeDesktopHomeView: View {
         NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, assistantArea: $workspace.assistantSettingsArea, attention: workspace.attention, mcpService: workspace.mcpService, obsidian: workspace.obsidian)
         #endif
     }
+    private func favoriteSidebarRow(_ room: RecentRoom) -> some View {
+        Button { library.open(room) } label: {
+            Label(room.displayTitle, systemImage: "star.fill")
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).contextMenu { roomMenu(room) }
+    }
     var body: some View {
         NavigationSplitView {
             List(selection: Binding(get: { workspace.sidebarSelection }, set: { workspace.sidebarSelection = $0 })) {
@@ -100,12 +108,7 @@ struct NativeDesktopHomeView: View {
                 if !library.favorites.isEmpty {
                     Section(L("Favorites")) {
                         ForEach(library.favorites) { room in
-                            Button { library.open(room) } label: {
-                                Label(room.displayTitle, systemImage: "star.fill")
-                                    .lineLimit(1)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(Rectangle())
-                            }.buttonStyle(.plain).contextMenu { roomMenu(room) }
+                            favoriteSidebarRow(room)
                         }.onMove { library.moveFavorites(from: $0, to: $1) }
                     }
                 }
