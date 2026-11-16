@@ -1,0 +1,12 @@
+Test Case '-[NativeDesktopTests.UpdateAdmissionTests testPrivateCameraGranted]' started.
+2026-11-16 18:12:25.117317+0300 RockNRoll Native Guest[71182:14740650] [AppKit] Invalid view geometry: width is negative.
+2026-11-16 18:12:25.117626+0300 RockNRoll Native Guest[71182:14740650] [AppKit] Invalid view geometry: height is negative.
+2026-11-16 18:12:25.117724+0300 RockNRoll Native Guest[71182:14740650] [AppKit] Invalid view geometry: width is negative.
+2026-11-16 18:12:25.117760+0300 RockNRoll Native Guest[71182:14740650] [AppKit] Invalid view geometry: height is negative.
+<unknown>:0: warning: -[NativeDesktopTests.UpdateAdmissionTests testPrivateCameraGranted] : Invalid view geometry: width is negative.
+<unknown>:0: warning: -[NativeDesktopTests.UpdateAdmissionTests testPrivateCameraGranted] : Invalid view geometry: height is negative.
+2026-11-16 18:12:25.151110+0300 RockNRoll Native Guest[71182:14740650] [AppKit] Invalid view geometry: width is negative.
+2026-11-16 18:12:25.151166+0300 RockNRoll Native Guest[71182:14740650] [AppKit] Invalid view geometry: height is negative.
+CAMERA_PERMISSION_RESULT=3
+CAMERA_PRIVATE_PREVIEW_FIRST_FRAME_AND_STOP=PASS
+Test Case '-[NativeDesktopTests.UpdateAdmissionTests testPrivateCameraGranted]' passed (56.524 seconds).

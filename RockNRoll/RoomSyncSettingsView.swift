@@ -7,12 +7,15 @@ struct RoomSyncSettingsView: View {
     @State private var confirmFresh = false
     var body: some View {
         Section {
-            Toggle(L("Sync with iCloud"), isOn: Binding(get: { sync.enabled }, set: { sync.setEnabled($0) }))
+            syncSwitch(L("Sync with iCloud"), isOn: Binding(get: { sync.enabled }, set: { sync.setEnabled($0) }),
+                       id: "settings.sync", fallbackFor: sync.enabled ? [] : ["settings.handoff", "settings.sync-recent", "settings.sync-now"])
                 .disabled(sync.busy)
             if sync.enabled {
-                Toggle(L("Show active jams on my devices"), isOn: Binding(get: { continuation.enabled }, set: { continuation.setEnabled($0) }))
-                Toggle(L("Include recent jams"), isOn: Binding(get: { sync.includeRecent }, set: { sync.setIncludeRecent($0) }))
-                Button(L("Sync now")) { sync.requestSync(immediate: true) }.disabled(sync.busy)
+                syncSwitch(L("Show active jams on my devices"), isOn: Binding(
+                    get: { continuation.enabled }, set: { continuation.setEnabled($0) }), id: "settings.handoff")
+                syncSwitch(L("Include recent jams"), isOn: Binding(
+                    get: { sync.includeRecent }, set: { sync.setIncludeRecent($0) }), id: "settings.sync-recent")
+                syncNowButton.disabled(sync.busy)
             }
             HStack {
                 if sync.busy { ProgressView() }
@@ -48,5 +51,21 @@ struct RoomSyncSettingsView: View {
         } message: {
             Text(L("The local name and room list will be cleared before syncing. Data in your previous Apple Account stays there."))
         }
+    }
+
+    @ViewBuilder private func syncSwitch(_ title: String, isOn: Binding<Bool>, id: String, fallbackFor: Set<String> = []) -> some View {
+        #if os(macOS)
+        NativeSettingsSwitch(title: title, isOn: isOn, id: id, fallbackFor: fallbackFor)
+        #else
+        Toggle(title, isOn: isOn)
+        #endif
+    }
+
+    @ViewBuilder private var syncNowButton: some View {
+        #if os(macOS)
+        NativeSettingsButton(title: L("Sync now"), id: "settings.sync-now") { sync.requestSync(immediate: true) }
+        #else
+        Button(L("Sync now")) { sync.requestSync(immediate: true) }
+        #endif
     }
 }

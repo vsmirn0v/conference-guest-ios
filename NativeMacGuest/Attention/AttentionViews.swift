@@ -570,13 +570,18 @@ private struct PushToTalkWarning: View {
 private struct HeadphoneApproval: View {
     @ObservedObject var store: AttentionStore
     var output: AssistantHeadphoneRoute.Snapshot?
+    var canApprove: Bool {
+        guard let output else { return false }
+        return !AssistantHeadphoneRoute.isHeadphoneSource(output.source) && AssistantHeadphoneRoute.isPeripheralTransport(output.transport)
+    }
     var body: some View {
         if let output {
             if AssistantHeadphoneRoute.isHeadphoneSource(output.source) {
                 Text(L("Headphones detected.")).font(.caption).foregroundStyle(.secondary)
-            } else if AssistantHeadphoneRoute.isPeripheralTransport(output.transport) {
-                Toggle(L("This is a headphone"), isOn: Binding(get: { store.headphoneUIDs.contains(output.uid) },
-                                                              set: { store.setHeadphoneApproved(output.uid, $0) }))
+            } else if canApprove {
+                NativeSettingsSwitch(title: L("This is a headphone"), isOn: Binding(
+                    get: { store.headphoneUIDs.contains(output.uid) }, set: { store.setHeadphoneApproved(output.uid, $0) }),
+                    id: "settings.headphone-approval")
                 Text(L("For a headset macOS does not report as a headphone jack. Built-in and external speakers cannot be marked."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -592,11 +597,11 @@ enum NativeDesktopAssistantSettingsArea: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .overview: L("Overview")
-        case .attention: L("Attention")
-        case .voice: L("Voice")
-        case .models: L("Models")
-        case .replies: L("Replies")
-        case .privacy: L("Memory and privacy")
+        case .attention: L("Meeting alerts")
+        case .voice: L("Voice & speaking")
+        case .models: L("AI providers")
+        case .replies: L("Replies & actions")
+        case .privacy: L("Memory & privacy")
         }
     }
 }
@@ -606,6 +611,7 @@ struct NativeDesktopIntelligenceSettings: View {
     @ObservedObject var store: AttentionStore
     @ObservedObject var attention: AttentionCoordinator
     @Binding var area: NativeDesktopAssistantSettingsArea
+    var directNavigation = false
     @State private var key = ""
     @State private var writerKey = ""
     @State private var escalationKey = ""
@@ -644,10 +650,11 @@ struct NativeDesktopIntelligenceSettings: View {
         }
     }
     /// The key for another role's provider, when it is not the judge's kind.
-    @ViewBuilder private func keyField(for provider: AttentionProvider, text: Binding<String>) -> some View {
+    @ViewBuilder private func keyField(for provider: AttentionProvider, text: Binding<String>, id: String) -> some View {
         if provider.needsKey && provider.kind != store.provider.kind {
             HStack {
                 SecureField(store.hasKey(for: provider) ? L("Saved in the keychain") : L("API key for %@", provider.title), text: text)
+                    .nativeSettingAnchor(id, nativeControlFocus: true)
                 Button(L("Save")) { store.setAPIKey(text.wrappedValue, for: provider); text.wrappedValue = "" }
                     .disabled(text.wrappedValue.trimmed.isEmpty)
                 if store.hasKey(for: provider) { Button(L("Remove")) { store.setAPIKey("", for: provider) } }
@@ -707,6 +714,7 @@ struct NativeDesktopIntelligenceSettings: View {
 
     var body: some View {
         Form {
+            if !directNavigation {
             Section {
                 Picker(L("Assistant settings"), selection: $area) {
                     ForEach(NativeDesktopAssistantSettingsArea.allCases) { option in
@@ -723,25 +731,15 @@ struct NativeDesktopIntelligenceSettings: View {
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
+            }
             if area == .attention {
-            Section(L("Attention")) {
-                Toggle(L("Tell me when a meeting needs me"), isOn: $store.enabled).accessibilityIdentifier("attention.enabled")
+            Section(L("Meeting alerts")) {
+                NativeSettingsSwitch(title: L("Tell me when a meeting needs me"), isOn: $store.enabled,
+                                     id: "settings.alerts", accessibilityID: "attention.enabled")
                 Text(L("While you are in several meetings, a judge model reads the last three minutes of each meeting you are not looking at and shows a card when one needs you. It needs a transcript: turn on Transcription, or use the meeting's own.")).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Toggle(L("Pause on battery power"), isOn: $store.pauseOnBattery)
-                Toggle(L("Create a meeting outcome when I leave"), isOn: $store.generateOutcomes)
-                    .accessibilityIdentifier("assistant.outcomes")
-                Text(L("Outcomes keep an editable summary, decisions, tasks and open questions on this Mac."))
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if store.effectiveWriter.onThisMac {
-                    Text(L("They are written on this Mac. Nothing is sent."))
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Toggle(L("Allow sending the transcript to %@ when I leave", store.effectiveWriter.host), isOn: $store.remoteOutcomes)
-                        .disabled(!store.enabled || !store.generateOutcomes)
-                        .accessibilityIdentifier("assistant.outcomes.remote")
-                    Text(outcomeSharingCaption).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
+                NativeSettingsSwitch(title: L("Pause on battery power"), isOn: $store.pauseOnBattery,
+                                     id: "settings.battery")
                 if let error = attention.lastError { Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
             }
             Section {
@@ -753,40 +751,48 @@ struct NativeDesktopIntelligenceSettings: View {
             }
             if area == .models {
             Section(L("On-device models")) {
-                LocalModelStatusIndicator(models: attention.localModels)
+                LocalModelStatusIndicator(models: attention.localModels, settingsID: "settings.assistant-model-status")
                 Text(L("Readiness and memory of the speech and voice models that run on this Mac. A model can be ready while not loaded; it loads when a meeting needs it."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section(L("Roles")) {
-                roleRow(L("Listen"), listen.enabled ? (listen.selected?.title ?? L("Off")) : L("Off"), local: true,
+                roleRow(L("Speech recognition"), listen.enabled ? (listen.selected?.title ?? L("Off")) : L("Off"), local: true,
                         detail: L("%@ of speech models on this Mac", ByteCountFormatter.string(fromByteCount: listen.installedSize, countStyle: .file)))
-                roleRow(L("Judge"), describe(store.provider), local: store.provider.onThisMac)
+                roleRow(L("Meeting alerts provider"), describe(store.provider), local: store.provider.onThisMac)
                 if let strong = store.escalationProvider {
                     roleRow(L("When unsure"), describe(strong), local: strong.onThisMac)
                 }
-                roleRow(L("Write"), describe(store.effectiveWriter), local: store.effectiveWriter.onThisMac)
+                roleRow(L("Writing provider"), describe(store.effectiveWriter), local: store.effectiveWriter.onThisMac)
                 roleRow(L("Voice"), voiceTitle, local: voiceOnThisMac)
             }
             }
             if area == .attention {
             Section(L("About you")) {
-                TextField(L("Your name"), text: $store.profile.name, prompt: Text(L("As people say it in meetings")))
+                TextField(L("Your name"), text: $store.profile.name, prompt: Text(L("As people say it in meetings"))).nativeSettingAnchor("settings.names", nativeControlFocus: true)
                 TextField(L("Other names"), text: $aliases, prompt: Text(L("Nicknames, separated by commas")))
-                    .onSubmit(saveAliases).onChange(of: aliases) { _ in saveAliases() }
-                TextField(L("Your role"), text: $store.profile.role, prompt: Text(L("For example: infrastructure lead, owns DNS and certificates")))
+                    .onSubmit(saveAliases).onChange(of: aliases) { _ in saveAliases() }.nativeSettingAnchor("settings.aliases", nativeControlFocus: true)
+                TextField(L("Your role"), text: $store.profile.role, prompt: Text(L("For example: infrastructure lead, owns DNS and certificates"))).nativeSettingAnchor("settings.role", nativeControlFocus: true)
             }
             }
             if area == .models {
             Section(L("Models")) {
-                Picker(L("Provider"), selection: Binding(get: { store.provider.kind }, set: { kind in
-                    if kind != store.provider.kind { store.provider = AttentionProvider.defaults[kind] ?? store.provider }
-                })) { ForEach(AttentionProvider.Kind.allCases, id: \.self) { Text(AttentionProvider.defaults[$0]?.title ?? $0.rawValue).tag($0) } }
+                NativeSettingsPopup(
+                    title: L("Provider"),
+                    selection: Binding(get: { store.provider.kind }, set: { kind in
+                        if kind != store.provider.kind { store.provider = AttentionProvider.defaults[kind] ?? store.provider }
+                    }),
+                    choices: AttentionProvider.Kind.allCases,
+                    titleForChoice: { AttentionProvider.defaults[$0]?.title ?? $0.rawValue },
+                    id: "settings.provider",
+                    fallbackFor: (store.provider.kind == .apple ? Set(["settings.provider-address", "settings.provider-model", "settings.provider-choose"]) : Set<String>())
+                        .union(store.provider.needsKey ? [] : ["settings.api-key"])
+                )
                 if store.provider.kind == .apple {
                     Text(L("Apple's on-device model judges here. Meetings in a language it does not know, such as Russian, are translated to English on this Mac first; the card's reason and drafted replies are translated back.")).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let reason = AppleOnDeviceJudge.unavailableReason { Text(reason).font(.caption).foregroundStyle(.orange) }
                 } else {
-                    TextField(L("Address"), text: $store.provider.baseURL)
+                    TextField(L("Address"), text: $store.provider.baseURL).nativeSettingAnchor("settings.provider-address", nativeControlFocus: true)
                     if store.provider.endpoint == nil { Text(L("Enter an http or https address.")).font(.caption).foregroundStyle(.red) }
                     else if !store.provider.onThisMac {
                         Text(L("When enabled, Assistant may send meeting text to %@.", store.provider.host))
@@ -794,41 +800,52 @@ struct NativeDesktopIntelligenceSettings: View {
                     }
                     HStack {
                         TextField(L("Model"), text: Binding(get: { store.provider.model },
-                            set: { store.provider.adoptTyped($0) }))
-                        Button(L("Choose…")) { choosingModel = true }.disabled(store.provider.endpoint == nil)
+                            set: { store.provider.adoptTyped($0) })).nativeSettingAnchor("settings.provider-model", nativeControlFocus: true)
+                        NativeSettingsButton(title: L("Choose…"), id: "settings.provider-choose") { choosingModel = true }
+                            .disabled(store.provider.endpoint == nil)
                             .help(L("Pick from the models this provider offers"))
                     }
                 }
                 if store.provider.kind == .rapidMLX { RapidMLXStatusView(store: store) }
                 if store.provider.needsKey {
                     HStack {
-                        SecureField(store.hasKey ? L("Saved in the keychain") : L("API key"), text: $key).accessibilityIdentifier("attention.key")
+                        SecureField(store.hasKey ? L("Saved in the keychain") : L("API key"), text: $key).accessibilityIdentifier("attention.key").nativeSettingAnchor("settings.api-key", nativeControlFocus: true)
                         Button(L("Save")) { store.setAPIKey(key); key = "" }.disabled(key.trimmed.isEmpty)
                         if store.hasKey { Button(L("Remove")) { store.setAPIKey("") } }
                     }
                     Text(L("The key is stored in this Mac's keychain and sent only to the address above.")).font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
-                    Button(L("Compare models…")) { comparing = true }
+                    NativeSettingsButton(title: L("Compare models…"), id: "settings.provider-compare") { comparing = true }
                         .disabled(store.provider.endpoint == nil || store.provider.needsKey && !store.hasKey || store.provider.kind == .apple)
                         .help(L("Run your saved decisions through another model and see how it agrees with your choices"))
-                    Button(testing ? L("Testing…") : L("Test")) { runTest() }.disabled(testing || !store.ready && !(store.provider.configured && (!store.provider.needsKey || store.hasKey)))
+                    NativeSettingsButton(title: testing ? L("Testing…") : L("Test"), id: "settings.provider-test") { runTest() }
+                        .disabled(testing || !store.ready && !(store.provider.configured && (!store.provider.needsKey || store.hasKey)))
                     if let testResult { Text(testResult).font(.caption).foregroundStyle(testFailed ? Color.red : .secondary).lineLimit(3) }
                 }
-                Picker(L("When the judge is unsure, ask"), selection: Binding(get: { store.escalationProvider?.kind }, set: { kind in
-                    store.escalationProvider = kind.flatMap { AttentionProvider.defaults[$0] }
-                })) {
-                    Text(L("Nobody")).tag(AttentionProvider.Kind?.none)
-                    ForEach(AttentionProvider.Kind.allCases.filter { $0 != .custom && $0 != store.provider.kind }, id: \.self) { kind in
-                        Text(AttentionProvider.defaults[kind]?.title ?? kind.rawValue).tag(AttentionProvider.Kind?.some(kind))
-                    }
-                }
+                NativeSettingsPopup(
+                    title: L("When the judge is unsure, ask"),
+                    selection: Binding(get: { store.escalationProvider?.kind }, set: { kind in
+                        store.escalationProvider = kind.flatMap { AttentionProvider.defaults[$0] }
+                    }),
+                    choices: [nil] + AttentionProvider.Kind.allCases
+                        .filter { $0 != .custom && $0 != store.provider.kind }
+                        .map(Optional.some),
+                    titleForChoice: { kind in
+                        guard let kind else { return L("Nobody") }
+                        return AttentionProvider.defaults[kind]?.title ?? kind.rawValue
+                    },
+                    id: "settings.escalation",
+                    fallbackFor: (store.escalationProvider == nil || store.escalationProvider?.kind == .apple ? Set(["settings.escalation-model"]) : Set<String>())
+                        .union(store.escalationProvider?.needsKey == true ? [] : ["settings.escalation-key"])
+                )
                 if let strong = store.escalationProvider {
                     if strong.kind != .apple {
                         TextField(L("Model to ask"), text: Binding(get: { store.escalationProvider?.model ?? "" },
                                                                    set: { store.escalationProvider?.model = $0 }))
+                            .nativeSettingAnchor("settings.escalation-model", nativeControlFocus: true)
                     }
-                    keyField(for: strong, text: $escalationKey)
+                    keyField(for: strong, text: $escalationKey, id: "settings.escalation-key")
                     if strong.needsKey && !store.hasKey(for: strong) {
                         Text(L("Asking needs an API key for %@.", strong.title)).font(.caption).foregroundStyle(.orange)
                     }
@@ -837,49 +854,90 @@ struct NativeDesktopIntelligenceSettings: View {
                 }
             }
             }
+            if area == .models {
+            Section(L("Provider for replies and summaries")) {
+                NativeSettingsPopup(
+                    title: L("Provider for replies and summaries"),
+                    selection: Binding(get: { store.writerProvider?.kind }, set: { kind in
+                        store.writerProvider = kind.flatMap { AttentionProvider.defaults[$0] }
+                    }),
+                    choices: [nil] + AttentionProvider.Kind.allCases.filter { $0 != .custom }.map(Optional.some),
+                    titleForChoice: { kind in
+                        guard let kind else { return L("The judge's provider") }
+                        return AttentionProvider.defaults[kind]?.title ?? kind.rawValue
+                    },
+                    id: "settings.writer",
+                    fallbackFor: (store.writerProvider == nil || store.writerProvider?.kind == .apple ? Set(["settings.writer-model"]) : Set<String>())
+                        .union(store.writerProvider?.needsKey != true || store.writerProvider?.kind == store.provider.kind ? ["settings.writer-key"] : [])
+                )
+                if let kind = store.writerProvider?.kind, kind != .apple {
+                    TextField(L("Writer model"), text: Binding(get: { store.writerProvider?.model ?? "" },
+                                                              set: { store.writerProvider?.adoptTyped($0) })).nativeSettingAnchor("settings.writer-model", nativeControlFocus: true)
+                    keyField(for: store.effectiveWriter, text: $writerKey, id: "settings.writer-key")
+                    if store.effectiveWriter.needsKey && !store.hasKey(for: store.effectiveWriter) {
+                        Text(L("The writer needs an API key for %@.", store.effectiveWriter.title)).font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+            }
             if area == .replies {
             Section(L("Replies")) {
-                Toggle(L("Draft chat replies and reactions on cards"), isOn: $store.draftReplies).accessibilityIdentifier("attention.replies")
+                NativeSettingsSwitch(title: L("Draft chat replies and reactions on cards"), isOn: $store.draftReplies,
+                                     id: "settings.drafts", fallbackFor: store.effectiveWriter.onThisMac ? [] : ["settings.local-drafts"],
+                                     accessibilityID: "attention.replies")
                 Text(L("When a meeting that needs you accepts chat or reactions, the card offers a short reply written by the same model. Nothing is sent until you press Send or a reaction, and you can edit the text first.")).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 TextField(L("How you write"), text: Binding(get: { store.profile.replyStyle ?? "" },
                                                            set: { store.profile.replyStyle = $0.trimmed.isEmpty ? nil : $0 }),
                           prompt: Text(L("For example: brief and informal, no emoji")))
-                    .disabled(!store.draftReplies)
-                Picker(L("Write replies with"), selection: Binding(get: { store.writerProvider?.kind }, set: { kind in
-                    store.writerProvider = kind.flatMap { AttentionProvider.defaults[$0] }
-                })) {
-                    Text(L("The judge's provider")).tag(AttentionProvider.Kind?.none)
-                    ForEach(AttentionProvider.Kind.allCases.filter { $0 != .custom }, id: \.self) { kind in
-                        Text(AttentionProvider.defaults[kind]?.title ?? kind.rawValue).tag(AttentionProvider.Kind?.some(kind))
-                    }
-                }.disabled(!store.draftReplies)
-                if let kind = store.writerProvider?.kind, kind != .apple {
-                    TextField(L("Writer model"), text: Binding(get: { store.writerProvider?.model ?? "" },
-                                                              set: { store.writerProvider?.adoptTyped($0) }))
-                        .disabled(!store.draftReplies)
-                    keyField(for: store.effectiveWriter, text: $writerKey)
-                    if store.effectiveWriter.needsKey && !store.hasKey(for: store.effectiveWriter) {
-                        Text(L("The writer needs an API key for %@.", store.effectiveWriter.title)).font(.caption).foregroundStyle(.orange)
-                    }
-                }
+                    .nativeSettingAnchor("settings.reply-style", nativeControlFocus: true).disabled(!store.draftReplies)
+                settingsLink(.models, detail: L("Provider for replies and summaries") + ": " + describe(store.effectiveWriter))
                 if store.effectiveWriter.onThisMac {
-                    Toggle(L("Draft with the model on this Mac anyway"), isOn: $store.localDrafts).disabled(!store.draftReplies)
+                    NativeSettingsSwitch(title: L("Draft with the model on this Mac anyway"), isOn: $store.localDrafts,
+                                         id: "settings.local-drafts")
+                        .disabled(!store.draftReplies)
                     Text(L("Small models on this Mac judge well, but in tests they answered questions for you (confirmed things, chose options). While the judge runs here, cards offer reactions only unless you turn this on.")).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            Section(L("Meeting outcomes")) {
+                NativeSettingsSwitch(title: L("Create a meeting outcome when I leave"), isOn: $store.generateOutcomes,
+                                     id: "settings.outcomes", fallbackFor: store.effectiveWriter.onThisMac ? ["settings.remote-outcomes"] : [],
+                                     accessibilityID: "assistant.outcomes")
+                Text(L("Outcomes keep an editable summary, decisions, tasks and open questions on this Mac."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if store.effectiveWriter.onThisMac {
+                    Text(L("They are written on this Mac. Nothing is sent."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    NativeSettingsSwitch(title: L("Allow sending the transcript to %@ when I leave", store.effectiveWriter.host),
+                                         isOn: $store.remoteOutcomes, id: "settings.remote-outcomes",
+                                         accessibilityID: "assistant.outcomes.remote")
+                        .disabled(!store.enabled || !store.generateOutcomes)
+                    Text(outcomeSharingCaption).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Section(L("Agent")) {
-                Toggle(L("Answer with the bounded agent (typed tools, grounded sources)"), isOn: $store.agentAssistantEnabled)
-                    .accessibilityIdentifier("assistant.agent.enabled")
+                NativeSettingsSwitch(title: L("Answer with the bounded agent (typed tools, grounded sources)"),
+                                     isOn: $store.agentAssistantEnabled, id: "settings.agent",
+                                     fallbackFor: store.agentAssistantEnabled ? [] : ["settings.agent-mcp", "settings.meeting-sends"],
+                                     accessibilityID: "assistant.agent.enabled")
                 if store.agentAssistantEnabled {
-                    Toggle(L("Also offer read-only MCP tools"), isOn: $store.agentExternalToolsEnabled)
-                        .accessibilityIdentifier("assistant.agent.externalTools")
-                    Picker(L("Meeting sends"), selection: $store.agentMeetingSendDefault) {
-                        Text(L("Send immediately")).tag(AssistantMeetingSendDefault.sendImmediately)
-                        Text(L("Ask every time")).tag(AssistantMeetingSendDefault.askEveryTime)
-                    }
-                    .accessibilityIdentifier("assistant.agent.meetingSendDefault")
+                    NativeSettingsSwitch(title: L("Also offer read-only MCP tools"), isOn: $store.agentExternalToolsEnabled,
+                                         id: "settings.agent-mcp", accessibilityID: "assistant.agent.externalTools")
+                    NativeSettingsPopup(
+                        title: L("Meeting sends"),
+                        selection: $store.agentMeetingSendDefault,
+                        choices: AssistantMeetingSendDefault.allCases,
+                        titleForChoice: { choice in
+                            switch choice {
+                            case .sendImmediately: L("Send immediately")
+                            case .askEveryTime: L("Ask every time")
+                            }
+                        },
+                        id: "settings.meeting-sends",
+                        accessibilityID: "assistant.agent.meetingSendDefault"
+                    )
                     Text(L("Applies to direct chat, spoken replies, and reactions in the selected active meeting. Joining, leaving, muting, reminders, automation, and external (MCP) requests always ask."))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Text(L("Off by default. Exposes the app's MCP server tools to the agent as read-only sources. Outward actions still ask natively."))
@@ -891,25 +949,40 @@ struct NativeDesktopIntelligenceSettings: View {
                 Section(L("Memory")) { AssistantMemorySettings(attention: attention) }
             }
             if area == .voice {
-            Section(L("Voice")) {
-                Toggle(L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk)
-                    .accessibilityIdentifier("assistant.pushToTalk")
+            Section(L("Talk to Assistant")) {
+                NativeSettingsSwitch(title: L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk,
+                                     id: "settings.push-talk", accessibilityID: "assistant.pushToTalk")
                 Text(L("Hold it in this app or while another app is in front. While it is on, ⌥Space is not typed into any app, including as a non-breaking space. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held, and listening stops within 30 seconds if the key release is missed. You can also type every command."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 PushToTalkWarning(talk: attention.talk)
-                Toggle(L("Speak Assistant answers in headphones"), isOn: $store.talkBack)
-                    .accessibilityIdentifier("assistant.talkBack")
+            }
+            Section(L("Hear answers privately")) {
+                let approval = HeadphoneApproval(store: store, output: headphones.output)
+                NativeSettingsSwitch(title: L("Speak Assistant answers in headphones"), isOn: $store.talkBack,
+                                     id: "settings.talk-back", fallbackFor: approval.canApprove ? [] : ["settings.headphone-approval"],
+                                     accessibilityID: "assistant.talkBack")
                 Text(L("Off by default. Answers play for a headphone jack, or for a Bluetooth or USB device you mark below. Speakers stay off, and sound never goes into a meeting."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                HeadphoneApproval(store: store, output: headphones.output)
-                Picker(L("Speak replies with"), selection: $store.voiceEngine) {
-                    Text(L("The macOS voice")).tag(VoiceEngine.system)
-                    Text(L("Rapid-MLX voice server")).tag(VoiceEngine.rapidMLX)
-                    Text(L("Your Personal Voice")).tag(VoiceEngine.personal)
-                    if clone.available || store.voiceEngine == .cloned {
-                        Text(L("Your voice, on the Neural Engine")).tag(VoiceEngine.cloned)
-                    }
-                }
+                approval
+            }
+            Section(L("Speaking voice")) {
+                NativeSettingsPopup(
+                    title: L("Speak replies with"),
+                    selection: $store.voiceEngine,
+                    choices: VoiceEngine.allCases.filter { $0 != .cloned || clone.available || store.voiceEngine == .cloned },
+                    titleForChoice: { choice in
+                        switch choice {
+                        case .system: L("The macOS voice")
+                        case .rapidMLX: L("Rapid-MLX voice server")
+                        case .personal: L("Your Personal Voice")
+                        case .cloned: L("Your voice, on the Neural Engine")
+                        }
+                    },
+                    id: "settings.voice-engine",
+                    fallbackFor: (store.voiceEngine == .rapidMLX ? Set<String>() : ["settings.voice-model", "settings.voice-description", "settings.voice-address"])
+                        .union(store.voiceEngine == .cloned && clone.available && clone.model != nil ? [] : ["settings.saved-voice", "settings.voice-preparation", "settings.voice-download", "settings.voice-delete", "settings.voice-gpu", "settings.voice-gpu-remove"])
+                        .union(store.voiceEngine == .cloned && clone.available && clone.model != nil && clone.gpuModel == nil ? ["settings.voice-gpu", "settings.voice-gpu-remove"] : [])
+                )
                 if store.voiceEngine == .cloned {
                     if clone.available {
                         VoiceCloneSettingsView(clone: clone, listen: listen) {
@@ -925,9 +998,9 @@ struct NativeDesktopIntelligenceSettings: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if store.voiceEngine == .rapidMLX {
-                    TextField(L("Voice model"), text: $store.voiceModel)
-                    TextField(L("How the voice sounds"), text: $store.voiceDescription, axis: .vertical).lineLimit(1...3)
-                    TextField(L("Address"), text: $store.voiceBaseURL)
+                    TextField(L("Voice model"), text: $store.voiceModel).nativeSettingAnchor("settings.voice-model", nativeControlFocus: true)
+                    TextField(L("How the voice sounds"), text: $store.voiceDescription, axis: .vertical).lineLimit(1...3).nativeSettingAnchor("settings.voice-description", nativeControlFocus: true)
+                    TextField(L("Address"), text: $store.voiceBaseURL).nativeSettingAnchor("settings.voice-address", nativeControlFocus: true)
                     if let host = store.voiceConfiguration.speechHost {
                         Text(L("Text for spoken replies is sent to the configured voice server at %@.", host))
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -935,7 +1008,10 @@ struct NativeDesktopIntelligenceSettings: View {
                     Text(L("Start Rapid-MLX with --enable-audio. The first reply loads the voice model and takes longer.")).font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
-                    Button(previewing ? L("Preparing…") : L("Listen")) { previewVoice() }.disabled(previewing)
+                    NativeSettingsButton(title: previewing ? L("Preparing…") : L("Listen"), id: "settings.voice-preview") {
+                        previewVoice()
+                    }
+                    .disabled(previewing)
                     if let voiceMessage { Text(voiceMessage).font(.caption).foregroundStyle(voiceFailed ? Color.red : .secondary).lineLimit(3) }
                 }
                 Text(L("“Say it” on a card speaks the reply into that meeting while your microphone is held back. Listen plays only on this Mac.")).font(.caption).foregroundStyle(.secondary)
@@ -947,8 +1023,10 @@ struct NativeDesktopIntelligenceSettings: View {
                 if store.provider.onThisMac {
                     Label(store.provider.kind == .apple ? L("The judge runs on this Mac: meeting text, instructions and your profile stay here.")
                           : L("The judge runs on this Mac at %@: meeting text, instructions and your profile stay here.", store.provider.host), systemImage: "laptopcomputer")
+                        .nativeSettingAnchor("settings.privacy")
                 } else {
                     Label(L("For each meeting you are not looking at: its last three minutes of text and chat, its instructions and your profile go to %@, at most six times a minute.", store.provider.host), systemImage: "arrow.up.forward")
+                        .nativeSettingAnchor("settings.privacy")
                 }
                 if let strong = store.escalationProvider, !strong.onThisMac {
                     Label(L("When the judge is unsure, the same text goes to %@.", strong.host), systemImage: "arrow.up.forward")
@@ -984,7 +1062,8 @@ struct NativeDesktopIntelligenceSettings: View {
             }
             if area == .attention {
             Section(L("Meeting instructions")) {
-                if store.presets.isEmpty { Text(L("Add instructions from a meeting's or favorite's menu.")).foregroundStyle(.secondary) }
+                Text(L("Add instructions from a meeting's or favorite's menu.")).foregroundStyle(.secondary)
+                    .nativeSettingAnchor("settings.instructions")
                 ForEach(store.presets) { preset in
                     HStack {
                         VStack(alignment: .leading) {
@@ -1003,8 +1082,11 @@ struct NativeDesktopIntelligenceSettings: View {
                 if let warning = store.persistenceWarning { Text(warning).font(.caption).foregroundStyle(.red) }
             }
             }
-        }.formStyle(.grouped)
-            .onAppear { aliases = store.profile.aliases.joined(separator: ", ") }
+        }.formStyle(.grouped).nativeSettingsReveal()
+            .onAppear {
+                aliases = store.profile.aliases.joined(separator: ", ")
+                if directNavigation && area == .overview { area = .attention }
+            }
             .onChange(of: clone.preparation) { preparation in
                 guard store.voiceEngine == .cloned else { return }
                 switch preparation {

@@ -63,8 +63,23 @@ import UniformTypeIdentifiers
     @Published var pinnedID: String? { didSet { focusAffinity = nil; updateDemand() } }
     @Published private(set) var pinnedSource: NativeDesktopVideoSource?
     @Published var galleryPage = 0 { didSet { updateDemand() } }
+    private var errorRevision: UInt64 = 0
     @Published var error: String? {
-        didSet { if let error, error != oldValue { probeLog("meeting-alert", ["message": error, "phase": String(describing: snapshot.phase)]) } }
+        didSet {
+            errorRevision &+= 1
+            if let error, error != oldValue { probeLog("meeting-alert", ["message": error, "phase": String(describing: snapshot.phase)]) }
+        }
+    }
+
+    /// SwiftUI may dismiss an alert while updating its view graph. Wait until
+    /// the update finishes, and never dismiss a later error (even identical text).
+    func dismissErrorAfterViewUpdate() {
+        guard error != nil else { return }
+        let revision = errorRevision
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.errorRevision == revision, self.error != nil else { return }
+            self.error = nil
+        }
     }
     @Published private(set) var sharingPending = false
     @Published var controlsHidden = false

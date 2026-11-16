@@ -10,8 +10,11 @@ struct NativeDesktopTranscriptionSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle(L("Transcribe meetings on this Mac"), isOn: $store.enabled)
-                    .accessibilityIdentifier("transcription.local.enabled")
+                NativeSettingsSwitch(
+                    title: L("Transcribe meetings on this Mac"), isOn: $store.enabled, id: "settings.transcribe",
+                    fallbackFor: !store.enabled && store.pendingID == nil ? ["settings.voice-detector"] : [],
+                    accessibilityID: "transcription.local.enabled"
+                )
                 Text(L("When a meeting is not transcribed by its service, other participants' speech is turned into text here, for Live text and Catch up. It keeps working while the meeting's sound is off."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if store.enabled, !store.ready {
@@ -23,29 +26,43 @@ struct NativeDesktopTranscriptionSettings: View {
                             .font(.caption).foregroundStyle(.orange)
                     }
                 }
-                Toggle(L("Include my microphone"), isOn: $store.includesMicrophone).disabled(!store.enabled)
-                    .accessibilityIdentifier("transcription.local.microphone")
+                NativeSettingsSwitch(
+                    title: L("Include my microphone"), isOn: $store.includesMicrophone,
+                    id: "settings.transcribe-mic", accessibilityID: "transcription.local.microphone"
+                ).disabled(!store.enabled)
                 Text(L("What you say joins the transcript of the meeting that holds your microphone, while it is unmuted. Nothing is transcribed while you are muted."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section(L("Meetings to transcribe")) {
-                Toggle(L("Telemost and TrueConf"), isOn: $store.transcribesExternal).disabled(!store.enabled)
-                    .accessibilityIdentifier("transcription.local.external")
+                NativeSettingsSwitch(
+                    title: L("Telemost and TrueConf"), isOn: $store.transcribesExternal,
+                    id: "settings.transcribe-external", accessibilityID: "transcription.local.external"
+                ).disabled(!store.enabled)
                 Text(L("These services send everyone's voice as one stream. Names come from who the service shows as speaking; TrueConf does not report it, so its lines show “Participant”."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Toggle(L("Rock jam sessions"), isOn: $store.transcribesRock).disabled(!store.enabled)
-                    .accessibilityIdentifier("transcription.local.rock")
+                NativeSettingsSwitch(
+                    title: L("Rock jam sessions"), isOn: $store.transcribesRock,
+                    id: "settings.transcribe-rock", accessibilityID: "transcription.local.rock"
+                ).disabled(!store.enabled)
                 Text(L("Off by default: jam sessions are mostly music. Each musician is transcribed separately."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section(L("Speech model")) {
+                if store.catalog.listen.isEmpty {
+                    Text(L("No speech models available.")).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("transcription.speech-model.management")
+                        .nativeSettingAnchor("settings.speech-model")
+                } else {
+                    Text(L("The selected model is used when transcription next starts. Meetings already transcribing continue with their current model."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("transcription.speech-model.management")
+                        .nativeSettingAnchor("settings.speech-model")
+                }
                 if let pending = store.pendingID.flatMap(store.catalog.model) {
                     Text(L("Switching to %@ when it and the voice detector are ready. The current model stays selected in the meantime.", pending.title))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 ForEach(store.catalog.listen) { model in row(model) }
-                Text(L("The selected model is used when transcription next starts. Meetings already transcribing continue with their current model."))
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Text(L("Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -54,7 +71,7 @@ struct NativeDesktopTranscriptionSettings: View {
             }
             if let models {
                 Section(L("On-device models")) {
-                    LocalModelStatusIndicator(models: models)
+                    LocalModelStatusIndicator(models: models, settingsID: "settings.transcription-model-status")
                     Text(L("Readiness and memory of the speech and voice models that run on this Mac. A model can be ready while not loaded; it loads when a meeting needs it."))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -64,7 +81,7 @@ struct NativeDesktopTranscriptionSettings: View {
                 Label(L("The app does not tell other participants. Let them know if your organisation requires it."), systemImage: "person.2")
                 Label(L("Your microphone is transcribed only while you are unmuted in a meeting."), systemImage: "mic")
             }.font(.callout)
-        }.formStyle(.grouped)
+        }.formStyle(.grouped).nativeSettingsReveal()
             .onAppear { store.refresh() }
     }
 
@@ -74,34 +91,35 @@ struct NativeDesktopTranscriptionSettings: View {
             case .installed:
                 if store.detectorConfigurationReady {
                     Label(L("Voice detector ready"), systemImage: "checkmark.circle").foregroundStyle(.green)
+                        .nativeSettingAnchor("settings.voice-detector")
                 } else {
                     Label(L("The installed voice detector has an invalid configuration. Check for an app update."), systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.orange).nativeSettingAnchor("settings.voice-detector")
                 }
             case .downloading(let progress):
                 HStack {
                     ProgressView(value: progress) { Text(L("Downloading the voice detector…")) }
-                    Button(L("Cancel")) { store.cancel(vad) }
+                    NativeSettingsButton(title: L("Cancel"), id: "settings.voice-detector") { store.cancel(vad) }
                 }
             case .absent:
                 HStack {
                     Label(L("Voice detector is not downloaded."), systemImage: "exclamationmark.triangle")
                     Spacer()
-                    Button(L("Download")) { store.download(vad) }
+                    NativeSettingsButton(title: L("Download"), id: "settings.voice-detector") { store.download(vad) }
                 }
             case .failed(let message):
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Label(L("Voice detector download failed."), systemImage: "exclamationmark.triangle")
                         Spacer()
-                        Button(L("Try Again")) { store.download(vad) }
+                        NativeSettingsButton(title: L("Try Again"), id: "settings.voice-detector") { store.download(vad) }
                     }
                     Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
         } else {
             Label(L("Voice detector is unavailable in this model catalog."), systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
+                .foregroundStyle(.orange).nativeSettingAnchor("settings.voice-detector")
         }
     }
 

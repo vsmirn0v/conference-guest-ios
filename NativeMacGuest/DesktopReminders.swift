@@ -44,26 +44,55 @@ import SwiftUI
 struct NativeDesktopReminderTimingEditor: View {
     @Binding var timing: ReminderTiming
     var body: some View {
-        Toggle(L("Before start"), isOn: Binding(get: { timing.before != nil }, set: { timing.before = $0 ? timing.rememberedBefore : nil }))
+        NativeSettingsSwitch(
+            title: L("Before start"),
+            isOn: Binding(get: { timing.before != nil }, set: { timing.before = $0 ? timing.rememberedBefore : nil }),
+            id: "settings.reminder-before",
+            fallbackFor: timing.before == nil ? ["settings.reminder-before-time", "settings.reminder-timing"] : ["settings.reminder-timing"]
+        )
         if timing.before != nil {
             HStack {
-                Stepper(value: Binding(get: { timing.before ?? 120 }, set: { timing.before = $0; timing.rememberedBefore = $0 }), in: 1...86400) { Text(L("Before: %d seconds", timing.before ?? 120)) }
+                NativeSettingsStepper(
+                    title: L("Before: %d seconds", timing.before ?? 120),
+                    value: Binding(get: { timing.before ?? 120 }, set: { value in
+                        var updated = timing
+                        updated.before = value
+                        updated.rememberedBefore = value
+                        timing = updated
+                    }),
+                    range: 1...86_400,
+                    id: "settings.reminder-before-time"
+                )
                 Menu(L("Common times")) {
                     ForEach([1, 2, 5, 10, 15], id: \.self) { minutes in
-                        Button(minutes == 1 ? L("1 minute") : L("%ld minutes", minutes)) { timing.before = minutes * 60; timing.rememberedBefore = minutes * 60 }
+                        Button(minutes == 1 ? L("1 minute") : L("%ld minutes", minutes)) {
+                            var updated = timing
+                            updated.before = minutes * 60
+                            updated.rememberedBefore = minutes * 60
+                            timing = updated
+                        }
                     }
                 }
             }
         }
-        Toggle(L("At start"), isOn: $timing.atStart)
-        Picker(L("After start"), selection: $timing.followUp.mode) {
-            Text(L("Off")).tag(ReminderFollowUp.Mode.off)
-            Text(L("If in another meeting")).tag(ReminderFollowUp.Mode.anotherMeeting)
-            Text(L("Always")).tag(ReminderFollowUp.Mode.always)
-        }
+        NativeSettingsSwitch(title: L("At start"), isOn: $timing.atStart, id: "settings.reminder-at-start")
+        NativeSettingsPopup(
+            title: L("After start"), selection: $timing.followUp.mode, choices: ReminderFollowUp.Mode.allCases,
+            titleForChoice: { mode in
+                switch mode {
+                case .off: L("Off")
+                case .anotherMeeting: L("If in another meeting")
+                case .always: L("Always")
+                }
+            },
+            id: "settings.reminder-follow-up",
+            fallbackFor: timing.followUp.mode == .off ? ["settings.reminder-follow-up-delay"] : []
+        )
         if timing.followUp.mode != .off {
             HStack {
-                Stepper(value: $timing.followUp.delay, in: 1...3600) { Text(L("Delay: %d seconds", timing.followUp.delay)) }
+                NativeSettingsStepper(title: L("Delay: %d seconds", timing.followUp.delay),
+                                      value: $timing.followUp.delay, range: 1...3600,
+                                      id: "settings.reminder-follow-up-delay")
                 Menu(L("Common times")) {
                     ForEach([1, 2, 5, 10, 15], id: \.self) { minutes in
                         Button(minutes == 1 ? L("1 minute") : L("%ld minutes", minutes)) { timing.followUp.delay = minutes * 60 }

@@ -1,0 +1,85 @@
+{
+  "version": "0.3.0",
+  "build": "110",
+  "channel": "beta",
+  "sourceBaseCommit": "16c5196e1c4351efd8180ae68eb43d5c93997189",
+  "sourceState": "Two tracked notes files changed locally; exact changes are preserved in source.patch and are not committed or pushed.",
+  "sourcePatch": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-110/source.patch",
+  "sourcePatchSHA256": "491f3e3406c1af00969c82f8f9b9ba66cf3a2691060dc8bb1b22897873cf8c1a",
+  "buildEvidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-110/build-evidence.json",
+  "buildEvidenceSHA256": "32a4cc23265a5249a9b8d8286a33885d69d8b63fc5f540ee791d86a5bcbd2eec",
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "110",
+    "file": "RockNRoll-0.3.0-110-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-110-arm64.dmg",
+    "sha256": "eff5ce552bf0c2a72fe76528c8a4072b74c41f5d55acbe45abfb652aee04f44d",
+    "length": 37771767,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-110/package/RockNRoll-0.3.0-110-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/voice-recovery-validation/RockNRollNativeGuest-0.3.0-110.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-110/export/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "110",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-110-arm64.dmg",
+      "sha256": "eff5ce552bf0c2a72fe76528c8a4072b74c41f5d55acbe45abfb652aee04f44d",
+      "length": 37771767
+    },
+    "state": {
+      "appcastSHA256": "386ce7add5e34249dc6e911e93f7ba46883c37e963806a3a3dbbcfc813e79289",
+      "inventorySHA256": "fa680b23e5107d18d7eac7e8a2d6fcafe50ad07742e28afe9bc3adbe0e6ce0a8",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-110-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/c91d06bc9e90407791394cc7efc3cc56/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "betaAliasSHA256": "eff5ce552bf0c2a72fe76528c8a4072b74c41f5d55acbe45abfb652aee04f44d",
+    "appcastSHA256": "386ce7add5e34249dc6e911e93f7ba46883c37e963806a3a3dbbcfc813e79289",
+    "inventorySHA256": "fa680b23e5107d18d7eac7e8a2d6fcafe50ad07742e28afe9bc3adbe0e6ce0a8",
+    "inventory": {
+      "schemaVersion": 1,
+      "stable": {
+        "version": "0.3.0",
+        "build": "53",
+        "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-53-arm64.dmg",
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009"
+      },
+      "beta": {
+        "version": "0.3.0",
+        "build": "110",
+        "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-110-arm64.dmg",
+        "sha256": "eff5ce552bf0c2a72fe76528c8a4072b74c41f5d55acbe45abfb652aee04f44d"
+      }
+    }
+  },
+  "validation": {
+    "notesTests": "24 hosted Markdown preview and notes controller tests passed on macOS 27.2, including malformed ranges, hard breaks, Unicode, lists, code and a 112 KB mixed note.",
+    "distributionTests": "27 tests passed.",
+    "archive": "Release archive succeeded; app-group I/O and embedded voice-worker checks passed. All 392 source hashes in build evidence matched the workspace.",
+    "package": "Notarized app was stapled, Gatekeeper accepted, and revalidated inside the read-only mounted DMG. The outer DMG was not separately notarized.",
+    "limitations": [
+      "The original macOS 26.6.2 crash sequence was not reproduced and the fix was not tested on macOS 26.",
+      "Installed Sparkle upgrade was not tested.",
+      "Rare inputs whose parser meaning cannot safely be preserved within bounded recovery may still have some preview styling omitted; note text is preserved."
+    ]
+  },
+  "recordedAt": "2026-11-16T11:41:01.062714+00:00"
+}

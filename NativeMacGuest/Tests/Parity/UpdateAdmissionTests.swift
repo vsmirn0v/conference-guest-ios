@@ -98,6 +98,16 @@ private final class UpdateAdmissionNoNetwork: URLProtocol {
     func setPhase(_ phase: NativeDesktopMeetingPhase) { snapshot.phase = phase; onState?(snapshot) }
 }
 
+private struct CompactSettingsFixture: View {
+    @ObservedObject var workspace: NativeDesktopWorkspace
+    let library: NativeDesktopLibrary
+
+    var body: some View {
+        NativeDesktopSettingsView(library: library, meeting: nil, tab: $workspace.settingsTab,
+                                  assistantArea: $workspace.assistantSettingsArea, attention: workspace.attention)
+    }
+}
+
 @MainActor final class UpdateAdmissionTests: XCTestCase {
     private let invitation = URL(string: "https://example.test/calls/update-admission")!
 
@@ -133,13 +143,13 @@ private final class UpdateAdmissionNoNetwork: URLProtocol {
 
         window.setContentSize(NSSize(width: 1200, height: 760))
         await settleUI(host)
-        let assistant = try XCTUnwrap(accessibilityButton(in: window, title: L("Assistant")))
+        let assistant = try XCTUnwrap(accessibilityButton(in: window, title: L("Meeting alerts")))
         XCTAssertEqual(AXUIElementPerformAction(assistant, kAXPressAction as CFString), .success)
         await settleUI(host)
         XCTAssertEqual(workspace.settingsTab, 6)
-        XCTAssertEqual(workspace.assistantSettingsArea, .overview)
+        XCTAssertEqual(workspace.assistantSettingsArea, .attention)
         try attachScreenshot(host, name: "settings-assistant-normal")
-        let voice = try XCTUnwrap(accessibilityButton(in: window, title: L("Voice")))
+        let voice = try XCTUnwrap(accessibilityButton(in: window, title: L("Voice & speaking")))
         XCTAssertEqual(AXUIElementPerformAction(voice, kAXPressAction as CFString), .success)
         await settleUI(host)
         XCTAssertEqual(workspace.assistantSettingsArea, .voice)
@@ -148,15 +158,51 @@ private final class UpdateAdmissionNoNetwork: URLProtocol {
 
         // Exercise the compact settings-specific layout independent of the
         // app's outer split-view minimum width.
-        host.rootView = AnyView(NativeDesktopSettingsView(library: library, meeting: nil,
-            tab: Binding(get: { workspace.settingsTab }, set: { workspace.settingsTab = $0 }),
-            assistantArea: Binding(get: { workspace.assistantSettingsArea }, set: { workspace.assistantSettingsArea = $0 }),
-            attention: workspace.attention))
         workspace.settingsTab = 6; workspace.assistantSettingsArea = .overview
+        host.rootView = AnyView(CompactSettingsFixture(workspace: workspace, library: library))
         window.setContentSize(NSSize(width: 560, height: 650))
         await settleUI(host)
         XCTAssertNotNil(accessibilityElement(in: window, identifier: "settings.search"))
-        try attachScreenshot(host, name: "settings-compact")
+        let destination = try XCTUnwrap(accessibilityElement(in: window, identifier: "settings.destination"))
+        let originalAppearance = window.appearance
+        defer { window.appearance = originalAppearance }
+        window.appearance = NSAppearance(named: .darkAqua)
+        await settleUI(host)
+        try attachScreenshot(host, name: "settings-compact-dark")
+        window.appearance = NSAppearance(named: .aqua)
+        await settleUI(host)
+        try attachScreenshot(host, name: "settings-compact-light")
+
+        // NSMenu uses a nested event loop. Observe the actual opened menu,
+        // select the native item, and let it close before checking state.
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        await settleUI(host)
+        let selected = expectation(description: "Selected camera settings from the compact menu")
+        let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
+                                                               object: nil, queue: .main) { notification in
+            guard let menu = notification.object as? NSMenu,
+                  let index = menu.items.firstIndex(where: { $0.title == L("Camera & sound") }) else { return }
+            DispatchQueue.main.async {
+                menu.performActionForItem(at: index)
+                menu.cancelTracking()
+                selected.fulfill()
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        DispatchQueue.main.async { AXUIElementPerformAction(destination, kAXPressAction as CFString) }
+        await fulfillment(of: [selected], timeout: 5)
+        await settleUI(host)
+        XCTAssertEqual(workspace.settingsTab, 3)
+        try await eventually {
+            self.accessibilityElement(in: window, identifier: "settings.microphone-test") != nil
+                && self.accessibilityElement(in: window, identifier: "settings.camera-test") != nil
+        }
+        await settleUI(host)
+        try attachScreenshot(host, name: "settings-compact-camera-light")
+        window.appearance = NSAppearance(named: .darkAqua)
+        await settleUI(host)
+        try attachScreenshot(host, name: "settings-compact-camera-dark")
 
     }
 
@@ -242,6 +288,68 @@ private final class UpdateAdmissionNoNetwork: URLProtocol {
         XCTAssertTrue(NativeDesktopSettingsSearch.assistantAreas(matching: "agent").contains(.replies))
         XCTAssertTrue(NativeDesktopSettingsSearch.assistantAreas(matching: "memory").contains(.privacy))
         XCTAssertTrue(NativeDesktopSettingsSearch.assistantAreas(matching: "  ").isEmpty)
+    }
+
+    func testSettingsSearchOpensAndFocusesExactResult() async throws {
+        let fixture = fixture(), workspace = fixture.workspace, library = fixture.library
+        let host = NSHostingView(rootView: AnyView(NativeDesktopSettingsView(library: library, meeting: nil,
+            tab: Binding(get: { workspace.settingsTab }, set: { workspace.settingsTab = $0 }),
+            assistantArea: Binding(get: { workspace.assistantSettingsArea }, set: { workspace.assistantSettingsArea = $0 }),
+            attention: workspace.attention)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "Settings search integration \(UUID().uuidString)"
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        addTeardownBlock { window.close() }
+        workspace.settingsTab = 1
+        await settleUI(host)
+        let search = try XCTUnwrap(accessibilityElement(in: window, identifier: "settings.search"))
+        XCTAssertEqual(AXUIElementSetAttributeValue(search, kAXFocusedAttribute as CFString, kCFBooleanTrue), .success)
+        for (character, code) in [("d", 2), ("i", 34), ("s", 1), ("p", 35), ("l", 37), ("a", 0), ("y", 16), (" ", 49), ("n", 45), ("a", 0), ("m", 46), ("e", 14)] {
+            let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: UInt16(code)))
+            window.sendEvent(key)
+        }
+        await settleUI(host)
+        let result = try XCTUnwrap(accessibilityElement(in: window, identifier: "settings.result.settings.display-name"))
+        XCTAssertEqual(AXUIElementPerformAction(result, kAXPressAction as CFString), .success)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        await settleUI(host)
+        XCTAssertEqual(workspace.settingsTab, 0)
+        let field = try XCTUnwrap(accessibilityElement(in: window, identifier: "settings.displayName.control"))
+        XCTAssertEqual(accessibilityValue(field, kAXFocusedAttribute) as? Bool, true)
+        XCTAssertEqual(library.displayName, "Update admission fixture")
+        XCTAssertNotNil(accessibilityElement(in: window, identifier: "settings.search.back"))
+        XCTAssertEqual(fixture.calls.detections, 0)
+        XCTAssertEqual(fixture.calls.models, 0)
+    }
+
+    func testSettingsResultsDescribeAndReadSafeCurrentValues() throws {
+        let fixture = fixture(), library = fixture.library, attention = fixture.workspace.attention
+        func entry(_ id: String) throws -> NativeSettingsSearchCatalog.Entry {
+            try XCTUnwrap(NativeSettingsSearchCatalog.entries.first { $0.id == id })
+        }
+        let mic = try entry("settings.microphone")
+        XCTAssertFalse(NativeSettingsResultPresentation.description(for: mic).isEmpty)
+        XCTAssertTrue(NativeSettingsSearchCatalog.search(query: "input level", availableTabs: Set(0...8)).contains { $0.id == "settings.microphone-test" })
+        attention.store.enabled = false
+        let alerts = try entry("settings.alerts")
+        XCTAssertEqual(NativeSettingsResultPresentation.value(for: alerts, library: library, attention: attention, obsidian: nil), L("Off"))
+        attention.store.enabled = true
+        XCTAssertEqual(NativeSettingsResultPresentation.value(for: alerts, library: library, attention: attention, obsidian: nil), L("On"))
+        library.displayName = "private-value-2f7c0c56"
+        XCTAssertEqual(NativeSettingsResultPresentation.value(for: try entry("settings.display-name"), library: library, attention: attention, obsidian: nil), L("Open to view"))
+        let keyStatus = try XCTUnwrap(NativeSettingsResultPresentation.value(for: try entry("settings.api-key"), library: library, attention: attention, obsidian: nil))
+        XCTAssertTrue([L("Configured"), L("Not configured")].contains(keyStatus))
+        XCTAssertEqual(NativeSettingsResultPresentation.value(for: mic, library: library, attention: attention, obsidian: nil), L("Open to view"))
+        XCTAssertNil(NativeSettingsResultPresentation.value(for: try entry("settings.microphone-test"), library: library, attention: attention, obsidian: nil))
+        XCTAssertTrue(NativeSettingsSearchCatalog.search(query: library.displayName, availableTabs: Set(0...8)).isEmpty)
+        XCTAssertEqual(fixture.calls.detections, 0)
+        XCTAssertEqual(fixture.calls.models, 0)
     }
     private final class Calls { var detections = 0; var models = 0 }
     private struct Fixture {
@@ -398,6 +506,32 @@ private final class UpdateAdmissionNoNetwork: URLProtocol {
         XCTAssertNil(workspace.meeting)
         XCTAssertEqual(fixture.engine.connections, 0)
         XCTAssertTrue(fixture.library.recent.isEmpty)
+    }
+
+    func testDeferredAlertDismissalPreservesNewerErrors() async throws {
+        let engine = UpdateAdmissionEngine()
+        let model = NativeDesktopMeetingModel(destination: .guest(try JoinTarget.parse(invitation.absoluteString)),
+                                              name: "Fixture", title: nil, engine: engine)
+        func drainMainQueue() async {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
+
+        model.error = "Earlier error"
+        model.dismissErrorAfterViewUpdate()
+        model.error = "Newer error"
+        await drainMainQueue()
+        XCTAssertEqual(model.error, "Newer error")
+
+        model.dismissErrorAfterViewUpdate()
+        model.error = "Newer error" // A new occurrence can have identical text.
+        await drainMainQueue()
+        XCTAssertEqual(model.error, "Newer error")
+
+        model.dismissErrorAfterViewUpdate()
+        await drainMainQueue()
+        XCTAssertNil(model.error)
     }
 
     func testConnectedRecoveringAndFailedMeetingsRemainBusyUntilSuccessfulLeave() async throws {

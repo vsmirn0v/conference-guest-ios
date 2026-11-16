@@ -285,7 +285,7 @@ struct NativeDesktopMeetingView: View {
         .onChange(of: model.showsFocus) { focused in if !focused { model.immersive = false } }
         .onChange(of: model.snapshot.phase) { phase in if phase == .left || phase == .leaving || phase == .failed { textSelection.close() } }
         .onDisappear { textSelection.close() }
-        .alert(L("Meeting"), isPresented: Binding(get: { presentsErrors && model.error != nil }, set: { if !$0 && presentsErrors && model.error != nil { model.error = nil } })) {
+        .alert(L("Meeting"), isPresented: Binding(get: { presentsErrors && model.error != nil }, set: { if !$0 && presentsErrors { model.dismissErrorAfterViewUpdate() } })) {
             Button(L("OK")) { model.error = nil }
         } message: { Text(model.error ?? "") }
     }

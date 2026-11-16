@@ -16,7 +16,7 @@ struct VoiceCloneSettingsView: View {
             if let model = clone.model {
                 setupProgress(model)
                 modelRow(model)
-                gpuFallbackRow
+                if clone.gpuModel != nil { gpuFallbackRow }
                 voiceRow
                 Text(L("VoxCPM2 speaks in your saved voice on this Mac. The GPU fallback uses the same saved voice when Neural Engine preparation needs attention. Your voice never leaves this Mac."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -44,47 +44,56 @@ struct VoiceCloneSettingsView: View {
     /// automatic and never changes the saved voice.
     @ViewBuilder private var gpuFallbackRow: some View {
         if let model = clone.gpuModel {
+            let state = listen.state(model)
             VStack(alignment: .leading, spacing: 6) {
                 Text(L("GPU voice fallback")).font(.headline)
+                    .nativeSettingAnchor("settings.voice-gpu-status", fallbackFor: state.installed ? [] : ["settings.voice-gpu-remove"])
                 Text(L("Keeps your saved voice available while the Neural Engine is preparing. GPU speech may take longer."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Text(L("The GPU model needs additional disk space and several GB of memory while speaking. Keep enough free disk space for Neural Engine preparation too."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                switch listen.state(model) {
+                switch state {
                 case .absent:
-                    Button(L("Download GPU model (%@)", ByteCountFormatter.string(fromByteCount: model.size, countStyle: .file))) { clone.downloadGPU() }
+                    NativeSettingsButton(
+                        title: L("Download GPU model (%@)", ByteCountFormatter.string(fromByteCount: model.size, countStyle: .file)),
+                        id: "settings.voice-gpu"
+                    ) { clone.downloadGPU() }
                 case .downloading(let progress):
                     HStack {
                         ProgressView(value: progress) { Text(L("Downloading GPU model…")).font(.caption) }
+                            .nativeSettingAnchor("settings.voice-gpu")
                         Button(L("Cancel")) { clone.cancelGPUDownload() }
                     }
                 case .failed:
                     if let storage = listen.storageFailure(model) {
                         Label(L("Not enough disk space to download the voice model."), systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                         storageDetails(storage)
-                        storageActions { clone.downloadGPU() }
+                        storageActions(revealID: "settings.voice-gpu") { clone.downloadGPU() }
                     } else {
                         Label(L("The GPU model could not be downloaded."), systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                        Button(L("Try Again")) { clone.downloadGPU() }
+                        NativeSettingsButton(title: L("Try Again"), id: "settings.voice-gpu") { clone.downloadGPU() }
                     }
                 case .installed:
                     HStack(alignment: .firstTextBaseline) {
                         switch clone.gpuPreparation {
-                        case .idle: Text(L("GPU model downloaded; it will prepare when needed."))
-                        case .preparing: ProgressView(L("Preparing GPU voice…")).controlSize(.small)
+                        case .idle:
+                            Text(L("GPU model downloaded; it will prepare when needed.")).nativeSettingAnchor("settings.voice-gpu")
+                        case .preparing:
+                            ProgressView(L("Preparing GPU voice…")).controlSize(.small).nativeSettingAnchor("settings.voice-gpu")
                         case .ready:
                             Label(clone.activeSpeechBackend == .gpu ? L("Using GPU fallback") :
                                     (clone.preparation == .ready ? L("GPU fallback ready") : L("GPU fallback available")), systemImage: "checkmark.circle")
-                                .foregroundStyle(.green)
+                                .foregroundStyle(.green).nativeSettingAnchor("settings.voice-gpu")
                         case .failed(let message):
                             VStack(alignment: .leading) {
                                 Label(L("GPU fallback needs attention."), systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                                 Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                                Button(L("Try Again")) { clone.prepareGPU() }
+                                NativeSettingsButton(title: L("Try Again"), id: "settings.voice-gpu") { clone.prepareGPU() }
                             }
                         }
                         Spacer()
-                        Button(L("Remove GPU model"), role: .destructive) { clone.deleteGPUModel() }.buttonStyle(.borderless)
+                        NativeSettingsButton(title: L("Remove GPU model"), role: .destructive,
+                                             id: "settings.voice-gpu-remove") { clone.deleteGPUModel() }
                     }
                 }
             }
@@ -113,7 +122,11 @@ struct VoiceCloneSettingsView: View {
             }
         }()
         return VStack(alignment: .leading, spacing: 6) {
-            Text(L("Voice setup")).font(.headline)
+            if clone.installed {
+                Text(L("Voice setup")).font(.headline).nativeSettingAnchor("settings.voice-download")
+            } else {
+                Text(L("Voice setup")).font(.headline)
+            }
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 20) {
                     setupStep(L("Download model"), modelStatus)
@@ -147,11 +160,13 @@ struct VoiceCloneSettingsView: View {
             HStack {
                 Text(L("Voice model, %@", size))
                 Spacer()
-                Button(L("Download")) { clone.download() }
+                NativeSettingsButton(title: L("Download"), id: "settings.voice-download",
+                                     fallbackFor: ["settings.voice-preparation"]) { clone.download() }
             }
         case .downloading(let progress):
             HStack {
                 ProgressView(value: progress) { Text(L("Downloading the voice model…")).font(.caption) }
+                    .nativeSettingAnchor("settings.voice-download", fallbackFor: ["settings.voice-preparation"])
                 Button(L("Cancel")) { clone.cancelDownload() }
             }
         case .failed:
@@ -160,13 +175,14 @@ struct VoiceCloneSettingsView: View {
                     Label(L("Not enough disk space to download the voice model."), systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                     storageDetails(storage)
-                    storageActions { clone.download() }
+                    storageActions(revealID: "settings.voice-download", fallbackFor: ["settings.voice-preparation"]) { clone.download() }
                 } else {
                     Label(L("The voice model could not be downloaded."), systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                     Text(L("Try again. If the problem continues, collect diagnostics."))
                         .font(.caption).foregroundStyle(.secondary)
-                    Button(L("Try Again")) { clone.download() }
+                    NativeSettingsButton(title: L("Try Again"), id: "settings.voice-download",
+                                         fallbackFor: ["settings.voice-preparation"]) { clone.download() }
                 }
             }
         case .installed:
@@ -181,7 +197,7 @@ struct VoiceCloneSettingsView: View {
     @ViewBuilder private var preparationStatus: some View {
         switch clone.preparation {
         case .idle:
-            Button(L("Prepare for the Neural Engine")) { retryPreparation() }
+            NativeSettingsButton(title: L("Prepare for the Neural Engine"), id: "settings.voice-preparation") { retryPreparation() }
         case .preparing:
             HStack(alignment: .top, spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -193,9 +209,10 @@ struct VoiceCloneSettingsView: View {
                         Text(started, style: .timer).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
-            }
+            }.nativeSettingAnchor("settings.voice-preparation")
         case .ready:
             Label(L("Voice model ready on the Neural Engine"), systemImage: "checkmark.circle").foregroundStyle(.green)
+                .nativeSettingAnchor("settings.voice-preparation")
         case .failed:
             preparationFailure
         }
@@ -220,7 +237,7 @@ struct VoiceCloneSettingsView: View {
                 Text(L("Preparing the voice model needs extra working space. Your downloaded model and saved voice will be kept."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 preparationStorageDetails(failure?.storage)
-                storageActions { retryPreparation() }
+                storageActions(revealID: "settings.voice-preparation") { retryPreparation() }
             case .compilation:
                 Label(L("Neural Engine model compilation failed."), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -229,13 +246,13 @@ struct VoiceCloneSettingsView: View {
                 Text(L("Your downloaded model and saved voice will be kept."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 preparationStorageDetails(failure?.storage)
-                storageActions { retryPreparation() }
+                storageActions(revealID: "settings.voice-preparation") { retryPreparation() }
             case .storage:
                 Label(L("Not enough disk space to prepare the voice model."), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
                 if let storage = failure?.storage { storageDetails(storage) }
                 else { Text(L("macOS did not report how much more space is needed.")).font(.caption).foregroundStyle(.secondary) }
-                storageActions { retryPreparation() }
+                storageActions(revealID: "settings.voice-preparation") { retryPreparation() }
             case .rateLimited:
                 Label(L("The voice model has been tried too many times."), systemImage: "clock")
                     .foregroundStyle(.orange)
@@ -257,7 +274,7 @@ struct VoiceCloneSettingsView: View {
                             .accessibilityIdentifier("voiceModel.repair")
                             .disabled(failure?.rateLimitedRepair == true && (failure?.retryAfter.map { $0 > context.date } ?? false))
                     }
-                    Button(L("Try Again")) { retryPreparation() }
+                    retryPreparationButton
                         .disabled(failure?.rateLimitedRepair != true && (failure?.retryAfter.map { $0 > context.date } ?? false))
                 }
             case .busy:
@@ -265,12 +282,12 @@ struct VoiceCloneSettingsView: View {
                     .foregroundStyle(.orange)
                 Text(L("Try again when the other operation finishes.")).font(.caption).foregroundStyle(.secondary)
                 repairActionIfAvailable(failure)
-                Button(L("Try Again")) { retryPreparation() }
+                retryPreparationButton
             case .interrupted:
                 Label(L("Voice model preparation was interrupted."), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
                 repairActionIfAvailable(failure)
-                Button(L("Try Again")) { retryPreparation() }
+                retryPreparationButton
             case .cache, .unknown, nil:
                 Label(L("The voice model could not start."), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -280,12 +297,12 @@ struct VoiceCloneSettingsView: View {
                     HStack {
                         Button(L("Repair Voice Model")) { onPreparationAction(); clone.repair() }
                             .accessibilityIdentifier("voiceModel.repair")
-                        Button(L("Try Again")) { retryPreparation() }
+                        retryPreparationButton
                     }
                 } else {
                     Text(L("The cause is not clear. Try again; if the problem continues, collect diagnostics."))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Button(L("Try Again")) { retryPreparation() }
+                    retryPreparationButton
                 }
             }
             if let failure, [.compilation, .cache, .unknown].contains(failure.kind),
@@ -366,13 +383,17 @@ struct VoiceCloneSettingsView: View {
         }.font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 
-    private func storageActions(_ retry: @escaping () -> Void) -> some View {
+    private var retryPreparationButton: some View {
+        NativeSettingsButton(title: L("Try Again"), id: "settings.voice-preparation") { retryPreparation() }
+    }
+
+    private func storageActions(revealID: String, fallbackFor: Set<String> = [], _ retry: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Button(L("Open Storage Settings")) { openStorageSettings() }
                     .accessibilityIdentifier("voiceModel.openStorage")
-                Button(L("Check Again")) { refreshStorage(); retry() }
-                    .accessibilityIdentifier("voiceModel.checkStorage")
+                NativeSettingsButton(title: L("Check Again"), id: revealID, fallbackFor: fallbackFor,
+                                     accessibilityID: "voiceModel.checkStorage") { refreshStorage(); retry() }
             }
             Text(L("System Settings → General → Storage"))
                 .font(.caption).foregroundStyle(.secondary)
@@ -407,8 +428,10 @@ struct VoiceCloneSettingsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(L("Record Again…")) { enrolling = true }.disabled(!clone.installed)
-                    Button(L("Delete Saved Voice…"), role: .destructive) { confirmingVoiceDeletion = true }.buttonStyle(.borderless)
+                    NativeSettingsButton(title: L("Record Again…"), id: "settings.saved-voice") { enrolling = true }
+                        .disabled(!clone.installed)
+                    NativeSettingsButton(title: L("Delete Saved Voice…"), role: .destructive,
+                                         id: "settings.voice-delete") { confirmingVoiceDeletion = true }
                 }
                 if let voiceDeletionError {
                     Label(L("Could not delete your saved voice: %@", voiceDeletionError), systemImage: "exclamationmark.triangle")
@@ -419,8 +442,10 @@ struct VoiceCloneSettingsView: View {
             HStack {
                 Text(clone.installed ? L("Record a short sample of your voice.") : L("After the download, record a short sample of your voice."))
                     .foregroundStyle(.secondary)
+                    .nativeSettingAnchor("settings.saved-voice-description", fallbackFor: ["settings.voice-delete"])
                 Spacer()
-                Button(L("Record Your Voice…")) { enrolling = true }.disabled(!clone.installed)
+                NativeSettingsButton(title: L("Record Your Voice…"), id: "settings.saved-voice") { enrolling = true }
+                    .disabled(!clone.installed)
             }
         }
     }

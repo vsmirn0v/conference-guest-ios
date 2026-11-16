@@ -535,179 +535,226 @@ struct NativeDesktopSettingsView: View {
     var mcpService: NativeDesktopMCPService? = nil
     /// Obsidian one-way export settings and status.
     var obsidian: ObsidianExportCoordinator? = nil
-    @FocusState private var editingName: Bool
+    @State private var editingName = false
     @AppStorage(NativeDesktopGuestEngine.forceTCPRelayKey) private var forceTCPRelay = false
-    @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
-    @AppStorage(NativeDesktopHeadsetMute.Platform.enabledKey) private var headsetMute = false
-    @AppStorage(NativeDesktopHeadsetMute.Platform.disabledReasonKey) private var headsetMuteDisabledReason = ""
     @State private var settingsQuery = ""
+    @State private var previousQuery = ""
+    @State private var revealID: String?
+    @State private var revealTarget: NativeSettingScrollTarget.Selection?
     private struct Destination: Identifiable {
-        var id: Int
+        var tab: Int
         var title: String
         var symbol: String
         var group: String
+        var area: NativeDesktopAssistantSettingsArea? = nil
+        var id: String { area.map { "assistant." + $0.rawValue } ?? String(tab) }
     }
     private var destinations: [Destination] {
-        var sections: [Destination] = [
-            .init(id: 0, title: "General", symbol: "person.crop.circle", group: "Meetings"),
-            .init(id: 1, title: "Calendars", symbol: "calendar", group: "Meetings"),
-            .init(id: 2, title: "Reminders", symbol: "bell", group: "Meetings"),
-            .init(id: 3, title: "Camera & sound", symbol: "slider.horizontal.3", group: "Meetings"),
-            .init(id: 5, title: "Transcription", symbol: "text.bubble", group: "Assistant")
+        var items: [Destination] = [
+            .init(tab: 0, title: "General", symbol: "person.crop.circle", group: "Meetings"),
+            .init(tab: 1, title: "Calendars", symbol: "calendar", group: "Meetings"),
+            .init(tab: 2, title: "Reminders", symbol: "bell", group: "Meetings"),
+            .init(tab: 3, title: "Camera & sound", symbol: "slider.horizontal.3", group: "Meetings"),
+            .init(tab: 5, title: "Transcription", symbol: "text.bubble", group: "Assistant")
         ]
-        if attention != nil { sections.append(.init(id: 6, title: "Assistant", symbol: "sparkles", group: "Assistant")) }
-        if mcpService != nil { sections.append(.init(id: 7, title: "MCP Server", symbol: "network", group: "Connections")) }
-        if obsidian != nil { sections.append(.init(id: 8, title: "Integrations", symbol: "arrow.triangle.branch", group: "Connections")) }
+        if attention != nil {
+            items.insert(.init(tab: 6, title: "Meeting alerts", symbol: "bell.badge", group: "Assistant", area: .attention), at: 4)
+            items.append(contentsOf: [
+                .init(tab: 6, title: "Replies & actions", symbol: "text.bubble", group: "Assistant", area: .replies),
+                .init(tab: 6, title: "Voice & speaking", symbol: "waveform", group: "Assistant", area: .voice),
+                .init(tab: 6, title: "AI providers", symbol: "cpu", group: "Assistant", area: .models),
+                .init(tab: 6, title: "Memory & privacy", symbol: "lock.shield", group: "Assistant", area: .privacy)
+            ])
+        }
+        if mcpService != nil { items.append(.init(tab: 7, title: "MCP Server", symbol: "network", group: "Connections")) }
+        if obsidian != nil { items.append(.init(tab: 8, title: "Integrations", symbol: "arrow.triangle.branch", group: "Connections")) }
         #if NATIVE_DIRECT_UPDATES
-        if updates != nil { sections.append(.init(id: 4, title: "Updates", symbol: "arrow.down.circle", group: "Connections")) }
+        if updates != nil { items.append(.init(tab: 4, title: "Updates", symbol: "arrow.down.circle", group: "App")) }
         #endif
-        return sections
+        return items
     }
-    private var filteredDestinations: [Destination] {
-        let query = settingsQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        return destinations.filter { query.isEmpty || L($0.title).localizedCaseInsensitiveContains(query) || L($0.group).localizedCaseInsensitiveContains(query) }
+    private var selectedDestination: String {
+        if tab == 6 { return "assistant." + (assistantArea.wrappedValue == .overview ? NativeDesktopAssistantSettingsArea.attention.rawValue : assistantArea.wrappedValue.rawValue) }
+        return String(tab)
     }
-    private var assistantSearchResults: [NativeDesktopAssistantSettingsArea] {
-        attention == nil ? [] : NativeDesktopSettingsSearch.assistantAreas(matching: settingsQuery)
+    private func choose(_ item: Destination) {
+        tab = item.tab
+        if let area = item.area { assistantArea.wrappedValue = area }
+        revealID = nil
+        settingsQuery = ""
+        previousQuery = ""
+    }
+    private var searchResults: [NativeSettingsSearchCatalog.Entry] {
+        NativeSettingsSearchCatalog.search(query: settingsQuery, availableTabs: Set(destinations.map(\.tab)))
+    }
+    private var searching: Bool { !settingsQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var searchField: some View {
+        TextField(L("Search all settings"), text: Binding(get: { settingsQuery }, set: { value in
+            settingsQuery = value
+            if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && revealID == nil { previousQuery = "" }
+        }))
+            .textFieldStyle(.roundedBorder).accessibilityIdentifier("settings.search")
+            .onSubmit { if let first = searchResults.first { openResult(first) } }
+            .onExitCommand { settingsQuery = ""; previousQuery = "" }
     }
     var body: some View {
         GeometryReader { geometry in
             if geometry.size.width < 600 {
                 VStack(spacing: 0) {
                     HStack {
-                        TextField(L("Find a settings section"), text: $settingsQuery)
-                            .textFieldStyle(.roundedBorder).accessibilityIdentifier("settings.search")
-                        Picker(L("Settings section"), selection: $tab) {
-                            ForEach(destinations) { destination in Label(L(destination.title), systemImage: destination.symbol).tag(destination.id) }
-                        }.labelsHidden()
+                        searchField
+                        Menu {
+                            ForEach(destinations) { item in
+                                Button { choose(item) } label: {
+                                    Label(L(item.title), systemImage: item.symbol)
+                                }
+                            }
+                        } label: {
+                            Text(L(destinations.first(where: { $0.id == selectedDestination })?.title ?? "General"))
+                                .lineLimit(1)
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .menuStyle(.borderlessButton)
+                        .accessibilityLabel(L("Settings section"))
+                        .accessibilityIdentifier("settings.destination")
                     }.padding()
-                    if !settingsQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        compactSettingsResults
-                    }
                     Divider()
-                    settingsContent
-                }
+                    detail
+                }.background(Color(nsColor: .windowBackgroundColor))
             } else {
                 HStack(spacing: 0) {
-                    settingsSidebar.frame(width: 190)
+                    settingsSidebar.frame(width: 220)
                     Divider()
-                    settingsContent
+                    detail
                 }
             }
         }.navigationTitle(L("Settings"))
             .onChange(of: editingName) { if $0 { library.sync.beginNameEditing() } else { library.sync.endNameEditing() } }
             .onDisappear { if editingName { library.sync.endNameEditing() } }
     }
+    private var detail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if searching { searchResultsView }
+            else {
+                if !previousQuery.isEmpty {
+                    Button(L("Back to search results")) { settingsQuery = previousQuery; revealID = nil }
+                        .accessibilityIdentifier("settings.search.back")
+                        .padding(.horizontal, 24).padding(.top, 12)
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    if let item = destinations.first(where: { $0.id == selectedDestination }) {
+                        Text(L(item.title)).font(.title2.weight(.semibold))
+                            .padding(.horizontal, 24).padding(.top, 20)
+                    }
+                    if let revealTarget, revealTarget.requestID == revealID, let message = revealTarget.availabilityMessage {
+                        Text(message)
+                            .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.top, 8)
+                    }
+                    settingsContent.environment(\.nativeSettingRevealID, revealID)
+                        .onPreferenceChange(NativeSettingScrollTarget.self) { revealTarget = $0 }
+                }.frame(maxWidth: 760, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            TextField(L("Find a settings section"), text: $settingsQuery)
-                .textFieldStyle(.roundedBorder).padding(12)
-                .accessibilityIdentifier("settings.search")
+            searchField.padding(12)
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(["Meetings", "Assistant", "Connections"], id: \.self) { group in
-                        let items = filteredDestinations.filter { $0.group == group }
-                        if !items.isEmpty || (group == "Assistant" && !assistantSearchResults.isEmpty) {
+                    ForEach(["Meetings", "Assistant", "Connections", "App"], id: \.self) { group in
+                        let items = destinations.filter { $0.group == group }
+                        if !items.isEmpty {
                             Text(L(group)).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 10)
                             ForEach(items) { item in
-                                Button { tab = item.id } label: {
+                                Button { choose(item) } label: {
                                     Label(L(item.title), systemImage: item.symbol)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.horizontal, 10).padding(.vertical, 7)
-                                        .background(tab == item.id ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
-                                }.buttonStyle(.plain).accessibilityValue(tab == item.id ? L("Selected") : "")
-                            }
-                            if group == "Assistant" {
-                                ForEach(assistantSearchResults) { area in
-                                    Button {
-                                        assistantArea.wrappedValue = area
-                                        tab = 6
-                                    } label: {
-                                        Label(area.title, systemImage: "chevron.right")
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .padding(.leading, 20).padding(.trailing, 8).padding(.vertical, 7)
-                                            .background(tab == 6 && assistantArea.wrappedValue == area ? Color.accentColor.opacity(0.15) : Color.clear,
-                                                        in: RoundedRectangle(cornerRadius: 7))
-                                    }.buttonStyle(.plain).accessibilityIdentifier("settings.assistant.\(area.rawValue)")
-                                }
+                                        .background(selectedDestination == item.id ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                                }.buttonStyle(.plain).accessibilityValue(selectedDestination == item.id ? L("Selected") : "")
                             }
                         }
                     }
-                    if filteredDestinations.isEmpty && assistantSearchResults.isEmpty {
-                        Text(L("No settings sections match your search.")).foregroundStyle(.secondary).font(.callout).padding(10)
-                    }
                 }.padding(.horizontal, 6)
             }
-            Spacer(minLength: 0)
         }.background(Color(nsColor: .controlBackgroundColor))
     }
-    private var compactSettingsResults: some View {
+    private func openResult(_ item: NativeSettingsSearchCatalog.Entry) {
+        previousQuery = settingsQuery
+        revealTarget = nil
+        tab = item.tab
+        if let area = item.assistantArea { assistantArea.wrappedValue = area }
+        revealID = item.id
+        settingsQuery = ""
+    }
+    private var searchResultsView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(filteredDestinations) { item in
-                    Button { tab = item.id; settingsQuery = "" } label: {
-                        Label(L(item.title), systemImage: item.symbol).frame(maxWidth: .infinity, alignment: .leading)
-                    }.buttonStyle(.plain).padding(.vertical, 4)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(L("Search results")).font(.title2.weight(.semibold))
+                if searchResults.isEmpty { Text(L("No settings found.")).foregroundStyle(.secondary) }
+                ForEach(searchResults) { item in
+                    #if NATIVE_DIRECT_UPDATES
+                    NativeSettingsSearchResultRow(entry: item, library: library, attention: attention,
+                                                  obsidian: obsidian, updates: updates) { openResult(item) }
+                    #else
+                    NativeSettingsSearchResultRow(entry: item, library: library, attention: attention,
+                                                  obsidian: obsidian) { openResult(item) }
+                    #endif
                 }
-                ForEach(assistantSearchResults) { area in
-                    Button { assistantArea.wrappedValue = area; tab = 6; settingsQuery = "" } label: {
-                        Label(L("Assistant") + " › " + area.title, systemImage: "sparkles")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }.buttonStyle(.plain).padding(.vertical, 4)
-                     .accessibilityIdentifier("settings.assistant.\(area.rawValue)")
-                }
-                if filteredDestinations.isEmpty && assistantSearchResults.isEmpty {
-                    Text(L("No settings sections match your search.")).foregroundStyle(.secondary)
-                }
-            }.padding(.horizontal).padding(.bottom, 8)
-        }.frame(maxHeight: 125)
+            }.frame(maxWidth: 720, alignment: .leading).padding(24)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
     @ViewBuilder private var settingsContent: some View {
         switch tab {
         case 0:
             Form {
-                Section(L("Your name")) { TextField(L("Display name"), text: $library.displayName).focused($editingName) }
+                Section(L("Your name")) {
+                    TextField(L("Display name"), text: $library.displayName)
+                        .accessibilityIdentifier("settings.displayName.control")
+                        .nativeSettingAnchor("settings.display-name", nativeControlFocus: true, onFocusChange: { editingName = $0 })
+                }
                 Section(L("Guest meeting website")) {
-                    TextField("https://salutejazz.ru", text: $library.guestWebsiteOrigin)
+                    TextField("https://salutejazz.ru", text: $library.guestWebsiteOrigin).nativeSettingAnchor("settings.website", nativeControlFocus: true)
                     Text(L("Used for guest invitations that contain a room code without a website.")).font(.caption).foregroundStyle(.secondary)
                 }
                 RoomSyncSettingsView(sync: library.sync, continuation: library.continuation)
                 Section(L("Meeting setup")) {
-                    Button(L("Review meeting setup…")) { library.setup.begin() }
+                    NativeSettingsButton(title: L("Review meeting setup…"), id: "settings.setup") { library.setup.begin() }
                     Text(L("Choose calendars, reminders, and device options at any time."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section(L("Guest meeting connection")) {
-                    Toggle(L("Use TCP/TLS relay only"), isOn: $forceTCPRelay)
+                    NativeSettingsSwitch(title: L("Use TCP/TLS relay only"), isOn: $forceTCPRelay, id: "settings.relay")
                     Text(L("Applies when you join your next guest meeting. Automatic mode can switch to a TCP/TLS relay if UDP fails."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section(L("Meetings")) {
-                    Toggle(L("Keep the microphone ready in every meeting (experimental)"), isOn: $keepMicrophoneWarm)
-                    Text(L("Moving your microphone between meetings skips restarting the device. Meetings you leave the microphone in stay muted, but macOS keeps showing the microphone indicator while you are in any meeting."))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Toggle(L("Mute with AirPods and headset buttons"), isOn: Binding(get: { headsetMute }, set: { on in
-                        headsetMute = on; if on { headsetMuteDisabledReason = "" }
-                    }))
-                    Text(L("Pressing the stem or the headset button mutes or unmutes your microphone in the meeting that holds it. On some macOS versions turning this on makes the system audio service stop responding when a meeting starts; the app then turns it off again. Applies to meetings joined after turning it on."))
-                        .font(.caption).foregroundStyle(.secondary)
-                    if !headsetMute && !headsetMuteDisabledReason.isEmpty {
-                        Text(L("Turned off after the system audio service stopped responding: %@.", headsetMuteDisabledReason))
-                            .font(.caption).foregroundStyle(.orange)
-                    }
-                }
-            }.formStyle(.grouped)
+
+            }.formStyle(.grouped).nativeSettingsReveal()
         case 1:
             Form {
                 Section {
-                    Toggle(L("Find meetings in Calendar"), isOn: Binding(get: { library.calendar.enabled }, set: { library.calendar.setEnabled($0) }))
+                    NativeSettingsSwitch(title: L("Find meetings in Calendar"), isOn: Binding(
+                        get: { library.calendar.enabled }, set: { library.calendar.setEnabled($0) }), id: "settings.calendar-enabled",
+                        fallbackFor: library.calendar.access == .denied ? [] : ["settings.calendar-privacy", "settings.calendar-refresh"])
                     if library.calendar.access == .denied {
                         Text(L("Calendar access is off in System Settings.")).foregroundStyle(.secondary)
                         HStack {
-                            Button(L("Open calendar privacy settings")) { openCalendarPrivacySettings() }
-                            Button(L("Check Again")) { library.calendar.refresh() }
+                            NativeSettingsButton(title: L("Open calendar privacy settings"), id: "settings.calendar-privacy") {
+                                openCalendarPrivacySettings()
+                            }
+                            NativeSettingsButton(title: L("Check Again"), id: "settings.calendar-refresh") {
+                                library.calendar.refresh()
+                            }
                         }
                         Text(L("System Settings → Privacy & Security → Calendars")).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Section {
+                    Text(L("Choose calendars")).font(.headline).nativeSettingAnchor("settings.calendar-selection")
+                    if library.calendar.calendars.isEmpty {
+                        Text(L("No calendars available.")).foregroundStyle(.secondary)
                     }
                     ForEach(library.calendar.calendars) { calendar in
                         Toggle(isOn: Binding(get: { library.calendar.selected.contains(calendar.id) }, set: { library.calendar.select(calendar.id, included: $0) })) {
@@ -716,29 +763,42 @@ struct NativeDesktopSettingsView: View {
                     }
                 }
                 Section(L("Automatic joining")) {
-                    Toggle(L("Keep running in menu bar"), isOn: Binding(get: { library.calendar.keepInMenuBar }, set: { library.calendar.setKeepInMenuBar($0) }))
+                    NativeSettingsSwitch(title: L("Keep running in menu bar"), isOn: Binding(
+                        get: { library.calendar.keepInMenuBar }, set: { library.calendar.setKeepInMenuBar($0) }), id: "settings.menu-bar")
                         .disabled(library.calendar.automaticJoinMode == .scheduled)
-                    Picker(L("Join scheduled meetings"), selection: Binding(get: { library.calendar.automaticJoinMode }, set: { library.calendar.setAutomaticJoinMode($0) })) {
-                        Text(L("Off")).tag(CalendarAutomaticJoinMode.off)
-                        Text(L("When opening the app")).tag(CalendarAutomaticJoinMode.whenOpening)
-                        Text(L("At scheduled time")).tag(CalendarAutomaticJoinMode.scheduled)
-                    }
+                    NativeSettingsPopup(
+                        title: L("Join scheduled meetings"),
+                        selection: Binding(get: { library.calendar.automaticJoinMode }, set: { library.calendar.setAutomaticJoinMode($0) }),
+                        choices: CalendarAutomaticJoinMode.allCases,
+                        titleForChoice: { choice in
+                            switch choice {
+                            case .off: L("Off")
+                            case .whenOpening: L("When opening the app")
+                            case .scheduled: L("At scheduled time")
+                            }
+                        },
+                        id: "settings.auto-join"
+                    )
                     Text(L("Microphone and camera always start off.")).font(.caption).foregroundStyle(.secondary)
                 }
-            }.formStyle(.grouped)
+            }.formStyle(.grouped).nativeSettingsReveal()
         case 2:
             Form {
                 Section {
-                    Toggle(L("Meeting reminders"), isOn: Binding(get: { library.calendar.reminders.enabled }, set: { value in Task { await library.calendar.reminders.setEnabled(value) } }))
+                    NativeSettingsSwitch(title: L("Meeting reminders"), isOn: Binding(
+                        get: { library.calendar.reminders.enabled },
+                        set: { value in Task { await library.calendar.reminders.setEnabled(value) } }), id: "settings.reminders")
                     NativeDesktopReminderTimingEditor(timing: profileBinding(\.timing))
-                    Toggle(L("Show meeting name"), isOn: profileBinding(\.details))
-                    Toggle(L("Sound"), isOn: profileBinding(\.sound))
-                    Toggle(L("Time Sensitive"), isOn: profileBinding(\.timeSensitive))
-                    Button(L("Open notification settings")) { Task { _ = await NotificationSettingsLink.open(isMac: true) } }
+                    NativeSettingsSwitch(title: L("Show meeting name"), isOn: profileBinding(\.details), id: "settings.reminder-name")
+                    NativeSettingsSwitch(title: L("Sound"), isOn: profileBinding(\.sound), id: "settings.reminder-sound")
+                    NativeSettingsSwitch(title: L("Time Sensitive"), isOn: profileBinding(\.timeSensitive), id: "settings.reminder-sensitive")
+                    NativeSettingsButton(title: L("Open notification settings"), id: "settings.notification-settings") {
+                        Task { _ = await NotificationSettingsLink.open(isMac: true) }
+                    }
                 }
-            }.formStyle(.grouped)
+            }.formStyle(.grouped).nativeSettingsReveal()
         case 3:
-            NativeDesktopDeviceSettings(liveTrack: meeting?.localCamera, liveAudioAvailable: meeting != nil,
+            NativeDesktopDeviceSettings(liveTrack: meeting?.localCamera, settingsPage: true, liveAudioAvailable: meeting != nil,
                 startLiveAudioCheck: { try await meeting?.engine.startPrivateAudioCheck() },
                 stopLiveAudioCheck: { try await meeting?.engine.stopPrivateAudioCheck() },
                 liveAudioLevel: { meeting?.engine.privateAudioLevel })
@@ -746,7 +806,7 @@ struct NativeDesktopSettingsView: View {
             NativeDesktopTranscriptionSettings(store: .shared, models: attention?.localModels)
         case 6:
             if let attention {
-                NativeDesktopIntelligenceSettings(store: attention.store, attention: attention, area: assistantArea)
+                NativeDesktopIntelligenceSettings(store: attention.store, attention: attention, area: assistantArea, directNavigation: true)
             }
         case 7:
             if let mcpService {

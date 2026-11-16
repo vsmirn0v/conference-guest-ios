@@ -8,6 +8,7 @@ struct LocalModelStatusIndicator: View {
     var onOpenTranscription: (() -> Void)?
     /// Opens Settings → Assistant → Voice. Nil in Settings itself.
     var onOpenVoice: (() -> Void)?
+    var settingsID: String? = nil
     @State private var showingPopover = false
 
     private var readinessColor: Color {
@@ -25,6 +26,24 @@ struct LocalModelStatusIndicator: View {
     }
 
     var body: some View {
+        Group {
+            if let settingsID {
+                NativeSettingsButton(title: models.overallSummary, id: settingsID,
+                                     accessibilityID: "local-models.indicator") { showingPopover = true }
+            } else {
+                toolbarButton
+            }
+        }
+        .popover(isPresented: $showingPopover) {
+            LocalModelStatusPopover(models: models, onOpenTranscription: onOpenTranscription, onOpenVoice: onOpenVoice)
+                .frame(width: 380)
+        }
+        .accessibilityIdentifier("local-models.indicator")
+        .accessibilityLabel(models.accessibilitySummary)
+        .help(L("On-device speech and voice models: readiness and memory"))
+    }
+
+    private var toolbarButton: some View {
         Button { showingPopover = true } label: {
             HStack(spacing: 5) {
                 Image(systemName: "laptopcomputer")
@@ -40,13 +59,6 @@ struct LocalModelStatusIndicator: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showingPopover) {
-            LocalModelStatusPopover(models: models, onOpenTranscription: onOpenTranscription, onOpenVoice: onOpenVoice)
-                .frame(width: 380)
-        }
-        .accessibilityIdentifier("local-models.indicator")
-        .accessibilityLabel(models.accessibilitySummary)
-        .help(L("On-device speech and voice models: readiness and memory"))
     }
 }
 

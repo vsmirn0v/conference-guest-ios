@@ -12,6 +12,14 @@ import XCTest
 }
 
 @MainActor final class CaptureStartupTests: XCTestCase {
+    func testPrivateCameraPermissionErrorOffersActionableGuidance() {
+        XCTAssertEqual(NativeDesktopDeviceModel.cameraPreviewErrorDescription(GuestCameraError.permissionDenied),
+                       L("Allow camera access in Settings to preview your video."))
+        let unrelated = NSError(domain: "CameraFixture", code: 3,
+                                userInfo: [NSLocalizedDescriptionKey: "Fixture camera failure"])
+        XCTAssertEqual(NativeDesktopDeviceModel.cameraPreviewErrorDescription(unrelated), "Fixture camera failure")
+    }
+
     func testCanceledPrivateCreationCannotReleaseReadinessAfterUnprovenShutdown() async throws {
         for stopSucceeds in [false, true] {
             let audio = CanceledPrivateAudioFixture(); audio.stopSucceeds = stopSucceeds

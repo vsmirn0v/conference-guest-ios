@@ -21,16 +21,19 @@ extension AttentionMode {
 }
 
 extension AttentionSituation {
-    var title: String {
-        switch self { case .onScreen: L("On screen"); case .background: L("In the background"); case .silenced: L("Silenced") }
+    var titleKey: String {
+        switch self { case .onScreen: "On screen"; case .background: "In the background"; case .silenced: "Silenced" }
     }
-    var detail: String {
+    var title: String { L(titleKey) }
+    var settingsSearchID: String { "attention-mode-\(rawValue)" }
+    var detailKey: String {
         switch self {
-        case .onScreen: L("You are looking at it")
-        case .background: L("Sound on, another meeting or app in front")
-        case .silenced: L("Sound off; you rely on the assistant to hear it")
+        case .onScreen: "You are looking at it"
+        case .background: "Sound on, another meeting or app in front"
+        case .silenced: "Sound off; you rely on the assistant to hear it"
         }
     }
+    var detail: String { L(detailKey) }
 }
 
 /// A meeting's attention mode as a small tinted button; click to change it.
@@ -370,24 +373,16 @@ struct AttentionSituationDefaults: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    @ViewBuilder private func segmentedPicker(_ situation: AttentionSituation) -> some View {
-        Picker(situation.title, selection: modeBinding(situation)) {
-            ForEach(AttentionMode.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .fixedSize(horizontal: true, vertical: false)
-        .accessibilityIdentifier("attention.mode.\(situation.rawValue)")
+    private func segmentedPicker(_ situation: AttentionSituation) -> some View {
+        NativeSettingsSegmented(title: situation.title, selection: modeBinding(situation), choices: AttentionMode.allCases,
+                                titleForChoice: { $0.title }, id: "settings.\(situation.settingsSearchID)",
+                                accessibilityID: "attention.mode.\(situation.rawValue)")
     }
 
-    @ViewBuilder private func menuPicker(_ situation: AttentionSituation) -> some View {
-        Picker(situation.title, selection: modeBinding(situation)) {
-            ForEach(AttentionMode.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        .labelsHidden()
-        .pickerStyle(.menu)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityIdentifier("attention.mode.\(situation.rawValue)")
+    private func menuPicker(_ situation: AttentionSituation) -> some View {
+        NativeSettingsPopup(title: situation.title, selection: modeBinding(situation), choices: AttentionMode.allCases,
+                            titleForChoice: { $0.title }, id: "settings.\(situation.settingsSearchID)",
+                            accessibilityID: "attention.mode.\(situation.rawValue)", showsLabel: false)
     }
 
     private func modeBinding(_ situation: AttentionSituation) -> Binding<AttentionMode> {

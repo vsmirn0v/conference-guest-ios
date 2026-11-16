@@ -167,6 +167,13 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
         if !clean { error = L("Microphone check could not stop. Quit and reopen the app before joining.") }
         return clean && !cleanupFailed
     }
+    static func cameraPreviewErrorDescription(_ error: Error) -> String {
+        if let cameraError = error as? GuestCameraError, case .permissionDenied = cameraError {
+            return L("Allow camera access in Settings to preview your video.")
+        }
+        return error.localizedDescription
+    }
+
     func startPreview() {
         guard !previewing, !cleanupFailed else { return }
         previewing = true; error = nil; let token = UUID(); generation = token
@@ -211,7 +218,7 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
                 previewTrack = factory.videoTrack(with: source, trackId: "private-camera-preview")
             } catch {
                 guard generation == token else { return }
-                self.error = error.localizedDescription; await stop()
+                self.error = Self.cameraPreviewErrorDescription(error); await stop()
             }
         }
     }
@@ -248,83 +255,175 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
 
 struct NativeDesktopDeviceSettings: View {
     var liveTrack: LKRTCVideoTrack?
+    var settingsPage = false
     var liveAudioAvailable = false
     var startLiveAudioCheck: (() async throws -> Void)?
     var stopLiveAudioCheck: (() async throws -> Void)?
     var liveAudioLevel: (() -> Float?)?
     @StateObject private var model = NativeDesktopDeviceModel()
+    @Environment(\.nativeSettingRevealID) private var revealID
+    @State private var audioAdvancedExpanded = false
+    @State private var cameraAdvancedExpanded = false
     @AppStorage("nativeDesktop.shareCameraReactions") private var shareCameraReactions = true
     @AppStorage(NativeDesktopJoinReadinessPolicy.microphoneKey) private var microphoneReadiness = ""
     @AppStorage(NativeDesktopJoinReadinessPolicy.cameraKey) private var cameraReadiness = ""
     @AppStorage(GuestAudioProfile.preferenceKey) private var profile = GuestAudioProfile.speech.rawValue
+    @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
+    @AppStorage(NativeDesktopHeadsetMute.Platform.enabledKey) private var headsetMute = false
+    @AppStorage(NativeDesktopHeadsetMute.Platform.disabledReasonKey) private var headsetMuteDisabledReason = ""
+    private var cameraIsLive: Bool { liveTrack != nil || model.borrowedLiveTrack != nil }
+
     var body: some View {
         Form {
             Section(L("Audio devices")) {
-                Picker(L("Microphone"), selection: Binding(get: { model.audioSnapshot.inputID }, set: { model.selectAudio($0, direction: .input) })) {
-                    if model.audioSnapshot.inputID == 0 { Text(L("System default")).tag(UInt32(0)) }
-                    ForEach(model.audioSnapshot.devices(for: .input), id: \.id) { Text($0.name).tag($0.id) }
-                }
-                Picker(L("Output"), selection: Binding(get: { model.audioSnapshot.outputID }, set: { model.selectAudio($0, direction: .output) })) {
-                    if model.audioSnapshot.outputID == 0 { Text(L("System default")).tag(UInt32(0)) }
-                    ForEach(model.audioSnapshot.devices(for: .output), id: \.id) { Text($0.name).tag($0.id) }
-                }
+                audioDevicePicker(L("Microphone"), direction: .input, id: "settings.microphone")
+                audioDevicePicker(L("Output"), direction: .output, id: "settings.output")
                 Text(L("Device choices follow the Mac’s system audio routes.")).font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Button(model.checkingAudio ? L("Stop microphone check") : L("Check microphone privately")) {
-                        if model.checkingAudio { Task { await model.stopAudioCheck() } }
-                        else { model.startAudioCheck(live: liveAudioAvailable, start: startLiveAudioCheck, stop: stopLiveAudioCheck, level: liveAudioLevel) }
-                    }
-                    Spacer(); Label(L("Only you"), systemImage: "lock").foregroundStyle(.secondary)
+                privateCheckButton(model.checkingAudio ? L("Stop microphone check") : L("Check microphone privately"),
+                                   id: "settings.microphone-test") {
+                    if model.checkingAudio { Task { await model.stopAudioCheck() } }
+                    else { model.startAudioCheck(live: liveAudioAvailable, start: startLiveAudioCheck, stop: stopLiveAudioCheck, level: liveAudioLevel) }
                 }
                 if model.checkingAudio {
                     ProgressView(value: Double(model.audioLevel), total: 1).accessibilityLabel(L("Microphone level"))
                     Text(L("Checking uses the meeting’s microphone when connected. Your mute setting stays unchanged. No recording is saved.")).font(.caption).foregroundStyle(.secondary)
                 }
-                DisclosureGroup(L("Advanced audio settings")) {
-                Picker(L("Audio profile"), selection: $profile) {
-                    Text(L("Speech")).tag(GuestAudioProfile.speech.rawValue)
-                    Text(L("Music")).tag(GuestAudioProfile.music.rawValue)
-                }
+                DisclosureGroup(L("Advanced audio settings"), isExpanded: $audioAdvancedExpanded) {
+                settingsPicker(L("Audio profile"), selection: $profile,
+                               choices: [GuestAudioProfile.speech.rawValue, GuestAudioProfile.music.rawValue],
+                               titleForChoice: { $0 == GuestAudioProfile.speech.rawValue ? L("Speech") : L("Music") },
+                               id: "settings.audio-profile")
                 Text(L("Speech uses echo cancellation, noise suppression and automatic gain. Music keeps software echo cancellation and removes noise suppression and automatic gain; room noise and level changes are more audible. Applies to the next meeting.")).font(.caption).foregroundStyle(.secondary)
-                readinessPicker(L("Microphone readiness"), selection: Binding(
+                settingsPicker(L("Microphone readiness"), selection: Binding(
                     get: { NativeDesktopJoinReadinessPolicy.current().microphone },
-                    set: { microphoneReadiness = $0.rawValue }))
+                    set: { microphoneReadiness = $0.rawValue }),
+                               choices: NativeDesktopMediaReadinessMode.allCases, titleForChoice: { $0.title },
+                               id: "settings.mic-readiness", accessibilityID: "settings.microphoneReadiness.control")
                 Text(L("Prepares the muted microphone while the app is active with a visible window, so native Guest meetings can reuse it for faster unmuting and headset controls. Muted audio is never sent. Uses extra energy. Bluetooth headsets may switch to call audio quality. Preparation stops shortly after the app becomes inactive. Power changes do not interrupt an active meeting.")).font(.caption).foregroundStyle(.secondary)
                 Text(L("Low Power Mode prevents automatic microphone and camera preparation. Preparation uses existing permission. Defaults apply to native Guest meetings; explicit microphone choices also apply to supported headset controls in other meetings.")).font(.caption).foregroundStyle(.secondary)
                 }
             }
             Section(L("Camera")) {
-                Picker(L("Camera"), selection: Binding(get: { model.cameraID }, set: { model.selectCamera($0) })) {
-                    Text(L("Automatic")).tag("")
-                    ForEach(model.cameras, id: \.uniqueID) { Text($0.localizedName).tag($0.uniqueID) }
-                }
+                settingsPicker(L("Camera"), selection: Binding(get: { model.cameraID }, set: { model.selectCamera($0) }),
+                               choices: [""] + model.cameras.map(\.uniqueID),
+                               titleForChoice: { id in
+                                   id.isEmpty ? L("Automatic") : model.cameras.first { $0.uniqueID == id }?.localizedName ?? id
+                               }, id: "settings.camera", fallbackFor: cameraIsLive ? ["settings.camera-test"] : [])
                 if let track = liveTrack ?? model.borrowedLiveTrack ?? model.previewTrack {
                     NativeDesktopVideoView(track: track, mirrored: true).aspectRatio(16/9, contentMode: .fit).frame(maxHeight: 250).clipShape(RoundedRectangle(cornerRadius: 12))
+                } else if settingsPage {
+                    VStack(spacing: 8) {
+                        if model.previewing { ProgressView() }
+                        else { Image(systemName: "video.slash").font(.title2) }
+                        Text(model.previewing ? L("Preparing…") : L("Camera is off"))
+                    }.foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                 }
-                if liveTrack == nil && model.borrowedLiveTrack == nil { HStack {
-                    Button(model.previewing ? L("Stop private preview") : L("Check camera privately")) {
+                if !cameraIsLive {
+                    privateCheckButton(model.previewing ? L("Stop private preview") : L("Check camera privately"),
+                                       id: "settings.camera-test") {
                         if model.previewing { Task { await model.stop() } } else { model.startPreview() }
                     }
-                    Spacer(); Label(L("Only you"), systemImage: "lock").foregroundStyle(.secondary)
-                } }
-                Text(L("This preview is never sent to a meeting. System camera effects use the camera’s native orientation.")).font(.caption).foregroundStyle(.secondary)
-                DisclosureGroup(L("Advanced camera settings")) {
-                Toggle(L("Share camera reactions"), isOn: $shareCameraReactions)
+                }
+                Text(cameraIsLive
+                     ? L("This is your live meeting camera.")
+                     : L("This preview is never sent to a meeting. System camera effects use the camera’s native orientation."))
+                    .font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup(L("Advanced camera settings"), isExpanded: $cameraAdvancedExpanded) {
+                if settingsPage {
+                    NativeSettingsSwitch(title: L("Share camera reactions"), isOn: $shareCameraReactions, id: "settings.camera-reactions")
+                } else {
+                    Toggle(L("Share camera reactions"), isOn: $shareCameraReactions)
+                        .nativeSettingAnchor("settings.camera-reactions", nativeControlFocus: true)
+                }
                 Text(L("System heart, thumbs and celebration effects also send matching meeting reactions when your camera is shared.")).font(.caption).foregroundStyle(.secondary)
-                readinessPicker(L("Camera readiness"), selection: Binding(
+                settingsPicker(L("Camera readiness"), selection: Binding(
                     get: { NativeDesktopJoinReadinessPolicy.current().camera },
-                    set: { cameraReadiness = $0.rawValue }))
+                    set: { cameraReadiness = $0.rawValue }),
+                               choices: NativeDesktopMediaReadinessMode.allCases, titleForChoice: { $0.title },
+                               id: "settings.camera-readiness")
                 Text(L("Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.")).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            if settingsPage {
+                Section(L("Meetings")) {
+                    NativeSettingsSwitch(title: L("Keep the microphone ready in every meeting (experimental)"),
+                                         isOn: $keepMicrophoneWarm, id: "settings.mic-warm")
+                    Text(L("Moving your microphone between meetings skips restarting the device. Meetings you leave the microphone in stay muted, but macOS keeps showing the microphone indicator while you are in any meeting."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    NativeSettingsSwitch(title: L("Mute with AirPods and headset buttons"), isOn: Binding(
+                        get: { headsetMute }, set: { on in
+                            headsetMute = on
+                            if on { headsetMuteDisabledReason = "" }
+                        }), id: "settings.headset")
+                    Text(L("Pressing the stem or the headset button mutes or unmutes your microphone in the meeting that holds it. On some macOS versions turning this on makes the system audio service stop responding when a meeting starts; the app then turns it off again. Applies to meetings joined after turning it on."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !headsetMute && !headsetMuteDisabledReason.isEmpty {
+                        Text(L("Turned off after the system audio service stopped responding: %@.", headsetMuteDisabledReason))
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
             if let error = model.error { Text(error).foregroundStyle(.red) }
-        }.onDisappear { Task { await model.stop() } }
+        }.nativeSettingsReveal().modifier(NativeDesktopDeviceFormStyle(settingsPage: settingsPage))
+            .onDisappear { Task { await model.stop() } }
             .onChange(of: liveTrack != nil) { if $0 { Task { await model.stopCamera() } } }
+            .onAppear { expandForReveal(revealID) }
+            .onChange(of: revealID) { expandForReveal($0) }
     }
-    private func readinessPicker(_ title: String, selection: Binding<NativeDesktopMediaReadinessMode>) -> some View {
-        Picker(title, selection: selection) {
-            ForEach(NativeDesktopMediaReadinessMode.allCases, id: \.rawValue) { Text($0.title).tag($0) }
+    private func expandForReveal(_ id: String?) {
+        if ["settings.audio-profile", "settings.mic-readiness"].contains(id ?? "") { audioAdvancedExpanded = true }
+        if ["settings.camera-reactions", "settings.camera-readiness"].contains(id ?? "") { cameraAdvancedExpanded = true }
+    }
+
+    private func audioDevicePicker(_ title: String, direction: MacAudioDirection, id: String) -> some View {
+        let devices = model.audioSnapshot.devices(for: direction)
+        let selection = Binding(
+            get: { model.audioSnapshot.selectedID(for: direction) },
+            set: { model.selectAudio($0, direction: direction) }
+        )
+        let choices = (selection.wrappedValue == 0 ? [UInt32(0)] : []) + devices.map(\.id)
+        return settingsPicker(title, selection: selection, choices: choices, titleForChoice: { id in
+            id == 0 ? L("System default") : devices.first { $0.id == id }?.name ?? String(id)
+        }, id: id)
+    }
+
+    @ViewBuilder private func settingsPicker<Value: Hashable>(_ title: String, selection: Binding<Value>,
+                                                               choices: [Value], titleForChoice: @escaping (Value) -> String,
+                                                               id: String, fallbackFor: Set<String> = [],
+                                                               accessibilityID: String? = nil) -> some View {
+        if settingsPage {
+            NativeSettingsPopup(title: title, selection: selection, choices: choices, titleForChoice: titleForChoice,
+                                id: id, fallbackFor: fallbackFor, accessibilityID: accessibilityID)
+        } else {
+            Picker(title, selection: selection) {
+                ForEach(choices, id: \.self) { Text(titleForChoice($0)).tag($0) }
+            }
         }
+    }
+
+    @ViewBuilder private func privateCheckButton(_ title: String, id: String, action: @escaping () -> Void) -> some View {
+        if settingsPage {
+            VStack(alignment: .leading, spacing: 6) {
+                NativeSettingsButton(title: title, id: id, action: action)
+                Label(L("Only you"), systemImage: "lock").font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            HStack {
+                Button(title, action: action)
+                Spacer()
+                Label(L("Only you"), systemImage: "lock").foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct NativeDesktopDeviceFormStyle: ViewModifier {
+    let settingsPage: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if settingsPage { content.formStyle(.grouped) }
+        else { content }
     }
 }
 

@@ -77,8 +77,10 @@ import XCTest
         XCTAssertTrue(predicate())
     }
 
-    private func present<V: View>(_ view: V, size: NSSize, name: String, minSize: NSSize? = nil) async -> Rendered {
+    private func present<V: View>(_ view: V, size: NSSize, name: String, minSize: NSSize? = nil,
+                                  sizeToContent: Bool = true) async -> Rendered {
         let hosting = NSHostingView(rootView: AnyView(view))
+        if !sizeToContent { hosting.sizingOptions = [] }
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "Assistant acceptance \(UUID().uuidString)"
@@ -91,6 +93,19 @@ import XCTest
         await settle()
         addTeardownBlock { window.close() }
         return Rendered(window: window, hosting: hosting, name: name)
+    }
+
+    private func presentVoiceSettings(clone: VoiceCloneStore, listen: ListenModelStore,
+                                      size: NSSize, name: String) async -> Rendered {
+        // Mount the settings rows in a fixed viewport, like the Settings page.
+        let view = VStack(alignment: .leading, spacing: 12) {
+            VoiceCloneSettingsView(clone: clone, listen: listen)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        let rendered = await present(view, size: size, name: name, sizeToContent: false)
+        XCTAssertLessThanOrEqual(rendered.hosting.bounds.height, size.height,
+                                 "The voice settings window must stay within the requested viewport")
+        return rendered
     }
 
     private func views(_ root: NSView) -> [NSView] {
@@ -197,8 +212,8 @@ import XCTest
             let worker = AssistantVoiceUIWorker()
             let engine = ClonedVoiceEngine(connect: { worker })
             let clone = VoiceCloneStore(model: model, listen: listen, folder: root, engine: engine, osBuild: "fixture")
-            let rendered = await present(VoiceCloneSettingsView(clone: clone, listen: listen),
-                                         size: NSSize(width: 1000, height: 600), name: "voice-recovery")
+            let rendered = await presentVoiceSettings(clone: clone, listen: listen,
+                                                      size: NSSize(width: 1000, height: 600), name: "voice-recovery")
             XCTAssertTrue(containsText(rendered, "Причина неизвестна"))
             XCTAssertNotNil(button(rendered, "Восстановить голосовую модель"))
             XCTAssertFalse(containsText(rendered, "Foundation._GenericObjCError"))
@@ -223,8 +238,8 @@ import XCTest
             let fixture = try voiceRecoveryFixture(failure: .init(kind: .preparationSpace)) {
                 .init(availableBytes: available, requiredBytes: required, location: .model)
             }
-            let rendered = await present(VoiceCloneSettingsView(clone: fixture.clone, listen: fixture.listen),
-                                         size: NSSize(width: 1000, height: 900), name: "voice-preparation-space")
+            let rendered = await presentVoiceSettings(clone: fixture.clone, listen: fixture.listen,
+                                                      size: NSSize(width: 1000, height: 900), name: "voice-preparation-space")
             XCTAssertTrue(containsText(rendered, "Недостаточно места на диске для подготовки вашего голоса"))
             XCTAssertTrue(containsText(rendered, L("Available for preparation: %@.", ByteCountFormatter.string(fromByteCount: initialAvailable, countStyle: .file))))
             XCTAssertTrue(containsText(rendered, L("Estimated free space needed for preparation: %@.", ByteCountFormatter.string(fromByteCount: required, countStyle: .file))))
@@ -263,8 +278,8 @@ import XCTest
             let fixture = try voiceRecoveryFixture(failure: .init(kind: .compilation, technicalDetails: details)) {
                 .init(availableBytes: 20 * 1_024 * 1_024 * 1_024, requiredBytes: 12 * 1_024 * 1_024 * 1_024)
             }
-            let rendered = await present(VoiceCloneSettingsView(clone: fixture.clone, listen: fixture.listen),
-                                         size: NSSize(width: 1000, height: 900), name: "voice-compilation-failure")
+            let rendered = await presentVoiceSettings(clone: fixture.clone, listen: fixture.listen,
+                                                      size: NSSize(width: 1000, height: 900), name: "voice-compilation-failure")
             XCTAssertTrue(containsText(rendered, "Не удалось скомпилировать модель для Neural Engine"))
             XCTAssertFalse(containsText(rendered, L("Not enough disk space to prepare the voice model.")))
             XCTAssertFalse(containsText(rendered, L("Not enough working space to prepare your voice.")))

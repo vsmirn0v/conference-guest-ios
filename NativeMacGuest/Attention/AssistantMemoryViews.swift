@@ -20,12 +20,12 @@ struct AssistantMemorySettings: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(L("Memory")).font(.title2.bold())
+                    Text(L("Memory")).font(.title2.bold()).nativeSettingAnchor("settings.memory")
                     Text(L("Visible, editable facts on this Mac. Only the 3–5 most relevant excerpts are included in a model request."))
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button(L("Add memory")) { adding = true }
+                NativeSettingsButton(title: L("Add memory"), id: "settings.memory-add") { adding = true }
             }
             if let warning = data.loadWarning {
                 HStack(alignment: .firstTextBaseline) {
@@ -81,15 +81,35 @@ struct AssistantMemorySettings: View {
 
             GroupBox(L("Retention and privacy")) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Picker(L("Keep local memory for"), selection: $data.retentionDays) {
-                        Text(L("30 days")).tag(30); Text(L("90 days")).tag(90); Text(L("1 year")).tag(365)
-                    }.frame(maxWidth: 360)
+                    NativeSettingsPopup(
+                        title: L("Keep local memory for"),
+                        selection: $data.retentionDays,
+                        choices: [30, 90, 365],
+                        titleForChoice: { days in
+                            switch days {
+                            case 30: L("30 days")
+                            case 90: L("90 days")
+                            case 365: L("1 year")
+                            default: String(days)
+                            }
+                        },
+                        id: "settings.memory-retention"
+                    )
+                    .frame(maxWidth: 360)
                     Text(L("Deleting memory also removes outcomes and pending suggestions on this Mac. Decision journals and meeting instructions are managed separately."))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {
-                        Button(L("Export memory…")) { export() }
-                        Button(L("Delete all assistant memory…"), role: .destructive) { confirmingDelete = true }
+                        NativeSettingsButton(title: L("Export memory…"), id: "settings.memory-export") {
+                            export()
+                        }
+                        NativeSettingsButton(
+                            title: L("Delete all assistant memory…"),
+                            role: .destructive,
+                            id: "settings.memory-delete"
+                        ) {
+                            confirmingDelete = true
+                        }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }

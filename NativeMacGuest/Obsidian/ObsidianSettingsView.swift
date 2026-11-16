@@ -8,22 +8,36 @@ struct ObsidianSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Toggle(L("Export meetings to Obsidian"), isOn: Binding(
-                    get: { coordinator.isEnabled }, set: coordinator.setEnabled))
-                Toggle(L("Save to vault after the meeting"), isOn: Binding(
-                    get: { coordinator.saveAfterMeeting }, set: coordinator.setSaveAfterMeeting))
+                NativeSettingsSwitch(
+                    title: L("Export meetings to Obsidian"),
+                    isOn: Binding(get: { coordinator.isEnabled }, set: coordinator.setEnabled),
+                    id: "settings.obsidian"
+                )
+                NativeSettingsSwitch(
+                    title: L("Save to vault after the meeting"),
+                    isOn: Binding(get: { coordinator.saveAfterMeeting }, set: coordinator.setSaveAfterMeeting),
+                    id: "settings.obsidian-after"
+                )
                 Text(L("The first completed outcome includes notes saved before it becomes available."))
                     .font(.caption).foregroundStyle(.secondary)
-                Toggle(L("Automatically export updates to Obsidian"), isOn: Binding(
-                    get: { coordinator.syncChanges }, set: coordinator.setSyncChanges))
+                NativeSettingsSwitch(
+                    title: L("Automatically export updates to Obsidian"),
+                    isOn: Binding(get: { coordinator.syncChanges }, set: coordinator.setSyncChanges),
+                    id: "settings.obsidian-updates"
+                )
                 Text(L("Changes to outcomes, notes and tasks are sent from Rock’N’Roll to Obsidian."))
                     .font(.caption).foregroundStyle(.secondary)
 
                 let destination = coordinator.destination
                 LabeledContent(L("Mode"), value: (destination?.mode ?? .separateFiles).title)
-                Button(L("Format and placement…")) { configureLayout = true }
+                NativeSettingsButton(title: L("Format and placement…"), id: "settings.obsidian-layout") {
+                    configureLayout = true
+                }
                 LabeledContent(L("Vault"), value: coordinator.vaultName ?? L("Choose a vault"))
-                Button(coordinator.vaultName == nil ? L("Choose Vault…") : L("Choose or reauthorize vault…")) {
+                NativeSettingsButton(
+                    title: coordinator.vaultName == nil ? L("Choose Vault…") : L("Choose or reauthorize vault…"),
+                    id: "settings.obsidian-vault"
+                ) {
                     coordinator.chooseVault()
                 }
                 if coordinator.waitingForVault && (coordinator.isEnabled || coordinator.pendingCount > 0) {
@@ -60,7 +74,7 @@ struct ObsidianSettingsView: View {
                     .font(.caption)
             }
         }
-        .formStyle(.grouped)
+        .formStyle(.grouped).nativeSettingsReveal()
         .sheet(isPresented: $configureLayout) { ObsidianLayoutSettingsView(coordinator: coordinator) }
         .sheet(isPresented: $confirmHeld) { ObsidianHeldExportsView(coordinator: coordinator) }
         .onAppear { coordinator.load(); coordinator.startStatusLoop() }

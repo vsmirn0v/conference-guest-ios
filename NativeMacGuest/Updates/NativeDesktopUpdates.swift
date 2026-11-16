@@ -264,22 +264,53 @@ struct NativeDesktopUpdatesView: View {
     @ObservedObject var updates: NativeDesktopUpdates
     var body: some View {
         Form {
-            Section("Software updates") {
+            Section(L("Software updates")) {
                 if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
                    let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String {
-                    LabeledContent("Installed version", value: "\(version) (\(build))")
+                    LabeledContent(L("Installed version"), value: "\(version) (\(build))").nativeSettingAnchor("settings.version")
                 }
-                Toggle("Automatically check for updates", isOn: Binding(get: { updates.updater.automaticallyChecksForUpdates }, set: { updates.updater.automaticallyChecksForUpdates = $0; updates.objectWillChange.send() }))
-                Toggle("Automatically download updates", isOn: Binding(get: { updates.updater.automaticallyDownloadsUpdates }, set: { updates.updater.automaticallyDownloadsUpdates = $0; updates.objectWillChange.send() }))
-                Toggle("Beta updates", isOn: Binding(get: { updates.beta }, set: { updates.setBeta($0) })).disabled(updates.channelLocked)
-                Text("Beta updates include early changes. Turning this off waits for a newer stable release; it does not downgrade your app.").font(.caption).foregroundStyle(.secondary)
-                Button("Check for Updates…") { updates.check() }.disabled(!updates.updater.canCheckForUpdates)
+                NativeSettingsButton(title: L("Check for Updates…"), id: "settings.check-updates") {
+                    updates.check()
+                }
+                .disabled(!updates.updater.canCheckForUpdates)
                 Text(updates.status).font(.caption).foregroundStyle(.secondary)
                 if let newer = updates.newerThanDownloaded {
                     Link(L("Download build %ld", newer.build), destination: newer.url)
                 }
             }
-        }
+            Section(L("Automatic updates")) {
+                NativeSettingsSwitch(
+                    title: L("Automatically check for updates"),
+                    isOn: Binding(get: { updates.updater.automaticallyChecksForUpdates }, set: {
+                        updates.updater.automaticallyChecksForUpdates = $0
+                        updates.objectWillChange.send()
+                    }),
+                    id: "settings.update-check"
+                )
+                NativeSettingsSwitch(
+                    title: L("Automatically download updates"),
+                    isOn: Binding(get: { updates.updater.automaticallyDownloadsUpdates }, set: {
+                        updates.updater.automaticallyDownloadsUpdates = $0
+                        updates.objectWillChange.send()
+                    }),
+                    id: "settings.update-download"
+                )
+            }
+            Section(L("Release channel")) {
+                NativeSettingsPopup(
+                    title: L("Release channel"),
+                    selection: Binding(get: { updates.beta }, set: { updates.setBeta($0) }),
+                    choices: [false, true],
+                    titleForChoice: { $0 ? L("Beta") : L("Stable") },
+                    id: "settings.update-channel"
+                )
+                .disabled(updates.channelLocked)
+                if updates.channelLocked {
+                    Text(L("The release channel cannot be changed while an update is in progress.")).font(.caption).foregroundStyle(.secondary)
+                }
+                Text(L("Beta updates include early changes. Turning this off waits for a newer stable release; it does not downgrade your app.")).font(.caption).foregroundStyle(.secondary)
+            }
+        }.nativeSettingsReveal().formStyle(.grouped)
     }
 }
 #endif
