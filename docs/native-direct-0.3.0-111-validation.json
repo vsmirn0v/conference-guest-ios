@@ -1,0 +1,126 @@
+{
+  "version": "0.3.0",
+  "build": "111",
+  "channel": "beta",
+  "sourceCommit": "8f2c3775c515e311a2cfbf5910149db1d64d2a9d",
+  "sourceState": "Built from an isolated git-archive snapshot of the pushed commit. Before building, 1,785 archived files and symlinks and executable modes matched the commit.",
+  "sourceManifest": {
+    "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-111/source/.build/release-111/build-evidence.json",
+    "sha256": "34e66741d6abb8e461e0aec29cdf2f59540fb20702372cd4d2c8aa6f0fe17ece",
+    "recordedSources": 339,
+    "trackedSourcesMatchingCommit": 335,
+    "otherSources": "Four generated configuration or pinned dependency evidence files matched the isolated build inputs."
+  },
+  "archive": {
+    "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-111/source/.build/release-111/RockNRollNativeGuest-0.3.0-111.xcarchive",
+    "distribution": "direct",
+    "configuration": "Release",
+    "appGroupCheckPassed": true,
+    "embeddedVoiceWorkerCheckPassed": true
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-111/source/.build/release-111/RockNRollNativeGuest-0.3.0-111.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-111/export/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "111",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "111",
+    "file": "RockNRoll-0.3.0-111-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-111-arm64.dmg",
+    "sha256": "5d5db472a47e5a1fa8905d5b7fdc9651cb70a07b45f91b89de888e4aa1a0fa2f",
+    "length": 37848844,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-111/package/RockNRoll-0.3.0-111-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "evidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-111/publication.json",
+    "httpsVerified": true,
+    "state": {
+      "appcastSHA256": "a6cb4b2a8c26b0507ab1f822b44b0efdb6eef16109aab503eb60d0470ed9aa3f",
+      "inventorySHA256": "ca6a7b66303c348ffd0e6e84cf18277db6d6be084cb95056a7683805e4b9341c",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-111-arm64.dmg"
+    }
+  },
+  "independentHTTPSReadback": {
+    "evidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-111/readback/verification.json",
+    "checks": {
+      "immutableMatchesPackage": true,
+      "betaMatchesImmutable": true,
+      "stableMatchesPrevious": true,
+      "stableInventoryUnchanged": true,
+      "betaInventoryCorrect": true,
+      "signedAppcastMatchesPrepared": true,
+      "inventoryMatchesPrepared": true,
+      "appcastBetaEntry": true
+    },
+    "hashes": {
+      "immutable.dmg": "5d5db472a47e5a1fa8905d5b7fdc9651cb70a07b45f91b89de888e4aa1a0fa2f",
+      "beta.dmg": "5d5db472a47e5a1fa8905d5b7fdc9651cb70a07b45f91b89de888e4aa1a0fa2f",
+      "stable.dmg": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+      "appcast.xml": "a6cb4b2a8c26b0507ab1f822b44b0efdb6eef16109aab503eb60d0470ed9aa3f",
+      "latest.json": "ca6a7b66303c348ffd0e6e84cf18277db6d6be084cb95056a7683805e4b9341c"
+    },
+    "inventory": {
+      "schemaVersion": 1,
+      "stable": {
+        "version": "0.3.0",
+        "build": "53",
+        "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-53-arm64.dmg",
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009"
+      },
+      "beta": {
+        "version": "0.3.0",
+        "build": "111",
+        "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-111-arm64.dmg",
+        "sha256": "5d5db472a47e5a1fa8905d5b7fdc9651cb70a07b45f91b89de888e4aa1a0fa2f"
+      }
+    },
+    "publicAppcastSignatureVerified": true,
+    "downloadedEnclosureSignatureVerified": true
+  },
+  "validation": {
+    "settingsTests": {
+      "passed": 64,
+      "failed": 0,
+      "runtimeWarnings": 0,
+      "resultBundle": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-settings-redesign-validation/settings-regression-20261116.xcresult",
+      "auditoryVoiceOverReview": "Skipped at user request and not included in the suite."
+    },
+    "updateSafety": {
+      "passed": 16,
+      "failed": 0,
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-settings-redesign-validation/update-safety-20261116.log"
+    },
+    "distributionTooling": {
+      "passed": 27,
+      "failed": 0,
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-111/distribution-tests.log"
+    },
+    "camera": {
+      "granted": "Separate test identity observed authorization, first forwarded frame, and removal of preview surface after Stop. No media saved.",
+      "denied": "Separate test identity observed denial, no live surface, and actionable permission guidance.",
+      "grantedResult": "/Users/v.smirnov/docs/conference-guest-ios/.build/camera-permission-validation/granted.xcresult",
+      "deniedResult": "/Users/v.smirnov/docs/conference-guest-ios/.build/camera-permission-validation/denied-final.xcresult",
+      "geometry": "Six negative-geometry events symbolicated to AppKit titlebar window-sharing indicator; the initiating sharing process was not identified, and no product cause was proven.",
+      "geometryEvidence": "/Users/v.smirnov/docs/conference-guest-ios/docs/native-mac-camera-window-geometry-2026-11-16.md"
+    },
+    "limitations": [
+      "An installed Sparkle upgrade to build 111 was not tested.",
+      "Auditory VoiceOver review was skipped at user request.",
+      "The app inside the DMG is notarized and stapled; the outer DMG was not separately notarized."
+    ]
+  },
+  "recordedAt": "2026-11-16T16:04:31+00:00"
+}
