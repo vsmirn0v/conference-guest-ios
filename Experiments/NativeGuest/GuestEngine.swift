@@ -820,13 +820,28 @@ final class NativeGuestEngine {
                      videoTracks: video.map(\.track), unboundVideo: unboundVideo)
     }
 
+    private func needsTCPRelayVerification(_ peer: GuestPeer) -> Bool {
+        let demand = transportDemand(peer)
+        guard tcpRelayTargets.contains(peer.target), demand.expected else { return false }
+        guard peer.iceConnected, peer.transportConnected,
+              let (verifiedDemand, evidence) = tcpRelayEvidence[peer.target] else { return true }
+        let requiresVideo = demand.kinds.contains(.video)
+        return (requiresVideo && verifiedDemand != demand) || !evidence.allowsRecovery(requiresVideo: requiresVideo)
+    }
+
     private func observeTransport(_ peer: GuestPeer) -> Task<Void, Never> {
         Task { @MainActor [weak self, weak peer] in
             var previous: GuestICETransportSample?
             var priorDemand: TransportDemand?
             var stalledStreams: Set<String> = []
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                let fastVerify = self.map { engine in
+                    peer.map { p in
+                        engine.tcpRelayTargets.contains(p.target) &&
+                            (!engine.joined || !engine.rtcJoined || engine.needsTCPRelayVerification(p))
+                    } ?? false
+                } ?? false
+                do { try await Task.sleep(for: fastVerify ? .milliseconds(250) : .seconds(2)) } catch { return }
                 guard let self, let peer, owns(peer), failure == nil else { return }
                 guard peer.iceConnected, peer.transportConnected else {
                     previous = nil; priorDemand = nil; stalledStreams.removeAll()
@@ -887,13 +902,7 @@ final class NativeGuestEngine {
         while true {
             try checkActive()
             if let failure { throw failure }
-            let waiting = [subscriber, publisher].compactMap { $0 }.filter { peer in
-                let demand = transportDemand(peer)
-                guard tcpRelayTargets.contains(peer.target), demand.expected else { return false }
-                guard peer.iceConnected, peer.transportConnected, let (verifiedDemand, evidence) = tcpRelayEvidence[peer.target] else { return true }
-                let requiresVideo = demand.kinds.contains(.video)
-                return (requiresVideo && verifiedDemand != demand) || !evidence.allowsRecovery(requiresVideo: requiresVideo)
-            }
+            let waiting = [subscriber, publisher].compactMap { $0 }.filter { needsTCPRelayVerification($0) }
             if waiting.isEmpty { return }
             guard ProcessInfo.processInfo.systemUptime < deadline else {
                 for peer in waiting { _ = discardTCPRelay?(peer.target) }
@@ -1505,8 +1514,12 @@ final class NativeGuestEngine {
         remoteVideoMetadata.removeAll()
         remoteTracks.removeAll(); seenRemoteVideoTrackIDs.removeAll(); subscriptions.removeAll()
         remoteParticipantIdentities.removeAll(); connectedRemoteParticipants.removeAll(); remoteTrackIDs.removeAll()
-        subscriber?.close(); publisher?.close(); subscriber = nil; publisher = nil
-        await transport?.close(); transport = nil
+        // Drain subscriber teardown while publisher's send stream still holds input
+        // running, so StopPlayout does not trigger a throwaway playout-only engine rebuild.
+        await subscriber?.closeAndDrain(timeout: 1)
+        publisher?.close()
+        subscriber = nil; publisher = nil
+        await transport?.close(graceTimeout: sendLeave ? 2 : 0.15); transport = nil
         reader?.cancel(); reader = nil
         let audioStopped: Bool
         if let releaseSystemAudio {
@@ -1863,6 +1876,10 @@ extension NativeGuestEngine {
         serverMute["test-video-sid"] = true
         localMuteIntent[true] = false
         return peer
+    }
+    func startTransportObservationForTesting() {
+        peerTransportObservers.forEach { $0.cancel() }
+        peerTransportObservers = [subscriber, publisher].compactMap { $0 }.map { observeTransport($0) }
     }
 }
 #endif

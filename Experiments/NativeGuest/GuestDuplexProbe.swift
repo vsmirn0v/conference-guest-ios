@@ -273,8 +273,11 @@ enum GuestDuplexAcceptance {
         return Set(locals.compactMap { $0["target"] as? String }) == Set(["SUBSCRIBER", "PUBLISHER"]) &&
             locals.allSatisfy { candidate in
                 guard let target = (candidate["target"] as? String).flatMap(GuestPeerTarget.init(rawValue:)) else { return false }
-                return candidate["candidateType"] as? String == "relay" &&
-                    (policy.forTarget(target) == .tcpRelay ? ["tcp", "tls"] : ["udp"]).contains(candidate["relayProtocol"] as? String ?? "")
+                let type = candidate["candidateType"] as? String
+                let relayProtocol = (candidate["relayProtocol"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                let isRelay = type == "relay" || (type == "prflx" && relayProtocol != nil)
+                return isRelay &&
+                    (policy.forTarget(target) == .tcpRelay ? ["tcp", "tls"] : ["udp"]).contains(relayProtocol ?? "")
             }
     }
 

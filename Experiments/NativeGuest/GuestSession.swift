@@ -454,17 +454,24 @@ final class GuestSession {
                 if relayTrialAwaitingJoin, GuestRecoveryPolicy.isRecoverable(cause) { restoreUnstartedRelayTrial() }
                 probeLog("session-control-failure", ["causeType": String(describing: type(of: cause)),
                     "causeCode": (cause as NSError).code])
-                let delay = policy.nextDelay(after: cause, at: now(), pendingRelayTrial: hasPendingRelayTrial())
+                let failedAt = now()
+                let delay = policy.nextDelay(after: cause, at: failedAt, pendingRelayTrial: hasPendingRelayTrial())
                 let stopped = await retireCurrent(sendLeave: delay == nil)
                 guard generation == expected, !Task.isCancelled else { return }
                 guard stopped else { finish(GuestSessionError.cleanupFailed); return }
                 guard let delay else { finish(cause); return }
                 recoveryAttempts = policy.retries; state = .recovering
+                let rawElapsed = now() - failedAt
+                let elapsed = rawElapsed.isFinite && rawElapsed > 0 ? rawElapsed : 0
+                let delaySeconds = Double(delay) / 1_000_000_000
+                let remainingDelay = elapsed >= delaySeconds ? 0 : delay - UInt64(elapsed * 1_000_000_000)
                 probeLog("session-recovery", ["attempt": recoveryAttempts, "causeType": String(describing: type(of: cause))])
-                do { try await sleep(delay) }
-                catch {
-                    guard generation == expected, !Task.isCancelled else { return }
-                    finish(error); return
+                if remainingDelay > 0 {
+                    do { try await sleep(remainingDelay) }
+                    catch {
+                        guard generation == expected, !Task.isCancelled else { return }
+                        finish(error); return
+                    }
                 }
                 guard generation == expected, !Task.isCancelled else { return }
             }

@@ -284,17 +284,19 @@ public actor GuestTransport {
             (envelope["event"] as? String == "\(event)-response" || envelope["event"] as? String == "error")
     }
 
-    /// Send the WebSocket close frame, then allow the peer at most two seconds
-    /// to complete the handshake before canceling the underlying URLSession.
-    public func close() async {
+    /// Send the WebSocket close frame, then allow the peer at most `graceTimeout`
+    /// seconds to complete the handshake before canceling the underlying URLSession.
+    public func close(graceTimeout: TimeInterval = 2) async {
         if state == .closed { return }
         guard state == .open || state == .closing else { finish(error: nil); return }
+        let clamped = graceTimeout.isFinite ? min(max(graceTimeout, 0.01), 10) : 2
+        let closeNanoseconds = UInt64((clamped * 1_000_000_000).rounded())
         await withCheckedContinuation { continuation in
             closeWaiters.append(continuation)
             guard state != .closing else { return }
             state = .closing
             closeTimeout = Task { [weak self] in
-                do { try await Task.sleep(nanoseconds: 2_000_000_000) }
+                do { try await Task.sleep(nanoseconds: closeNanoseconds) }
                 catch { return }
                 await self?.finish(error: nil)
             }

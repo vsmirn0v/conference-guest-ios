@@ -59,6 +59,7 @@ private final class FakeEngine: GuestSessionEngine {
     var suppressed = false
     var resumedPublication: (Bool, Bool, Bool)?
     var leaves: [Bool] = []
+    var onLeave: (() -> Void)?
     func join(_ invitation: GuestInvitation, sessionID: String?) async throws {
         startupEvents.append("join")
         joins.append(sessionID)
@@ -84,7 +85,7 @@ private final class FakeEngine: GuestSessionEngine {
     }
     func suppressOutgoingMedia() { suppressed = true; audioMuted = true; videoMuted = true }
     func leave(sendLeave: Bool) async -> Bool {
-        leaves.append(sendLeave); await leaveGate?.wait(); return cleanupResult
+        leaves.append(sendLeave); onLeave?(); await leaveGate?.wait(); return cleanupResult
     }
     func interruptTransportForTesting() async { onFailure?(interruptError) }
 }
@@ -849,6 +850,34 @@ struct SessionTests {
         }
     }
 
+    @MainActor static func teardownElapsedReducesOrSkipsBackoff() async throws {
+        let first = FakeEngine(), second = FakeEngine(), third = FakeEngine()
+        second.joinError = GuestTransportError.networkFailure
+        let harness = Harness([first, second, third]), session = harness.session
+        first.onLeave = { harness.clock += 0.6 }
+        second.onLeave = { harness.clock += 0.25 }
+        try await connect(session)
+        first.onFailure?(GuestTransportError.networkFailure)
+        try await spin { session.connectionCount == 2 && session.state == .connected }
+        try expect(harness.made == 3 && session.recoveryAttempts == 2, "Recovered after two retries")
+        try expect(harness.delays == [750_000_000],
+                   "First 500ms backoff skipped after 600ms teardown; second 1000ms backoff reduced by 250ms teardown")
+        _ = await session.leave()
+    }
+
+    @MainActor static func nonLeaveTransportCloseBoundsGraceTimeout() async throws {
+        let transport = GuestTransport(url: URL(string: "wss://fixture.invalid/socket")!, roomID: "fixture")
+        await transport.openWithoutSocketForTesting()
+        let started = ProcessInfo.processInfo.systemUptime
+        await transport.close(graceTimeout: 0.12)
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        try expect(elapsed < 1.0, "Non-leave transport close respects bounded grace timeout")
+        do {
+            try await transport.notify("media-in")
+            throw SessionTestError.assertion("Closed transport accepted a send")
+        } catch GuestTransportError.closed {}
+    }
+
     @MainActor static func main() async {
         do {
             try policy()
@@ -884,7 +913,9 @@ struct SessionTests {
             try await preparedMediaButtonsKeepAudioAndPublication()
             try await preparationRecoveryPreservesExplicitActivation()
             try await mediaIntentDuringDeviceReconciliation()
-            print("GuestSession: 33 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
+            try await teardownElapsedReducesOrSkipsBackoff()
+            try await nonLeaveTransportCloseBoundsGraceTimeout()
+            print("GuestSession: 35 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
         } catch {
             print("GuestSession failed: \(error)")
             exit(1)

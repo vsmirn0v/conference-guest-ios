@@ -1,3 +1,4 @@
+import LiveKitWebRTC
 import XCTest
 @testable import RockNativeDesktop
 
@@ -135,6 +136,114 @@ final class AdaptiveICERecoveryTests: XCTestCase {
         XCTAssertTrue(try publisher(time: 12, sent: 10, feedback: feedback(localID: "other", time: 11)).mediaDelta(since: old).progressing.isEmpty)
         XCTAssertEqual(try publisher(time: 12, sent: 10, feedback: feedback(time: 11)).mediaDelta(since: old).progressing, [.audio])
         XCTAssertEqual(try publisher(time: 12, sent: 10, feedback: feedback(time: 11, lost: 0.98)).mediaDelta(since: old).stalledStreams, ["sender"])
+    }
+
+    func testPeerReflexiveRelayCandidatePreservesExplicitRelayProtocol() throws {
+        func localRow(type: String, proto: String, relayProtocol: String?) -> [String: Any] {
+            var local: [String: Any] = ["id": "local", "type": "local-candidate", "candidateType": type, "protocol": proto]
+            if let relayProtocol { local["relayProtocol"] = relayProtocol }
+            return local
+        }
+        func sampleFor(type: String, proto: String, relayProtocol: String?) throws -> GuestICETransportSample {
+            let rows: [[String: Any]] = [
+                ["id": "media", "type": "transport", "dtlsState": "connected", "selectedCandidatePairId": "selected",
+                 "sampleUptime": 10, "nativeTimestampUS": 10_000_000],
+                ["id": "selected", "type": "candidate-pair", "state": "succeeded", "localCandidateId": "local",
+                 "remoteCandidateId": "remote", "requestsSent": 3, "responsesReceived": 3],
+                localRow(type: type, proto: proto, relayProtocol: relayProtocol)
+            ]
+            return try XCTUnwrap(GuestICETransportSample(rows, target: .subscriber, demandedTracks: []))
+        }
+        XCTAssertEqual(try sampleFor(type: "prflx", proto: "udp", relayProtocol: "tcp").route, .tcp)
+        XCTAssertEqual(try sampleFor(type: "prflx", proto: "udp", relayProtocol: "tls").route, .tls)
+        XCTAssertEqual(try sampleFor(type: "prflx", proto: "udp", relayProtocol: "udp").route, .udp)
+        XCTAssertEqual(try sampleFor(type: "prflx", proto: "udp", relayProtocol: nil).route, .udp)
+        XCTAssertEqual(try sampleFor(type: "prflx", proto: "udp", relayProtocol: "").route, .udp)
+
+        let tcpPrflx = try sampleFor(type: "prflx", proto: "tcp", relayProtocol: nil)
+        XCTAssertEqual(tcpPrflx.route, .other)
+        XCTAssertFalse(tcpPrflx.isTCPRelay)
+
+        let hostWithRelayField = try sampleFor(type: "host", proto: "udp", relayProtocol: "tcp")
+        XCTAssertEqual(hostWithRelayField.route, .udp)
+        XCTAssertFalse(hostWithRelayField.isTCPRelay)
+
+        func candidate(_ target: String, type: String, relayProtocol: String?) -> [String: Any] {
+            var row: [String: Any] = ["type": "local-candidate", "target": target, "candidateType": type, "protocol": "udp"]
+            if let relayProtocol { row["relayProtocol"] = relayProtocol }
+            return row
+        }
+        let accepted: [String: Any] = ["icePolicy": "tcp-relay", "subscriberStatsFresh": true, "publisherStatsFresh": true,
+            "stats": [candidate("PUBLISHER", type: "prflx", relayProtocol: "tcp"),
+                      candidate("SUBSCRIBER", type: "prflx", relayProtocol: "tls")]]
+        XCTAssertTrue(GuestDuplexAcceptance.transport(accepted))
+
+        var rejectedUDP = accepted
+        rejectedUDP["stats"] = [candidate("PUBLISHER", type: "prflx", relayProtocol: "tcp"),
+                                candidate("SUBSCRIBER", type: "prflx", relayProtocol: "udp")]
+        XCTAssertFalse(GuestDuplexAcceptance.transport(rejectedUDP))
+
+        var rejectedNil = accepted
+        rejectedNil["stats"] = [candidate("PUBLISHER", type: "prflx", relayProtocol: "tcp"),
+                                candidate("SUBSCRIBER", type: "prflx", relayProtocol: nil)]
+        XCTAssertFalse(GuestDuplexAcceptance.transport(rejectedNil))
+    }
+
+    @MainActor func testTCPRelayVerificationCompletesPromptlyOnPeerReflexiveVideoRoute() async throws {
+        let engine = NativeGuestEngine(label: "Fast prflx TCP recovery", icePolicy: .automatic)
+        engine.tcpRelayTargets = [.subscriber]
+        var confirmed: [GuestPeerTarget] = []
+        engine.confirmTCPRelay = { confirmed.append($0) }
+        engine.mediaNotifyForTesting = { _ in }
+        _ = try await engine.prepareJoinForTesting()
+        let sub = try await engine.prepareSubscriberForTesting()
+
+        let receiver = try XCTUnwrap(sub.connection.addTransceiver(of: .video)?.receiver)
+        let videoTrackID = try XCTUnwrap((receiver.track as? LKRTCVideoTrack)?.trackId)
+        let stream = sub.factory.mediaStream(withStreamId: "PA_remote|TR_video")
+        await withCheckedContinuation { done in
+            sub.receiverEventFinishedForTesting = { sub.receiverEventFinishedForTesting = nil; done.resume() }
+            sub.peerConnection(sub.connection, didAdd: receiver, streams: [stream])
+        }
+        try await engine.processEventForTesting(["event": "media-out", "payload": [
+            "method": "rtc:participants:update", "update": ["participants": [[
+                "sid": "PA_remote", "identity": "remote", "version": 1, "state": "ACTIVE", "tracks": [
+                    ["sid": "TR_video", "type": "VIDEO", "source": "CAMERA", "muted": false]]]]]]])
+
+        var sampleTime = 10.0
+        var frames = 5
+        sub.statsOverrideForTesting = {
+            sampleTime += 0.25
+            frames += 5
+            return [
+                ["id": "media", "type": "transport", "dtlsState": "connected", "selectedCandidatePairId": "selected",
+                 "sampleUptime": sampleTime, "nativeTimestampUS": Int(sampleTime * 1_000_000)],
+                ["id": "selected", "type": "candidate-pair", "state": "succeeded", "localCandidateId": "local",
+                 "remoteCandidateId": "remote", "requestsSent": 3, "responsesReceived": 3],
+                ["id": "local", "type": "local-candidate", "candidateType": "prflx", "protocol": "udp", "relayProtocol": "tcp"],
+                ["id": "v", "type": "inbound-rtp", "transportId": "media", "kind": "video",
+                 "trackIdentifier": videoTrackID, "framesDecoded": frames, "packetsLost": 0]
+            ]
+        }
+
+        await withCheckedContinuation { done in
+            sub.iceEventFinishedForTesting = { sub.iceEventFinishedForTesting = nil; done.resume() }
+            sub.peerConnection(sub.connection, didChange: LKRTCIceConnectionState.connected)
+        }
+        await withCheckedContinuation { done in
+            sub.transportEventFinishedForTesting = { sub.transportEventFinishedForTesting = nil; done.resume() }
+            sub.peerConnection(sub.connection, didChange: LKRTCPeerConnectionState.connected)
+        }
+
+        let started = ProcessInfo.processInfo.systemUptime
+        engine.startTransportObservationForTesting()
+        try await engine.waitForTransportRecovery()
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+
+        XCTAssertEqual(confirmed, [.subscriber])
+        XCTAssertLessThan(elapsed, 2.0)
+        let clean = await engine.leave(sendLeave: false)
+        XCTAssertTrue(clean)
     }
 
     private func sample(_ rows: [[String: Any]], tracks: Set<String> = ["remote-audio", "remote-video"]) throws -> GuestICETransportSample {

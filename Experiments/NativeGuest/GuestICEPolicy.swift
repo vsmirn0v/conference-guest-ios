@@ -212,8 +212,12 @@ struct GuestICETransportSample {
         self.localCandidateID = localCandidateID; self.remoteCandidateID = remoteCandidateID
         self.requests = Self.count(pair["requestsSent"])
         self.responses = Self.count(pair["responsesReceived"])
-        let relay = local["candidateType"] as? String == "relay"
-        let proto = local[relay ? "relayProtocol" : "protocol"] as? String
+        let candidateType = local["candidateType"] as? String
+        let relayProtocol = (local["relayProtocol"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // When an internal SFU sees a TURN socket address different from XOR-RELAYED-ADDRESS,
+        // WebRTC updates candidateType from "relay" to "prflx" while keeping relayProtocol.
+        let relay = candidateType == "relay" || (candidateType == "prflx" && relayProtocol != nil)
+        let proto = relay ? relayProtocol : (local["protocol"] as? String)
         switch (relay, proto) {
         case (_, "udp"): route = .udp
         case (true, "tcp"): route = .tcp

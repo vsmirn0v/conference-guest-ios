@@ -123,6 +123,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private(set) var receiverAttachmentsForTesting = 0
     private(set) var receiverDetachmentsForTesting = 0
     var receiverEventFinishedForTesting: (() -> Void)?
+    var statsOverrideForTesting: (() async -> [[String: Any]]?)?
+    var onNativeCloseForTesting: (@Sendable () -> Void)?
     var retainedReceiverTracksForTesting: Int { incomingVideo.count + incomingAudio.count }
     struct SoundOffSourceProof {
         let trackID: String
@@ -559,6 +561,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 
     func stats() async -> [[String: Any]]? {
         guard !closed else { return nil }
+#if DEBUG
+        if let statsOverrideForTesting { return await statsOverrideForTesting() }
+#endif
         let connection = connection!
         guard let report: LKRTCStatisticsReport = try? await native.call("statistics", timeout: 3, { done in
             connection.statistics { done(.success($0)) }
@@ -594,7 +599,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             var value: [String: Any] = ["target": target.rawValue, "type": stat.type, "id": stat.id, "sampleUptime": sampledAt, "nativeTimestampUS": stat.timestamp_us]
 #if DEBUG
             value["peerID"] = diagnosticID
-            if stat.values["candidateType"] as? String == "relay" {
+            let candidateType = stat.values["candidateType"] as? String
+            if candidateType == "relay" || (candidateType == "prflx" && (stat.values["relayProtocol"] as? String)?.isEmpty == false) {
                 // These identify the allocated relay socket, not the TURN server.
                 if let address = stat.values["address"] as? String, address.utf8.count <= 255,
                    !address.contains(where: { $0.isWhitespace }) { value["relayAllocationAddress"] = address }
@@ -662,15 +668,30 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         onIncomingAudioChange = nil
         localICE.removeAll(); remoteICE.removeAll(); sendCandidate = nil
         let connection = connection!
+#if DEBUG
+        let closeHook = onNativeCloseForTesting
+        onNativeCloseForTesting = nil
+#endif
         native.post("close") {
             tracks.forEach { $0?.isEnabled = false }
             videoSinks.forEach { track, sink in track.remove(sink) }
             audioTracks.forEach { $0.remove(meter) }
             connection.stopRtcEventLog()
             connection.close(); connection.delegate = nil
+#if DEBUG
+            closeHook?()
+#endif
         }
         audioTrack = nil; videoTrack = nil; videoSender = nil; source = nil
         screenTrack = nil; screenSender = nil; screenSource = nil
+    }
+
+    /// Drains native receiver/transceiver teardown before the caller closes a
+    /// companion publisher, avoiding an intermediate playout-only AVAudioEngine
+    /// rebuild when VPIO recording is still active. Bounded if WebRTC is stuck.
+    func closeAndDrain(timeout: TimeInterval = 1) async {
+        close()
+        _ = try? await native.run("drain-close", timeout: timeout) {}
     }
 
     private func descriptionForOffer(_ offer: Bool) async throws -> LKRTCSessionDescription {

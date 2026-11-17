@@ -120,4 +120,40 @@ import XCTest
         try await peer.configure(["iceServers": [] as [[String: Any]]])
         let closed = await peer.close(); XCTAssertTrue(closed)
     }
+
+    func testLeaveDrainsSubscriberCloseBeforePublisherAndBoundsStuckSubscriber() async throws {
+        final class CloseRecorder: @unchecked Sendable {
+            private let lock = NSLock()
+            private var items: [String] = []
+            func record(_ item: String) { lock.lock(); items.append(item); lock.unlock() }
+            var events: [String] { lock.lock(); defer { lock.unlock() }; return items }
+        }
+        let engine = NativeGuestEngine(label: "Close order")
+        let publisher = try await engine.prepareJoinForTesting()
+        let subscriber = try await engine.prepareSubscriberForTesting()
+        let recorder = CloseRecorder()
+        subscriber.onNativeCloseForTesting = { recorder.record("subscriber-closed") }
+        publisher.onNativeCloseForTesting = { recorder.record("publisher-closed") }
+        subscriber.native.post("delay-subscriber-close") { Thread.sleep(forTimeInterval: 0.05) }
+        let clean = await engine.leave(sendLeave: false)
+        _ = try? await publisher.native.run("drain-publisher") {}
+        XCTAssertTrue(clean)
+        XCTAssertEqual(recorder.events, ["subscriber-closed", "publisher-closed"])
+
+        let stuckEngine = NativeGuestEngine(label: "Stuck subscriber close")
+        _ = try await stuckEngine.prepareJoinForTesting()
+        let stuckSubscriber = try await stuckEngine.prepareSubscriberForTesting()
+        stuckSubscriber.native.timeoutOverrideForTesting = 0.2
+        let release = stuckSubscriber.native.blockForTesting()
+        let started = Date()
+        var stuckClean = false
+        let ticks = await mainTicks {
+            stuckClean = await stuckEngine.leave(sendLeave: false)
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        release()
+        XCTAssertTrue(stuckClean)
+        XCTAssertLessThan(elapsed, 2.0)
+        XCTAssertGreaterThan(ticks, 5, "The main thread stayed responsive while subscriber teardown was blocked")
+    }
 }
