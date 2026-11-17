@@ -9,15 +9,40 @@ import UniformTypeIdentifiers
     /// Layout only; what is received is `display`, shared with iOS.
     enum ViewMode: String, CaseIterable { case automatic = "Automatic", gallery = "Gallery", focused = "Focus" }
     enum Panel: String, CaseIterable { case participants = "Participants", conversation = "Conversation", studio = "Camera & sound", presenter = "Presenter", notes = "Notes" }
+    struct ScheduledSegment: Equatable, Sendable {
+        var sessionID: UUID
+        var calendarEventID: String?
+        var seriesID: String?
+        var title: String
+        var startedAt: Date
+        var endedAt: Date?
+        var explicitSplitChoice: Bool = false
+    }
+
+    struct SameRoomTransitionBanner: Equatable {
+        var eventID: String
+        var previousTitle: String
+        var currentTitle: String
+        var seriesID: String?
+        var mode: SameRoomMeetingTransitionMode
+        var transitionAt: Date
+    }
+
     let invitation: URL
     let kind: MeetingEngineKind
     let displayName: String
+    var resolvedEndpoint: URL?
+    @Published private(set) var connectedSince: Date?
     let chat = ChatStore()
     let participation = ParticipationCoordinator()
     let catchUp = CatchUpStore()
     let sessionID = UUID()
+    private let fallbackRoomTitle: String
+    private(set) var scheduledTitle: String?
+    private(set) var serverTitle: String?
+    private(set) var userOverrodeTitle = false
     @Published var title: String {
-        didSet { workspaceJournal?.rename(sessionID: sessionID, title: title) }
+        didSet { workspaceJournal?.rename(sessionID: workspaceSessionID, title: title) }
     }
     @Published private(set) var snapshot = NativeDesktopExternalSnapshot()
     @Published private(set) var videos: [NativeDesktopExternalVideo] = []
@@ -29,7 +54,11 @@ import UniformTypeIdentifiers
     var meetingLibrary: MeetingLibraryController?
     var notes: MeetingNotesController?
     var workspaceJournal: MeetingWorkspaceJournal? { meetingLibrary?.workspaceJournal }
-    var workspaceSessionID: UUID { sessionID }
+    @Published private(set) var workspaceSessionID: UUID
+    @Published private(set) var activeNoteSessionID: UUID
+    @Published private(set) var pendingNoteRolloverTitle: String? = nil
+    var segments: [ScheduledSegment]
+    @Published var sameRoomTransitionBanner: SameRoomTransitionBanner? = nil
     private var workspaceCaptureGap: (id: String, reason: String, start: Date)?
     private var transcriptionDrains: [UUID: Task<Void, Never>] = [:]
     private var archivedLocalAttribution: [UUID: [String: String]] = [:]
@@ -232,7 +261,7 @@ import UniformTypeIdentifiers
             localTranscriptionGeneration = generation
             let transcriber = MeetingTranscriber(model: model, vadModel: vad, onDropped: { [weak self] start, end in
                 guard let self else { return }
-                self.workspaceJournal?.recordGap(sessionID: self.sessionID, reason: "decode", from: start, until: end)
+                self.workspaceJournal?.recordGap(sessionID: self.workspaceSessionID, reason: "decode", from: start, until: end)
             }) { [weak self] line in
                 self?.receiveLocalLine(line, generation: generation)
             }
@@ -368,33 +397,33 @@ import UniformTypeIdentifiers
         if !transcript {
             for (message, event) in zip(messages, captured) where message.isOwn {
                 guard let status = event.status else { continue }
-                workspaceJournal?.observeApprovedChat(sessionID: sessionID, chatID: event.id, status: status)
+                workspaceJournal?.observeApprovedChat(sessionID: workspaceSessionID, chatID: event.id, status: status)
             }
         }
     }
 
     private func ensureWorkspaceSession() {
         guard !workspaceSessionCreated, let workspaceJournal, let workspaceStartedAt else { return }
-        workspaceJournal.begin(sessionID: sessionID, title: title, calendarSeriesID: calendarSeriesID,
+        workspaceJournal.begin(sessionID: workspaceSessionID, title: title, calendarSeriesID: calendarSeriesID,
             roomIdentity: MeetingRoomIdentity(invitation, engine: kind)?.displayDetails,
             roomRuleKey: MeetingWorkspaceGuidance.roomKey(for: self), at: workspaceStartedAt)
-        workspaceSessionCreated = workspaceJournal.session(id: sessionID) != nil
+        workspaceSessionCreated = workspaceJournal.session(id: workspaceSessionID) != nil
     }
 
     private func observeWorkspace(_ events: [MeetingWorkspaceEvent]) {
         guard let workspaceJournal else { return }
         ensureWorkspaceSession()
-        guard workspaceJournal.session(id: sessionID) != nil else {
+        guard workspaceJournal.session(id: workspaceSessionID) != nil else {
             if !closed { pendingWorkspaceObservations += events }
             return
         }
         let all = pendingWorkspaceObservations + events
         pendingWorkspaceObservations.removeAll()
-        workspaceJournal.observe(sessionID: sessionID, events: all)
+        workspaceJournal.observe(sessionID: workspaceSessionID, events: all)
     }
 
     private func updateWorkspaceCoverage(at: Date = .now) {
-        guard let workspaceJournal, workspaceJournal.session(id: sessionID) != nil else { return }
+        guard let workspaceJournal, workspaceJournal.session(id: workspaceSessionID) != nil else { return }
         let reason: String?
         if closed { reason = nil }
         else if !connected { reason = "connection" }
@@ -403,15 +432,78 @@ import UniformTypeIdentifiers
         else if localTranscriptionPaused { reason = "transcriptionPaused" }
         else { reason = "transcriptionUnavailable" }
         if let existing = workspaceCaptureGap, existing.reason != reason {
-            workspaceJournal.recordGap(sessionID: sessionID, id: existing.id, reason: existing.reason,
+            workspaceJournal.recordGap(sessionID: workspaceSessionID, id: existing.id, reason: existing.reason,
                                        from: existing.start, until: at)
             workspaceCaptureGap = nil
         }
         if let reason, workspaceCaptureGap == nil {
             let id = UUID().uuidString
             workspaceCaptureGap = (id, reason, at)
-            workspaceJournal.recordGap(sessionID: sessionID, id: id, reason: reason, from: at)
+            workspaceJournal.recordGap(sessionID: workspaceSessionID, id: id, reason: reason, from: at)
         }
+    }
+
+    func applyScheduledTitle(_ newTitle: String?, seriesID: String?, calendarMeeting: CalendarMeeting?) {
+        let clean = newTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        scheduledTitle = clean?.isEmpty == false ? clean : nil
+        calendarSeriesID = seriesID
+        participationCalendar = calendarMeeting
+        if !userOverrodeTitle {
+            title = scheduledTitle ?? serverTitle ?? fallbackRoomTitle
+        }
+    }
+
+    func rolloverWorkspaceSession(to newSessionID: UUID, title newTitle: String, seriesID: String?,
+                                  calendarMeeting: CalendarMeeting?, at boundary: Date, protectActiveNote: Bool) {
+        if let existing = workspaceCaptureGap {
+            workspaceJournal?.recordGap(sessionID: workspaceSessionID, id: existing.id, reason: existing.reason,
+                                       from: existing.start, until: boundary)
+            workspaceCaptureGap = nil
+        }
+        observeWorkspace([])
+        workspaceJournal?.end(sessionID: workspaceSessionID, at: boundary)
+        workspaceSessionID = newSessionID
+        workspaceStartedAt = boundary
+        workspaceSessionCreated = false
+        applyScheduledTitle(newTitle, seriesID: seriesID, calendarMeeting: calendarMeeting)
+        ensureWorkspaceSession()
+        updateWorkspaceCoverage(at: boundary)
+        if protectActiveNote {
+            pendingNoteRolloverTitle = newTitle
+        } else {
+            activeNoteSessionID = newSessionID
+            pendingNoteRolloverTitle = nil
+        }
+    }
+
+    func switchLiveNoteToCurrentSession() {
+        activeNoteSessionID = workspaceSessionID
+        pendingNoteRolloverTitle = nil
+    }
+
+    func mergeWorkspaceSessionBack(into parentSessionID: UUID, title combinedTitle: String,
+                                   seriesID: String?, calendarMeeting: CalendarMeeting?, at now: Date) {
+        if let existing = workspaceCaptureGap {
+            workspaceJournal?.recordGap(sessionID: workspaceSessionID, id: existing.id, reason: existing.reason,
+                                       from: existing.start, until: now)
+            workspaceCaptureGap = nil
+        }
+        observeWorkspace([])
+        let childID = workspaceSessionID
+        workspaceJournal?.mergeAndDelete(from: childID, into: parentSessionID, at: now)
+        workspaceSessionID = parentSessionID
+        workspaceSessionCreated = workspaceJournal?.session(id: parentSessionID) != nil
+        activeNoteSessionID = parentSessionID
+        pendingNoteRolloverTitle = nil
+        applyScheduledTitle(combinedTitle, seriesID: seriesID, calendarMeeting: calendarMeeting)
+        updateWorkspaceCoverage(at: now)
+    }
+
+    func noteUserRenamedSession(_ manualTitle: String) {
+        let clean = manualTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        userOverrodeTitle = true
+        title = clean
     }
 
     func withApprovedWorkspaceChat<T>(id: String, _ action: () -> T) -> T {
@@ -695,7 +787,7 @@ import UniformTypeIdentifiers
         for (id, permit) in approvedWorkspaceChatPermits {
             permit.cancel()
             if !permit.didDispatch {
-                workspaceJournal?.observeApprovedChat(sessionID: sessionID, chatID: "chat:guest:" + id, status: .cancelled)
+                workspaceJournal?.observeApprovedChat(sessionID: workspaceSessionID, chatID: "chat:guest:" + id, status: .cancelled)
             }
         }
     }
@@ -820,7 +912,16 @@ import UniformTypeIdentifiers
         self.captureCoordinator = MeetingCaptureCoordinator(joinCameraPrime: joinCameraPrime, cameraMetadata: cameraMetadata)
         precondition(joinTimeout.isFinite && joinTimeout > 0)
         self.joinTimeout = joinTimeout
-        self.title = title?.isEmpty == false ? title! : destination.roomIdentifier
+        let initialSessionID = sessionID
+        self.workspaceSessionID = initialSessionID
+        self.activeNoteSessionID = initialSessionID
+        self.fallbackRoomTitle = destination.roomIdentifier
+        let cleanTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveInitial = cleanTitle?.isEmpty == false ? cleanTitle! : destination.roomIdentifier
+        self.scheduledTitle = cleanTitle?.isEmpty == false ? cleanTitle : nil
+        self.title = effectiveInitial
+        self.segments = [ScheduledSegment(sessionID: initialSessionID, calendarEventID: nil, seriesID: nil,
+                                          title: effectiveInitial, startedAt: Date(), endedAt: nil)]
         engine = makeEngine ?? UniversalMeetingEngine.shared.makeSession(destination: destination, chat: chat)
         reactionObserver.onReaction = { [weak self] kind, _ in self?.sendReaction(kind) }
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).sink { [weak self] _ in
@@ -847,8 +948,14 @@ import UniformTypeIdentifiers
             guard let self, !closed else { return }; videos = value; updateDemand()
         }
         engine.onLocalCamera = { [weak self] track in self?.setLocalCamera(track) }
-        engine.onTitle = { [weak self] title in
-            guard let self, !closed, !title.isEmpty else { return }; self.title = title
+        engine.onTitle = { [weak self] raw in
+            guard let self, !closed else { return }
+            let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { return }
+            self.serverTitle = clean
+            if !self.userOverrodeTitle && self.scheduledTitle == nil {
+                self.title = clean
+            }
         }
         if let session = engine as? MeetingSession {
             session.onFeatureError = { [weak self] error in
@@ -861,7 +968,7 @@ import UniformTypeIdentifiers
             if let chatService = session.chatService {
                 chatService.onApprovedChatOutcome = { [weak self] id, status in
                     guard let self, let chatID = approvedWorkspaceChatLink(id: id) else { return }
-                    workspaceJournal?.observeApprovedChat(sessionID: sessionID, chatID: chatID, status: status)
+                    workspaceJournal?.observeApprovedChat(sessionID: workspaceSessionID, chatID: chatID, status: status)
                 }
                 if !chatService.managesChatStoreSendCallbacks {
                     if chatService.supportsSending {
@@ -877,12 +984,12 @@ import UniformTypeIdentifiers
                                     let chatID = self.approvedWorkspaceChatLink(id: id) ?? ("chat:" + self.kind.rawValue + ":" + id)
                                     do {
                                         let status = try await chatService.send(text, permit: permit, approvedID: id)
-                                        self.workspaceJournal?.observeApprovedChat(sessionID: self.sessionID, chatID: chatID, status: status)
+                                        self.workspaceJournal?.observeApprovedChat(sessionID: self.workspaceSessionID, chatID: chatID, status: status)
                                     } catch {
-                                        let current = self.workspaceJournal?.session(id: self.sessionID)?.events
+                                        let current = self.workspaceJournal?.session(id: self.workspaceSessionID)?.events
                                             .first(where: { $0.linkedChatID == chatID })?.status
                                         let status = chatService.classifyError(error, permit: permit, currentStatus: current)
-                                        self.workspaceJournal?.observeApprovedChat(sessionID: self.sessionID, chatID: chatID, status: status)
+                                        self.workspaceJournal?.observeApprovedChat(sessionID: self.workspaceSessionID, chatID: chatID, status: status)
                                         throw error
                                     }
                                 }
@@ -909,7 +1016,7 @@ import UniformTypeIdentifiers
         if (engine as? MeetingSession)?.chatService?.observesStoreCaptures ?? true {
             chat.onCapture = { [weak self] entries in
                 guard let self, let workspaceJournal = self.workspaceJournal else { return }
-                workspaceJournal.observe(sessionID: self.sessionID, events: entries.map { entry in
+                workspaceJournal.observe(sessionID: self.workspaceSessionID, events: entries.map { entry in
                     let status: MeetingWorkspaceEvent.Status = switch entry.delivery {
                     case .pending: .sending
                     case .sent: entry.isOwn ? .submitted : .sent
@@ -1322,14 +1429,16 @@ import UniformTypeIdentifiers
         guard !closed else { return }
         let previous = snapshot; snapshot = value
         if value.phase == .connected && !everConnected {
-            workspaceStartedAt = Date()
+            let now = Date()
+            if connectedSince == nil { connectedSince = now }
+            workspaceStartedAt = now
             observeWorkspace([])
         }
         participation.updateAudience(participationAudience)
         if !participationVoiceEligible || participationRemoteSpeaking { participation.interruptVoice() }
         if previous.playoutOn && !value.playoutOn { workspaceSoundTurnedOff() }
         if previous.playoutOn != value.playoutOn, value.phase == .connected {
-            workspaceJournal?.recordAction(sessionID: sessionID,
+            workspaceJournal?.recordAction(sessionID: workspaceSessionID,
                 text: value.playoutOn ? L("Meeting sound on") : L("Meeting sound off"),
                 source: value.playoutOn ? "soundOn" : "soundOff")
         }
@@ -1836,26 +1945,26 @@ import UniformTypeIdentifiers
             defer { if let approvedID { approvedWorkspaceReactionTasks[approvedID] = nil } }
             if let approvedID {
                 guard !Task.isCancelled, !closed else {
-                    workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .cancelled)
+                    workspaceJournal?.updateActionStatus(sessionID: workspaceSessionID, id: approvedID, status: .cancelled)
                     return
                 }
-                guard workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .sending) != false else { return }
+                guard workspaceJournal?.updateActionStatus(sessionID: workspaceSessionID, id: approvedID, status: .sending) != false else { return }
             }
             do {
                 try await reactionService.sendReaction(kind, approvedID: approvedID)
-                if let approvedID { workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .submitted) }
+                if let approvedID { workspaceJournal?.updateActionStatus(sessionID: workspaceSessionID, id: approvedID, status: .submitted) }
             } catch let sessionError as MeetingSessionError {
                 if let approvedID {
                     let status: MeetingWorkspaceEvent.Status = switch sessionError {
                     case .cancelled: .cancelled
                     case .unavailable, .notConnected, .permissionDenied, .cleanupFailed, .staleCommand: .failed
                     }
-                    workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: status)
+                    workspaceJournal?.updateActionStatus(sessionID: workspaceSessionID, id: approvedID, status: status)
                 }
                 chat.reactionHistory.setLocalDelivery(.failed, submissionID: id)
                 self.error = sessionError.localizedDescription
             } catch {
-                if let approvedID { workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .unknown) }
+                if let approvedID { workspaceJournal?.updateActionStatus(sessionID: workspaceSessionID, id: approvedID, status: .unknown) }
                 chat.reactionHistory.setLocalDelivery(.failed, submissionID: id)
                 self.error = error.localizedDescription
             }
@@ -2038,11 +2147,11 @@ import UniformTypeIdentifiers
         }
         var iterator = results.makeAsyncIterator()
         if await iterator.next() == false, !transcriptionDrains.isEmpty {
-            workspaceJournal.recordGap(sessionID: sessionID, reason: "finalization", from: leftAt, until: .now)
+            workspaceJournal.recordGap(sessionID: workspaceSessionID, reason: "finalization", from: leftAt, until: .now)
         }
         timeout.cancel()
         output.finish()
         observeWorkspace([])
-        workspaceJournal.end(sessionID: sessionID, at: leftAt)
+        workspaceJournal.end(sessionID: workspaceSessionID, at: leftAt)
     }
 }

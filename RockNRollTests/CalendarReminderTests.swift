@@ -569,4 +569,127 @@ import XCTest
         let opened = await NotificationSettingsLink.open()
         XCTAssertTrue(opened)
     }
+
+    func testConnectedSameRoomSuppressesBackToBackWithdrawsDeliveredAndRestoresOnEarlyLeave() async throws {
+        var now = Date()
+        let prefs = preferences()
+        prefs.set(true, forKey: "calendarReminders.enabled")
+        let storage = Storage(), notifications = Notifications()
+        let coordinator = CalendarReminderCoordinator(preferences: prefs, storage: storage, notifications: notifications, clock: { now })
+
+        let m1 = CalendarMeeting(id: "m1", seriesID: "s1", calendarID: "work", calendarTitle: "Calendar",
+            title: "Standup", start: now.addingTimeInterval(-300), end: now.addingTimeInterval(1800),
+            links: [URL(string: "https://salutejazz.ru/calls/standup?psw=a")!])
+        var resolved1 = m1
+        resolved1.invitation = URL(string: "https://salutejazz.ru/calls/standup?psw=a")!
+        resolved1.engine = .guest
+
+        var m2 = CalendarMeeting(id: "m2", seriesID: "s2", calendarID: "work", calendarTitle: "Calendar",
+            title: "Design", start: now.addingTimeInterval(1800), end: now.addingTimeInterval(3600),
+            links: [URL(string: "https://salutejazz.ru/calls/standup?psw=a")!])
+        m2.invitation = resolved1.invitation
+        m2.engine = .guest
+
+        var active: [ActiveRoomConnection] = []
+        coordinator.activeConnections = { active }
+        coordinator.scene = { .init(visible: false, connections: active, usable: true) }
+
+        coordinator.update(meetings: [resolved1, m2], available: true)
+        let occ2 = try XCTUnwrap(coordinator.occurrence(for: m2))
+        let ref2 = occ2.reference
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(notifications.items.values.contains { $0.plan.occurrenceID == occ2.id })
+
+        // Simulate M2 reminder already delivered before user joined M1; connecting to M1 withdraws it and cancels pending M2 alerts.
+        notifications.delivered.insert(PlannedReminder.namespace + occ2.id)
+
+        active = [ActiveRoomConnection(room: MeetingRoomIdentity(resolved1.invitation!, engine: .guest)!)]
+        coordinator.activeConnectionsChanged()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(notifications.items.values.contains { $0.plan.occurrenceID == occ2.id })
+        XCTAssertTrue(notifications.removed.contains(occ2.id))
+        XCTAssertTrue(coordinator.shouldSuppressSystemNotification(reference: ref2))
+
+        // Early leave before M2 starts restores M2's upcoming reminder.
+        active = []
+        coordinator.activeConnectionsChanged()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(notifications.items.values.contains { $0.plan.occurrenceID == occ2.id })
+        XCTAssertFalse(coordinator.shouldSuppressSystemNotification(reference: ref2))
+    }
+
+    func testConnectedBoundaryLatchesAttendanceAndOverlappingEventsMarkBothAttended() async throws {
+        var now = Date()
+        let prefs = preferences()
+        prefs.set(true, forKey: "calendarReminders.enabled")
+        let storage = Storage(), notifications = Notifications()
+        let coordinator = CalendarReminderCoordinator(preferences: prefs, storage: storage, notifications: notifications, clock: { now })
+
+        var m1 = CalendarMeeting(id: "m1", seriesID: "s1", calendarID: "work", calendarTitle: "Calendar",
+            title: "First", start: now.addingTimeInterval(-300), end: now.addingTimeInterval(600))
+        m1.invitation = URL(string: "https://salutejazz.ru/calls/shared?psw=secret")!
+        m1.engine = .guest
+
+        var m2 = CalendarMeeting(id: "m2", seriesID: "s2", calendarID: "work", calendarTitle: "Calendar",
+            title: "Second", start: now.addingTimeInterval(600), end: now.addingTimeInterval(2400))
+        m2.invitation = m1.invitation
+        m2.engine = .guest
+
+        var overlap = CalendarMeeting(id: "overlap", seriesID: "s3", calendarID: "work", calendarTitle: "Calendar",
+            title: "Overlap", start: now.addingTimeInterval(-60), end: now.addingTimeInterval(900))
+        overlap.invitation = m1.invitation
+        overlap.engine = .guest
+
+        let conn = ActiveRoomConnection(room: MeetingRoomIdentity(m1.invitation!, engine: .guest)!)
+        coordinator.activeConnections = { [conn] }
+        coordinator.scene = { .init(visible: true, connections: [conn], usable: true) }
+
+        coordinator.update(meetings: [m1, m2, overlap], available: true)
+        let occ2 = try XCTUnwrap(coordinator.occurrence(for: m2))
+        let occOverlap = try XCTUnwrap(coordinator.occurrence(for: overlap))
+        let connectedAt = now
+        coordinator.joined(room: conn.room, eventID: "m1", since: connectedAt)
+        try await Task.sleep(for: .milliseconds(30))
+
+        // Overlapping same-room meeting in [since, now] is also marked attended.
+        coordinator.activeConnections = { [] }
+        now = m2.start.addingTimeInterval(30)
+        // Re-attach connection across boundary before leaving to test boundary latch.
+        coordinator.activeConnections = { [conn] }
+        coordinator.activeConnectionsChanged()
+        now = m2.start.addingTimeInterval(60)
+        coordinator.activeConnections = { [] }
+        coordinator.activeConnectionsChanged()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(notifications.items.values.contains { $0.plan.occurrenceID == occ2.id })
+        XCTAssertFalse(notifications.items.values.contains { $0.plan.occurrenceID == occOverlap.id })
+    }
+
+    func testSuppressOtherDevicesToggleControlsRemoteSuppression() async throws {
+        let now = Date()
+        let prefs = preferences()
+        prefs.set(true, forKey: "calendarReminders.enabled")
+        let storage = Storage(), notifications = Notifications()
+        let coordinator = CalendarReminderCoordinator(preferences: prefs, storage: storage, notifications: notifications, clock: { now })
+        XCTAssertTrue(coordinator.suppressOtherDevices)
+
+        var nextMeeting = CalendarMeeting(id: "remote-next", seriesID: "s-rem", calendarID: "work", calendarTitle: "Calendar",
+            title: "Sync", start: now.addingTimeInterval(1200), end: now.addingTimeInterval(3000))
+        nextMeeting.invitation = URL(string: "https://salutejazz.ru/calls/shared-room?psw=123")!
+        nextMeeting.engine = .guest
+
+        coordinator.update(meetings: [nextMeeting], available: true)
+        let occRemote = try XCTUnwrap(coordinator.occurrence(for: nextMeeting))
+        let jam = ActiveJam(deviceID: "mac", sessionID: UUID(), invitation: nextMeeting.invitation!,
+                            title: "Ongoing", name: "User", deviceLabel: "Mac", updatedAt: now)
+        coordinator.observe([jam], account: "icloud-user")
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(notifications.items.values.contains { $0.plan.occurrenceID == occRemote.id })
+
+        coordinator.setSuppressOtherDevices(false)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(notifications.items.values.contains { $0.plan.occurrenceID == occRemote.id })
+    }
 }

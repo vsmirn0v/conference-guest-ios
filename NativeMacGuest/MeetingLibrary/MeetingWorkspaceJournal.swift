@@ -74,6 +74,60 @@ struct MeetingWorkspaceSession: Codable, Equatable, Identifiable {
         commit(session: session, events: [])
     }
 
+    func reopen(sessionID: UUID) {
+        guard var session = session(id: sessionID), session.endedAt != nil else { return }
+        session.endedAt = nil
+        session.interrupted = false
+        commit(session: session, events: [])
+    }
+
+    func mergeAndDelete(from childID: UUID, into parentID: UUID, at now: Date = .now) {
+        guard childID != parentID else { return }
+        reopen(sessionID: parentID)
+        let childEvents = (eventsBySession[childID]?.values).map(Array.init) ?? []
+        let parentKeys = Set(eventsBySession[parentID]?.keys ?? [:].keys)
+        let moved = childEvents.filter { event in
+            !parentKeys.contains(event.id) && (event.kind != .captureGap || event.endedAt != nil)
+        }
+        if !moved.isEmpty {
+            _ = store(sessionID: parentID, events: moved)
+        }
+        if session(id: childID) != nil {
+            end(sessionID: childID, at: now)
+            try? delete(sessionID: childID)
+        }
+    }
+
+    func splitEvents(from parentID: UUID, into childID: UUID, since boundary: Date) {
+        guard parentID != childID, let parentEvents = eventsBySession[parentID]?.values else { return }
+        let movable = parentEvents.filter {
+            $0.occurredAt >= boundary && ($0.kind == .transcript || $0.kind == .chat)
+        }
+        let removableIDs = Set(parentEvents.filter {
+            $0.occurredAt >= boundary && ($0.kind == .transcript || $0.kind == .chat || $0.source == "calendarTransition")
+        }.map(\.id))
+        guard !movable.isEmpty || !removableIDs.isEmpty else { return }
+        if !movable.isEmpty {
+            _ = store(sessionID: childID, events: Array(movable))
+        }
+        guard !removableIDs.isEmpty else { return }
+        let removed = write { db in
+            try db.transaction {
+                for id in removableIDs {
+                    try db.run("DELETE FROM workspace_events WHERE session_id=? AND id=?") {
+                        try MeetingSQLiteConnection.bindText($0, parentID.uuidString, at: 1)
+                        try MeetingSQLiteConnection.bindText($0, id, at: 2)
+                    }
+                }
+            }
+        }
+        guard removed else { return }
+        for id in removableIDs { eventsBySession[parentID]?.removeValue(forKey: id) }
+        if let index = sessions.firstIndex(where: { $0.id == parentID }) {
+            sessions[index].events.removeAll { removableIDs.contains($0.id) }
+        }
+    }
+
     func end(sessionID: UUID, at: Date = .now) {
         if failedObservations[sessionID] != nil { observe(sessionID: sessionID, events: []) }
         guard var session = session(id: sessionID), session.endedAt == nil else { return }

@@ -12,10 +12,25 @@ public struct ReminderForegroundEvent: Codable, Equatable, Identifiable, Sendabl
 
 public struct ReminderScene: Equatable, Sendable {
     public var visible: Bool
-    public var room: MeetingRoomIdentity?
+    public var connections: [ActiveRoomConnection]
     public var usable: Bool
+
+    public var room: MeetingRoomIdentity? {
+        get { connections.first?.room }
+        set { connections = newValue.map { [ActiveRoomConnection(room: $0)] } ?? [] }
+    }
+    public var rooms: Set<MeetingRoomIdentity> { Set(connections.map(\.room)) }
+
     public init(visible: Bool = false, room: MeetingRoomIdentity? = nil, usable: Bool = true) {
-        self.visible = visible; self.room = room; self.usable = usable
+        self.visible = visible
+        self.connections = room.map { [ActiveRoomConnection(room: $0)] } ?? []
+        self.usable = usable
+    }
+
+    public init(visible: Bool = false, connections: [ActiveRoomConnection], usable: Bool = true) {
+        self.visible = visible
+        self.connections = connections
+        self.usable = usable
     }
 }
 
@@ -28,20 +43,27 @@ public struct ReminderForegroundDecision: Equatable, Sendable {
 public enum ReminderForegroundPlanner {
     /// No polling, media state mutation, or replay of past native notifications.
     public static func decide(occurrences: [ReminderOccurrence], states: [String: ReminderOccurrenceState],
-                              profile: ReminderProfile, enabled: Bool, scene: ReminderScene, now: Date) -> ReminderForegroundDecision {
+                              profile: ReminderProfile, enabled: Bool, scene: ReminderScene, now: Date,
+                              remoteConnections: [ActiveRoomConnection] = []) -> ReminderForegroundDecision {
         var result = ReminderForegroundDecision()
         func deadline(_ date: Date) {
             if date > now { result.nextDeadline = min(result.nextDeadline ?? date, date) }
         }
         for occurrence in occurrences {
             let state = states[occurrence.id] ?? .init()
-            guard occurrence.eligible, occurrence.end > now, let room = occurrence.room,
+            guard occurrence.eligible, occurrence.end > now, occurrence.room != nil,
                   !state.attended, state.remoteAccount == nil, !state.skipped,
                   !occurrence.tentative || state.override?.mode == .custom,
                   let timing = (state.override ?? .init()).timing(profile: profile) else {
                 result.invalidatedIDs.insert(occurrence.id); continue
             }
             guard enabled else { continue }
+            let connectedLocally = !scene.connections.isEmpty && occurrence.isConnected(in: scene.connections)
+            if connectedLocally && occurrence.start <= now && occurrence.end > now {
+                result.invalidatedIDs.insert(occurrence.id); continue
+            }
+            let inThisRoom = connectedLocally || (!remoteConnections.isEmpty && occurrence.isConnected(in: remoteConnections))
+            let inAnotherMeeting = !scene.connections.isEmpty && !inThisRoom
             deadline(occurrence.end)
             var event: ReminderForegroundEvent?
             if let saved = state.presentation, saved.plan.reference == occurrence.reference {
@@ -57,7 +79,7 @@ public enum ReminderForegroundPlanner {
             if timing.followUp.mode == .anotherMeeting &&
                 (!state.consumed.contains(.after) || state.presentation?.plan.phase == .after) {
                 let date = occurrence.start.addingTimeInterval(Double(timing.followUp.delay))
-                if date <= now, state.snooze == nil, let current = scene.room, current != room {
+                if date <= now, state.snooze == nil, inAnotherMeeting {
                     event = .init(plan: .init(occurrence: occurrence, phase: .after, date: date), scope: .anotherMeeting)
                 } else { deadline(date) }
             }
@@ -71,9 +93,9 @@ public enum ReminderForegroundPlanner {
                     } else { deadline(snooze) }
                 }
             }
-            guard let event, scene.room != room else { continue }
+            guard let event, !inThisRoom else { continue }
             if event.scope == .anotherMeeting {
-                guard timing.followUp.mode == .anotherMeeting, let current = scene.room, current != room else { continue }
+                guard timing.followUp.mode == .anotherMeeting, inAnotherMeeting else { continue }
             }
             if scene.visible && scene.usable { result.events.append(event) }
         }

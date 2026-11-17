@@ -3002,3 +3002,26 @@
 "Test provider" = "Проверить провайдера";
 "GPU fallback" = "Запасной вариант на GPU";
 "This setting is currently unavailable." = "Эта настройка сейчас недоступна.";
+
+"Skip when active on another device" = "Пропускать, если открыто на другом устройстве";
+"Suppresses reminders on this device when the same room is already open on another device signed in to your iCloud account. Turn off to still receive notifications here." = "Не показывать напоминания на этом устройстве, если та же комната уже открыта на другом устройстве с вашим аккаунтом iCloud. Выключите, чтобы всё равно получать уведомления здесь.";
+"Suppresses reminders on this Mac when the same room is already open on your iPhone or iPad." = "Не показывать напоминания на этом Mac, если та же комната уже открыта на вашем iPhone или iPad.";
+"Separate summaries & notes" = "Раздельные итоги и заметки";
+"Keep as one continuous meeting" = "Объединять в одну встречу";
+"Back-to-back meetings in the same room" = "Встречи подряд в одной комнате";
+"Back-to-back in this series" = "Подряд в этой серии";
+"Back-to-back in this room" = "Подряд в этой комнате";
+"When a new scheduled meeting starts in a room you are already connected to, Rock'N'Roll updates the meeting title and can either start a fresh summary and note or keep one combined session." = "Когда в комнате, к которой вы уже подключены, по расписанию начинается следующая встреча, Rock'N'Roll обновляет название встречи и может либо начать новую заметку и итог, либо вести общую сессию.";
+"Choose whether back-to-back meetings in the same room create separate outcomes or stay combined." = "Выберите, создавать ли отдельные итоги для встреч подряд в одной комнате или объединять их.";
+"Now in “%@”" = "Сейчас идёт «%@»";
+"Starting a separate note & summary for this meeting." = "Создаются отдельные заметка и итог для этой встречи.";
+"Continuing notes & summary as one meeting." = "Заметки и итог продолжаются как одна встреча.";
+"Keep as one meeting" = "Объединить в одну";
+"Separate summary" = "Отдельный итог";
+"Remember…" = "Запомнить…";
+"Always separate for this series" = "Всегда разделять для этой серии";
+"Always separate in this room" = "Всегда разделять в этой комнате";
+"Always keep as one for this series" = "Всегда объединять для этой серии";
+"Always keep as one in this room" = "Всегда объединять в этой комнате";
+"Open new note" = "Открыть новую заметку";
+"Scheduled meeting started: %@" = "Началась встреча по расписанию: %@";

@@ -249,7 +249,10 @@ enum MeetingOutcomePrompt {
     }
 
     /// The leave path snapshots bounded value types; no live model is retained by a writer.
-    static func window(title: String, transcript: [GuestMeetingMessage], chat: [ChatEntry], yourName: String, now: Date, onDevice: Bool = false, contextTokens: Int? = nil) -> AttentionWindow {
+    static func window(title: String, transcript: [GuestMeetingMessage], chat: [ChatEntry], yourName: String, now: Date,
+                       onDevice: Bool = false, contextTokens: Int? = nil,
+                       from start: Date? = nil, until end: Date? = nil,
+                       chapters: [(at: Date, title: String)] = []) -> AttentionWindow {
         struct Item { var at: Date; var order: Int; var line: AttentionWindow.Line }
         let lineCap = onDevice ? maxLines : remoteMaxLines
         let charCap = onDevice ? maxCharacters : remoteCharacterBudget(contextTokens: contextTokens)
@@ -259,14 +262,25 @@ enum MeetingOutcomePrompt {
         for message in transcript.suffix(scan) {
             let time = NativeDesktopMeetingModel.spokenAt(message); last = time ?? last
             guard !message.text.trimmed.isEmpty else { continue }
+            if let start, last < start { continue }
+            if let end, last >= end { continue }
             items.append(.init(at: last, order: order, line: .init(id: message.id, ref: "", source: .speech,
                 speaker: message.participantName, isYou: message.isOwn, text: String(message.text.trimmed.prefix(perLine)),
                 at: time, mentionsYou: false))); order += 1
         }
         for entry in chat.suffix(scan) where !entry.text.trimmed.isEmpty {
+            if let start, entry.sentAt != .distantPast, entry.sentAt < start { continue }
+            if let end, entry.sentAt != .distantPast, entry.sentAt >= end { continue }
             items.append(.init(at: entry.sentAt, order: order, line: .init(id: "chat-" + entry.id, ref: "", source: .chat,
                 speaker: entry.sender, isYou: entry.isOwn, text: String(entry.text.trimmed.prefix(perLine)),
                 at: entry.sentAt, mentionsYou: false))); order += 1
+        }
+        for (index, chapter) in chapters.enumerated() where !chapter.title.trimmed.isEmpty {
+            items.append(.init(at: chapter.at, order: order, line: .init(
+                id: "chapter-\(Int(chapter.at.timeIntervalSince1970))-\(index)", ref: "", source: .note,
+                speaker: "", isYou: false, text: "[Scheduled meeting started: \(chapter.title.trimmed)]",
+                at: nil, mentionsYou: false)))
+            order += 1
         }
         let chronological = items.sorted { ($0.at, $0.order) < ($1.at, $1.order) }
         let chosen: [Item]

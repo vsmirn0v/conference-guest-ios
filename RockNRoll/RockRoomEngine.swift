@@ -64,6 +64,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     var isSharingScreen: Bool { room?.localParticipant.isScreenShareEnabled() == true }
     var continuationHostView: UIView? { callView?.viewIfLoaded }
     var reminderHost: MeetingReminderHost? { callView?.reminderHost }
+    func setRoomTitle(_ title: String) { callView?.setRoomTitle(title) }
     func setTransferHeld(_ held: Bool, restoreSending: Bool) async throws {
         if !held && !restoreSending { microphoneIntentOn = false; cameraIntentOn = false }
         try await systemCall.setTransferHeld(held)

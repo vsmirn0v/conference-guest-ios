@@ -326,8 +326,10 @@ import Foundation
 
     /// Resolves a persisted or active session to its (sessionUUID, title) pair.
     private func noteSession(_ id: String) async throws -> (UUID, String) {
-        if id.hasPrefix("session:"), let model = app?.meetings.first(where: { mcpSessionID($0.sessionID) == id }) {
-            return (model.sessionID, model.title)
+        if id.hasPrefix("session:"), let model = app?.meetings.first(where: {
+            mcpSessionID($0.sessionID) == id || mcpSessionID($0.workspaceSessionID) == id
+        }) {
+            return (model.workspaceSessionID, model.title)
         }
         if id.hasPrefix("outcome:native:") {
             let record = try await outcome(id)

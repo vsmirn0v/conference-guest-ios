@@ -113,4 +113,46 @@ final class ReminderFollowUpTests: XCTestCase {
         XCTAssertTrue(decide([occurrence], states: [occurrence.id: state], profile: profile).events.isEmpty)
     }
 
+    func testMultiRoomForegroundSceneSuppressesAllConnectedAndRemoteRooms() throws {
+        let occA = makeOccurrence("a", roomID: "room-a", offset: -120)
+        let occB = makeOccurrence("b", roomID: "room-b", offset: -120)
+        let occC = makeOccurrence("c", roomID: "room-c", offset: -120)
+        let connA = ActiveRoomConnection(room: try XCTUnwrap(occA.room))
+        let connB = ActiveRoomConnection(room: try XCTUnwrap(occB.room))
+
+        var states: [String: ReminderOccurrenceState] = [:]
+        var presentingB = ReminderOccurrenceState()
+        presentingB.presentation = .init(plan: .init(occurrence: occB, phase: .start, date: now), scope: .anotherMeeting)
+        states[occB.id] = presentingB
+
+        let decision = decide(
+            [occA, occB, occC], states: states,
+            scene: ReminderScene(visible: true, connections: [connA, connB])
+        )
+        XCTAssertEqual(decision.events.map(\.plan.occurrenceID), ["c"])
+        XCTAssertTrue(decision.invalidatedIDs.contains("b"))
+
+        let remoteDecision = decide(
+            [occA, occB, occC], states: [:],
+            scene: ReminderScene(visible: true, connections: [connA]),
+            remote: [connB]
+        )
+        XCTAssertEqual(remoteDecision.events.map(\.plan.occurrenceID), ["c"])
+    }
+
+    private func makeOccurrence(_ id: String, roomID: String, offset: Double) -> ReminderOccurrence {
+        var meeting = CalendarMeeting(id: id, seriesID: "s-\(id)", calendarID: "cal", calendarTitle: "Work",
+            title: "Meeting \(id)", start: now.addingTimeInterval(offset), end: now.addingTimeInterval(offset + 1800))
+        meeting.invitation = URL(string: "https://salutejazz.ru/calls/\(roomID)?psw=secret")!
+        meeting.engine = .guest
+        return ReminderOccurrence(meeting: meeting, id: id, reference: "ref-" + id)!
+    }
+
+    private func decide(_ occurrences: [ReminderOccurrence], states: [String: ReminderOccurrenceState],
+                        scene: ReminderScene, remote: [ActiveRoomConnection]) -> ReminderForegroundDecision {
+        var profile = ReminderProfile(); profile.timing.atStart = true
+        return ReminderForegroundPlanner.decide(occurrences: occurrences, states: states, profile: profile,
+                                              enabled: true, scene: scene, now: now, remoteConnections: remote)
+    }
+
 }

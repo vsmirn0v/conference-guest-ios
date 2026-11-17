@@ -54,6 +54,7 @@ struct CalendarReminderRepository: Codable {
     var device = UUID().uuidString
     var pendingOpen: String?
     var pendingOpenDate: Date?
+    var suppressOtherDevices: Bool? = nil
 
     mutating func update(_ meetings: [CalendarMeeting], at now: Date) {
         // Multiple calendar copies of the same exact room/interval share reminders.
@@ -70,8 +71,10 @@ struct CalendarReminderRepository: Codable {
                 let moved = incoming.start >= old.end || incoming.end <= old.start
                 if !moved {
                     let changed = incoming.room != old.room || incoming.start != old.start || incoming.end != old.end
+                    let preservedEndpoint = incoming.endpoint ?? (incoming.room == old.room ? old.endpoint : nil)
                     incoming = ReminderOccurrence(meeting: meeting, id: old.id,
                         reference: changed ? UUID().uuidString : old.reference)!
+                    incoming.endpoint = preservedEndpoint
                     if incoming.room != old.room { states[old.id] = nil }
                     else if incoming.start != old.start || incoming.end != old.end { states[old.id]?.consumed = [] }
                 }
@@ -92,29 +95,47 @@ struct CalendarReminderRepository: Codable {
             }
         }
     }
-    mutating func joined(room: MeetingRoomIdentity, eventID: String? = nil, at now: Date) {
-        let matching = occurrences.filter { occurrence in occurrence.eligible && occurrence.room == room &&
-            (eventID == nil ? occurrence.start <= now && occurrence.end > now : occurrence.eventID == eventID) }
-        // Arbitrary room joins cannot distinguish two scheduled occurrences of the same room.
-        guard eventID != nil || matching.count == 1 else { return }
+    @discardableResult
+    mutating func joined(room: MeetingRoomIdentity, endpoint: String? = nil, eventID: String? = nil,
+                         since: Date? = nil, at now: Date) -> Bool {
+        let connection = ActiveRoomConnection(room: room, normalizedEndpoint: endpoint)
+        let effectiveSince = since ?? now
+        let matching = occurrences.filter { occurrence in
+            guard occurrence.eligible, occurrence.isConnected(in: [connection]) else { return false }
+            if let eventID { return occurrence.eventID == eventID }
+            return occurrence.start <= now && occurrence.end > effectiveSince
+        }
+        var changed = false
         for occurrence in matching {
+            if states[occurrence.id]?.attended != true ||
+                states[occurrence.id]?.snooze != nil ||
+                states[occurrence.id]?.presentation != nil {
+                changed = true
+            }
             states[occurrence.id, default: .init()].attended = true
             states[occurrence.id]?.snooze = nil
+            states[occurrence.id]?.presentation = nil
         }
+        return changed
     }
-    mutating func observe(_ jams: [ActiveJam], account: String?, now: Date) {
-        if self.account != account {
+    mutating func observe(_ jams: [ActiveJam], account: String?, now: Date, suppressOtherDevices: Bool = true) {
+        if self.account != account || !suppressOtherDevices {
             for id in states.keys { states[id]?.remoteAccount = nil }
+        }
+        if self.account != account {
             self.account = account
         }
-        guard let account else { return }
+        guard suppressOtherDevices, let account else { return }
         for jam in jams where jam.isRecent(at: now) {
             guard let room = MeetingRoomIdentity(jam.invitation, engine: jam.engine) else { continue }
-            let matching = occurrences.filter { $0.eligible && $0.room == room && $0.start <= jam.updatedAt && $0.end > jam.updatedAt }
-            guard matching.count == 1 else { continue }
+            let connection = ActiveRoomConnection(room: room)
+            let matching = occurrences.filter {
+                $0.eligible && $0.isConnected(in: [connection]) && $0.start <= jam.updatedAt && $0.end > jam.updatedAt
+            }
             for occurrence in matching {
                 states[occurrence.id, default: .init()].remoteAccount = account
                 states[occurrence.id]?.snooze = nil
+                states[occurrence.id]?.presentation = nil
             }
         }
     }

@@ -87,8 +87,14 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
             completionHandler([.banner, .list, .sound]); return
         }
         Task { @MainActor in
-            guard let coordinator, coordinator.scene().visible,
-                  let reference = notification.request.content.userInfo["reference"] as? String,
+            guard let coordinator,
+                  let reference = notification.request.content.userInfo["reference"] as? String else {
+                completionHandler([.banner, .list, .sound]); return
+            }
+            if coordinator.shouldSuppressSystemNotification(reference: reference) {
+                completionHandler([]); return
+            }
+            guard coordinator.scene().visible,
                   let fingerprint = notification.request.content.userInfo["fingerprint"] as? String else {
                 completionHandler([.banner, .list, .sound]); return
             }

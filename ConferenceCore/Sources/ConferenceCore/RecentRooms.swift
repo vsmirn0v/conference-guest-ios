@@ -138,7 +138,7 @@ public struct RecentRooms: Codable, Equatable, Sendable {
     }
 
     public mutating func updateTitle(for url: URL, title: String) {
-        guard let index = items.firstIndex(where: { $0.invitationURL == url }) else { return }
+        guard let index = items.firstIndex(where: { $0.invitationURL == url }) ?? matchingIndex(url, engine: nil) else { return }
         let cleanTitle = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
         guard !cleanTitle.isEmpty else { return }
         items[index].title = cleanTitle

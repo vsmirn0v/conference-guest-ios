@@ -15,6 +15,7 @@ enum MeetingNoteSaveStatus: Equatable {
     @Published private(set) var cards: [MeetingLibraryCard] = []
     @Published private(set) var noteStatus: [UUID: MeetingNoteSaveStatus] = [:]
     @Published private(set) var persistenceError: String?
+    var onSessionRenamed: (@MainActor (UUID, String) -> Void)?
     private var refreshTask: Task<Void, Never>?
 
     init(root: URL) {
@@ -97,7 +98,25 @@ enum MeetingNoteSaveStatus: Equatable {
 
     func renameSession(_ id: UUID, title: String) async throws {
         try await store.renameSession(id, title: title)
-        workspaceJournal.rename(sessionID: id, title: title.trimmingCharacters(in: .whitespacesAndNewlines))
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        workspaceJournal.rename(sessionID: id, title: clean)
+        onSessionRenamed?(id, clean)
+        await refresh()
+    }
+
+    func updateSessionTitle(_ id: UUID, title: String) async {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        _ = try? await store.updateSession(id, title: clean)
+        if await !store.hasTitleOverride(id) {
+            workspaceJournal.rename(sessionID: id, title: clean)
+        }
+        await refresh()
+    }
+
+    func deleteSession(_ id: UUID) async {
+        try? await store.deleteSession(id)
+        noteStatus[id] = nil
         await refresh()
     }
 

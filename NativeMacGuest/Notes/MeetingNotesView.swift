@@ -261,28 +261,45 @@ struct LiveMeetingNotes: View {
         var workspace: NativeDesktopWorkspace?
 
         var body: some View {
-            let card = library.cards.first { $0.sessionID == model.sessionID }
-            let title = card?.title ?? model.title
-            let id = model.sessionID
-            MeetingNotesView(sessionID: id, notes: notes, title: title, ended: card?.endedAt != nil, openWindow: {
-                let originalWindow = NSApp.keyWindow
-                notes.windows.open(sessionID: id, title: title, date: card?.startedAt ?? Date(),
-                    isEnded: { [weak model] in model?.isClosed ?? true },
-                    showInMain: { [weak workspace, weak model, weak originalWindow] in
-                    guard let workspace else {
-                        originalWindow?.deminiaturize(nil)
-                        originalWindow?.makeKeyAndOrderFront(nil)
-                        return
+            let id = model.activeNoteSessionID
+            let card = library.cards.first { $0.sessionID == id }
+            let segmentTitle = model.segments.first { $0.sessionID == id }?.title
+            let title = card?.title ?? (id == model.workspaceSessionID ? model.title : (segmentTitle ?? model.title))
+            VStack(spacing: 0) {
+                if let nextTitle = model.pendingNoteRolloverTitle,
+                   model.activeNoteSessionID != model.workspaceSessionID {
+                    HStack(spacing: 8) {
+                        Image(systemName: "calendar.badge.clock").foregroundStyle(.orange)
+                        Text(L("Now in “%@”", nextTitle)).font(.caption).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button(L("Open new note")) { model.switchLiveNoteToCurrentSession() }
+                            .buttonStyle(.link).font(.caption.weight(.semibold))
+                            .accessibilityIdentifier("meeting.notes.rollover.open")
                     }
-                    if let model, !model.isClosed, !workspace.isDetached(model) {
-                        model.panel = .notes
-                        workspace.presentEmbedded(model)
-                    } else {
-                        workspace.attention.requestedOutcomeSessionID = id
-                        workspace.show(section: .assistant)
-                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.12))
+                    Divider()
+                }
+                MeetingNotesView(sessionID: id, notes: notes, title: title, ended: card?.endedAt != nil, openWindow: {
+                    let originalWindow = NSApp.keyWindow
+                    notes.windows.open(sessionID: id, title: title, date: card?.startedAt ?? Date(),
+                        isEnded: { [weak model] in model?.isClosed ?? true },
+                        showInMain: { [weak workspace, weak model, weak originalWindow] in
+                        guard let workspace else {
+                            originalWindow?.deminiaturize(nil)
+                            originalWindow?.makeKeyAndOrderFront(nil)
+                            return
+                        }
+                        if let model, !model.isClosed, !workspace.isDetached(model) {
+                            model.panel = .notes
+                            workspace.presentEmbedded(model)
+                        } else {
+                            workspace.attention.requestedOutcomeSessionID = id
+                            workspace.show(section: .assistant)
+                        }
+                    })
                 })
-            })
+            }
         }
     }
 }

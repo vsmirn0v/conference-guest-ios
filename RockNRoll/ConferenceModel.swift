@@ -128,6 +128,10 @@ final class ConferenceModel: ObservableObject {
     private var activeRoute: JoinDestination?
     @Published private var activeRoomTitle: String?
     private var activeVisitTitle: String?
+    private var serverRoomTitle: String?
+    private var connectedSince: Date?
+    private var appliedScheduledMeetingID: String?
+    private var scheduleTransitionTask: Task<Void, Never>?
     private var joinTask: Task<Void, Never>?
     private var scheduledJoinPending = false
     private var terminalEventHandled = false
@@ -179,6 +183,10 @@ final class ConferenceModel: ObservableObject {
         setup.onDefer = { [weak self] in self?.sync.dismissOffer() }
     }
 
+    deinit {
+        scheduleTransitionTask?.cancel()
+    }
+
     var desktopMeetingActive: Bool { phase != .idle }
     var desktopSessionToken: String { String(sessionGeneration) }
     var desktopMeetingTitle: String { activeRoomTitle ?? activeRoute?.invitationURL.lastPathComponent ?? L("Joining…") }
@@ -210,13 +218,23 @@ final class ConferenceModel: ObservableObject {
         }
     }
 
+    private var currentActiveConnection: ActiveRoomConnection? {
+        guard isInConference, let url = connectedURL,
+              let route = activeRoute,
+              let room = MeetingRoomIdentity(url, engine: route.engineKind) else { return nil }
+        let endpoint: URL? = if case .guest(let guest) = route { endpointCache[guest.originURL] } else { nil }
+        return ActiveRoomConnection(room: room, endpoint: endpoint)
+    }
+
     private func configureReminders() {
         guard reminderSubscriptions.isEmpty else { return }
         let reminders = calendar.reminders
         reminders.canPresent = { [weak self] in self?.container?.view.window != nil && UIApplication.shared.applicationState == .active }
+        reminders.activeConnections = { [weak self] in
+            self?.currentActiveConnection.map { [$0] } ?? []
+        }
         reminders.activeRoom = { [weak self] in
-            guard let self, self.isInConference, let url = self.connectedURL else { return nil }
-            return MeetingRoomIdentity(url, engine: self.activeRoute?.engineKind)
+            self?.currentActiveConnection?.room
         }
         reminders.onOpen = { [weak self] occurrence, join in
             self?.explicitCalendarEntry = true; self?.calendar.cancelAutomaticJoin()
@@ -224,8 +242,9 @@ final class ConferenceModel: ObservableObject {
         }
         reminders.scene = { [weak self, weak reminders] in
             guard let self else { return .init() }
+            let connections = reminders?.effectiveConnections() ?? []
             return .init(visible: self.reminderSceneVisible && self.container?.view.window != nil && UIApplication.shared.applicationState == .active,
-                room: reminders?.activeRoom(), usable: !self.setup.isPresented && !self.meetingReconnecting && !self.isJoining && !self.isLeaving && reminders?.presenting != true && reminders?.editing == nil)
+                connections: connections, usable: !self.setup.isPresented && !self.meetingReconnecting && !self.isJoining && !self.isLeaving && reminders?.presenting != true && reminders?.editing == nil)
         }
         reminders.onBackground = { [weak self] in self?.reminderPresenter.backgrounded() }
         reminders.onPresentation = { [weak self, weak reminders] events in
@@ -239,6 +258,9 @@ final class ConferenceModel: ObservableObject {
         }
         continuation.$candidates.sink { [weak self, weak reminders] jams in
             reminders?.observe(jams, account: self?.sync.cloudAccount)
+        }.store(in: &reminderSubscriptions)
+        calendar.$meetings.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.synchronizeScheduledMeeting() }
         }.store(in: &reminderSubscriptions)
         objectWillChange.sink { [weak self] in
             DispatchQueue.main.async { self?.refreshReminders() }
@@ -257,6 +279,7 @@ final class ConferenceModel: ObservableObject {
                 DispatchQueue.main.async { self?.calendar.reminders.refreshPresentation() }
             }
         }
+        calendar.reminders.activeConnectionsChanged()
         calendar.reminders.refreshPresentation()
     }
 
@@ -267,8 +290,8 @@ final class ConferenceModel: ObservableObject {
         setup.suspendForMeeting()
         guard let container else { return }
         let busy = isInConference || isJoining || isLeaving
-        if let occurrence, busy, isInConference, let url = connectedURL,
-           MeetingRoomIdentity(url, engine: activeRoute?.engineKind) == occurrence.room {
+        if let occurrence, busy, isInConference, let current = currentActiveConnection,
+           occurrence.isConnected(in: [current]) {
             restoreFromFloatingVideo(); return
         }
         // A notification tap or explicit Join is already the user's meeting
@@ -310,6 +333,20 @@ final class ConferenceModel: ObservableObject {
         presenter.present(panel, animated: true)
     }
     private func joinReminder(_ occurrence: ReminderOccurrence) {
+        if isInConference, let current = currentActiveConnection, occurrence.isConnected(in: [current]) {
+            let clean = occurrence.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty {
+                appliedScheduledMeetingID = occurrence.eventID
+                activeVisitTitle = clean
+                activeRoomTitle = clean
+                activeEngine?.setRoomTitle(clean)
+                if let url = connectedURL { history.updateTitle(for: url, title: clean) }
+                continuation.updateCurrent(continuationSnapshot())
+                updateContinuationActivity()
+            }
+            restoreFromFloatingVideo()
+            return
+        }
         calendarReminderTarget = occurrence.room.map { ($0, occurrence.eventID) }
         do {
             let target = try destination(for: occurrence.invitation.absoluteString, verifiedEngine: occurrence.engine)
@@ -396,6 +433,20 @@ final class ConferenceModel: ObservableObject {
         if isLeaving {
             replacementAfterLeave = PendingInvitation(target: target, autoJoin: autoJoin, title: title)
         } else if isJoining || isInConference {
+            if isInConference, let current = currentActiveConnection,
+               let incomingRoom = MeetingRoomIdentity(target.invitationURL, engine: target.engineKind),
+               current.matches(incomingRoom) {
+                if let clean = title?.trimmingCharacters(in: .whitespacesAndNewlines), !clean.isEmpty {
+                    activeVisitTitle = clean
+                    activeRoomTitle = clean
+                    activeEngine?.setRoomTitle(clean)
+                    if let url = connectedURL { history.updateTitle(for: url, title: clean) }
+                    continuation.updateCurrent(continuationSnapshot())
+                    updateContinuationActivity()
+                }
+                restoreFromFloatingVideo()
+                return
+            }
             guard target != activeRoute else { return }
             if autoJoin {
                 replacementAfterLeave = PendingInvitation(target: target, autoJoin: true, title: title)
@@ -547,6 +598,10 @@ final class ConferenceModel: ObservableObject {
         companionAudioPaused = request.quiet
         liveSessionID = UUID(); liveName = name
         connectedURL = nil
+        connectedSince = nil
+        serverRoomTitle = nil
+        appliedScheduledMeetingID = nil
+        scheduleTransitionTask?.cancel(); scheduleTransitionTask = nil
         activeRoomTitle = request.title
         activeVisitTitle = request.title
         status = L("Finding this jam…")
@@ -714,9 +769,10 @@ final class ConferenceModel: ObservableObject {
                         self.mediaStatus = self.isJoining || self.isInConference ? message : nil
                         selected?.showMediaStatus(message)
                     }
-                    activeRoomTitle = history.matching(target.invitationURL)?.displayTitle ?? L("Jam %@", target.roomID)
+                    let initialTitle = request.title ?? history.matching(target.invitationURL)?.displayTitle ?? L("Jam %@", target.roomID)
+                    activeRoomTitle = initialTitle
                     macCallActivity.retainForGraphicsResources()
-                    try selected.join(target: target, name: request.name, container: container, quiet: request.quiet, title: activeRoomTitle)
+                    try selected.join(target: target, name: request.name, container: container, quiet: request.quiet, title: initialTitle)
                 case .trueconf(let target):
                     try handoffToTransport()
                     let selected = TrueConfCallEngine(systemCall: systemCall, catchUp: catchUpStore, chat: chat)
@@ -736,9 +792,10 @@ final class ConferenceModel: ObservableObject {
                         guard let self, self.sessionGeneration == generation else { return }
                         self.setActiveRoomTitle(title)
                     }
-                    activeRoomTitle = history.matching(target.invitationURL)?.displayTitle ?? L("Jam %@", target.roomID)
+                    let initialTitle = request.title ?? history.matching(target.invitationURL)?.displayTitle ?? L("Jam %@", target.roomID)
+                    activeRoomTitle = initialTitle
                     macCallActivity.retainForGraphicsResources()
-                    try selected.join(target: target, name: request.name, container: container, quiet: request.quiet, title: activeRoomTitle)
+                    try selected.join(target: target, name: request.name, container: container, quiet: request.quiet, title: initialTitle)
                 }
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
@@ -759,6 +816,19 @@ final class ConferenceModel: ObservableObject {
         }
     }
 
+    private func recordDisconnectFromActiveRoom(at now: Date = Date()) {
+        scheduleTransitionTask?.cancel()
+        scheduleTransitionTask = nil
+        if let url = connectedURL, let since = connectedSince {
+            let endpoint: URL? = if case .guest(let guest) = activeRoute { endpointCache[guest.originURL] } else { nil }
+            calendar.noteConnected(invitation: url, engine: activeRoute?.engineKind, endpoint: endpoint,
+                                   since: since, roomID: history.matching(url)?.id, at: now)
+        }
+        connectedSince = nil
+        serverRoomTitle = nil
+        appliedScheduledMeetingID = nil
+    }
+
     func leave() {
         if scheduledJoinPending { calendar.finishScheduledTransportPreparation() }
         scheduledJoinPending = false
@@ -769,7 +839,9 @@ final class ConferenceModel: ObservableObject {
         joinTask?.cancel()
         joinTask = nil
         activeEngine?.leave()
+        recordDisconnectFromActiveRoom()
         connectedURL = nil
+        calendar.reminders.activeConnectionsChanged()
         mediaStatus = nil
         status = didStartConference ? L("Leaving the jam…") : L("Joining canceled.")
         statusIsError = false
@@ -896,6 +968,7 @@ final class ConferenceModel: ObservableObject {
         case .inactive:
             guard !isLeaving else { return }
             terminalEventHandled = true
+            recordDisconnectFromActiveRoom()
             if isJoining { status = L("Could not connect to the jam.") }
             else if isInConference { status = L("Disconnected from the jam.") }
             statusIsError = true
@@ -921,6 +994,7 @@ final class ConferenceModel: ObservableObject {
             phase = .active
             meetingReconnecting = false
             connectedURL = activeRoute?.invitationURL
+            if connectedSince == nil { connectedSince = Date() }
             status = L("In jam")
             continuation.targetDidConnect(invitation: connectedURL, sessionID: liveSessionID)
             refreshContinuationBanner()
@@ -931,16 +1005,20 @@ final class ConferenceModel: ObservableObject {
                                title: activeVisitTitle ?? activeRoomTitle ?? identifier, identifier: identifier,
                                engine: activeRoute.engineKind)
                 if let room = history.matching(activeRoute.invitationURL) { calendar.noteJoined(room, invitation: activeRoute.invitationURL) }
-                if let room = MeetingRoomIdentity(activeRoute.invitationURL, engine: activeRoute.engineKind) {
-                    calendar.reminders.joined(room: room, eventID: calendarReminderTarget.flatMap { $0.room == room ? $0.eventID : nil })
+                if let conn = currentActiveConnection {
+                    calendar.reminders.joined(room: conn.room, endpoint: conn.endpoint,
+                        eventID: calendarReminderTarget.flatMap { $0.room == conn.room ? $0.eventID : nil },
+                        since: connectedSince)
                     calendarReminderTarget = nil
                 }
             }
+            synchronizeScheduledMeeting()
         case .joining:
             break
         case .failed:
             guard isJoining || isInConference, !isLeaving else { return }
             terminalEventHandled = true
+            recordDisconnectFromActiveRoom()
             if let url = activeRoute?.invitationURL { Task { await engineDetector.invalidate(url) } }
             phase = .idle
             connectedURL = nil
@@ -951,6 +1029,7 @@ final class ConferenceModel: ObservableObject {
         case .canceled:
             guard isJoining || isLeaving else { return }
             terminalEventHandled = true
+            recordDisconnectFromActiveRoom()
             phase = .idle
             connectedURL = nil
             status = L("Joining canceled.")
@@ -960,6 +1039,7 @@ final class ConferenceModel: ObservableObject {
             completeReplacement()
         case .left:
             terminalEventHandled = true
+            recordDisconnectFromActiveRoom()
             phase = .idle
             connectedURL = nil
             mediaStatus = nil
@@ -970,6 +1050,7 @@ final class ConferenceModel: ObservableObject {
             completeReplacement()
         case .evicted:
             terminalEventHandled = true
+            recordDisconnectFromActiveRoom()
             phase = .idle
             connectedURL = nil
             status = L("Removed from the jam.")
@@ -1011,11 +1092,54 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func setActiveRoomTitle(_ title: String) {
-        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        activeRoomTitle = title
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        serverRoomTitle = clean
+        if activeVisitTitle == nil {
+            activeRoomTitle = clean
+            if isInConference { activeEngine?.setRoomTitle(clean) }
+        } else if isInConference, let visitTitle = activeVisitTitle {
+            activeEngine?.setRoomTitle(visitTitle)
+        }
         continuation.updateCurrent(continuationSnapshot())
         if isInConference, let url = activeRoute?.invitationURL {
-            history.updateTitle(for: url, title: activeVisitTitle ?? title)
+            history.updateTitle(for: url, title: activeVisitTitle ?? clean)
+        }
+    }
+
+    private func synchronizeScheduledMeeting() {
+        scheduleTransitionTask?.cancel()
+        scheduleTransitionTask = nil
+        guard isInConference, let connection = currentActiveConnection else { return }
+        let now = calendar.currentTime
+        if let scheduled = calendar.currentScheduledMeeting(matching: connection, at: now),
+           scheduled.id != appliedScheduledMeetingID {
+            appliedScheduledMeetingID = scheduled.id
+            let clean = scheduled.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty {
+                activeVisitTitle = clean
+                activeRoomTitle = clean
+                activeEngine?.setRoomTitle(clean)
+                if let url = connectedURL {
+                    history.updateTitle(for: url, title: clean)
+                    let endpoint: URL? = if case .guest(let guest) = activeRoute { endpointCache[guest.originURL] } else { nil }
+                    calendar.noteConnected(invitation: url, engine: activeRoute?.engineKind, endpoint: endpoint,
+                                           since: connectedSince ?? now, roomID: history.matching(url)?.id, at: now)
+                }
+                calendar.reminders.joined(room: connection.room, endpoint: connection.endpoint,
+                                          eventID: scheduled.id, since: connectedSince)
+                continuation.updateCurrent(continuationSnapshot())
+                updateContinuationActivity()
+            }
+        }
+        if let nextDate = calendar.nextTransitionDate(matching: [connection], after: now) {
+            let delay = max(0.05, nextDate.timeIntervalSince(now) + 0.05)
+            scheduleTransitionTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                guard !Task.isCancelled else { return }
+                self?.synchronizeScheduledMeeting()
+                self?.calendar.reminders.activeConnectionsChanged()
+            }
         }
     }
 
@@ -1096,8 +1220,8 @@ extension ConferenceModel: BackgroundAudioJoinSession {
     }
     func beginBackgroundJoin(_ occurrence: ReminderOccurrence, access: BackgroundJoinAccess) -> BackgroundJoinStart {
         guard !NativeGuestPreference.enabled(defaults: preferences) else { return .openApp }
-        if isInConference, let connectedURL,
-           MeetingRoomIdentity(connectedURL, engine: activeRoute?.engineKind) == occurrence.room { return .alreadyConnected }
+        if isInConference, let current = currentActiveConnection,
+           occurrence.isConnected(in: [current]) { return .alreadyConnected }
         guard access.protectedData, access.microphone, !access.systemControls, !systemCall.hasCompetingCall,
               phase == .idle, !setup.needsDismissal, siteSelection == nil, engineSelection == nil,
               occurrence.engine == .guest, occurrence.eligible, occurrence.end > Date(),

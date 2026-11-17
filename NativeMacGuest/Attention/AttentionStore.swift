@@ -208,7 +208,12 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     static let repliesKey = "attention.replies.enabled"
     static let decisionRetention: TimeInterval = 30 * 24 * 3600
 
-    private struct Document: Codable { var profile = AttentionProfile(); var presets: [MeetingPreset] = [] }
+    private struct Document: Codable {
+        var profile = AttentionProfile()
+        var presets: [MeetingPreset] = []
+        var sameRoomTransitionDefault: SameRoomMeetingTransitionMode? = nil
+        var seriesTransitions: [String: SameRoomMeetingTransitionMode]? = nil
+    }
 
     @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: Self.enabledKey) } }
     @Published var pauseOnBattery: Bool { didSet { defaults.set(pauseOnBattery, forKey: Self.batteryKey) } }
@@ -329,6 +334,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     }
     @Published var profile: AttentionProfile { didSet { if profile != oldValue { save() } } }
     @Published private(set) var presets: [MeetingPreset] = []
+    @Published var sameRoomTransitionDefault: SameRoomMeetingTransitionMode = .separateSessions {
+        didSet { if sameRoomTransitionDefault != oldValue { save() } }
+    }
+    @Published private(set) var seriesTransitions: [String: SameRoomMeetingTransitionMode] = [:]
     /// Provider kinds with a key in the keychain.
     @Published private(set) var keyedKinds: Set<AttentionProvider.Kind> = []
     /// The judge's provider has its key.
@@ -600,13 +609,18 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         do {
             let document = try JSONDecoder.attention.decode(Document.self, from: data)
             profile = document.profile; presets = document.presets
+            sameRoomTransitionDefault = document.sameRoomTransitionDefault ?? .separateSessions
+            seriesTransitions = document.seriesTransitions ?? [:]
         } catch { persistenceWarning = L("Meeting instructions could not be read. Changes will replace them.") }
     }
     private func save() {
         guard !loading else { return }
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let data = try JSONEncoder.attention.encode(Document(profile: profile, presets: presets))
+            let data = try JSONEncoder.attention.encode(Document(
+                profile: profile, presets: presets,
+                sameRoomTransitionDefault: sameRoomTransitionDefault,
+                seriesTransitions: seriesTransitions.isEmpty ? nil : seriesTransitions))
             try data.write(to: documentURL, options: .atomic)
             persistenceWarning = nil
         } catch { persistenceWarning = L("Meeting instructions could not be saved.") }
@@ -656,6 +670,44 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         if let series, !preset.bindings.contains(.calendarSeries(series)) { preset.bindings.append(.calendarSeries(series)) }
         preset.mode = mode
         save(preset)
+    }
+
+    func savedSameRoomTransition(room: URL, latest: URL? = nil, series: String?) -> SameRoomMeetingTransitionMode? {
+        if let series {
+            if let mode = seriesTransitions[series] { return mode }
+            if let seriesPreset = presets.first(where: { $0.bindings.contains(.calendarSeries(series)) }),
+               let mode = seriesPreset.sameRoomTransition {
+                return mode
+            }
+            return nil
+        }
+        return preset(room: room, latest: latest, series: nil)?.sameRoomTransition
+    }
+
+    func effectiveSameRoomTransition(room: URL, latest: URL? = nil, series: String?) -> (mode: SameRoomMeetingTransitionMode, isSaved: Bool) {
+        if let saved = savedSameRoomTransition(room: room, latest: latest, series: series) {
+            return (saved, true)
+        }
+        return (sameRoomTransitionDefault, false)
+    }
+
+    func setSameRoomTransition(_ mode: SameRoomMeetingTransitionMode?, room: URL, latest: URL? = nil,
+                               series: String?, title: String) {
+        if let series {
+            if let mode { seriesTransitions[series] = mode }
+            else { seriesTransitions.removeValue(forKey: series) }
+            save()
+            return
+        }
+        let rooms = [room, latest].compactMap { $0?.absoluteString }
+        if var existing = presets.first(where: { $0.bindings.contains { if case .room(let key) = $0 { rooms.contains(key) } else { false } } }) {
+            existing.sameRoomTransition = mode
+            save(existing)
+        } else if let mode {
+            var created = MeetingPreset(title: title, bindings: [.room(room.absoluteString)])
+            created.sameRoomTransition = mode
+            save(created)
+        }
     }
     func record(_ example: PresetExample, in preset: MeetingPreset) {
         var updated = self.preset(id: preset.id) ?? preset

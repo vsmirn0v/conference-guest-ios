@@ -15,7 +15,7 @@ enum NativeSettingsResultPresentation {
         for id in ["settings.sync", "settings.handoff", "settings.sync-recent", "settings.sync-now"] { result[id] = "Sync saved meetings or share active jams across your devices." }
         for id in ["settings.calendar-enabled", "settings.calendar-selection", "settings.calendar-privacy", "settings.calendar-refresh"] { result[id] = "Choose which calendars provide meetings." }
         for id in ["settings.menu-bar", "settings.auto-join"] { result[id] = "Control background operation and automatic joining." }
-        for id in ["settings.reminders", "settings.reminder-timing", "settings.reminder-before", "settings.reminder-before-time", "settings.reminder-at-start", "settings.reminder-follow-up", "settings.reminder-follow-up-delay", "settings.reminder-name", "settings.reminder-sound", "settings.reminder-sensitive", "settings.notification-settings"] { result[id] = "Choose when and how meeting reminders appear." }
+        for id in ["settings.reminders", "settings.reminder-timing", "settings.reminder-before", "settings.reminder-before-time", "settings.reminder-at-start", "settings.reminder-follow-up", "settings.reminder-follow-up-delay", "settings.reminder-name", "settings.reminder-sound", "settings.reminder-sensitive", "settings.reminder-other-devices", "settings.notification-settings"] { result[id] = "Choose when and how meeting reminders appear." }
         for id in ["settings.microphone"] { result[id] = "Choose the microphone used by the Mac." }
         for id in ["settings.output"] { result[id] = "Choose the sound output used by the Mac." }
         for id in ["settings.microphone-test"] { result[id] = "Check the input level without changing meeting mute." }
@@ -29,6 +29,7 @@ enum NativeSettingsResultPresentation {
         for id in ["settings.alerts", "settings.battery"] { result[id] = "Control meeting alerts and their battery behavior." }
         for situation in AttentionSituation.allCases { result["settings.\(situation.settingsSearchID)"] = situation.detailKey }
         for id in ["settings.outcomes", "settings.remote-outcomes"] { result[id] = "Choose whether meeting outcomes are created or sent to a provider." }
+        for id in ["settings.outcomes-same-room"] { result[id] = "Choose whether back-to-back meetings in the same room create separate outcomes or stay combined." }
         for id in ["settings.instructions"] { result[id] = "Review instructions for individual meetings." }
         for id in ["settings.provider", "settings.provider-address", "settings.provider-model", "settings.api-key", "settings.provider-choose", "settings.provider-compare", "settings.provider-test", "settings.escalation", "settings.escalation-model", "settings.escalation-key"] { result[id] = "Configure the AI that evaluates meeting alerts." }
         for id in ["settings.writer", "settings.writer-model", "settings.writer-key"] { result[id] = "Choose the AI that writes replies and meeting outcomes." }
@@ -95,6 +96,7 @@ enum NativeSettingsResultPresentation {
         case "settings.reminder-name": return toggle(library.calendar.reminders.profile.details)
         case "settings.reminder-sound": return toggle(library.calendar.reminders.profile.sound)
         case "settings.reminder-sensitive": return toggle(library.calendar.reminders.profile.timeSensitive)
+        case "settings.reminder-other-devices": return toggle(library.calendar.reminders.suppressOtherDevices)
         case "settings.audio-profile": return L(GuestAudioProfile.saved == .speech ? "Speech" : "Music")
         case "settings.mic-readiness": return NativeDesktopJoinReadinessPolicy.current().microphone.title
         case "settings.camera-readiness": return NativeDesktopJoinReadinessPolicy.current().camera.title
@@ -107,6 +109,7 @@ enum NativeSettingsResultPresentation {
         case "settings.battery": return store.map { toggle($0.pauseOnBattery) }
         case "settings.outcomes": return store.map { toggle($0.generateOutcomes) }
         case "settings.remote-outcomes": return store.map { toggle($0.remoteOutcomes) }
+        case "settings.outcomes-same-room": return store.map(\.sameRoomTransitionDefault.title)
         case "settings.drafts": return store.map { toggle($0.draftReplies) }
         case "settings.local-drafts": return store.map { toggle($0.localDrafts) }
         case "settings.agent": return store.map { toggle($0.agentAssistantEnabled) }

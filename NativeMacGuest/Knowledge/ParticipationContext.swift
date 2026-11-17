@@ -185,7 +185,7 @@ enum ParticipationContext {
 
         @MainActor
         init(model: NativeDesktopMeetingModel, store: AttentionStore) {
-            sessionID = model.sessionID
+            sessionID = model.workspaceSessionID
             title = model.title
             calendar = model.participationCalendar
             participantNames = model.participants.map(\.name).sorted()

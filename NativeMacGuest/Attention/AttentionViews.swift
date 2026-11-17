@@ -331,6 +331,7 @@ struct MeetingPresetEditor: View {
     @State private var preset: MeetingPreset
     @State private var people: String
     @State private var appliesToSeries: Bool
+    @State private var sameRoomTransition: SameRoomMeetingTransitionMode?
     @State private var tuning: ThresholdTuner.Result?
     @State private var tuneMessage: String?
 
@@ -341,6 +342,8 @@ struct MeetingPresetEditor: View {
         _preset = State(initialValue: existing)
         _people = State(initialValue: existing.people.joined(separator: ", "))
         _appliesToSeries = State(initialValue: target.seriesID.map { existing.bindings.contains(.calendarSeries($0)) } ?? false)
+        _sameRoomTransition = State(initialValue: store.savedSameRoomTransition(
+            room: target.invitation, latest: target.latest, series: target.seriesID))
     }
 
     var body: some View {
@@ -365,6 +368,13 @@ struct MeetingPresetEditor: View {
                     Text(L("Threshold %.2f. Your approvals lower it and declines raise it.", preset.threshold)).font(.caption).foregroundStyle(.secondary)
                     Toggle(L("Draft chat replies and reactions for this meeting"),
                            isOn: Binding(get: { preset.repliesAllowed }, set: { preset.suggestReplies = $0 }))
+                    Picker(target.seriesID != nil ? L("Back-to-back in this series") : L("Back-to-back in this room"),
+                           selection: $sameRoomTransition) {
+                        Text(L("Use default")).tag(SameRoomMeetingTransitionMode?.none)
+                        ForEach(SameRoomMeetingTransitionMode.allCases, id: \.self) {
+                            Text($0.title).tag(SameRoomMeetingTransitionMode?.some($0))
+                        }
+                    }
                     if target.seriesID != nil { Toggle(L("Use for every meeting in this calendar series"), isOn: $appliesToSeries) }
                 }
                 Section(L("Learned from you")) {
@@ -439,6 +449,12 @@ struct MeetingPresetEditor: View {
         if appliesToSeries, let series = target.seriesID { bindings.append(.calendarSeries(series)) }
         else { bindings += value.bindings.filter { if case .calendarSeries(let id) = $0 { id != target.seriesID } else { false } } }
         value.bindings = bindings
+        if let series = target.seriesID {
+            store.setSameRoomTransition(sameRoomTransition, room: target.invitation, latest: target.latest,
+                                        series: series, title: target.title)
+        } else {
+            value.sameRoomTransition = sameRoomTransition
+        }
         store.save(value)
     }
 }
@@ -916,6 +932,16 @@ struct NativeDesktopIntelligenceSettings: View {
                         .disabled(!store.enabled || !store.generateOutcomes)
                     Text(outcomeSharingCaption).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                NativeSettingsPopup(
+                    title: L("Back-to-back meetings in the same room"),
+                    selection: $store.sameRoomTransitionDefault,
+                    choices: SameRoomMeetingTransitionMode.allCases,
+                    titleForChoice: \.title,
+                    id: "settings.outcomes-same-room",
+                    accessibilityID: "assistant.outcomes.sameRoom"
+                )
+                Text(L("When a new scheduled meeting starts in a room you are already connected to, Rock'N'Roll updates the meeting title and can either start a fresh summary and note or keep one combined session."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section(L("Agent")) {
                 NativeSettingsSwitch(title: L("Answer with the bounded agent (typed tools, grounded sources)"),

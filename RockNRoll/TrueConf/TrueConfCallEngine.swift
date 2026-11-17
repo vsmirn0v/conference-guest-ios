@@ -71,6 +71,7 @@ final class TrueConfCallEngine: CallEngine {
     var isSharingScreen: Bool { sharingActive }
     var continuationHostView: UIView? { view?.viewIfLoaded }
     var reminderHost: MeetingReminderHost? { view?.reminderHost }
+    func setRoomTitle(_ title: String) { view?.setRoomTitle(title) }
 
     init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore, chat: ChatStore) {
         self.systemCall = systemCall; self.catchUp = catchUp; self.chat = chat
@@ -345,7 +346,9 @@ final class TrueConfCallEngine: CallEngine {
                   let stream = conference["streamConferenceId"] as? String, !stream.isEmpty else { return }
             streamID = stream
             if let title = conference["topic"] as? String, !title.isEmpty {
-                let title = String(title.prefix(256)); view?.setRoomTitle(title); onRoomTitle?(title)
+                let title = String(title.prefix(256))
+                if onRoomTitle == nil { view?.setRoomTitle(title) }
+                onRoomTitle?(title)
             }
             try await transport.send(["method": "getIceConfig", "streamConferenceId": stream])
         case "getIceConfig":

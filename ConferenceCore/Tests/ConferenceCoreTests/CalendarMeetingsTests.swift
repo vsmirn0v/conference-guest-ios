@@ -133,4 +133,45 @@ final class CalendarMeetingsTests: XCTestCase {
         document.upsert(visited, visited: true)
         XCTAssertEqual(document.visibleRooms.first?.lastVisit, visited.lastJoined)
     }
+
+    func testTelemostRoomIdentityCanonicalizesRegions() {
+        let ru = MeetingRoomIdentity(URL(string: "https://telemost.yandex.ru/j/123456")!, engine: .telemost)
+        let corp = MeetingRoomIdentity(URL(string: "https://telemost.360.yandex.ru/j/123456")!, engine: .telemost)
+        let other = MeetingRoomIdentity(URL(string: "https://telemost.yandex.ru/j/999999")!, engine: .telemost)
+        XCTAssertNotNil(ru)
+        XCTAssertEqual(ru, corp)
+        XCTAssertNotEqual(ru, other)
+    }
+
+    func testActiveRoomConnectionMatchesResolvedEndpointAcrossDistinctOrigins() {
+        let firstURL = URL(string: "https://one.example.test/calls/standup?psw=aaa")!
+        let secondURL = URL(string: "https://two.example.test/calls/standup?psw=bbb")!
+        let otherRoomURL = URL(string: "https://two.example.test/calls/retro?psw=bbb")!
+        let sharedEndpoint = URL(string: "https://rtc.shared.example.test:443/v2")!
+        let otherEndpoint = URL(string: "https://rtc.other.example.test/")!
+
+        let connected = ActiveRoomConnection(
+            room: MeetingRoomIdentity(firstURL, engine: .guest)!,
+            endpoint: sharedEndpoint
+        )
+        let secondRoom = MeetingRoomIdentity(secondURL, engine: .guest)!
+        let otherRoom = MeetingRoomIdentity(otherRoomURL, engine: .guest)!
+
+        XCTAssertTrue(connected.matches(secondRoom, endpoint: MeetingRoomIdentity.normalizedEndpoint(sharedEndpoint)))
+        XCTAssertFalse(connected.matches(secondRoom, endpoint: MeetingRoomIdentity.normalizedEndpoint(otherEndpoint)))
+        XCTAssertFalse(connected.matches(secondRoom, endpoint: nil))
+        XCTAssertFalse(connected.matches(otherRoom, endpoint: MeetingRoomIdentity.normalizedEndpoint(sharedEndpoint)))
+
+        var calendarMeeting = CalendarMeeting(
+            id: "m2", seriesID: "s2", calendarID: "cal", calendarTitle: "Work",
+            title: "Next", start: Date(timeIntervalSince1970: 1000), end: Date(timeIntervalSince1970: 2800),
+            links: [secondURL], endpoint: sharedEndpoint
+        )
+        calendarMeeting.invitation = secondURL
+        calendarMeeting.engine = .guest
+        XCTAssertTrue(calendarMeeting.isConnected(in: [connected]))
+
+        calendarMeeting.endpoint = otherEndpoint
+        XCTAssertFalse(calendarMeeting.isConnected(in: [connected]))
+    }
 }

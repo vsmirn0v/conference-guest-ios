@@ -252,12 +252,16 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         guard notification.request.content.categoryIdentifier == Self.category else { completionHandler([.banner, .list, .sound]); return }
         Task { @MainActor in
-            if let reference = notification.request.content.userInfo["reference"] as? String,
-               let fingerprint = notification.request.content.userInfo["fingerprint"] as? String {
-                if let coordinator, coordinator.scene().visible {
-                    coordinator.foregroundReminder(reference: reference, requestID: notification.request.identifier, fingerprint: fingerprint)
-                } else {
-                    completionHandler([.banner, .list, .sound]); return
+            if let reference = notification.request.content.userInfo["reference"] as? String {
+                if let coordinator, coordinator.shouldSuppressSystemNotification(reference: reference) {
+                    completionHandler([]); return
+                }
+                if let fingerprint = notification.request.content.userInfo["fingerprint"] as? String {
+                    if let coordinator, coordinator.scene().visible {
+                        coordinator.foregroundReminder(reference: reference, requestID: notification.request.identifier, fingerprint: fingerprint)
+                    } else {
+                        completionHandler([.banner, .list, .sound]); return
+                    }
                 }
             }
             completionHandler([]) // No extra meeting audio or modal system alert in the foreground.

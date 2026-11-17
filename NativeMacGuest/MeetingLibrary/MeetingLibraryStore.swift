@@ -936,6 +936,25 @@ actor MeetingLibraryStore: @unchecked Sendable {
 
     // MARK: Data clearing
 
+    func hasTitleOverride(_ sessionID: UUID) async -> Bool {
+        guard let db = try? db() else { return false }
+        return (try? db.one("SELECT 1 FROM meeting_title_overrides WHERE session_id=?", bind: {
+            try Self.bindText($0, sessionID.uuidString, at: 1)
+        })) != nil
+    }
+
+    func deleteSession(_ sessionID: UUID) async throws {
+        participationNoteChanges.willChange(sessionID)
+        let db = try db()
+        try db.transaction {
+            for table in ["export_outbox", "export_bindings", "note_chunks", "meeting_sessions"] {
+                try db.run("DELETE FROM \(table) WHERE session_id=?") {
+                    try Self.bindText($0, sessionID.uuidString, at: 1)
+                }
+            }
+        }
+    }
+
     func deleteAll() async throws {
         participationNoteChanges.willChange()
         let db = try db()

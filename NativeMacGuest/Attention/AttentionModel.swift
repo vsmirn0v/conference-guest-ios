@@ -27,6 +27,19 @@ enum AttentionMode: String, Codable, CaseIterable, Sendable {
     case watch
 }
 
+/// How back-to-back scheduled meetings in the same room affect notes & summaries.
+enum SameRoomMeetingTransitionMode: String, Codable, CaseIterable, Sendable {
+    case separateSessions
+    case continuousSession
+
+    var title: String {
+        switch self {
+        case .separateSessions: L("Separate summaries & notes")
+        case .continuousSession: L("Keep as one continuous meeting")
+        }
+    }
+}
+
 /// Where a meeting is relative to you, which picks its default mode.
 enum AttentionSituation: String, CaseIterable, Sendable {
     /// You are looking at it with its sound on.
@@ -85,6 +98,8 @@ struct MeetingPreset: Codable, Identifiable, Equatable, Sendable {
     var repliesAllowed: Bool { suggestReplies ?? true }
     /// Drafts you changed before sending, newest last; the writer sees them as examples.
     var replyEdits: [ReplyEdit]?
+    /// Optional per-room override when back-to-back scheduled meetings share this room.
+    var sameRoomTransition: SameRoomMeetingTransitionMode? = nil
     static let replyEditLimit = 10
     static let promptReplyEditLimit = 5
 

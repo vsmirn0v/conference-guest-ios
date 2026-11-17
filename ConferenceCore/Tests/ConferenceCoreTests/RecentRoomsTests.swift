@@ -139,4 +139,16 @@ final class RecentRoomsTests: XCTestCase {
         XCTAssertEqual(restored.items.last?.invitationURL, first)
         XCTAssertFalse(restored.items.last?.isStarred == true)
     }
+
+    func testUpdateTitleMatchesRotatedGuestTokenWithoutLosingAlias() {
+        let first = URL(string: "https://example.org/calls/standup?psw=v1")!
+        let rotated = URL(string: "https://example.org/calls/standup?psw=v2")!
+        var history = RecentRooms()
+        history.record(url: first, title: "Standup", identifier: "standup", engine: .guest)
+        history.setAlias("Daily Standup", for: first)
+        history.updateTitle(for: rotated, title: "Platform Review")
+        XCTAssertEqual(history.items.count, 1)
+        XCTAssertEqual(history.items[0].title, "Platform Review")
+        XCTAssertEqual(history.items[0].displayTitle, "Daily Standup")
+    }
 }

@@ -78,6 +78,10 @@ import UserNotifications
     private var handoffLookup: Task<Void, Never>?
     private var sessionID = UUID()
     private var shutdownBlocked = false
+    private var scheduleTransitionTask: Task<Void, Never>?
+    private var pendingSessionCreates: [UUID: Task<Void, Never>] = [:]
+    private var sameRoomSwitchTasks: [UUID: Task<Void, Never>] = [:]
+    static let sameRoomOverrunGrace: TimeInterval = 120
     private let reminderPresenter = NativeDesktopReminderPresenter()
     private var pendingScheduled: NativeDesktopScheduledJoin?
     private let detect: @MainActor (URL) async throws -> MeetingEngineDetection
@@ -143,9 +147,10 @@ import UserNotifications
             self?.attention.showMoment(id); self?.show(section: .assistant)
         }
         library.calendar.reminders.activeRoom = { [weak self] in self?.meeting.flatMap { MeetingRoomIdentity($0.invitation, engine: $0.kind) } }
+        library.calendar.reminders.activeConnections = { [weak self] in self?.currentActiveConnections() ?? [] }
         library.calendar.reminders.scene = { [weak self] in
-            let active = self?.meeting.flatMap { MeetingRoomIdentity($0.invitation, engine: $0.kind) }
-            return ReminderScene(visible: NSApp.isActive, room: active,
+            let connections = self?.currentActiveConnections() ?? []
+            return ReminderScene(visible: NSApp.isActive, connections: connections,
                 usable: self?.preparing == false && self?.library.setup.isPresented == false && self?.library.calendar.reminders.editing == nil)
         }
         library.calendar.reminders.onPresentation = { [weak self] events in
@@ -170,6 +175,15 @@ import UserNotifications
         self.attention.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         // Store and assistant publishes (a seen-mark, a keystroke in an outcome) must not
         // invalidate the whole workspace. Views that read them observe those objects.
+        library.calendar.$meetings.dropFirst().sink { [weak self] _ in
+            Task { @MainActor [weak self] in self?.synchronizeScheduledTransitions() }
+        }.store(in: &subscriptions)
+        self.attention.store.meetingLibrary.onSessionRenamed = { [weak self] id, title in
+            guard let self else { return }
+            for model in self.meetings where model.workspaceSessionID == id || model.sessionID == id {
+                model.noteUserRenamedSession(title)
+            }
+        }
         self.attention.start()
     }
 
@@ -277,8 +291,11 @@ import UserNotifications
             return
         }
         let room = MeetingRoomIdentity(url, engine: known)
-        if let existing = meetings.first(where: { MeetingRoomIdentity($0.invitation, engine: $0.kind) == room }) {
-            showMeeting(existing); return
+        if let room, let existing = meetings.first(where: {
+            guard !$0.isClosed, let conn = connection(for: $0) else { return false }
+            return conn.matches(room, endpoint: nil)
+        }) {
+            scheduled?.finish(); showMeeting(existing); return
         }
         if meetings.count >= Self.meetingLimit {
             error = L("You can be in up to %d meetings at once.", Self.meetingLimit); return
@@ -303,6 +320,8 @@ import UserNotifications
                 guard scheduled?.admission() != false else { throw CancellationError() }
                 let detection = try await detect(url)
                 try Task.checkCancellation(); guard token == joinGeneration else { return }
+                var detectedEndpoint: URL?
+                if case .verified(.guest(let endpoint)) = detection { detectedEndpoint = endpoint }
                 let destination: JoinDestination
                 if let resolved = try JoinDestination.resolve(url, detection: detection, knownEngine: known) { destination = resolved }
                 else {
@@ -310,13 +329,43 @@ import UserNotifications
                     destination = try chooseEngine(for: url)
                 }
                 try Task.checkCancellation()
+                let endpointString = MeetingRoomIdentity.normalizedEndpoint(detectedEndpoint)
+                let incomingRoom = MeetingRoomIdentity(destination.invitationURL, engine: destination.engineKind) ?? room
+                if let incomingRoom, let existing = meetings.first(where: {
+                    guard !$0.isClosed, let conn = connection(for: $0) else { return false }
+                    return conn.matches(incomingRoom, endpoint: endpointString)
+                }) {
+                    settingUp = false; endJoinSetup()
+                    showMeeting(existing); return
+                }
                 let name = (nameOverride ?? library.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard destination.engineKind.inputPolicy.accepts(name: name) else { throw NativeGuestEntryError.invalidName }
-                let model = makeMeeting(destination, name, title, quiet)
+                let explicitTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let nowAtJoin = library.calendar.currentTime
+                let calendarMeeting: CalendarMeeting? = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id } }
+                    ?? incomingRoom.flatMap {
+                        library.calendar.currentScheduledMeeting(
+                            matching: ActiveRoomConnection(room: $0, normalizedEndpoint: endpointString),
+                            at: nowAtJoin)
+                    }
+                let initialTitle = (explicitTitle?.isEmpty == false ? explicitTitle : nil) ?? calendarMeeting?.title
+                let model = makeMeeting(destination, name, initialTitle, quiet)
                 ownedModel = model; joinModels[joinID] = ObjectIdentifier(model)
-                let calendarMeeting = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id } }
-                model.calendarSeriesID = calendarMeeting?.seriesID
-                model.participationCalendar = calendarMeeting
+                model.resolvedEndpoint = detectedEndpoint
+                if let calendarMeeting {
+                    model.applyScheduledTitle(calendarMeeting.title, seriesID: calendarMeeting.seriesID, calendarMeeting: calendarMeeting)
+                } else {
+                    model.calendarSeriesID = nil
+                    model.participationCalendar = nil
+                }
+                model.segments = [
+                    NativeDesktopMeetingModel.ScheduledSegment(
+                        sessionID: model.workspaceSessionID,
+                        calendarEventID: calendarMeeting?.id,
+                        seriesID: calendarMeeting?.seriesID ?? model.calendarSeriesID,
+                        title: model.title,
+                        startedAt: nowAtJoin)
+                ]
                 model.meetingLibrary = attention.store.meetingLibrary
                 model.notes = attention.store.notes
                 model.synthesizeVoiceReply = { [weak attention] text in
@@ -325,13 +374,16 @@ import UserNotifications
                 }
                 // The persisted session uses the model's own UUID: a reconnect in this
                 // model keeps the session; only an explicit Leave plus a new model starts a new one.
-                Task { @MainActor [weak self] in
+                let initialSessionID = model.sessionID
+                let initialSessionTitle = model.title
+                let initialSeriesID = model.calendarSeriesID
+                pendingSessionCreates[initialSessionID] = Task { @MainActor [weak self] in
                     guard let self else { return }
                     await self.attention.store.meetingLibrary.createSession(
-                        id: model.sessionID, title: model.title, invitation: model.invitation,
+                        id: initialSessionID, title: initialSessionTitle, invitation: model.invitation,
                         roomIdentity: MeetingRoomIdentity(model.invitation, engine: model.kind)?.displayDetails ?? "",
-                        calendarSeriesID: model.calendarSeriesID)
-                    await self.attention.store.meetingLibrary.markSessionConnected(model.sessionID)
+                        calendarSeriesID: initialSeriesID, startedAt: nowAtJoin)
+                    await self.attention.store.meetingLibrary.markSessionConnected(initialSessionID)
                 }
                 let concurrent = !meetings.isEmpty, owns = talkMeeting == nil
                 if concurrent { model.configureForConcurrentJoin(ownsMicrophone: owns) }
@@ -359,10 +411,17 @@ import UserNotifications
                 guard token == joinGeneration, meetings.contains(where: { $0 === model }), scheduled?.admission() != false else { throw CancellationError() }
                 // Commit only after final admission, including same-turn revocation.
                 if scheduledJoinID == joinID { scheduledJoinID = nil; pendingScheduled = nil }
+                let connectedAt = library.calendar.currentTime
+                if model.segments.count == 1, model.segments[0].sessionID == model.workspaceSessionID {
+                    model.segments[0].startedAt = connectedAt
+                }
                 library.recordJoin(invitation: model.invitation, title: model.title,
-                    identifier: destination.roomIdentifier, engine: model.kind, eventID: eventID)
+                    identifier: destination.roomIdentifier, engine: model.kind,
+                    eventID: calendarMeeting?.id ?? eventID, endpoint: endpointString, since: connectedAt)
                 library.continuation.targetDidConnect(invitation: model.invitation, sessionID: requestedSession)
                 updateContinuation()
+                library.calendar.reminders.activeConnectionsChanged()
+                synchronizeScheduledTransitions()
             } catch {
                 if token == joinGeneration, !(error is CancellationError) { self.error = error.localizedDescription }
                 if token == joinGeneration, requestedSession == sessionID { library.continuation.targetDidFail() }
@@ -386,6 +445,7 @@ import UserNotifications
     /// Leaves every meeting (Quit, update, "Leave all meetings").
     @discardableResult func leave() async -> Bool {
         if let leaveTask { return await leaveTask.value }
+        scheduleTransitionTask?.cancel(); scheduleTransitionTask = nil
         let pending = Array(joinTasks.values)
         queuedJoin = nil; joinGeneration = UUID(); leavingAll = true
         let cleanup = Task { @MainActor in
@@ -400,7 +460,10 @@ import UserNotifications
     }
     private func refreshPreparing() {
         let busy = !joinTasks.isEmpty || leavingAll
-        if preparing != busy { preparing = busy }
+        if preparing != busy {
+            preparing = busy
+            if !busy { library.calendar.reminders.refreshPresentation() }
+        }
     }
     private func endJoinSetup() {
         joinSettingUp = false
@@ -414,26 +477,411 @@ import UserNotifications
         return clean && !shutdownBlocked
     }
     /// Leaves one meeting; a sole survivor of a departed talk meeting takes the talk role (muted).
+    deinit {
+        scheduleTransitionTask?.cancel()
+    }
+
+    private func connection(for model: NativeDesktopMeetingModel) -> ActiveRoomConnection? {
+        MeetingRoomIdentity(model.invitation, engine: model.kind).map {
+            ActiveRoomConnection(room: $0, endpoint: model.resolvedEndpoint)
+        }
+    }
+
+    private func currentActiveConnections() -> [ActiveRoomConnection] {
+        meetings.filter { $0.connected && !$0.isClosed }.compactMap { connection(for: $0) }
+    }
+
+    func synchronizeScheduledTransitions() {
+        scheduleTransitionTask?.cancel(); scheduleTransitionTask = nil
+        let active = meetings.filter { $0.connected && !$0.isClosed }
+        guard !active.isEmpty else { return }
+        let now = library.calendar.currentTime
+        let connections = active.compactMap { connection(for: $0) }
+
+        for model in active {
+            guard let conn = connection(for: model) else { continue }
+            guard let scheduled = library.calendar.currentScheduledMeeting(matching: conn, at: now) else { continue }
+
+            if model.segments.last?.calendarEventID == scheduled.id {
+                let lastIndex = model.segments.count - 1
+                if model.segments[lastIndex].title != scheduled.title || model.segments[lastIndex].seriesID != scheduled.seriesID {
+                    model.segments[lastIndex].title = scheduled.title
+                    model.segments[lastIndex].seriesID = scheduled.seriesID
+                    model.applyScheduledTitle(scheduled.title, seriesID: scheduled.seriesID, calendarMeeting: scheduled)
+                    let targetSessionID = model.workspaceSessionID
+                    let updatedTitle = model.title
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        await self.attention.store.meetingLibrary.updateSessionTitle(targetSessionID, title: updatedTitle)
+                    }
+                }
+            } else if model.segments.count == 1, model.segments[0].calendarEventID == nil,
+                      now.timeIntervalSince(model.segments[0].startedAt) < Self.sameRoomOverrunGrace {
+                model.segments[0].calendarEventID = scheduled.id
+                model.segments[0].seriesID = scheduled.seriesID
+                model.segments[0].title = scheduled.title
+                model.applyScheduledTitle(scheduled.title, seriesID: scheduled.seriesID, calendarMeeting: scheduled)
+                if let room = MeetingRoomIdentity(model.invitation, engine: model.kind) {
+                    library.calendar.reminders.joined(
+                        room: room,
+                        endpoint: MeetingRoomIdentity.normalizedEndpoint(model.resolvedEndpoint),
+                        eventID: scheduled.id,
+                        since: model.connectedSince ?? model.segments[0].startedAt)
+                }
+                library.calendar.noteConnected(
+                    invitation: model.invitation,
+                    engine: model.kind,
+                    endpoint: model.resolvedEndpoint,
+                    since: model.connectedSince ?? model.segments[0].startedAt,
+                    roomID: library.history.matching(model.invitation, engine: model.kind)?.id,
+                    at: now)
+                library.history.updateTitle(for: model.invitation, title: scheduled.title)
+                let targetSessionID = model.workspaceSessionID
+                let updatedTitle = model.title
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.attention.store.meetingLibrary.updateSessionTitle(targetSessionID, title: updatedTitle)
+                }
+            } else {
+                let boundary = max(scheduled.start, model.segments.last?.startedAt ?? now)
+                handleScheduledTransition(for: model, to: scheduled, at: boundary, now: now)
+            }
+        }
+
+        if let nextDate = library.calendar.nextTransitionDate(matching: connections, after: now) {
+            let delay = max(0.05, nextDate.timeIntervalSince(now))
+            scheduleTransitionTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                self?.synchronizeScheduledTransitions()
+            }
+        }
+    }
+
+    private func handleScheduledTransition(for model: NativeDesktopMeetingModel, to scheduled: CalendarMeeting,
+                                           at boundary: Date, now: Date) {
+        let room = MeetingRoomIdentity(model.invitation, engine: model.kind)
+        let endpointString = MeetingRoomIdentity.normalizedEndpoint(model.resolvedEndpoint)
+        if let room {
+            library.calendar.reminders.joined(room: room, endpoint: endpointString,
+                                              eventID: scheduled.id, since: model.connectedSince ?? boundary)
+        }
+        library.calendar.noteConnected(
+            invitation: model.invitation,
+            engine: model.kind,
+            endpoint: model.resolvedEndpoint,
+            since: model.connectedSince ?? boundary,
+            roomID: library.history.matching(model.invitation, engine: model.kind)?.id,
+            at: now)
+        library.history.updateTitle(for: model.invitation, title: scheduled.title)
+
+        let previousTitle = model.segments.last?.title ?? model.title
+        if !model.segments.isEmpty {
+            model.segments[model.segments.count - 1].endedAt = boundary
+        }
+        let decision = attention.store.effectiveSameRoomTransition(room: model.invitation, series: scheduled.seriesID)
+        let mode = decision.mode
+
+        switch mode {
+        case .separateSessions:
+            let newSessionID = UUID()
+            let protectNote = shouldProtectActiveNote(for: model)
+            model.rolloverWorkspaceSession(to: newSessionID, title: scheduled.title, seriesID: scheduled.seriesID,
+                                           calendarMeeting: scheduled, at: boundary, protectActiveNote: protectNote)
+            model.segments.append(NativeDesktopMeetingModel.ScheduledSegment(
+                sessionID: newSessionID,
+                calendarEventID: scheduled.id,
+                seriesID: scheduled.seriesID,
+                title: scheduled.title,
+                startedAt: boundary))
+            model.workspaceJournal?.recordAction(
+                sessionID: newSessionID,
+                text: L("Scheduled meeting started: %@", scheduled.title),
+                occurredAt: boundary,
+                source: "calendarTransition")
+            let parentID = model.segments.count >= 2 ? model.segments[model.segments.count - 2].sessionID : nil
+            let roomDetails = room?.displayDetails ?? ""
+            pendingSessionCreates[newSessionID] = Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let parentID { await self.pendingSessionCreates[parentID]?.value }
+                await self.attention.store.meetingLibrary.createSession(
+                    id: newSessionID, title: scheduled.title, invitation: model.invitation,
+                    roomIdentity: roomDetails, calendarSeriesID: scheduled.seriesID, startedAt: boundary)
+                await self.attention.store.meetingLibrary.markSessionConnected(newSessionID)
+            }
+
+        case .continuousSession:
+            let sessionID = model.workspaceSessionID
+            model.applyScheduledTitle(scheduled.title, seriesID: scheduled.seriesID, calendarMeeting: scheduled)
+            model.segments.append(NativeDesktopMeetingModel.ScheduledSegment(
+                sessionID: sessionID,
+                calendarEventID: scheduled.id,
+                seriesID: scheduled.seriesID,
+                title: scheduled.title,
+                startedAt: boundary))
+            model.workspaceJournal?.recordAction(
+                sessionID: sessionID,
+                text: L("Scheduled meeting started: %@", scheduled.title),
+                occurredAt: boundary,
+                source: "calendarTransition")
+            let chaptered = chapteredTitle(for: sessionID, in: model.segments)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.pendingSessionCreates[sessionID]?.value
+                await self.attention.store.meetingLibrary.updateSessionTitle(sessionID, title: chaptered)
+            }
+        }
+
+        model.sameRoomTransitionBanner = NativeDesktopMeetingModel.SameRoomTransitionBanner(
+            eventID: scheduled.id,
+            previousTitle: previousTitle,
+            currentTitle: scheduled.title,
+            seriesID: scheduled.seriesID,
+            mode: mode,
+            transitionAt: boundary)
+    }
+
+    func setSameRoomTransitionMode(for model: NativeDesktopMeetingModel, mode: SameRoomMeetingTransitionMode, remember: Bool) {
+        guard model.segments.count >= 2 else { return }
+        let lastIndex = model.segments.count - 1
+        let current = model.segments[lastIndex]
+        let previous = model.segments[lastIndex - 1]
+        if remember {
+            attention.store.setSameRoomTransition(mode, room: model.invitation, series: current.seriesID, title: current.title)
+        }
+        if remember {
+            model.sameRoomTransitionBanner = nil
+        } else {
+            model.sameRoomTransitionBanner?.mode = mode
+        }
+
+        let now = library.calendar.currentTime
+        let previousSwitch = sameRoomSwitchTasks[model.sessionID]
+
+        switch mode {
+        case .continuousSession:
+            guard current.sessionID != previous.sessionID else {
+                model.segments[lastIndex].explicitSplitChoice = false
+                return
+            }
+            let childID = current.sessionID
+            let parentID = previous.sessionID
+            model.segments[lastIndex].sessionID = parentID
+            model.segments[lastIndex].explicitSplitChoice = false
+            model.mergeWorkspaceSessionBack(into: parentID, title: current.title, seriesID: current.seriesID,
+                                            calendarMeeting: model.participationCalendar, at: now)
+            let chaptered = chapteredTitle(for: parentID, in: model.segments)
+            sameRoomSwitchTasks[model.sessionID] = Task { @MainActor [weak self] in
+                await previousSwitch?.value
+                guard let self else { return }
+                await self.pendingSessionCreates[parentID]?.value
+                await self.pendingSessionCreates[childID]?.value
+                self.pendingSessionCreates[childID] = nil
+                let notes = self.attention.store.notes
+                await notes.flush(sessionID: childID)
+                await notes.flush(sessionID: parentID)
+                await notes.load(sessionID: parentID)
+                await notes.load(sessionID: childID)
+                let parentText = notes.buffer(sessionID: parentID)
+                let childText = notes.buffer(sessionID: childID)
+                if !childText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let merged: String
+                    if parentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        merged = childText
+                    } else {
+                        let trimmedParent = parentText.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
+                        let trimmedChild = childText.replacingOccurrences(of: #"^\s+"#, with: "", options: .regularExpression)
+                        merged = trimmedParent + "\n\n## \(current.title)\n\n" + trimmedChild
+                    }
+                    notes.update(sessionID: parentID, text: merged, at: now)
+                    await notes.flush(sessionID: parentID)
+                }
+                notes.discard(sessionID: childID)
+                await self.attention.store.meetingLibrary.deleteSession(childID)
+                await self.attention.store.meetingLibrary.updateSessionTitle(parentID, title: chaptered)
+            }
+
+        case .separateSessions:
+            model.segments[lastIndex].explicitSplitChoice = true
+            guard current.sessionID == previous.sessionID else { return }
+            let parentID = previous.sessionID
+            let newSessionID = UUID()
+            let boundary = current.startedAt
+            let protectNote = shouldProtectActiveNote(for: model)
+            model.segments[lastIndex].sessionID = newSessionID
+            model.rolloverWorkspaceSession(to: newSessionID, title: current.title, seriesID: current.seriesID,
+                                           calendarMeeting: model.participationCalendar, at: boundary,
+                                           protectActiveNote: protectNote)
+            model.workspaceJournal?.splitEvents(from: parentID, into: newSessionID, since: boundary)
+            model.workspaceJournal?.end(sessionID: parentID, at: boundary)
+            model.workspaceJournal?.recordAction(
+                sessionID: newSessionID,
+                text: L("Scheduled meeting started: %@", current.title),
+                occurredAt: boundary,
+                source: "calendarTransition")
+            let parentChaptered = chapteredTitle(for: parentID, in: model.segments)
+            let roomDetails = MeetingRoomIdentity(model.invitation, engine: model.kind)?.displayDetails ?? ""
+            let createTask = Task { @MainActor [weak self] in
+                await previousSwitch?.value
+                guard let self else { return }
+                await self.pendingSessionCreates[parentID]?.value
+                await self.attention.store.meetingLibrary.updateSessionTitle(parentID, title: parentChaptered)
+                await self.attention.store.meetingLibrary.createSession(
+                    id: newSessionID, title: current.title, invitation: model.invitation,
+                    roomIdentity: roomDetails, calendarSeriesID: current.seriesID, startedAt: boundary)
+                await self.attention.store.meetingLibrary.markSessionConnected(newSessionID)
+            }
+            pendingSessionCreates[newSessionID] = createTask
+            sameRoomSwitchTasks[model.sessionID] = createTask
+        }
+    }
+
+    private func shouldProtectActiveNote(for model: NativeDesktopMeetingModel) -> Bool {
+        guard let notes = model.notes else { return false }
+        let noteID = model.activeNoteSessionID
+        if notes.draft(sessionID: noteID)?.isDirty == true { return true }
+        if !notes.buffer(sessionID: noteID).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        return notes.hasEditor(sessionID: noteID) && (NSApp.keyWindow?.firstResponder is NSTextView)
+    }
+
+    private func chapteredTitle(for sessionID: UUID, in segments: [NativeDesktopMeetingModel.ScheduledSegment]) -> String {
+        var titles: [String] = []
+        for segment in segments where segment.sessionID == sessionID {
+            let clean = segment.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { continue }
+            if titles.last != clean { titles.append(clean) }
+        }
+        return titles.joined(separator: " → ")
+    }
+
+    private func finalizeSegmentsAndOutcomes(for model: NativeDesktopMeetingModel, leftAt: Date) async -> Set<UUID> {
+        await sameRoomSwitchTasks[model.sessionID]?.value
+        let pendingIDs = Set([model.sessionID, model.workspaceSessionID] + model.segments.map(\.sessionID))
+        for sid in pendingIDs {
+            await pendingSessionCreates[sid]?.value
+            pendingSessionCreates[sid] = nil
+        }
+
+        if model.segments.count >= 2, let last = model.segments.last {
+            let previous = model.segments[model.segments.count - 2]
+            if leftAt.timeIntervalSince(last.startedAt) <= Self.sameRoomOverrunGrace, !last.explicitSplitChoice {
+                var canFold = true
+                if last.sessionID != previous.sessionID {
+                    let bufferEmpty = attention.store.notes.buffer(sessionID: last.sessionID)
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let persisted = await attention.store.meetingLibrary.note(sessionID: last.sessionID)
+                    let persistedEmpty = persisted?.markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+                    canFold = bufferEmpty && persistedEmpty
+                }
+                if canFold {
+                    model.segments.removeLast()
+                    model.segments[model.segments.count - 1].endedAt = nil
+                    if last.sessionID != previous.sessionID {
+                        model.mergeWorkspaceSessionBack(into: previous.sessionID, title: previous.title,
+                                                        seriesID: previous.seriesID, calendarMeeting: nil, at: leftAt)
+                        attention.store.notes.discard(sessionID: last.sessionID)
+                        await attention.store.meetingLibrary.deleteSession(last.sessionID)
+                    } else {
+                        let restored = chapteredTitle(for: previous.sessionID, in: model.segments)
+                        let hasOverride = await attention.store.meetingLibrary.store.hasTitleOverride(previous.sessionID)
+                        if !hasOverride, !restored.isEmpty {
+                            await attention.store.meetingLibrary.updateSessionTitle(previous.sessionID, title: restored)
+                        }
+                    }
+                }
+            }
+        }
+
+        var groups: [(sessionID: UUID, segments: [NativeDesktopMeetingModel.ScheduledSegment])] = []
+        for segment in model.segments {
+            if let lastGroup = groups.last, lastGroup.sessionID == segment.sessionID {
+                groups[groups.count - 1].segments.append(segment)
+            } else {
+                groups.append((sessionID: segment.sessionID, segments: [segment]))
+            }
+        }
+        if groups.isEmpty {
+            groups = [(sessionID: model.workspaceSessionID, segments: [
+                NativeDesktopMeetingModel.ScheduledSegment(
+                    sessionID: model.workspaceSessionID,
+                    calendarEventID: nil,
+                    seriesID: model.calendarSeriesID,
+                    title: model.title,
+                    startedAt: model.connectedSince ?? leftAt)
+            ])]
+        }
+
+        var specs: [AttentionCoordinator.OutcomeSegmentSpec] = []
+        for (index, group) in groups.enumerated() {
+            let from: Date? = index == 0 ? nil : group.segments.first?.startedAt
+            let until: Date? = index == groups.count - 1
+                ? nil
+                : (group.segments.last?.endedAt ?? groups[index + 1].segments.first?.startedAt)
+            let endedAt = index == groups.count - 1 ? leftAt : (group.segments.last?.endedAt ?? leftAt)
+            let rawChaptered = chapteredTitle(for: group.sessionID, in: model.segments)
+            let chaptered = rawChaptered.isEmpty ? model.title : rawChaptered
+            let hasOverride = await attention.store.meetingLibrary.store.hasTitleOverride(group.sessionID)
+            let resolvedTitle: String
+            if hasOverride,
+               let saved = (try? await attention.store.meetingLibrary.store.session(group.sessionID))?.title.trimmingCharacters(in: .whitespacesAndNewlines),
+               !saved.isEmpty {
+                resolvedTitle = saved
+            } else {
+                resolvedTitle = chaptered
+                if group.segments.count > 1 {
+                    await attention.store.meetingLibrary.updateSessionTitle(group.sessionID, title: chaptered)
+                }
+            }
+            let chapters: [(at: Date, title: String)] = group.segments.count > 1
+                ? group.segments.map { (at: $0.startedAt, title: $0.title) }
+                : []
+            specs.append(AttentionCoordinator.OutcomeSegmentSpec(
+                sessionID: group.sessionID,
+                title: resolvedTitle,
+                invitation: model.invitation,
+                seriesID: group.segments.last?.seriesID ?? model.calendarSeriesID,
+                from: from,
+                until: until,
+                endedAt: endedAt,
+                chapters: chapters))
+        }
+
+        let awaiting = attention.captureOutcomes(for: model, segments: specs)
+        for (group, spec) in zip(groups, specs) {
+            model.workspaceJournal?.end(sessionID: group.sessionID, at: spec.endedAt)
+            await attention.store.meetingLibrary.endSession(
+                group.sessionID,
+                endedAt: spec.endedAt,
+                awaitingOutcome: awaiting.contains(group.sessionID))
+        }
+        return awaiting
+    }
+
     @discardableResult func leave(_ model: NativeDesktopMeetingModel) async -> Bool {
         let id = model.sessionID
         if let task = meetingLeaves[id] { return await task.value }
         for (joinID, owner) in joinModels where owner == ObjectIdentifier(model) { joinTasks[joinID]?.cancel() }
         let task = Task { @MainActor () -> Bool in
+            let leftAt = library.calendar.currentTime
             attention.noteLeave(model)
-            let awaitingOutcome = attention.captureOutcome(for: model)
             // Local durable flushes are part of leaving; Obsidian export stays queued.
-            await attention.store.notes.flush(sessionID: id)
+            let noteSessionIDs = Set([id, model.workspaceSessionID, model.activeNoteSessionID] + model.segments.map(\.sessionID))
+            for noteSessionID in noteSessionIDs {
+                await attention.store.notes.flush(sessionID: noteSessionID)
+            }
             let clean = await model.leave()
             guard self.meetings.contains(where: { $0 === model }) else {
-                await self.attention.store.meetingLibrary.endSession(id, awaitingOutcome: awaitingOutcome)
+                await self.pendingSessionCreates[id]?.value
+                await self.attention.store.meetingLibrary.endSession(id, endedAt: leftAt, awaitingOutcome: false)
                 self.attention.forgetLeave(id)
                 return clean
             }
             if clean {
-                await self.attention.store.meetingLibrary.endSession(id, awaitingOutcome: awaitingOutcome)
+                _ = await self.finalizeSegmentsAndOutcomes(for: model, leftAt: leftAt)
                 self.meetings.removeAll { $0 === model }
                 self.meetingWindows.removeValue(forKey: id)?.close()
                 self.meetingSubscriptions[id] = nil; self.renderedMeetingStates[id] = nil; self.continuationSessions[id] = nil
+                self.pendingSessionCreates[id] = nil; self.sameRoomSwitchTasks[id] = nil
                 if self.talkID == id { self.talkID = nil }
                 if self.talkID == nil, self.meetings.count == 1, let survivor = self.meetings.first {
                     _ = await self.claimTalk(for: survivor)
@@ -441,6 +889,8 @@ import UserNotifications
                 if self.selectedMeetingID == id { self.selectedMeetingID = (self.talkMeeting ?? self.meetings.last)?.sessionID }
                 self.synchronizeMeetingPresentation()
                 self.updateContinuation()
+                self.library.calendar.reminders.activeConnectionsChanged()
+                self.synchronizeScheduledTransitions()
                 self.attention.forgetLeave(id)
             } else {
                 self.shutdownBlocked = true; self.error = NativeDesktopError.cleanupFailed.localizedDescription

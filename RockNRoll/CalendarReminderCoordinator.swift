@@ -9,9 +9,12 @@ import AppKit
 
 @MainActor
 final class CalendarReminderCoordinator: ObservableObject {
+    static let suppressOtherDevicesKey = "calendarReminders.suppressOtherDevices"
+
     @Published private(set) var enabled = false
     @Published private(set) var profile = ReminderProfile()
     @Published private(set) var authorization: ReminderAuthorization = .notDetermined
+    @Published private(set) var suppressOtherDevices = true
     @Published private(set) var error: String?
     @Published var editing: ReminderOccurrence? { didSet { if editing != nil { onEditing() }; refreshPresentation() } }
     var onOpen: (ReminderOccurrence?, Bool) -> Void = { _, _ in }
@@ -19,17 +22,22 @@ final class CalendarReminderCoordinator: ObservableObject {
     var scene: () -> ReminderScene = { .init() }
     var onBackground: () -> Void = {}
     private var deadline: Task<Void, Never>?
+    private var connectionDeadline: Task<Void, Never>?
     private var permissionRefresh: Task<Void, Never>?
     private var permissionFresh = false
     private var permissionEpoch = 0
     private var foregroundOffers: [String: ReminderForegroundEvent] = [:]
-    private var lastSceneRoom: MeetingRoomIdentity?
+    private var connectedRoomsSince: [MeetingRoomIdentity: (connection: ActiveRoomConnection, since: Date)] = [:]
+    private var latestJams: [ActiveJam] = []
+    private var latestJamAccount: String?
+    private var isSyncingConnections = false
     private let clock: () -> Date
     var beforeOpen: () async -> Bool = { true }
     var onNeedsSnapshot: () -> Void = {}
     var onEditing: () -> Void = {}
     var onSkip: (String) -> Void = { _ in }
     var activeRoom: () -> MeetingRoomIdentity? = { nil }
+    var activeConnections: () -> [ActiveRoomConnection] = { [] }
     var isEventVisible: (String) -> Bool = { _ in false }
     var canPresent: () -> Bool = { false }
     private(set) var repository = CalendarReminderRepository()
@@ -81,11 +89,12 @@ final class CalendarReminderCoordinator: ObservableObject {
         }
     }
     deinit {
-        worker?.cancel(); cloudTask?.cancel(); opening?.cancel(); deadline?.cancel(); permissionRefresh?.cancel()
+        worker?.cancel(); cloudTask?.cancel(); opening?.cancel(); deadline?.cancel(); connectionDeadline?.cancel(); permissionRefresh?.cancel()
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
     }
     private func load() {
         if let enabled = preferences.object(forKey: "calendarReminders.enabled") as? Bool { self.enabled = enabled }
+        if let suppress = preferences.object(forKey: Self.suppressOtherDevicesKey) as? Bool { self.suppressOtherDevices = suppress }
         do {
             if let data = try storage.read() {
                 let saved = try JSONDecoder().decode(CalendarReminderRepository.self, from: data)
@@ -95,6 +104,8 @@ final class CalendarReminderCoordinator: ObservableObject {
             }
             enabled = preferences.object(forKey: "calendarReminders.enabled") as? Bool ?? repository.enabled
             repository.enabled = enabled
+            suppressOtherDevices = (preferences.object(forKey: Self.suppressOtherDevicesKey) as? Bool) ?? repository.suppressOtherDevices ?? true
+            repository.suppressOtherDevices = suppressOtherDevices
             profile = repository.profile.value; loaded = true; error = nil
         } catch { self.error = L("Reminders could not be saved. Try again."); loaded = false }
     }
@@ -126,6 +137,7 @@ final class CalendarReminderCoordinator: ObservableObject {
         if !loaded { load() }
         if !value {
             enabled = false; repository.enabled = false
+            connectionDeadline?.cancel(); connectionDeadline = nil
             preferences.set(false, forKey: "calendarReminders.enabled")
             changed(); return
         }
@@ -142,6 +154,13 @@ final class CalendarReminderCoordinator: ObservableObject {
         preferences.set(value, forKey: "calendarReminders.enabled")
         changed()
         if value { onNeedsSnapshot() }
+    }
+    func setSuppressOtherDevices(_ value: Bool) {
+        suppressOtherDevices = value
+        preferences.set(value, forKey: Self.suppressOtherDevicesKey)
+        repository.suppressOtherDevices = value
+        repository.observe(latestJams, account: latestJamAccount, now: clock(), suppressOtherDevices: value)
+        changed()
     }
     func setProfile(_ value: ReminderProfile) {
         guard loaded else { return }
@@ -165,7 +184,7 @@ final class CalendarReminderCoordinator: ObservableObject {
         let previous = Set(repository.occurrences.map(\.id))
         repository.update(available ? meetings : [], at: clock())
         removedOccurrences.formUnion(previous.subtracting(repository.occurrences.map(\.id)))
-        if let active = activeRoom() { repository.joined(room: active, at: clock()) }
+        _ = syncConnectedState()
         changed()
     }
     func occurrence(for meeting: CalendarMeeting) -> ReminderOccurrence? {
@@ -189,14 +208,103 @@ final class CalendarReminderCoordinator: ObservableObject {
     func setOverride(_ value: ReminderOverride, for occurrence: ReminderOccurrence) {
         repository.setOverride(value, id: occurrence.id); changed()
     }
-    func joined(room: MeetingRoomIdentity, eventID: String? = nil) {
+    func joined(room: MeetingRoomIdentity, endpoint: String? = nil, eventID: String? = nil, since: Date? = nil) {
         guard !repository.occurrences.isEmpty else { return }
-        repository.joined(room: room, eventID: eventID, at: clock()); changed()
+        repository.joined(room: room, endpoint: endpoint, eventID: eventID, since: since, at: clock())
+        changed()
     }
     func observe(_ jams: [ActiveJam], account: String?) {
+        let now = clock()
         let previous = repository.states
-        repository.observe(jams, account: account, now: clock())
-        if repository.states != previous { changed() }
+        let previousRemote = activeRemoteConnections(at: now)
+        latestJams = jams
+        latestJamAccount = account
+        repository.observe(jams, account: account, now: now, suppressOtherDevices: suppressOtherDevices)
+        let nextRemote = activeRemoteConnections(at: now)
+        scheduleConnectionDeadline(at: now)
+        if repository.states != previous || previousRemote != nextRemote { changed() }
+    }
+    func effectiveConnections() -> [ActiveRoomConnection] {
+        let explicit = activeConnections()
+        if !explicit.isEmpty { return explicit }
+        if let single = activeRoom() { return [ActiveRoomConnection(room: single)] }
+        return scene().connections
+    }
+    private func activeRemoteConnections(at now: Date) -> [ActiveRoomConnection] {
+        guard suppressOtherDevices, latestJamAccount != nil else { return [] }
+        return latestJams.filter { $0.isRecent(at: now) }.compactMap { jam in
+            MeetingRoomIdentity(jam.invitation, engine: jam.engine).map { ActiveRoomConnection(room: $0) }
+        }
+    }
+    @discardableResult
+    private func syncConnectedState() -> Bool {
+        guard !isSyncingConnections else { return false }
+        isSyncingConnections = true
+        defer { isSyncingConnections = false }
+        let now = clock()
+        let current = effectiveConnections()
+        let currentSet = Set(current)
+        let previousSet = Set(connectedRoomsSince.values.map(\.connection))
+        var stateChanged = false
+        for entry in connectedRoomsSince.values {
+            if repository.joined(room: entry.connection.room, endpoint: entry.connection.endpoint, since: entry.since, at: now) {
+                stateChanged = true
+            }
+        }
+        var nextSince: [MeetingRoomIdentity: (connection: ActiveRoomConnection, since: Date)] = [:]
+        for conn in current {
+            let since = connectedRoomsSince[conn.room]?.since ?? now
+            nextSince[conn.room] = (conn, since)
+            if repository.joined(room: conn.room, endpoint: conn.endpoint, since: since, at: now) {
+                stateChanged = true
+            }
+        }
+        connectedRoomsSince = nextSince
+        let remote = activeRemoteConnections(at: now)
+        if !current.isEmpty || !remote.isEmpty {
+            foregroundOffers = foregroundOffers.filter { id, _ in
+                guard let occ = repository.occurrences.first(where: { $0.id == id }) else { return true }
+                return !occ.isConnected(in: current) && !occ.isConnected(in: remote)
+            }
+        }
+        scheduleConnectionDeadline(at: now)
+        return stateChanged || currentSet != previousSet
+    }
+    func activeConnectionsChanged() {
+        if syncConnectedState() {
+            changed()
+        } else {
+            refreshPresentation()
+        }
+    }
+    private func scheduleConnectionDeadline(at now: Date) {
+        connectionDeadline?.cancel()
+        connectionDeadline = nil
+        guard loaded && enabled && available else { return }
+        let local = Array(connectedRoomsSince.values.map(\.connection))
+        let remote = activeRemoteConnections(at: now)
+        guard let next = CalendarReminderPlanner.nextSuppressionDeadline(
+            occurrences: repository.occurrences, states: repository.states, profile: profile,
+            now: now, connectedRooms: local, remoteRooms: remote) else { return }
+        let delay = max(0.05, next.timeIntervalSince(now) + 0.05)
+        connectionDeadline = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.activeConnectionsChanged()
+        }
+    }
+    func shouldSuppressSystemNotification(reference: String) -> Bool {
+        _ = syncConnectedState()
+        guard let occurrence = repository.occurrences.first(where: { $0.reference == reference }) else { return false }
+        let now = clock()
+        let state = repository.states[occurrence.id]
+        if state?.attended == true || state?.skipped == true { return true }
+        let connected = effectiveConnections()
+        if !connected.isEmpty && occurrence.isConnected(in: connected) { return true }
+        if suppressOtherDevices && (state?.remoteAccount != nil || occurrence.isConnected(in: activeRemoteConnections(at: now))) {
+            return true
+        }
+        return false
     }
     func open(reference: String, join: Bool) {
         if join, repository.pendingOpen != nil {
@@ -221,8 +329,11 @@ final class CalendarReminderCoordinator: ObservableObject {
             (!$0.tentative || repository.states[$0.id]?.override?.mode == .custom) }
     }
     func foregroundReminder(reference: String, requestID: String, fingerprint: String) {
+        let now = clock()
         guard let occurrence = repository.occurrences.first(where: { $0.reference == reference }),
-              enabled, available, occurrence.eligible, occurrence.end > clock(),
+              enabled, available, occurrence.eligible, occurrence.end > now,
+              !occurrence.isConnected(in: effectiveConnections()),
+              !occurrence.isConnected(in: activeRemoteConnections(at: now)),
               !occurrence.tentative || override(for: occurrence).mode == .custom,
               let planned = repository.scheduled.first(where: { $0.reference == reference && $0.id == requestID }),
               repository.states[occurrence.id]?.attended != true,
@@ -250,8 +361,10 @@ final class CalendarReminderCoordinator: ObservableObject {
             let previousState = repository.states[occurrence.id]
             guard repository.snooze(reference: reference, now: clock(), scope: scope) else { deferCard(reference: reference); return }
             let foreign = pending.keys.filter { !$0.hasPrefix(PlannedReminder.namespace) }.count
+            let now = clock()
             let plan = CalendarReminderPlanner.plan(occurrences: repository.occurrences, states: repository.states,
-                profile: profile, now: clock(), budget: max(0, min(56, 64 - foreign)))
+                profile: profile, now: now, budget: max(0, min(56, 64 - foreign)),
+                connectedRooms: effectiveConnections(), remoteRooms: activeRemoteConnections(at: now))
             guard repository.occurrences.contains(where: { $0.reference == reference }),
                   scope == .anotherMeeting || plan.contains(where: { $0.reference == reference && $0.phase == .snooze }) else {
                 if let occurrence = repository.occurrences.first(where: { $0.reference == reference }) { repository.states[occurrence.id] = previousState }
@@ -327,9 +440,12 @@ final class CalendarReminderCoordinator: ObservableObject {
         guard expected == revision else { return }
         let foreign = pending.keys.filter { !$0.hasPrefix(PlannedReminder.namespace) }.count
         let budget = max(0, min(56, 64 - foreign))
+        let now = clock()
+        let connected = effectiveConnections()
+        let remote = activeRemoteConnections(at: now)
         let plans = enabled && available && permission == .allowed ? CalendarReminderPlanner.plan(
             occurrences: repository.occurrences, states: repository.states, profile: profile,
-            now: clock(), budget: budget) : []
+            now: now, budget: budget, connectedRooms: connected, remoteRooms: remote) : []
         let desired = plans.compactMap { plan -> ReminderNotification? in
             repository.occurrences.first { $0.id == plan.occurrenceID }.map {
                 .init(plan: plan, occurrence: $0, profile: profile)
@@ -338,9 +454,14 @@ final class CalendarReminderCoordinator: ObservableObject {
         let ids = Set(desired.map { $0.plan.id })
         let fingerprints = Dictionary(uniqueKeysWithValues: desired.map { ($0.plan.id, $0.fingerprint) })
         notifications.removePending(pending.keys.filter { $0.hasPrefix(PlannedReminder.namespace) && (!ids.contains($0) || fingerprints[$0] != pending[$0]) })
+        let localHorizonCutoff = now.addingTimeInterval(CalendarReminderPlanner.connectedSuppressionHorizon)
+        let remoteHorizonCutoff = now.addingTimeInterval(CalendarReminderPlanner.remoteSuppressionHorizon)
         let quiet = Set(repository.occurrences.filter {
-            !enabled || !available || !$0.eligible || $0.end <= clock() || repository.states[$0.id]?.attended == true ||
-                repository.states[$0.id]?.remoteAccount != nil || repository.states[$0.id]?.skipped == true ||
+            !enabled || !available || !$0.eligible || $0.end <= now || repository.states[$0.id]?.attended == true ||
+                (suppressOtherDevices && repository.states[$0.id]?.remoteAccount != nil) ||
+                (!connected.isEmpty && $0.isConnected(in: connected) && $0.start <= localHorizonCutoff) ||
+                (!remote.isEmpty && $0.isConnected(in: remote) && $0.start <= remoteHorizonCutoff) ||
+                repository.states[$0.id]?.skipped == true ||
                 repository.states[$0.id]?.override?.mode == .off
         }.map(\.id)).union(removedOccurrences)
         if enabled { await notifications.removeDelivered(occurrenceIDs: quiet) }
@@ -371,17 +492,22 @@ final class CalendarReminderCoordinator: ObservableObject {
     /// Called by the visible call host on layout/interaction/lifecycle changes, never a heartbeat.
     func refreshPresentation() {
         deadline?.cancel(); deadline = nil
-        let snapshot = scene()
-        let previous = repository.states
-        for room in Set([lastSceneRoom, snapshot.room].compactMap { $0 }) { repository.joined(room: room, at: clock()) }
-        lastSceneRoom = snapshot.room
-        if repository.states != previous { changed(refresh: false) }
+        var snapshot = scene()
+        let connected = effectiveConnections()
+        if snapshot.connections.isEmpty && !connected.isEmpty {
+            snapshot.connections = connected
+        }
+        if syncConnectedState() {
+            changed(refresh: false)
+        }
+        let now = clock()
+        let remote = activeRemoteConnections(at: now)
         if !snapshot.visible { onBackground() }
         var states = repository.states
         for (id, event) in foregroundOffers { states[id, default: .init()].presentation = event }
         let decision = ReminderForegroundPlanner.decide(occurrences: repository.occurrences, states: states,
             profile: profile, enabled: loaded && enabled && available && authorization == .allowed && permissionFresh,
-            scene: snapshot, now: clock())
+            scene: snapshot, now: now, remoteConnections: remote)
         for id in decision.invalidatedIDs { foregroundOffers[id] = nil; repository.states[id]?.presentation = nil }
         let mounted = onPresentation(decision.events)
         var didChange = false

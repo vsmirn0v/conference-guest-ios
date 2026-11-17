@@ -69,7 +69,7 @@ final class MeetingWorkspaceViewState: ObservableObject {
         let token = pause(model, attention: attention)
         model.participation.yieldToUser()
         restorePauses[model.sessionID] = nil
-        model.workspaceJournal?.recordAction(sessionID: model.sessionID, text: L("You took over"), source: "takeover")
+        model.workspaceJournal?.recordAction(sessionID: model.workspaceSessionID, text: L("You took over"), source: "takeover")
         return token
     }
 
@@ -79,7 +79,7 @@ final class MeetingWorkspaceViewState: ObservableObject {
             for model in models {
                 guard let token = pause(model, attention: attention) else { continue }
                 paused[model.sessionID] = token
-                model.workspaceJournal?.recordAction(sessionID: model.sessionID, text: L("Assistant paused"), source: "pause")
+                model.workspaceJournal?.recordAction(sessionID: model.workspaceSessionID, text: L("Assistant paused"), source: "pause")
             }
             restorePauses = paused
         } else {

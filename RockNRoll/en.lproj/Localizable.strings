@@ -3002,3 +3002,26 @@
 "Test provider" = "Test provider";
 "GPU fallback" = "GPU fallback";
 "This setting is currently unavailable." = "This setting is currently unavailable.";
+
+"Skip when active on another device" = "Skip when active on another device";
+"Suppresses reminders on this device when the same room is already open on another device signed in to your iCloud account. Turn off to still receive notifications here." = "Suppresses reminders on this device when the same room is already open on another device signed in to your iCloud account. Turn off to still receive notifications here.";
+"Suppresses reminders on this Mac when the same room is already open on your iPhone or iPad." = "Suppresses reminders on this Mac when the same room is already open on your iPhone or iPad.";
+"Separate summaries & notes" = "Separate summaries & notes";
+"Keep as one continuous meeting" = "Keep as one continuous meeting";
+"Back-to-back meetings in the same room" = "Back-to-back meetings in the same room";
+"Back-to-back in this series" = "Back-to-back in this series";
+"Back-to-back in this room" = "Back-to-back in this room";
+"When a new scheduled meeting starts in a room you are already connected to, Rock'N'Roll updates the meeting title and can either start a fresh summary and note or keep one combined session." = "When a new scheduled meeting starts in a room you are already connected to, Rock'N'Roll updates the meeting title and can either start a fresh summary and note or keep one combined session.";
+"Choose whether back-to-back meetings in the same room create separate outcomes or stay combined." = "Choose whether back-to-back meetings in the same room create separate outcomes or stay combined.";
+"Now in “%@”" = "Now in “%@”";
+"Starting a separate note & summary for this meeting." = "Starting a separate note & summary for this meeting.";
+"Continuing notes & summary as one meeting." = "Continuing notes & summary as one meeting.";
+"Keep as one meeting" = "Keep as one meeting";
+"Separate summary" = "Separate summary";
+"Remember…" = "Remember…";
+"Always separate for this series" = "Always separate for this series";
+"Always separate in this room" = "Always separate in this room";
+"Always keep as one for this series" = "Always keep as one for this series";
+"Always keep as one in this room" = "Always keep as one in this room";
+"Open new note" = "Open new note";
+"Scheduled meeting started: %@" = "Scheduled meeting started: %@";

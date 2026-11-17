@@ -247,6 +247,7 @@ struct NativeDesktopMeetingView: View {
                     // In the main window the toolbar holds the title, status and meeting buttons.
                     if !model.controlsHidden && !textSelection.isOpen && !embedded && chromeShown { header.padding(.horizontal, 18).padding(.top, 10) }
                     if let workspace, !textSelection.isOpen { NativeDesktopListeningBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
+                    if let workspace, !textSelection.isOpen { NativeDesktopSameRoomTransitionBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen && !embedded { NativeDesktopTranscriptionBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { NativeDesktopLocalFallbackBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { NativeDesktopCatchUpCard(model: model).padding(.top, 8).padding(.trailing, reserved) }
@@ -342,7 +343,7 @@ struct NativeDesktopMeetingView: View {
                 iconButton("person.2", L("Participants")) { togglePanel(.participants) }
                 iconButton("bubble.left", L("Conversation")) { togglePanel(.conversation) }
                 if let notes = model.notes {
-                    MeetingNotesEntryButton(notes: notes, sessionID: model.sessionID) { togglePanel(.notes) }
+                    MeetingNotesEntryButton(notes: notes, sessionID: model.activeNoteSessionID) { togglePanel(.notes) }
                 } else {
                     iconButton("note.text", L("Notes")) { togglePanel(.notes) }
                 }
@@ -1172,6 +1173,67 @@ struct NativeDesktopListeningBanner: View {
                 Text(L("Your microphone is on in “%@”. Unmute to talk here instead.", talk.title)).font(.callout).lineLimit(2)
                 Button(L("Unmute here")) { model.toggleMicrophone() }.controlSize(.small)
             }.padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
+        }
+    }
+}
+
+/// Non-intrusive transition pill when a connected room rolls into the next scheduled meeting.
+struct NativeDesktopSameRoomTransitionBanner: View {
+    @ObservedObject var workspace: NativeDesktopWorkspace
+    @ObservedObject var model: NativeDesktopMeetingModel
+
+    var body: some View {
+        if let banner = model.sameRoomTransitionBanner {
+            let split = banner.mode == .separateSessions
+            HStack(spacing: 10) {
+                Image(systemName: split ? "text.badge.plus" : "arrow.triangle.merge")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Now in “%@”", banner.currentTitle))
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text(split ? L("Starting a separate note & summary for this meeting.") : L("Continuing notes & summary as one meeting."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Button(split ? L("Keep as one meeting") : L("Separate summary")) {
+                    workspace.setSameRoomTransitionMode(
+                        for: model,
+                        mode: split ? .continuousSession : .separateSessions,
+                        remember: false)
+                }
+                .controlSize(.small)
+                .accessibilityIdentifier("meeting.sameRoomTransition.toggle")
+                Menu {
+                    Button(banner.seriesID != nil ? L("Always separate for this series") : L("Always separate in this room")) {
+                        workspace.setSameRoomTransitionMode(for: model, mode: .separateSessions, remember: true)
+                    }
+                    Button(banner.seriesID != nil ? L("Always keep as one for this series") : L("Always keep as one in this room")) {
+                        workspace.setSameRoomTransitionMode(for: model, mode: .continuousSession, remember: true)
+                    }
+                } label: {
+                    Text(L("Remember…"))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .controlSize(.small)
+                .accessibilityIdentifier("meeting.sameRoomTransition.remember")
+                Button {
+                    model.sameRoomTransitionBanner = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("Dismiss"))
+                .accessibilityIdentifier("meeting.sameRoomTransition.dismiss")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .nativeMeetingChrome()
+            .accessibilityIdentifier("meeting.sameRoomTransition.banner")
         }
     }
 }

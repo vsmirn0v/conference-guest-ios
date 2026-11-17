@@ -541,15 +541,29 @@ private struct AssistantDataDocument: Codable {
 
     func forgetUnpersistedOutcome(_ id: UUID) { outcomes.removeAll { $0.id == id } }
 
+    private static func matchesRoomOrSeries(invitation: URL?, series: String?,
+                                            candidateInvitation: URL?, candidateSeries: String?) -> (seriesMatch: Bool, roomMatch: Bool) {
+        let seriesMatch = series != nil && candidateSeries == series
+        let conflictingSeries = series != nil && candidateSeries != nil && candidateSeries != series
+        let roomMatch = !conflictingSeries && invitation != nil && candidateInvitation == invitation
+        return (seriesMatch, roomMatch)
+    }
+
     func latestOutcome(invitation: URL? = nil, series: String? = nil, before: Date = .distantFuture) -> MeetingOutcome? {
         outcomes.first { outcome in
-            outcome.endedAt < before && ((series != nil && outcome.seriesID == series) ||
-                (invitation != nil && outcome.invitation == invitation))
+            guard outcome.endedAt < before else { return false }
+            let match = Self.matchesRoomOrSeries(invitation: invitation, series: series,
+                                                 candidateInvitation: outcome.invitation, candidateSeries: outcome.seriesID)
+            return match.seriesMatch || match.roomMatch
         }
     }
 
     func seriesOutcomes(invitation: URL? = nil, series: String? = nil) -> [MeetingOutcome] {
-        outcomes.filter { (series != nil && $0.seriesID == series) || (invitation != nil && $0.invitation == invitation) }
+        outcomes.filter { outcome in
+            let match = Self.matchesRoomOrSeries(invitation: invitation, series: series,
+                                                 candidateInvitation: outcome.invitation, candidateSeries: outcome.seriesID)
+            return match.seriesMatch || match.roomMatch
+        }
     }
 
     func remember(_ text: String, kind: AssistantMemoryKind = .you, invitation: URL? = nil, series: String? = nil, people: [String] = []) {
@@ -586,8 +600,10 @@ private struct AssistantDataDocument: Codable {
         let words = Self.tokens(meetingTitle + " " + people.joined(separator: " "))
         for item in memories {
             var score = item.kind == .you ? 1 : 0
-            if let series, item.seriesID == series { score += 12 }
-            if let invitation, item.invitation == invitation { score += 8 }
+            let match = Self.matchesRoomOrSeries(invitation: invitation, series: series,
+                                                 candidateInvitation: item.invitation, candidateSeries: item.seriesID)
+            if match.seriesMatch { score += 12 }
+            if match.roomMatch { score += 8 }
             score += Set(item.people.map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) })
                 .intersection(people.map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }).count * 4
             score += Self.tokens(item.text).intersection(words).count
@@ -597,8 +613,10 @@ private struct AssistantDataDocument: Codable {
         }
         for outcome in outcomes {
             var score = 0
-            if let series, outcome.seriesID == series { score += 12 }
-            if let invitation, outcome.invitation == invitation { score += 8 }
+            let match = Self.matchesRoomOrSeries(invitation: invitation, series: series,
+                                                 candidateInvitation: outcome.invitation, candidateSeries: outcome.seriesID)
+            if match.seriesMatch { score += 12 }
+            if match.roomMatch { score += 8 }
             let excerpts = [outcome.summary] + outcome.decisions + outcome.tasks.filter(isTaskOperational).map(\.text)
             for (index, text) in excerpts.enumerated() where !text.trimmed.isEmpty {
                 let tokenScore = Self.tokens(text).intersection(words).count

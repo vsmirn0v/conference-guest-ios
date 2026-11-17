@@ -179,11 +179,16 @@ import Foundation
             self?.onOpenMeeting?(invitation, current.engine, current.title, current.id)
         }
     }
-    func recordJoin(invitation: URL, title: String, identifier: String, engine: MeetingEngineKind = .guest, eventID: String? = nil) {
+    func recordJoin(invitation: URL, title: String, identifier: String, engine: MeetingEngineKind = .guest,
+                    eventID: String? = nil, endpoint: String? = nil, since: Date? = nil) {
         history.record(url: invitation, title: title, identifier: identifier, engine: engine)
-        if let room = history.matching(invitation, engine: engine) { calendar.noteJoined(room, invitation: invitation) }
+        let matchedRoom = history.matching(invitation, engine: engine)
+        if let matchedRoom { calendar.noteJoined(matchedRoom, invitation: invitation) }
+        calendar.noteConnected(invitation: invitation, engine: engine,
+                               endpoint: endpoint.flatMap(URL.init(string:)),
+                               since: since ?? calendar.currentTime, roomID: matchedRoom?.id, at: calendar.currentTime)
         if let identity = MeetingRoomIdentity(invitation, engine: engine) {
-            calendar.reminders.joined(room: identity, eventID: eventID)
+            calendar.reminders.joined(room: identity, endpoint: endpoint, eventID: eventID, since: since)
         }
     }
 

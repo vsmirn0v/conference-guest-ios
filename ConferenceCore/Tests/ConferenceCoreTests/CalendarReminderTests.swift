@@ -83,4 +83,51 @@ final class CalendarReminderTests: XCTestCase {
         XCTAssertEqual(first[0].date, occurrence.start)
         XCTAssertNotEqual(first[0].id, CalendarReminderPlanner.plan(occurrences: [self.occurrence("recurrence")], states: [:], profile: .init(), now: now)[0].id)
     }
+
+    func testConnectedSuppressionHorizonAndNextDeadline() throws {
+        let m30 = occurrence("m30", offset: 1800)
+        let m60 = occurrence("m60", offset: 3600)
+        let m95 = occurrence("m95", offset: 6000)
+        let m6h = occurrence("m6h", offset: 21600)
+        let connected = [ActiveRoomConnection(room: try XCTUnwrap(m30.room))]
+
+        var profile = ReminderProfile()
+        profile.timing.before = 300
+        profile.timing.atStart = true
+
+        let initial = CalendarReminderPlanner.plan(
+            occurrences: [m30, m60, m95, m6h], states: [:], profile: profile, now: now,
+            connectedRooms: connected
+        )
+        XCTAssertFalse(initial.contains { $0.occurrenceID == "m30" })
+        XCTAssertFalse(initial.contains { $0.occurrenceID == "m60" })
+        XCTAssertTrue(initial.contains { $0.occurrenceID == "m95" })
+        XCTAssertTrue(initial.contains { $0.occurrenceID == "m6h" })
+
+        let deadline = CalendarReminderPlanner.nextSuppressionDeadline(
+            occurrences: [m30, m60, m95, m6h], states: [:], profile: profile, now: now,
+            connectedRooms: connected
+        )
+        XCTAssertEqual(deadline, now.addingTimeInterval(300))
+
+        let laterBefore = CalendarReminderPlanner.plan(
+            occurrences: [m30, m60, m95, m6h], states: [:], profile: profile,
+            now: now.addingTimeInterval(300), connectedRooms: connected
+        )
+        XCTAssertFalse(laterBefore.contains { $0.occurrenceID == "m95" && $0.phase == .before })
+
+        let laterAll = CalendarReminderPlanner.plan(
+            occurrences: [m30, m60, m95, m6h], states: [:], profile: profile,
+            now: now.addingTimeInterval(600), connectedRooms: connected
+        )
+        XCTAssertFalse(laterAll.contains { $0.occurrenceID == "m95" })
+        XCTAssertTrue(laterAll.contains { $0.occurrenceID == "m6h" })
+
+        let remoteOnly = CalendarReminderPlanner.plan(
+            occurrences: [m30, m60, m95], states: [:], profile: profile, now: now,
+            remoteRooms: connected
+        )
+        XCTAssertFalse(remoteOnly.contains { $0.occurrenceID == "m30" })
+        XCTAssertTrue(remoteOnly.contains { $0.occurrenceID == "m95" })
+    }
 }

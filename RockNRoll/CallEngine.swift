@@ -16,10 +16,12 @@ protocol CallEngine: AnyObject {
     var continuationHostView: UIView? { get }
     var reminderHost: MeetingReminderHost? { get }
     func setTransferHeld(_ held: Bool, restoreSending: Bool) async throws
+    func setRoomTitle(_ title: String)
 }
 
 extension CallEngine {
     var reminderHost: MeetingReminderHost? { nil }
+    func setRoomTitle(_ title: String) {}
     // A future engine without confirmed capture evidence must show unknown.
     var activityMicrophonePublisher: AnyPublisher<PiPMicrophoneStatus, Never> {
         Just(.unavailable).eraseToAnyPublisher()

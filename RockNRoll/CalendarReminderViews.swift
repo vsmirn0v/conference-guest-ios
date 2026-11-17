@@ -61,6 +61,14 @@ private struct ReminderDeliveryView: View {
             Section {
                 Toggle(L("Show meeting details"), isOn: binding(\.details))
             } footer: { Text(L("When off, notifications show only the scheduled time.")) }
+            Section {
+                Toggle(L("Skip when active on another device"), isOn: Binding(
+                    get: { reminders.suppressOtherDevices },
+                    set: { reminders.setSuppressOtherDevices($0) }
+                )).accessibilityIdentifier("reminders.suppressOtherDevices")
+            } footer: {
+                Text(L("Suppresses reminders on this device when the same room is already open on another device signed in to your iCloud account. Turn off to still receive notifications here."))
+            }
         }.navigationTitle(L("Delivery and privacy"))
     }
 }

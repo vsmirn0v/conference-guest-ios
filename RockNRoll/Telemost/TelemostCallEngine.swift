@@ -71,6 +71,7 @@ final class TelemostCallEngine: CallEngine {
     var isSharingScreen: Bool { sharingActive }
     var continuationHostView: UIView? { view?.viewIfLoaded }
     var reminderHost: MeetingReminderHost? { view?.reminderHost }
+    func setRoomTitle(_ title: String) { view?.setRoomTitle(title) }
 
     init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore, chat: ChatStore) {
         self.systemCall = systemCall; self.catchUp = catchUp; self.chat = chat

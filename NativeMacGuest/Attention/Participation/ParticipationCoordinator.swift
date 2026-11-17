@@ -297,7 +297,10 @@ final class ParticipationCoordinator: ObservableObject {
         store.workspaceGuidance.$rules.map { $0.filter { scopes.contains($0.scope) } }.removeDuplicates().dropFirst()
             .sink { [weak self] _ in self?.yieldToUser() }.store(in: &settings)
         model.$title.removeDuplicates().dropFirst().sink { [weak self] _ in self?.yieldToUser() }.store(in: &settings)
-        store.notes.participationDraftChanges(sessionID: model.sessionID).sink { [weak self] in self?.yieldToUser() }
+        model.$workspaceSessionID
+            .map { id in store.notes.participationDraftChanges(sessionID: id) }
+            .switchToLatest()
+            .sink { [weak self] in self?.yieldToUser() }
             .store(in: &settings)
         if output == .voice {
             Publishers.CombineLatest4(store.$voiceEngine, store.$voiceBaseURL, store.$voiceModel, store.$voiceDescription)
@@ -380,7 +383,7 @@ final class ParticipationCoordinator: ObservableObject {
         yieldToUser()
         privateInsight = nil
         workspaceGuidance.append(clean)
-        meeting.workspaceJournal?.recordGuidance(sessionID: meeting.sessionID, text: clean, source: "live")
+        meeting.workspaceJournal?.recordGuidance(sessionID: meeting.workspaceSessionID, text: clean, source: "live")
         return true
     }
 
@@ -397,7 +400,7 @@ final class ParticipationCoordinator: ObservableObject {
         guard workspaceHeldDraft?.id == id, validWorkspaceDraftText(clean), let model,
               !model.isClosed else { return false }
         if workspaceHeldDraft?.text == clean { return true }
-        guard model.workspaceJournal?.reviseHeldReply(sessionID: model.sessionID, id: id, text: clean) == true else { return false }
+        guard model.workspaceJournal?.reviseHeldReply(sessionID: model.workspaceSessionID, id: id, text: clean) == true else { return false }
         workspaceHeldDraft = .init(id: id, text: clean)
         return true
     }
@@ -512,7 +515,7 @@ final class ParticipationCoordinator: ObservableObject {
         planned = nil
         queuedText = nil
         if let draft = workspaceQueuedDraft, let model {
-            model.workspaceJournal?.updateReplyStatus(sessionID: model.sessionID, id: draft.id, status: workspaceStatus)
+            model.workspaceJournal?.updateReplyStatus(sessionID: model.workspaceSessionID, id: draft.id, status: workspaceStatus)
         }
         workspaceQueuedDraft = nil
         workspaceCandidateContext = nil
@@ -557,7 +560,7 @@ final class ParticipationCoordinator: ObservableObject {
         self.reason = reason
         self.status = status
         if let model {
-            model.workspaceJournal?.recordAction(sessionID: model.sessionID,
+            model.workspaceJournal?.recordAction(sessionID: model.workspaceSessionID,
                 text: reason?.message ?? status.title, source: "participation." + (reason?.rawValue ?? status.rawValue))
         }
     }
@@ -904,7 +907,7 @@ final class ParticipationCoordinator: ObservableObject {
         let archiveSources = workspaceSources(input: input, decision: decision)
         if decision.kind == .privateInsight {
             privateInsight = draft
-            model.workspaceJournal?.recordAssistantReply(sessionID: model.sessionID, id: archiveID, text: draft,
+            model.workspaceJournal?.recordAssistantReply(sessionID: model.workspaceSessionID, id: archiveID, text: draft,
                 source: "assistantInsight", status: .privateOnly, isPrivate: true, sourceSnapshots: archiveSources)
             noteDecision(.privateInsight, at: .admission, trace)
             return
@@ -917,7 +920,7 @@ final class ParticipationCoordinator: ObservableObject {
         var archivedCandidate = false
         if !directlyAddressed || revisedDraft != nil {
             queuedText = draft
-            archivedCandidate = model.workspaceJournal?.recordAssistantReply(sessionID: model.sessionID, id: archiveID,
+            archivedCandidate = model.workspaceJournal?.recordAssistantReply(sessionID: model.workspaceSessionID, id: archiveID,
                 text: draft, source: grant.output.rawValue, status: .queued, isPrivate: true,
                 sourceSnapshots: archiveSources) ?? false
             if archivedCandidate {
@@ -928,9 +931,9 @@ final class ParticipationCoordinator: ObservableObject {
             catch { noteDecision(.superseded, at: .admission, trace); return }
         }
         defer {
-            if archivedCandidate, model.workspaceJournal?.session(id: model.sessionID)?.events
+            if archivedCandidate, model.workspaceJournal?.session(id: model.workspaceSessionID)?.events
                 .first(where: { $0.id == "assistant:" + archiveID })?.status == .queued {
-                model.workspaceJournal?.updateReplyStatus(sessionID: model.sessionID, id: archiveID, status: .cancelled)
+                model.workspaceJournal?.updateReplyStatus(sessionID: model.workspaceSessionID, id: archiveID, status: .cancelled)
             }
             if workspaceQueuedDraft?.id == archiveID {
                 workspaceQueuedDraft = nil
@@ -952,7 +955,7 @@ final class ParticipationCoordinator: ObservableObject {
         }
         guard decisionGrant(trace, turn: turn, stage: .admission) != nil else { return }
         guard model.participationMeetingSoundOn else {
-            model.workspaceJournal?.recordAssistantReply(sessionID: model.sessionID, id: archiveID, text: draft,
+            model.workspaceJournal?.recordAssistantReply(sessionID: model.workspaceSessionID, id: archiveID, text: draft,
                 source: grant.output.rawValue, status: .held, isPrivate: true, sourceSnapshots: archiveSources)
             privateInsight = draft
             return
@@ -1070,14 +1073,14 @@ final class ParticipationCoordinator: ObservableObject {
             state: .reserved, providerMessageID: UUID().uuidString.lowercased())
         let messageID = receipt.providerMessageID!
         if let journal = model.workspaceJournal,
-           !journal.recordAssistantReply(sessionID: model.sessionID, id: archiveID, text: text, source: "chat",
+           !journal.recordAssistantReply(sessionID: model.workspaceSessionID, id: archiveID, text: text, source: "chat",
                 status: .sending, at: now, sourceSnapshots: archiveSources, linkedChatID: "chat:guest:" + messageID) {
             storageFailed(grantID: grant.id)
             return
         }
         do { try grant.store.reserve(receipt) }
         catch {
-            model.workspaceJournal?.updateReplyStatus(sessionID: model.sessionID, id: archiveID, status: .cancelled)
+            model.workspaceJournal?.updateReplyStatus(sessionID: model.workspaceSessionID, id: archiveID, status: .cancelled)
             storageFailed(grantID: grant.id)
             return
         }
@@ -1128,15 +1131,16 @@ final class ParticipationCoordinator: ObservableObject {
                                archiveSources: [MeetingWorkspaceEvent.SourceSnapshot]) async {
         guard let model else { noteDecision(.superseded, at: .synthesis, trace); return }
         let journal = model.workspaceJournal
-        if let journal, journal.session(id: model.sessionID)?.events.contains(where: { $0.id == "assistant:" + archiveID }) != true,
-           !journal.recordAssistantReply(sessionID: model.sessionID, id: archiveID, text: draft, source: "voice",
+        let journalID = model.workspaceSessionID
+        if let journal, journal.session(id: journalID)?.events.contains(where: { $0.id == "assistant:" + archiveID }) != true,
+           !journal.recordAssistantReply(sessionID: journalID, id: archiveID, text: draft, source: "voice",
                 status: .queued, isPrivate: true, sourceSnapshots: archiveSources) {
             storageFailed(grantID: grant.id)
             return
         }
         var archiveTerminal: MeetingWorkspaceEvent.Status = .held
         defer {
-            journal?.updateReplyStatus(sessionID: model.sessionID, id: archiveID, status: archiveTerminal,
+            journal?.updateReplyStatus(sessionID: journalID, id: archiveID, status: archiveTerminal,
                                        isPrivate: archiveTerminal == .cancelled ? true : nil)
         }
         guard voicePlayback == nil else { noteDecision(.voiceBusy, at: .synthesis, trace); return }
@@ -1235,7 +1239,7 @@ final class ParticipationCoordinator: ObservableObject {
         let receipt = ParticipationReceipt(id: id, sessionID: model.sessionID, grantID: grant.id,
             payloadHash: ParticipationReceipt.hash(draft), evidenceRevisions: grant.sources.revisions + context.sources.map(\.revision),
             createdAt: now, updatedAt: Date(), state: .reserved, providerMessageID: nil, output: .voice)
-        if let journal, !journal.recordAssistantReply(sessionID: model.sessionID, id: archiveID, text: draft,
+        if let journal, !journal.recordAssistantReply(sessionID: journalID, id: archiveID, text: draft,
                 source: "voice", status: .sending, sourceSnapshots: archiveSources) {
             archiveTerminal = .cancelled
             setVoiceStatus(.textOnly, for: id)
@@ -1322,7 +1326,7 @@ final class ParticipationCoordinator: ObservableObject {
             case .voicePlayed: .spoken
             case .voiceInterrupted: .interrupted
             }
-            model.workspaceJournal?.updateReplyStatus(sessionID: model.sessionID, id: id, status: status,
+            model.workspaceJournal?.updateReplyStatus(sessionID: model.workspaceSessionID, id: id, status: status,
                                                        isPrivate: status == .cancelled ? true : nil)
         }
         record(receipt.id, grantID: receipt.grantID, state: state, store: action.store)

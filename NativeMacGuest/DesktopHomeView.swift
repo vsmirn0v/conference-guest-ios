@@ -799,6 +799,15 @@ struct NativeDesktopSettingsView: View {
                     NativeSettingsSwitch(title: L("Show meeting name"), isOn: profileBinding(\.details), id: "settings.reminder-name")
                     NativeSettingsSwitch(title: L("Sound"), isOn: profileBinding(\.sound), id: "settings.reminder-sound")
                     NativeSettingsSwitch(title: L("Time Sensitive"), isOn: profileBinding(\.timeSensitive), id: "settings.reminder-sensitive")
+                    NativeSettingsSwitch(
+                        title: L("Skip when active on another device"),
+                        isOn: Binding(get: { library.calendar.reminders.suppressOtherDevices },
+                                      set: { library.calendar.reminders.setSuppressOtherDevices($0) }),
+                        id: "settings.reminder-other-devices",
+                        accessibilityID: "reminders.suppressOtherDevices"
+                    )
+                    Text(L("Suppresses reminders on this Mac when the same room is already open on your iPhone or iPad."))
+                        .font(.caption).foregroundStyle(.secondary)
                     NativeSettingsButton(title: L("Open notification settings"), id: "settings.notification-settings") {
                         Task { _ = await NotificationSettingsLink.open(isMac: true) }
                     }

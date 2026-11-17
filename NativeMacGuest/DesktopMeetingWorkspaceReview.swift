@@ -29,7 +29,7 @@ struct MeetingWorkspaceReview: View {
 
     private var meetings: [ArchivedMeeting] {
         let journalIDs = Set(journal.sessions.map(\.id))
-        let liveIDs = Set(workspace.meetings.map(\.sessionID))
+        let liveIDs = Set(workspace.meetings.flatMap { [$0.sessionID, $0.workspaceSessionID] + $0.segments.map(\.sessionID) })
         let saved = journal.sessions.filter { $0.endedAt != nil && !liveIDs.contains($0.id) }.map {
             ArchivedMeeting(id: $0.id, title: $0.title, startedAt: $0.startedAt, endedAt: $0.endedAt, session: $0)
         }

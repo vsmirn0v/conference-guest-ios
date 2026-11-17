@@ -40,6 +40,7 @@ final class CalendarMeetingStore: ObservableObject {
     @Published var choosingMeeting: CalendarMeeting? {
         didSet { if choosingMeeting != nil { cancelAutomaticJoin(suppress: true) } }
     }
+    var currentTime: Date { clock() }
     var knownOrigins: () -> Set<String> = { [] }
     var aliases: () -> [String: URL] = { [:] }
     var invitationNormalizer: (URL) -> URL? = { (try? JoinTarget.parse($0.absoluteString))?.invitationURL }
@@ -73,6 +74,7 @@ final class CalendarMeetingStore: ObservableObject {
     private var admissionRevision = UUID()
     private var scheduledTransportPreparing = false
     private var scheduledUIBlocked = false
+    private var resolvedEndpoints: [URL: URL] = [:]
     private let clock: () -> Date
     private let countdownInterval: Duration
     private var observer: NSObjectProtocol?
@@ -92,6 +94,7 @@ final class CalendarMeetingStore: ObservableObject {
          clock: @escaping () -> Date = Date.init, countdownInterval: Duration = .seconds(1)) {
         self.reader = reader; self.detector = detector; self.preferences = preferences; self.storage = storage
         self.isMac = isMac; self.clock = clock; self.countdownInterval = countdownInterval
+        self.now = clock()
         self.reminders = reminders ?? (preferences === UserDefaults.standard ? CalendarReminderBroker.shared.sharedCoordinator : CalendarReminderCoordinator(preferences: preferences))
         enabled = preferences.bool(forKey: "calendarMeetings.enabled")
         let savedMode = preferences.string(forKey: "calendarMeetings.automaticJoinMode").flatMap(CalendarAutomaticJoinMode.init(rawValue:))
@@ -235,7 +238,7 @@ final class CalendarMeetingStore: ObservableObject {
                 guard authorization == .allowed else {
                     meetings = []; calendars = []; loading = false; state.visits = [:]; persist(); updateReminders(); return
                 }
-                let snapshot = await reader.read(selected: selected, now: Date(), knownOrigins: knownOrigins(), aliases: aliases())
+                let snapshot = await reader.read(selected: selected, now: clock(), knownOrigins: knownOrigins(), aliases: aliases())
                 guard !Task.isCancelled, revision == token else { return }
                 calendars = snapshot.calendars
                 // Removed calendars and new accounts never silently widen selection.
@@ -262,30 +265,42 @@ final class CalendarMeetingStore: ObservableObject {
                 for index in incoming.indices {
                     for group in candidateGroups[index] {
                         var unresolvedConflict = false
-                        let supported = group.compactMap { url -> (URL, MeetingEngineKind)? in
+                        let supported = group.compactMap { url -> (URL, MeetingEngineKind, URL?)? in
+                            let key = self.probeKey(url)
                             let kind: MeetingEngineKind?
-                            switch proofs[self.probeKey(url)] ?? .unknown {
-                            case .verified(.guest): kind = .guest
+                            var endpoint: URL? = nil
+                            switch proofs[key] ?? .unknown {
+                            case .verified(.guest(let discoveredEndpoint)):
+                                kind = .guest
+                                endpoint = discoveredEndpoint
+                                self.resolvedEndpoints[key] = discoveredEndpoint
                             case .verified(.community): kind = .community
                             case .verified(.telemost): kind = .telemost
                             case .verified(.trueconf): kind = .trueconf
                             case .ambiguous:
                                 kind = self.knownEngine(url)
+                                if kind == .guest { endpoint = self.resolvedEndpoints[key] }
                                 unresolvedConflict = unresolvedConflict || kind == nil
-                            case .unknown: kind = self.knownEngine(url)
+                            case .unknown:
+                                kind = self.knownEngine(url)
+                                if kind == .guest { endpoint = self.resolvedEndpoints[key] }
                             }
-                            return kind.map { (url, $0) }
+                            return kind.map { (url, $0, endpoint) }
                         }
                         if unresolvedConflict || supported.count > 1 { incoming[index].requiresChoice = true; break }
-                        if let (url, kind) = supported.first {
-                            incoming[index].invitation = url; incoming[index].engine = kind; break
+                        if let (url, kind, endpoint) = supported.first {
+                            incoming[index].invitation = url
+                            incoming[index].engine = kind
+                            incoming[index].endpoint = endpoint
+                            break
                         }
                     }
                 }
                 // Deduplicate identical copies without collapsing different events in one room.
+                now = clock()
                 var seen: Set<CalendarCopy> = []
                 meetings = incoming.filter { seen.insert(CalendarCopy($0)).inserted }
-                now = clock(); loading = false; task = nil
+                loading = false; task = nil
                 let retained = state.suppressed.filter { $0.value > now }
                 if retained != state.suppressed { state.suppressed = retained; persist() }
                 completedRevision = token
@@ -382,6 +397,52 @@ final class CalendarMeetingStore: ObservableObject {
         state.visits[room.id] = Visit(title: meeting.title, start: meeting.start, end: meeting.end)
         state.suppressed[meeting.id] = meeting.end
         persist()
+    }
+
+    func currentScheduledMeeting(matching connection: ActiveRoomConnection, at date: Date? = nil) -> CalendarMeeting? {
+        let current = date ?? clock()
+        return meetings.filter {
+            !$0.allDay && !$0.tentative && $0.hasResolvedInvitation &&
+                $0.isScheduledNow(current) && $0.isConnected(in: [connection])
+        }.max { ($0.start, $0.id) < ($1.start, $1.id) }
+    }
+
+    func nextTransitionDate(matching connections: [ActiveRoomConnection], after date: Date) -> Date? {
+        guard !connections.isEmpty else { return nil }
+        var earliest: Date?
+        for meeting in meetings where !meeting.allDay && !meeting.tentative &&
+            meeting.hasResolvedInvitation && meeting.isConnected(in: connections) {
+            if meeting.start > date { earliest = min(earliest ?? meeting.start, meeting.start) }
+            if meeting.end > date { earliest = min(earliest ?? meeting.end, meeting.end) }
+        }
+        return earliest
+    }
+
+    func noteConnected(invitation: URL, engine: MeetingEngineKind?, endpoint: URL? = nil,
+                       since: Date, roomID: String? = nil, at ref: Date? = nil) {
+        let current = ref ?? clock()
+        guard let room = MeetingRoomIdentity(invitation, engine: engine) else { return }
+        let connection = ActiveRoomConnection(room: room, endpoint: endpoint)
+        let matches = meetings.filter {
+            $0.hasResolvedInvitation && !$0.allDay && !$0.tentative &&
+                $0.isConnected(in: [connection]) && $0.start <= current && $0.end > since
+        }
+        guard !matches.isEmpty else { return }
+        var changed = false
+        for item in matches where state.suppressed[item.id] != item.end {
+            state.suppressed[item.id] = item.end
+            changed = true
+        }
+        if let roomID, let latest = matches.max(by: { ($0.start, $0.id) < ($1.start, $1.id) }) {
+            let visit = Visit(title: latest.title, start: latest.start, end: latest.end)
+            if state.visits[roomID]?.title != visit.title ||
+                state.visits[roomID]?.start != visit.start ||
+                state.visits[roomID]?.end != visit.end {
+                state.visits[roomID] = visit
+                changed = true
+            }
+        }
+        if changed { persist() }
     }
     func preferredInvitation(for room: RecentRoom) -> URL {
         meeting(matching: room.joinURL, engine: room.engine, in: upcoming)?.invitation ?? room.joinURL
