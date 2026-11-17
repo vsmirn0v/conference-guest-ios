@@ -56,6 +56,9 @@ struct NativeRockLiveMediaEvidence {
     private var participantVolumes: [String: Double] = [:]
     private let subscriptions = MediaConfigurationCoordinator<ObjectIdentifier, NativeRockTrackDemand>()
     private var subscriptionFailure: Error?
+    /// Uptime when LiveKit entered `.reconnecting`, so a completed or failed
+    /// attempt can record how long remote media was down.
+    private var reconnectStartedAt: TimeInterval?
     private var visibleParticipantIDs: Set<String>?
     private var focusedParticipantID: String?
     private var receivesCameras = true
@@ -677,6 +680,7 @@ struct NativeRockLiveMediaEvidence {
             onLocalCamera?(localRenderer?.track)
         }
         incomingVideo = videos; onVideo?(videos); emit()
+        guard Self.appliesSubscriptions(when: room.connectionState) else { return }
         Task { [weak self] in
             do { try await self?.subscribe(room) }
             catch { guard let self, self.room === room else { return }; snapshot.lastError = error.localizedDescription; emit() }
@@ -772,15 +776,50 @@ struct NativeRockLiveMediaEvidence {
     }
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) { changed(room) }
     nonisolated private func changed(_ room: Room) { Task { @MainActor [weak self] in self?.refresh(room) } }
+    private func reconnectElapsedMs(since started: TimeInterval) -> Int {
+        Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
+    }
+    /// Remote audio and video are subscribed only while the room is connected.
+    /// The coordinator allows three tries. A reconnect usually lasts longer than
+    /// that, and spending them while the socket is down leaves the same demand
+    /// unsubscribed after LiveKit returns.
+    static func appliesSubscriptions(when connection: ConnectionState) -> Bool {
+        connection == .connected
+    }
     nonisolated func room(_ room: Room, didUpdateConnectionState state: ConnectionState, from oldState: ConnectionState) {
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
             switch state {
-            case .connected: snapshot.phase = .connected; snapshot.lastError = nil; chat.canSend = true
+            case .connected:
+                if let started = reconnectStartedAt {
+                    probeLog("rock-reconnect-complete", ["elapsedMs": reconnectElapsedMs(since: started)])
+                    reconnectStartedAt = nil
+                    // The outage may have failed applies that were already in flight.
+                    // Forget them and subscribe again now that the room can accept it.
+                    subscriptions.reset()
+                }
+                snapshot.phase = .connected; snapshot.lastError = nil; chat.canSend = true
             case .connecting: snapshot.phase = .connecting; chat.canSend = false
-            case .reconnecting: snapshot.phase = .reconnecting; chat.canSend = false; subscriptions.reset()
-            case .disconnecting: snapshot.phase = .leaving; chat.canSend = false
-            case .disconnected: snapshot.phase = .failed; chat.canSend = false
+            case .reconnecting:
+                snapshot.phase = .reconnecting; chat.canSend = false
+                if reconnectStartedAt == nil {
+                    reconnectStartedAt = ProcessInfo.processInfo.systemUptime
+                    probeLog("rock-reconnect-start", [:])
+                }
+                // Cancel applies that would otherwise count as failed tries.
+                subscriptions.reset()
+            case .disconnecting:
+                if let started = reconnectStartedAt {
+                    probeLog("rock-reconnect-failed", ["elapsedMs": reconnectElapsedMs(since: started)])
+                    reconnectStartedAt = nil
+                }
+                snapshot.phase = .leaving; chat.canSend = false
+            case .disconnected:
+                if let started = reconnectStartedAt {
+                    probeLog("rock-reconnect-failed", ["elapsedMs": reconnectElapsedMs(since: started)])
+                    reconnectStartedAt = nil
+                }
+                snapshot.phase = .failed; chat.canSend = false
             @unknown default: break
             }
             refresh(room)
