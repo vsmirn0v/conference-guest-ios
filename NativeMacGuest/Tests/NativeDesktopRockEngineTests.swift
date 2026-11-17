@@ -111,6 +111,19 @@ private final class RockFrameSink: NSObject, LiveKit.VideoRenderer, @unchecked S
         await coordinator.waitForReconciliation()
         try expect(attempts == 3 && coordinator.didFail("video", value: shown), "Failed SDK configuration has a bounded retry budget and readback")
         coordinator.reset()
+        var restored = 0
+        coordinator.update([.init(key: "video", value: shown) { _ in restored += 1 }])
+        await coordinator.waitForReconciliation()
+        try expect(restored == 1 && coordinator.isApplied("video", value: shown) && !coordinator.didFail("video", value: shown),
+            "Resetting when the room reconnects clears tries spent while the socket was down")
+    }
+    static func reconnectSubscriptionPolicy() throws {
+        try expect(NativeDesktopRockEngine.appliesSubscriptions(when: .connected), "A restored room reapplies remote audio and video")
+        try expect(!NativeDesktopRockEngine.appliesSubscriptions(when: .connecting) &&
+            !NativeDesktopRockEngine.appliesSubscriptions(when: .reconnecting) &&
+            !NativeDesktopRockEngine.appliesSubscriptions(when: .disconnecting) &&
+            !NativeDesktopRockEngine.appliesSubscriptions(when: .disconnected),
+            "Subscriptions stay idle until the room is connected again")
     }
     @MainActor static func nativeAspectScreenBridge() async throws {
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory())
@@ -181,7 +194,7 @@ private final class RockFrameSink: NSObject, LiveKit.VideoRenderer, @unchecked S
     }
     @MainActor static func main() async {
         do {
-            try demandPolicy(); try capturePolicies(); try await latestDemand(); try await nativeAspectScreenBridge(); try await sharedAudioOwnership()
+            try demandPolicy(); try capturePolicies(); try reconnectSubscriptionPolicy(); try await latestDemand(); try await nativeAspectScreenBridge(); try await sharedAudioOwnership()
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [AdmissionResponse.self]
             let engine = NativeDesktopRockEngine(service: JamService(session: URLSession(configuration: configuration)))
