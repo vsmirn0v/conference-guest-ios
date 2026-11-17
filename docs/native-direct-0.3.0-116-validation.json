@@ -1,0 +1,92 @@
+{
+  "version": "0.3.0",
+  "build": "116",
+  "channel": "beta",
+  "sourceCommit": "3105de9cce644ec7eefc40670df752ee05d75276",
+  "sourceState": "Isolated git-archive snapshot of HEAD (3105de9c); uncommitted workspace WIP excluded.",
+  "sourceManifest": {
+    "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-116/source/.build/release-116/build-evidence.json",
+    "sha256": "603e35e6e0488ce82a745cf808a3e2f705e317688d6ea4a3b8d341b4f1188701"
+  },
+  "validation": {
+    "conferenceCoreTests": {
+      "executed": 160,
+      "failed": 0
+    },
+    "nativeDesktopTests": {
+      "executed": 215,
+      "skipped": 4,
+      "failed": 0,
+      "note": "Ran SameRoomBackToBackTests, NativeSettingsRevealTests, MeetingNotesControllerTests, ObsidianSharedExportTests, MeetingWorkspaceJournalTests, MeetingLibraryTests, DesktopParityTests, and AttentionTests. Skipped 2 live Rapid-MLX tests (not running on 127.0.0.1:8000) and 2 ROCK_WORKSPACE_RESTART_ROOT restart tests."
+    },
+    "distributionTooling": {
+      "passed": 27,
+      "failed": 0
+    },
+    "archive": {
+      "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-116/source/.build/release-116/RockNRollNativeGuest-0.3.0-116.xcarchive",
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-116/archive-build.log",
+      "appGroupCheckPassed": true,
+      "embeddedVoiceWorkerCheckPassed": true
+    }
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-116/source/.build/release-116/RockNRollNativeGuest-0.3.0-116.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-116/export-116-3105de9c/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "116",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "116",
+    "file": "RockNRoll-0.3.0-116-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-116-arm64.dmg",
+    "sha256": "6ba9073325b50166799a3ccaf62b1ece9e96311ffaa9d4e8e58e219b3bfff3e6",
+    "length": 38768427,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-116/package-116-3105de9c/RockNRoll-0.3.0-116-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "evidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-116/publication-116-3105de9c.json",
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-116-arm64.dmg",
+      "sha256": "6ba9073325b50166799a3ccaf62b1ece9e96311ffaa9d4e8e58e219b3bfff3e6",
+      "length": 38768427
+    },
+    "state": {
+      "appcastSHA256": "2e7ca69c988e38610900647ba4e5ecbe1667860f229d59f45c95d58e00381b1b",
+      "inventorySHA256": "d8a3af8fee29b500188de29942e394171e1a00b62c6e11629a5289c4a614e2e3",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-116-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/b92550959d38493c8d876be2cac3073d/backup",
+    "httpsVerified": true
+  },
+  "inventory": {
+    "schemaVersion": 1,
+    "stable": {
+      "version": "0.3.0",
+      "build": "53",
+      "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009"
+    },
+    "beta": {
+      "version": "0.3.0",
+      "build": "116",
+      "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-116-arm64.dmg",
+      "sha256": "6ba9073325b50166799a3ccaf62b1ece9e96311ffaa9d4e8e58e219b3bfff3e6"
+    }
+  },
+  "recordedAt": "2026-11-17T20:54:31Z"
+}
