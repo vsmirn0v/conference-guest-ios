@@ -7,6 +7,29 @@ import XCTest
 /// engine's arbitration, with a fake module that records every native call.
 @MainActor final class SharedAudioEngineTests: XCTestCase {
 
+    func testOwnershipDiagnosticsReflectTalkAndSenderWithoutChangingState() async throws {
+        let (engine, module) = make()
+        let first = try await engine.attach(meetingID: UUID())
+        let second = try await engine.attach(meetingID: UUID())
+        let sender = DiagnosticSender(); first.addSender(sender)
+        ok(await first.assumeTalk()); ok(await first.setMuted(false))
+        let before = module.log, readsBefore = sender.readCount
+        let snapshot = engine.ownershipDiagnostics
+        XCTAssertEqual(snapshot["attachmentCount"] as? Int, 2)
+        let entries = try XCTUnwrap(snapshot["attachments"] as? [[String: Any]])
+        XCTAssertEqual(entries.filter { $0["talk"] as? Bool == true }.count, 1)
+        XCTAssertTrue(entries.allSatisfy { $0["senderEnabled"] as? String == "unavailable" },
+                      "Reading SDK sender state can block on the RTC worker")
+        let firstEntry = try XCTUnwrap(entries.first { $0["attachment"] as? String == first.meetingID.uuidString })
+        XCTAssertEqual(firstEntry["registeredSenderCount"] as? Int, 1)
+        XCTAssertEqual(firstEntry["lastAttachmentSenderCommand"] as? String, "enable-all")
+        XCTAssertTrue(JSONSerialization.isValidJSONObject(snapshot))
+        XCTAssertEqual(module.log, before, "Diagnostics must not operate the audio module")
+        XCTAssertEqual(sender.readCount, readsBefore, "Diagnostics must not wait on an SDK sender getter")
+        XCTAssertTrue(sender.isEnabled)
+        ok(await first.detach()); ok(await second.detach())
+    }
+
     // Guarantee 1: muted means silent, per meeting.
     func testMutedMeansSilentPerMeeting() async throws {
         let (engine, module) = make()
@@ -480,6 +503,24 @@ import XCTest
         XCTAssertNil(engine.guestOwner)
     }
 
+    func testColdPrivateCheckCreatesModuleOnSharedEngineAndRetiresWhenUnpinned() async throws {
+        var created = 0
+        let module = FakeModule()
+        let engine = SharedAudioEngine(reportFailedStop: {}) {
+            created += 1
+            return module
+        }
+        XCTAssertFalse(engine.hasModule)
+        ok(await engine.beginPrivateCheck())
+        XCTAssertEqual(created, 1)
+        XCTAssertTrue(engine.privateCheckActive)
+        XCTAssertEqual(module.log, ["permit:true", "check:begin"])
+        ok(await engine.endPrivateCheck())
+        XCTAssertFalse(engine.privateCheckActive)
+        XCTAssertFalse(engine.hasModule, "Unpinned unforegrounded private check shuts down its temporary module on release")
+        XCTAssertEqual(module.log.last, "shutdown")
+    }
+
     private func spin(_ condition: @escaping @MainActor () -> Bool, timeout: TimeInterval = 2) async throws {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         while !condition() {
@@ -511,6 +552,14 @@ import XCTest
 }
 
 private final class FakeSender: MeetingAudioSender { var isEnabled = true }
+private final class DiagnosticSender: MeetingAudioSender {
+    private var enabled = true
+    private(set) var readCount = 0
+    var isEnabled: Bool {
+        get { readCount += 1; return enabled }
+        set { enabled = newValue }
+    }
+}
 
 @MainActor private final class FakeModule: SharedAudioModule {
     var log: [String] = []

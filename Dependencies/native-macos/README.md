@@ -1,15 +1,17 @@
 # Native Mac build SDK
 
-The Git repository includes `LiveKitWebRTC-m156-screen-r5.tar.gz` (about 7 MB).
-It is the **native macOS arm64 M156 SDK used by Mac build 31**, including public
-Objective-C headers, module maps, the exact binary, matching `build-evidence.json`,
-source manifests, GN arguments, and WebRTC/third-party license notices. It is an
-ordinary Git file, not a Git LFS pointer or a download of the installed app.
+The Git repository includes `LiveKitWebRTC-m157-audio-route-r1.tar.gz` (about 7 MB).
+It is the **native macOS arm64 M157 (`branch-heads/8103`, `95554e4a0c5c343fdc989387d9d0ce18e2a2294b`) audio-route-recovery SDK**,
+including public Objective-C headers, module maps, the exact binary, matching
+`build-evidence.json` (`audioRouteRecovery`), source manifests, GN arguments,
+and WebRTC/third-party license notices. It is an ordinary Git file, not a Git
+LFS pointer or a download of the installed app.
 
 `sdk.lock.json` pins the archive and every framework file. The binary SHA-256 is
-`a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845`.
+`87214268a7a0837ef1e85e1202f623c62c34fbc6c8a9f1a3381eed20acf67519`.
 An installed app contains the runtime binary but omits the development headers;
-do not extract its framework as a build SDK or substitute upstream M150.
+do not extract its framework as a build SDK or substitute unpatched upstream M150.
+(`LiveKitWebRTC-m156-screen-r5.tar.gz` and `sdk.screen-r5.lock.json` are retained untouched as M156 baseline provenance.)
 
 ## Fresh checkout
 
@@ -23,10 +25,10 @@ python3 NativeMacGuest/bootstrap.py
 python3 NativeMacGuest/build.py --compile-only --output-dir .build/native-clean-build
 ```
 
-The bootstrap extracts the verified SDK to the existing default
-`.build/webrtc-m156-desktop-audio/native-framework-screen-r5` and fetches LiveKit
-Swift at commit `57a84d71c33e97349963c1cbd442fb4b01428b7c` into an independent
-`.build/native-sdk` checkout. `build.py` also prepares missing dependencies
+The bootstrap extracts the verified SDK to the default
+`.build/webrtc-m157-desktop-audio/native-framework-audio-route-r1` and fetches
+LiveKit Swift `2.19.0` at commit `43c1c0870e51eedbfd95b20b1b5c43a767886786`
+(`livekit-ffi-xcframework` `0.13.1`) into an independent `.build/native-sdk` checkout; `prepare-livekit.py` applies `Dependencies/native-macos/livekit-patches/*.patch` (`cancellable-app-reply.patch`, `shared-factory.patch`, `shared-track.patch`, `video-encoder-callback-prefix.patch`) to a build copy. `build.py` also prepares missing dependencies
 automatically. It does not depend on a previous Xcode build's SourcePackages.
 For offline SDK extraction only, use `bootstrap.py --framework-only`; LiveKit
 and its transitive Swift packages still need network access on the first build.
@@ -72,12 +74,12 @@ The archive retains the original build evidence byte-for-byte; its absolute
 source paths describe the original build machine and are not prerequisites for
 using this SDK. The corresponding manifests and previous r4 evidence are in
 `provenance/`. The committed source recipe and patches are under
-[`Experiments/WebRTCM156`](../../Experiments/WebRTCM156/README.md), with the later
-desktop audio and screen-detail patches beside the base M156 patch.
+[`Experiments/WebRTCM157`](../../Experiments/WebRTCM157/README.md), with the
+desktop audio, screen-detail, and audio-route recovery patches beside the rebased
+M157 port (`Experiments/WebRTCM156/` retains M156 provenance).
 
-This artifact is the validated screen-r5 baseline, not the separate ongoing
-first-microphone experiment. Updating the default SDK requires a new immutable
-archive, lock and validation; do not modify this archive in place.
+Updating the default SDK requires a new immutable archive, lock and validation;
+do not modify an existing archive in place.
 
 Run dependency regressions with:
 

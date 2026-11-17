@@ -1,0 +1,312 @@
+diff --git a/modules/audio_device/BUILD.gn b/modules/audio_device/BUILD.gn
+--- a/modules/audio_device/BUILD.gn
++++ b/modules/audio_device/BUILD.gn
+@@ -358,6 +358,7 @@
+       }
+       if (is_mac || is_ios) {
+         sources += [
++          "audio_engine_configuration_recovery_gate.h",
+           "audio_engine_device.h",
+           "audio_engine_device.mm",
+         ]
+@@ -463,6 +464,11 @@
+ }
+ 
+ if (rtc_include_tests && !build_with_chromium) {
++  rtc_cc_test("audio_engine_configuration_recovery_gate_unittest") {
++    sources = [ "audio_engine_configuration_recovery_gate_unittest.cc" ]
++    deps = [ "../../test:test_support" ]
++  }
++
+   rtc_cc_test("fine_audio_buffer_unittest") {
+     sources = [ "fine_audio_buffer_unittest.cc" ]
+     deps = [
+diff --git a/modules/audio_device/audio_engine_configuration_recovery_gate.h b/modules/audio_device/audio_engine_configuration_recovery_gate.h
+new file mode 100644
+--- /dev/null
++++ b/modules/audio_device/audio_engine_configuration_recovery_gate.h
+@@ -0,0 +1,56 @@
++/* Copyright 2026 Rock'n'Roll contributors. BSD license: see LICENSE. */
++#ifndef MODULES_AUDIO_DEVICE_AUDIO_ENGINE_CONFIGURATION_RECOVERY_GATE_H_
++#define MODULES_AUDIO_DEVICE_AUDIO_ENGINE_CONFIGURATION_RECOVERY_GATE_H_
++
++#include <cstdint>
++
++namespace webrtc {
++
++// Sequence-bound admission for deferred AVAudioEngine configuration recovery.
++// AudioEngineDevice confines this gate to its worker thread. Notification
++// callbacks carry Registration values and never access the gate off-thread.
++class AudioEngineConfigurationRecoveryGate {
++ public:
++  struct Registration {
++    uint64_t epoch = 0;
++    uintptr_t engine_identity = 0;
++  };
++
++  struct RecoveryState {
++    uintptr_t engine_identity = 0;
++    bool initialized = false;
++    bool device_mode = false;
++    bool any_running = false;
++    bool engine_running = false;
++  };
++
++  [[nodiscard]] Registration RegisterEngine(uintptr_t engine_identity) {
++    ++current_.epoch;
++    current_.engine_identity = engine_identity;
++    return current_;
++  }
++
++  void Invalidate() {
++    ++current_.epoch;
++    current_.engine_identity = 0;
++  }
++
++  // Revalidate at task execution time, before changing logical engine state.
++  // A route-driven rebuild invalidates its registration; a successful restart
++  // makes duplicate notifications no-ops through engine_running.
++  [[nodiscard]] bool ShouldRecover(const Registration& registration,
++                                   const RecoveryState& state) const {
++    return state.initialized && state.engine_identity != 0 &&
++           registration.epoch == current_.epoch &&
++           registration.engine_identity == current_.engine_identity &&
++           registration.engine_identity == state.engine_identity &&
++           state.device_mode && state.any_running && !state.engine_running;
++  }
++
++ private:
++  Registration current_;
++};
++
++}  // namespace webrtc
++
++#endif  // MODULES_AUDIO_DEVICE_AUDIO_ENGINE_CONFIGURATION_RECOVERY_GATE_H_
+diff --git a/modules/audio_device/audio_engine_configuration_recovery_gate_unittest.cc b/modules/audio_device/audio_engine_configuration_recovery_gate_unittest.cc
+new file mode 100644
+--- /dev/null
++++ b/modules/audio_device/audio_engine_configuration_recovery_gate_unittest.cc
+@@ -0,0 +1,108 @@
++/* Copyright 2026 Rock'n'Roll contributors. BSD license: see LICENSE. */
++
++#include "modules/audio_device/audio_engine_configuration_recovery_gate.h"
++
++#include "test/gtest.h"
++
++namespace webrtc {
++namespace {
++
++constexpr uintptr_t kOldEngine = 0x1000;
++constexpr uintptr_t kReplacementEngine = 0x2000;
++
++AudioEngineConfigurationRecoveryGate::RecoveryState StoppedDeviceState(
++    uintptr_t engine_identity = kOldEngine) {
++  AudioEngineConfigurationRecoveryGate::RecoveryState state;
++  state.engine_identity = engine_identity;
++  state.initialized = true;
++  state.device_mode = true;
++  state.any_running = true;
++  state.engine_running = false;
++  return state;
++}
++
++TEST(AudioEngineConfigurationRecoveryGateTest,
++     DeviceRebuildInvalidatesQueuedRecovery) {
++  AudioEngineConfigurationRecoveryGate gate;
++  const auto queued = gate.RegisterEngine(kOldEngine);
++
++  // Default-device recovery removes the old observer and installs a new one.
++  gate.Invalidate();
++  const auto replacement = gate.RegisterEngine(kReplacementEngine);
++  const auto state = StoppedDeviceState(kReplacementEngine);
++
++  EXPECT_FALSE(gate.ShouldRecover(queued, state));
++  EXPECT_TRUE(gate.ShouldRecover(replacement, state));
++}
++
++TEST(AudioEngineConfigurationRecoveryGateTest,
++     RestartBeforeTaskExecutionSuppressesRecovery) {
++  AudioEngineConfigurationRecoveryGate gate;
++  const auto queued = gate.RegisterEngine(kOldEngine);
++  auto state = StoppedDeviceState();
++
++  // Another path restarted the engine after the notification was queued.
++  state.engine_running = true;
++  EXPECT_FALSE(gate.ShouldRecover(queued, state));
++}
++
++TEST(AudioEngineConfigurationRecoveryGateTest,
++     OldEngineNotificationCannotRecoverReplacement) {
++  AudioEngineConfigurationRecoveryGate gate;
++  const auto stale = gate.RegisterEngine(kOldEngine);
++  const auto current = gate.RegisterEngine(kReplacementEngine);
++  const auto state = StoppedDeviceState(kReplacementEngine);
++
++  EXPECT_FALSE(gate.ShouldRecover(stale, state));
++  EXPECT_TRUE(gate.ShouldRecover(current, state));
++}
++
++TEST(AudioEngineConfigurationRecoveryGateTest,
++     RepeatedNotificationsRecoverOnlyUntilEngineRuns) {
++  AudioEngineConfigurationRecoveryGate gate;
++  const auto queued = gate.RegisterEngine(kOldEngine);
++  auto state = StoppedDeviceState();
++  int recovery_count = 0;
++
++  // Model serialized tasks on the audio worker. A successful first recovery
++  // starts the engine before the next queued notification is examined.
++  for (int i = 0; i < 3; ++i) {
++    if (gate.ShouldRecover(queued, state)) {
++      ++recovery_count;
++      state.engine_running = true;
++    }
++  }
++
++  EXPECT_EQ(recovery_count, 1);
++}
++
++TEST(AudioEngineConfigurationRecoveryGateTest,
++     GenuineStoppedConfigurationChangeIsRecoverable) {
++  AudioEngineConfigurationRecoveryGate gate;
++  const auto queued = gate.RegisterEngine(kOldEngine);
++  const auto state = StoppedDeviceState();
++
++  EXPECT_TRUE(gate.ShouldRecover(queued, state));
++}
++
++TEST(AudioEngineConfigurationRecoveryGateTest,
++     RecoveryRequiresCurrentLogicalDeviceDemand) {
++  AudioEngineConfigurationRecoveryGate gate;
++  const auto queued = gate.RegisterEngine(kOldEngine);
++  auto state = StoppedDeviceState();
++
++  state.initialized = false;
++  EXPECT_FALSE(gate.ShouldRecover(queued, state));
++  state = StoppedDeviceState();
++  state.device_mode = false;
++  EXPECT_FALSE(gate.ShouldRecover(queued, state));
++  state = StoppedDeviceState();
++  state.any_running = false;
++  EXPECT_FALSE(gate.ShouldRecover(queued, state));
++  state = StoppedDeviceState();
++  state.engine_identity = 0;
++  EXPECT_FALSE(gate.ShouldRecover(queued, state));
++}
++
++}  // namespace
++}  // namespace webrtc
+diff --git a/modules/audio_device/audio_engine_device.h b/modules/audio_device/audio_engine_device.h
+--- a/modules/audio_device/audio_engine_device.h
++++ b/modules/audio_device/audio_engine_device.h
+@@ -26,6 +26,7 @@
+ #include "api/sequence_checker.h"
+ #include "api/task_queue/pending_task_safety_flag.h"
+ #include "modules/audio_device/audio_device_generic.h"
++#include "modules/audio_device/audio_engine_configuration_recovery_gate.h"
+ #include "rtc_base/buffer.h"
+ #include "rtc_base/thread.h"
+ #include "rtc_base/thread_annotations.h"
+@@ -491,7 +492,7 @@
+   void EnsureFineAudioBuffer();
+ 
+   // AudioEngine observer methods. May be called from any thread.
+-  void ReconfigureEngine();
++  void ReconfigureEngine(AudioEngineConfigurationRecoveryGate::Registration registration);
+ 
+   // Device engine I/O node accessors. Must be called on `thread_`. The ones
+   // taking the in-flight transition assert that the matching side is, or is
+@@ -594,6 +595,7 @@
+   AVAudioPCMBuffer* converter_buffer_;
+ 
+   void* configuration_observer_ RTC_GUARDED_BY(thread_) = nullptr;
++  AudioEngineConfigurationRecoveryGate configuration_recovery_gate_ RTC_GUARDED_BY(thread_);
+ };
+ }  // namespace webrtc
+ 
+diff --git a/modules/audio_device/audio_engine_device.mm b/modules/audio_device/audio_engine_device.mm
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -28,6 +28,7 @@
+ #include <span>
+ #include "api/audio/audio_processing_options_resolver.h"
+ #include "api/task_queue/pending_task_safety_flag.h"
++#include "modules/audio_device/audio_engine_configuration_recovery_gate.h"
+ #include "modules/audio_device/fine_audio_buffer.h"
+ #include "rtc_base/checks.h"
+ #include "rtc_base/logging.h"
+@@ -1688,19 +1689,29 @@
+   }
+ }
+ 
+-void AudioEngineDevice::ReconfigureEngine() {
++void AudioEngineDevice::ReconfigureEngine(
++    AudioEngineConfigurationRecoveryGate::Registration registration) {
+   LOGI() << "ReconfigureEngine";
+ 
+   // TODO: More optimizations
+   // We only need to re-attach the input / output nodes with updated sample rate etc.
+ 
+-  thread_->PostTask(SafeTask(safety_, [this] {
++  thread_->PostTask(SafeTask(safety_, [this, registration] {
+     RTC_DCHECK_RUN_ON(thread_);
+ 
++    AudioEngineConfigurationRecoveryGate::RecoveryState recovery_state;
++    recovery_state.engine_identity =
++        engine_device_ == nil ? 0 : reinterpret_cast<uintptr_t>((__bridge void*)engine_device_);
++    recovery_state.initialized = initialized_;
++    recovery_state.device_mode = engine_state_.render_mode == RenderMode::Device;
++    recovery_state.any_running = engine_state_.IsAnyRunning();
++    recovery_state.engine_running = engine_device_ != nil && engine_device_.running;
++    if (!configuration_recovery_gate_.ShouldRecover(registration, recovery_state)) {
++      LOGI() << "ReconfigureEngine: skipping stale or already recovered notification";
++      return;
++    }
++
+     EngineState current_state = this->engine_state_;
+-
+-    // Re-configure is only for device mode
+-    if (current_state.render_mode != RenderMode::Device) return;
+ 
+ #if TARGET_OS_OSX
+     mac_adm::ScopedApplicationInputMuteReconfiguration preserve_application_mute;
+@@ -2255,6 +2266,8 @@
+        state.DidBeginInterruption() || state.IsEngineRecreateRequired())) {
+     LOGI() << "Stopping AVAudioEngine...";
+ 
++    // Invalidate queued recovery before removing its observer or replacing the engine.
++    configuration_recovery_gate_.Invalidate();
+     if (configuration_observer_ != nullptr) {
+       NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+       [center removeObserver:(__bridge_transfer id)configuration_observer_
+@@ -3093,24 +3106,23 @@
+         });
+ 
+         RTC_DCHECK(configuration_observer_ == nullptr);
+-        // Add observer for configuration changes
++        // Capture immutable registration data; never inspect the mutable engine
++        // ivar on the notification-posting thread.
++        const auto configuration_registration = configuration_recovery_gate_.RegisterEngine(
++            reinterpret_cast<uintptr_t>((__bridge void*)engine_device_));
+         NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+         configuration_observer_ = (__bridge_retained void*)[center
+             addObserverForName:AVAudioEngineConfigurationChangeNotification
+                         object:engine_device_
+                          queue:nil
+-                    usingBlock:^(NSNotification* notification) {
+-                      LOGI() << "AVAudioEngineConfigurationChangeNotification engineIsRunning: "
+-                             << engine_device_.running;
+-                      // Only re-configure if engine stopped.
+-                      if (!engine_device_.running) {
+-                        ReconfigureEngine();
+-                      }
++                    usingBlock:^(NSNotification*) {
++                      ReconfigureEngine(configuration_registration);
+                     }];
+ 
+         rollback_actions.push_back([this]() {
+           RTC_DCHECK_RUN_ON(thread_);
+           LOGI() << "Rolling back configuration observer (Device)...";
++          configuration_recovery_gate_.Invalidate();
+           if (configuration_observer_ != nullptr) {
+             NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+             [center removeObserver:(__bridge_transfer id)configuration_observer_

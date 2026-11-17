@@ -9,6 +9,7 @@ final class GuestAudioOwnerLease: @unchecked Sendable {
     private static var owners: [UUID: Owner] = [:]
     private static var cleanupFailed = false
     private let id = UUID()
+    var diagnosticID: String { id.uuidString }
     let privateCheck: Bool
     init?(privateCheck: Bool, exclusive: Bool = false, concurrent: Bool = false) {
         Self.lock.lock(); defer { Self.lock.unlock() }
@@ -21,6 +22,18 @@ final class GuestAudioOwnerLease: @unchecked Sendable {
     }
     deinit { Self.lock.lock(); Self.owners[id] = nil; Self.lock.unlock() }
     static func reportFailedStop() { lock.lock(); cleanupFailed = true; lock.unlock() }
+    /// Bounded process-local reservations; this is not a count of active hardware devices.
+    static var ownershipDiagnostics: [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        let ordered = owners.keys.sorted { $0.uuidString < $1.uuidString }
+        let values = ordered.prefix(16).compactMap { id -> [String: Any]? in
+            guard let owner = owners[id] else { return nil }
+            return ["id": id.uuidString, "privateCheck": owner.privateCheck,
+                    "exclusive": owner.exclusive, "concurrent": owner.concurrent]
+        }
+        return ["count": owners.count, "leases": values,
+                "truncated": max(0, owners.count - values.count), "cleanupFailed": cleanupFailed]
+    }
 }
 
 /// A private check borrows hardware only for its own lifetime. Explicit user or

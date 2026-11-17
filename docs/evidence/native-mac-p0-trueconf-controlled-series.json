@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "scenario": "Five sequential TrueConf meetings using signed Mac app build 112, receiving a synthetic publisher from a separate process. One prior warm-up.",
+  "artifact": {
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "version": "0.3.0",
+    "build": "112",
+    "executableSHA256": "c9e43982bf486076e9b2f8512cf5cb48306dab200186544ab0d940b41305f7b0"
+  },
+  "runs": [
+    {
+      "run": 1,
+      "cpuMedianPercent": 51.75,
+      "rssMedianMiB": 276.19,
+      "sampleCount": 10
+    },
+    {
+      "run": 2,
+      "cpuMedianPercent": 44.3,
+      "rssMedianMiB": 294.97,
+      "sampleCount": 10
+    },
+    {
+      "run": 3,
+      "cpuMedianPercent": 51.599999999999994,
+      "rssMedianMiB": 289.69,
+      "sampleCount": 10
+    },
+    {
+      "run": 4,
+      "cpuMedianPercent": 42.650000000000006,
+      "rssMedianMiB": 300.265,
+      "sampleCount": 10
+    },
+    {
+      "run": 5,
+      "cpuMedianPercent": 55.55,
+      "rssMedianMiB": 294.86,
+      "sampleCount": 10
+    }
+  ],
+  "publisherFinished": true,
+  "publisherStopped": true,
+  "publisherFailed": false,
+  "uiObservations": [
+    "A generated color pattern appeared in each run.",
+    "Two participant labels were explicitly confirmed in runs 3, 4, and 5.",
+    "Run 5 initially displayed the meeting view while still connecting; it later showed two participants and the test pattern.",
+    "All five 10-second sample windows were collected after the test pattern was observed.",
+    "A scripted transition after run 1 reached Home later than expected; run 2 was then started once Home was confirmed."
+  ],
+  "limitations": [
+    "One device and one room; background system load was not measured.",
+    "Mic and camera were off; no physical input, outgoing track or audio audibility was verified.",
+    "Video-pattern appearance was visually checked; exact first-frame time, frame cadence, and all five independent frame movements were not measured.",
+    "The meeting view appears during connection and its appearance time must not be treated as join latency.",
+    "One publisher process stayed connected throughout the series; app sessions were sequential, not independent publisher runs.",
+    "The user-provided room was added to the app Recents through normal behavior."
+  ]
+}

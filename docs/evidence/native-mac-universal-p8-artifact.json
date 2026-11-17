@@ -1,0 +1,797 @@
+{
+  "schemaVersion": 1,
+  "label": "universal-p8-release-candidate",
+  "sourceRevision": "0f2ea2651cda4473e8bc64a12aac367e9194207f+universal-p8",
+  "app": {
+    "bundleID": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "version": "0.1",
+    "build": "1",
+    "entries": [
+      {
+        "path": "Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/MacOS",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Info.plist",
+        "kind": "file",
+        "size": 2449,
+        "sha256": "e3a5034081814da996d1ae1efc52d72217dc32a9f7a1a6e5900f5799c4fc3f43"
+      },
+      {
+        "path": "Contents/PkgInfo",
+        "kind": "file",
+        "size": 8,
+        "sha256": "82502191c9484b04d685374f9879a0066069c49b8acae7a04b01d38d07e8eca0"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Resources",
+        "kind": "symlink",
+        "target": "Versions/Current/Resources"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/LiveKitWebRTC",
+        "kind": "symlink",
+        "target": "Versions/Current/LiveKitWebRTC"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/Current",
+        "kind": "symlink",
+        "target": "A"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/LiveKitWebRTC",
+        "kind": "file",
+        "size": 14386720,
+        "sha256": "9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "@rpath/LiveKitWebRTC.framework/LiveKitWebRTC",
+            "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+            "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+            "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+            "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+            "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+            "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+            "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio",
+            "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+            "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+            "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+            "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+            "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+            "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+            "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit",
+            "/System/Library/Frameworks/AudioUnit.framework/Versions/A/AudioUnit",
+            "/System/Library/Frameworks/ScreenCaptureKit.framework/Versions/A/ScreenCaptureKit",
+            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libobjc.A.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/Resources/Info.plist",
+        "kind": "file",
+        "size": 1039,
+        "sha256": "116c4389a50459d317128f67c804dfeea80ae35f875de3cbed13d27e610a9a78"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/Resources/PrivacyInfo.xcprivacy",
+        "kind": "file",
+        "size": 845,
+        "sha256": "eb9337f2dee5992f74ae2b10f78f526d3eec1da8cfde029131081c0b18579614"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Resources",
+        "kind": "symlink",
+        "target": "Versions/Current/Resources"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/RustLiveKitUniFFI",
+        "kind": "symlink",
+        "target": "Versions/Current/RustLiveKitUniFFI"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/Current",
+        "kind": "symlink",
+        "target": "A"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/RustLiveKitUniFFI",
+        "kind": "file",
+        "size": 2340000,
+        "sha256": "1fda8c0647a6e81ed22085384fff981ca84c3b64f20f69be1bfaa762027f779c",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "@rpath/RustLiveKitUniFFI.framework/RustLiveKitUniFFI",
+            "/usr/lib/libiconv.2.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "<external>/RustLiveKitUniFFI (architecture arm64):",
+            "@rpath/RustLiveKitUniFFI.framework/RustLiveKitUniFFI",
+            "/usr/lib/libiconv.2.dylib",
+            "/usr/lib/libSystem.B.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/Resources/Info.plist",
+        "kind": "file",
+        "size": 898,
+        "sha256": "86172b4ffdb6aa837af122cd3b13de67b163eb6fa30535d39b6e7a1e3d6cec8d"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/Resources/PrivacyInfo.xcprivacy",
+        "kind": "file",
+        "size": 599,
+        "sha256": "10da67f217824f019288ec328ababc290ab0399c52e9be77a24d494339137da2"
+      },
+      {
+        "path": "Contents/MacOS/RockClonedVoiceGPUWorker",
+        "kind": "file",
+        "size": 38721992,
+        "sha256": "25b353201c87f493e5656427c35ffe398e2966dcefab731daf5f835af36d2e4e",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/usr/lib/libc++.1.dylib",
+            "/System/Library/Frameworks/CoreAI.framework/Versions/A/CoreAI",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+            "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio",
+            "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/System/Library/Frameworks/CoreML.framework/Versions/A/CoreML",
+            "/System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit",
+            "/System/Library/Frameworks/Network.framework/Versions/A/Network",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/usr/lib/libz.1.dylib",
+            "/usr/lib/swift/libswiftAVFoundation.dylib",
+            "/usr/lib/swift/libswiftAccelerate.dylib",
+            "/usr/lib/swift/libswiftCore.dylib",
+            "/usr/lib/swift/libswiftCoreAudio.dylib",
+            "/usr/lib/swift/libswiftCoreFoundation.dylib",
+            "/usr/lib/swift/libswiftCoreImage.dylib",
+            "/usr/lib/swift/libswiftCoreMIDI.dylib",
+            "/usr/lib/swift/libswiftDarwin.dylib",
+            "/usr/lib/swift/libswiftDispatch.dylib",
+            "/usr/lib/swift/libswiftIOKit.dylib",
+            "/usr/lib/swift/libswiftMetal.dylib",
+            "/usr/lib/swift/libswiftOSLog.dylib",
+            "/usr/lib/swift/libswiftObjectiveC.dylib",
+            "/usr/lib/swift/libswiftQuartzCore.dylib",
+            "/usr/lib/swift/libswiftRegexBuilder.dylib",
+            "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+            "/usr/lib/swift/libswiftXPC.dylib",
+            "/usr/lib/swift/libswift_Builtin_float.dylib",
+            "/usr/lib/swift/libswift_Concurrency.dylib",
+            "/usr/lib/swift/libswift_DarwinFoundation1.dylib",
+            "/usr/lib/swift/libswift_DarwinFoundation3.dylib",
+            "/usr/lib/swift/libswift_StringProcessing.dylib",
+            "/usr/lib/swift/libswiftos.dylib",
+            "/usr/lib/swift/libswiftsimd.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/MacOS/RockClonedVoiceWorker",
+        "kind": "file",
+        "size": 803592,
+        "sha256": "7db74d07812ee70945d1d6553dc2f0294189c5ecfce55afa19fb278e47b31927",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/System/Library/Frameworks/CoreAI.framework/Versions/A/CoreAI",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/usr/lib/swift/libswiftAccelerate.dylib",
+            "/usr/lib/swift/libswiftCore.dylib",
+            "/usr/lib/swift/libswiftCoreFoundation.dylib",
+            "/usr/lib/swift/libswiftDarwin.dylib",
+            "/usr/lib/swift/libswiftDispatch.dylib",
+            "/usr/lib/swift/libswiftIOKit.dylib",
+            "/usr/lib/swift/libswiftMetal.dylib",
+            "/usr/lib/swift/libswiftObjectiveC.dylib",
+            "/usr/lib/swift/libswiftXPC.dylib",
+            "/usr/lib/swift/libswift_Concurrency.dylib",
+            "/usr/lib/swift/libswiftos.dylib",
+            "/usr/lib/swift/libswiftsimd.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/MacOS/RockNRoll Native Guest",
+        "kind": "file",
+        "size": 79202776,
+        "sha256": "7ee41b0e67c2ff56c9e603f813ed9219a0c421c5e21865ab8a8d9b70716ac9ee",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/System/Library/Frameworks/FoundationModels.framework/Versions/A/FoundationModels",
+            "/System/Library/Frameworks/Translation.framework/Versions/A/Translation",
+            "/System/Library/Frameworks/CoreAI.framework/Versions/A/CoreAI",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libc++.1.dylib",
+            "@rpath/LiveKitWebRTC.framework/LiveKitWebRTC",
+            "@rpath/RustLiveKitUniFFI.framework/RustLiveKitUniFFI",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio",
+            "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+            "/System/Library/Frameworks/AVKit.framework/Versions/A/AVKit",
+            "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon",
+            "/System/Library/Frameworks/CloudKit.framework/Versions/A/CloudKit",
+            "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+            "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+            "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+            "/System/Library/Frameworks/CoreML.framework/Versions/A/CoreML",
+            "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+            "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText",
+            "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+            "/System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit",
+            "/System/Library/Frameworks/EventKit.framework/Versions/A/EventKit",
+            "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+            "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+            "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+            "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit",
+            "/System/Library/Frameworks/MetricKit.framework/Versions/A/MetricKit",
+            "/System/Library/Frameworks/NaturalLanguage.framework/Versions/A/NaturalLanguage",
+            "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+            "/System/Library/Frameworks/ReplayKit.framework/Versions/A/ReplayKit",
+            "/System/Library/Frameworks/ScreenCaptureKit.framework/Versions/A/ScreenCaptureKit",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI",
+            "/System/Library/Frameworks/UserNotifications.framework/Versions/A/UserNotifications",
+            "/System/Library/Frameworks/Vision.framework/Versions/A/Vision",
+            "/System/Library/Frameworks/VisionKit.framework/Versions/A/VisionKit",
+            "/usr/lib/libcompression.dylib",
+            "/usr/lib/libsqlite3.dylib",
+            "/usr/lib/swift/libswiftAVFoundation.dylib",
+            "/usr/lib/swift/libswiftAccelerate.dylib",
+            "/usr/lib/swift/libswiftCompression.dylib",
+            "/usr/lib/swift/libswiftCore.dylib",
+            "/usr/lib/swift/libswiftCoreAudio.dylib",
+            "/usr/lib/swift/libswiftCoreFoundation.dylib",
+            "/usr/lib/swift/libswiftCoreImage.dylib",
+            "/usr/lib/swift/libswiftCoreLocation.dylib",
+            "/usr/lib/swift/libswiftCoreMIDI.dylib",
+            "/usr/lib/swift/libswiftDarwin.dylib",
+            "/usr/lib/swift/libswiftDispatch.dylib",
+            "/usr/lib/swift/libswiftIOKit.dylib",
+            "/usr/lib/swift/libswiftMetal.dylib",
+            "/usr/lib/swift/libswiftMetalKit.dylib",
+            "/usr/lib/swift/libswiftModelIO.dylib",
+            "/usr/lib/swift/libswiftNaturalLanguage.dylib",
+            "/usr/lib/swift/libswiftOSLog.dylib",
+            "/usr/lib/swift/libswiftObjectiveC.dylib",
+            "/usr/lib/swift/libswiftQuartzCore.dylib",
+            "/usr/lib/swift/libswiftSpatial.dylib",
+            "/usr/lib/swift/libswiftSynchronization.dylib",
+            "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+            "/usr/lib/swift/libswiftXPC.dylib",
+            "/usr/lib/swift/libswift_Concurrency.dylib",
+            "/usr/lib/swift/libswiftos.dylib",
+            "/usr/lib/swift/libswiftsimd.dylib",
+            "/usr/lib/swift/libswiftAppKit.dylib",
+            "/usr/lib/swift/libswiftCoreGraphics.dylib",
+            "/usr/lib/swift/libswiftCoreMedia.dylib",
+            "/usr/lib/swift/libswiftNetwork.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/en.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ru.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/AppIcon.icns",
+        "kind": "file",
+        "size": 106211,
+        "sha256": "0f9a354631cf8fafe2c543e624dcd062c62262d11867e859d91824bc2ca1604b"
+      },
+      {
+        "path": "Contents/Resources/Assets.car",
+        "kind": "file",
+        "size": 2100008,
+        "sha256": "0676506246e700581dd535fec39beac860d97e8cc9b30184dee0807c54419b38"
+      },
+      {
+        "path": "Contents/Resources/LICENSE",
+        "kind": "file",
+        "size": 1070,
+        "sha256": "fd330bb5d9adf9e65bfe4d8f6f90c808a4196ef5c98aad018a3344256fcb2374"
+      },
+      {
+        "path": "Contents/Resources/ListenModels.json",
+        "kind": "file",
+        "size": 9568,
+        "sha256": "463452b8ae3498ee8bbb00a298e0fe48deebac44fae4094119d79ca2c57587df"
+      },
+      {
+        "path": "Contents/Resources/Package.resolved",
+        "kind": "file",
+        "size": 3898,
+        "sha256": "c0ead196cb809c30bc75e02cee5611e5240ddf3187e9fc74cb9a8aeabae4848c"
+      },
+      {
+        "path": "Contents/Resources/PrivacyInfo.xcprivacy",
+        "kind": "file",
+        "size": 576,
+        "sha256": "5425b94e2067d8835cabcbf6fcd00bc59bee5cdfd8fd1531764bcb46272a7421"
+      },
+      {
+        "path": "Contents/Resources/VoiceModels.json",
+        "kind": "file",
+        "size": 359533,
+        "sha256": "6f32c5d6ece2533e707c66790291f14cd425da6b3fd87f4a07d45ecc1f322bb1"
+      },
+      {
+        "path": "Contents/Resources/VoxCPM2-NOTICE.txt",
+        "kind": "file",
+        "size": 12249,
+        "sha256": "226771d8ae98247e31659194e8c16982c0eb79262c748429c5bf8dc76dcf8e40"
+      },
+      {
+        "path": "Contents/Resources/voice-model-catalog.py",
+        "kind": "file",
+        "size": 4695,
+        "sha256": "44c484f8c85dfa46fba3ea25b9185eefb0b77b4448fd3cb6fa5c3d5c91a0d5d5"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Info.plist",
+        "kind": "file",
+        "size": 1261,
+        "sha256": "acdce5e73ad9866030445a2cd9b1a3726eb6cc73d69dd87d71c72de5cded20d5"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources/en.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources/ru.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources/en.lproj/Localizable.strings",
+        "kind": "file",
+        "size": 1145,
+        "sha256": "cc0e9b173fba59495daa5d9078676b728aa1b16b174577be7f6770a2f6a96ebe"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources/ru.lproj/Localizable.strings",
+        "kind": "file",
+        "size": 1551,
+        "sha256": "72ea32a803f58e89e5ca3da5e95917b9611f36821abcfc885c3517993ff62f31"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle/Contents/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle/Contents/Info.plist",
+        "kind": "file",
+        "size": 1242,
+        "sha256": "ad98d513f75875f6218c3ec42c1f50c7e7883c4c61fb132ae7f6e490e24f05f0"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle/Contents/Resources/PrivacyInfo.xcprivacy",
+        "kind": "file",
+        "size": 541,
+        "sha256": "7aed2e211fa5ee40e6457423bdb485a3fa0a60b4e182658e9fef5239c918dbc0"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/EventSource-LICENSE.md.txt",
+        "kind": "file",
+        "size": 1062,
+        "sha256": "2f9b695627d569a3ce452b2c03fdd34310df78c8ea94edfafd9ce38381e5b502"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/livekit-uniffi-xcframework-LICENSE.txt",
+        "kind": "file",
+        "size": 11357,
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-LICENSE.txt",
+        "kind": "file",
+        "size": 1067,
+        "sha256": "44326a4ea062241ae6fc26ee2ec90bdc81af7eb7b9d3966181b733fa69d42057"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-fmt-LICENSE.txt",
+        "kind": "file",
+        "size": 1431,
+        "sha256": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-json-LICENSE.MIT.txt",
+        "kind": "file",
+        "size": 1075,
+        "sha256": "62176251affdda17bece4ddd44271d68019e2448ca721d2c1af4c650f29c9898"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-metal-cpp-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11344,
+        "sha256": "f4e92c7fe2aa066e294c0da9d08683dc9fb741ee6e6debbfad99a0c96e07c1f2"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-mlx-LICENSE.txt",
+        "kind": "file",
+        "size": 1066,
+        "sha256": "ccfab7ccb2ea306f71531c8ca77bb55507606cd90768b1e32b8b52ab5b48cf01"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-mlx-c-LICENSE.txt",
+        "kind": "file",
+        "size": 1067,
+        "sha256": "44326a4ea062241ae6fc26ee2ec90bdc81af7eb7b9d3966181b733fa69d42057"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-asn1-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11358,
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-asn1-NOTICE.txt.txt",
+        "kind": "file",
+        "size": 1446,
+        "sha256": "570ef2dc97e91403cb8a9b322a66cdd4107821d225a20e7df892700d7ad9586b"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-collections-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-crypto-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11358,
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-crypto-NOTICE.txt.txt",
+        "kind": "file",
+        "size": 1563,
+        "sha256": "b3ddc2ae068e76b3beb71be03c0400f90090f9469aa491bf7b1ac42320af37b8"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-docc-plugin-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-docc-symbolkit-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-huggingface-LICENSE.txt",
+        "kind": "file",
+        "size": 11347,
+        "sha256": "4d6ad72952a8329063a71de28329b493de96cf57459e2ac217110d1a6a5f84ae"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-jinja-LICENSE.txt",
+        "kind": "file",
+        "size": 11347,
+        "sha256": "648b81e6c6f9975c3b6cf6d630229b6c8d6f1ddaef55f5770f576adda19f3495"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-numerics-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-protobuf-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-transformers-LICENSE.txt",
+        "kind": "file",
+        "size": 11347,
+        "sha256": "648b81e6c6f9975c3b6cf6d630229b6c8d6f1ddaef55f5770f576adda19f3495"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/yyjson-LICENSE.txt",
+        "kind": "file",
+        "size": 1084,
+        "sha256": "45e384d3d52c73cba3a64d6e6c25d47cd738cd8a55c30629e3201046eda62947"
+      },
+      {
+        "path": "Contents/Resources/en.lproj/InfoPlist.strings",
+        "kind": "file",
+        "size": 814,
+        "sha256": "60b26e5893f8c1cbf10fd0d162a27d2cb7646f397ddf74937cc085b80890dd61"
+      },
+      {
+        "path": "Contents/Resources/en.lproj/Localizable.strings",
+        "kind": "file",
+        "size": 217950,
+        "sha256": "4f8d28a5e4545134f75320e0f470382a18c6a01701e12fcb598e3276b08c7630"
+      },
+      {
+        "path": "Contents/Resources/en.lproj/Localizable.stringsdict",
+        "kind": "file",
+        "size": 4031,
+        "sha256": "877380dd14634f4dbe71947e61aa23d6cc0f710f9de6b852a716ad286f76c1d0"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Info.plist",
+        "kind": "file",
+        "size": 1231,
+        "sha256": "06c2aba30d93c3c2999369df4c6c9d160f51941490247058f86fe197666e1620"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib",
+        "kind": "file",
+        "size": 4716496,
+        "sha256": "1802f1eba2f0997d4eb0e538b64b261dd21e7fd7f3847b955361f272f4bbf69f"
+      },
+      {
+        "path": "Contents/Resources/ru.lproj/InfoPlist.strings",
+        "kind": "file",
+        "size": 1373,
+        "sha256": "4e6a6caa841fc78a54ed454ea5a3a09810a5a98832dca37fc11effdb11c4d78e"
+      },
+      {
+        "path": "Contents/Resources/ru.lproj/Localizable.strings",
+        "kind": "file",
+        "size": 318044,
+        "sha256": "bf7fd7af67c4580c64fbf188464392ee2149f1cf8dc4291f763f9aa7c0089895"
+      },
+      {
+        "path": "Contents/Resources/ru.lproj/Localizable.stringsdict",
+        "kind": "file",
+        "size": 5650,
+        "sha256": "43e87729bf44130d9c816b78a4baa7a1ac034716c940c7eff25d561e604a0fbd"
+      }
+    ]
+  },
+  "packageLock": {
+    "sha256": "c0ead196cb809c30bc75e02cee5611e5240ddf3187e9fc74cb9a8aeabae4848c",
+    "pins": [
+      {
+        "identity": "eventsource",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "bb4b61273b5a976bb571859c17f903ebc3439df1",
+          "version": "1.6.0"
+        }
+      },
+      {
+        "identity": "livekit-uniffi-xcframework",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "7a9bf91b1601d5c408ae0cac7dc2047b5a4f615e",
+          "version": "0.1.9"
+        }
+      },
+      {
+        "identity": "mlx-swift",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "7ede4fd6d05f63305c1c0ebf4f8c1909a637c574",
+          "version": "0.33.0"
+        }
+      },
+      {
+        "identity": "swift-asn1",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "917b472dbe53ba699cbb0495f9a95a084bc6364d",
+          "version": "1.7.4"
+        }
+      },
+      {
+        "identity": "swift-collections",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "88754449ab766a739610b660e117762115fabc9c",
+          "version": "1.7.6"
+        }
+      },
+      {
+        "identity": "swift-crypto",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
+          "version": "4.5.2"
+        }
+      },
+      {
+        "identity": "swift-docc-plugin",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "647c708be89f834fa6a6d4945442793a77ddf5b6",
+          "version": "1.5.0"
+        }
+      },
+      {
+        "identity": "swift-docc-symbolkit",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "b45d1f2ed151d057b54504d653e0da5552844e34",
+          "version": "1.0.0"
+        }
+      },
+      {
+        "identity": "swift-huggingface",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "f0a0cb43cb1b402d2bbf6fb10d8981328c449c48",
+          "version": "0.13.0"
+        }
+      },
+      {
+        "identity": "swift-jinja",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "66042420a9225c98ea9382d705e2285769dfdbe5",
+          "version": "3.1.0"
+        }
+      },
+      {
+        "identity": "swift-numerics",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+          "version": "1.1.1"
+        }
+      },
+      {
+        "identity": "swift-protobuf",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "fed2f76413026cb0ae90999a8c9116949dfe6aa6",
+          "version": "1.41.0"
+        }
+      },
+      {
+        "identity": "swift-transformers",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "402a8a1105f52038b0949d9596981fc9e32bed17",
+          "version": "1.4.0"
+        }
+      },
+      {
+        "identity": "yyjson",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "6447536015f3d600f3d65323b10976103b337ca7",
+          "version": "0.13.0"
+        }
+      }
+    ]
+  },
+  "linkFileLists": [
+    {
+      "path": "RockClonedVoiceGPUWorker.build/Objects-normal/arm64/RockClonedVoiceGPUWorker.LinkFileList",
+      "sha256": "bc7510359b441c9b9c9f30fde38815edd3f9bcf1119a83db63cb9d5b71c72b82",
+      "lineCount": 32
+    },
+    {
+      "path": "RockClonedVoiceWorker.build/Objects-normal/arm64/RockClonedVoiceWorker.LinkFileList",
+      "sha256": "87615c6893b2b2efc01c222334d0ff6a790352b54ea2ebc10098c42416ab219c",
+      "lineCount": 10
+    },
+    {
+      "path": "RockNRollNativeGuest.build/Objects-normal/arm64/Rock'N'Roll for Mac.LinkFileList",
+      "sha256": "ee0819cd8b0c311cf00ed85844d5a7a75e14ffae447ed885d13109f831fa20fa",
+      "lineCount": 244
+    }
+  ],
+  "limitations": [
+    "Dynamic libraries are observed with otool -L for each recognized Mach-O file; tool failures are explicit.",
+    "Hashes and dependency names do not prove that prohibited SDK code is absent or identify statically linked source.",
+    "Link-file-list hashes and package pins are build evidence, not proof that every static object was audited or linked.",
+    "Symlinks are inventoried without following directory symlinks; code signature, extended attributes and timestamps are not checked."
+  ]
+}

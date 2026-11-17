@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "stage": "P8",
+  "test": "NativeDesktopTests/SharedEngineRockEngineTests/testRockRunsOnTheSharedOwnerAndSendsOnlyWithTheTalkRole",
+  "environment": {
+    "configuration": "Debug (CODE_SIGNING_ALLOWED=NO, manual rendering)",
+    "framework": ".build/webrtc-m156-desktop-audio/native-framework-audio-route-r1",
+    "sfu": "local livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1",
+    "note": "P8 test includes additional P6 muted-reconnect and track-replacement handover checks inside the test method; run-4 hit the same pre-existing longestGap == 2 manual-rendering 100 ms bucket jitter flake seen in P0 run-5."
+  },
+  "passedCount": 4,
+  "measuredRuns": 5,
+  "summary": {
+    "medianTestCaseSeconds": 17.57,
+    "p95TestCaseSeconds": 17.681,
+    "medianUnmuteMs": 19.945,
+    "medianMoveMs": 6.121
+  },
+  "comparisonVsP0": {
+    "p0MedianTestCaseSeconds": 16.166,
+    "p8MedianTestCaseSeconds": 17.57,
+    "testCaseDeltaPct": 8.68,
+    "p0MedianUnmuteMs": 21.467,
+    "p8MedianUnmuteMs": 19.945,
+    "unmuteDeltaPct": -7.09,
+    "p0MedianMoveMs": 8.683,
+    "p8MedianMoveMs": 6.121,
+    "moveDeltaPct": -29.5,
+    "within10PercentTrigger": true
+  },
+  "runs": [
+    {
+      "run": "warmup",
+      "isWarmup": true,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.652,
+      "replyRenderSeconds": 2.795331333298236,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.008933958364650607,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 76.86723391406184,
+        "talkingAgainBytesPerSecond": 9425.91865580021,
+        "talkingBytesPerSecond": 6836.454809801446,
+        "unmuteSeconds": 0.017121583339758217,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-p0-compile/p8-rock-warmup.log"
+    },
+    {
+      "run": "run-1",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.508,
+      "replyRenderSeconds": 2.796825833269395,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.009514958364889026,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 115.08112833697423,
+        "talkingAgainBytesPerSecond": 8932.66845667378,
+        "talkingBytesPerSecond": 5859.668204178986,
+        "unmuteSeconds": 0.01831475005019456,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-p0-compile/p8-rock-run-1.log"
+    },
+    {
+      "run": "run-2",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.565,
+      "replyRenderSeconds": 2.7975412500090897,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.005983749986626208,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 118.36406969465776,
+        "talkingAgainBytesPerSecond": 7928.317253945782,
+        "talkingBytesPerSecond": 6489.807517722128,
+        "unmuteSeconds": 0.02437358326278627,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-p0-compile/p8-rock-run-2.log"
+    },
+    {
+      "run": "run-3",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.589,
+      "replyRenderSeconds": 2.7998641250887886,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.0057215417036786675,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 114.9860244901984,
+        "talkingAgainBytesPerSecond": 8758.001908357825,
+        "talkingBytesPerSecond": 7591.953673230173,
+        "unmuteSeconds": 0.019945208332501352,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-p0-compile/p8-rock-run-3.log"
+    },
+    {
+      "run": "run-4",
+      "isWarmup": false,
+      "exitCode": 65,
+      "passed": false,
+      "testCaseSeconds": 17.57,
+      "replyRenderSeconds": 2.7999007917242125,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.009008249966427684,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 120.40732408922601,
+        "talkingAgainBytesPerSecond": 9124.927885424439,
+        "talkingBytesPerSecond": 6715.086487549117,
+        "unmuteSeconds": 0.010186166735365987,
+        "unpublishedAfterMove": true
+      },
+      "failures": [
+        "/Users/v.smirnov/docs/conference-guest-ios/NativeMacGuest/Tests/Parity/SharedEngineRockEngineTests.swift:203: error: -[NativeDesktopTests.SharedEngineRockEngineTests testRockRunsOnTheSharedOwnerAndSendsOnlyWithTheTalkRole] : XCTAssertLessThan failed: (\"2\") is not less than (\"2\") - received=3.0799999999999783 audible=2.4199999999999924 activeBuckets=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28] peakPerTenth=[0.32176924518881894, 0.38885648389625543, 0.18890860499084203, 0.49048544868503235, 0.2631723724148128, 0.33343871081062415, 0.4623773074723723, 0.3589909922106787, 0.4375562179348327, 0.14276192110287914, 0.3919968340381251, 0.3266245066376716, 0.3788086825085123, 0.3956925320159656, 0.28340367508207576, 0.18559331736201684, 0.3049711515479336, 0.3938894960847622, 0.2991272177425057, 0.25332527662443083, 0.17323733702181138, 0.35883315501918844, 0.3499586355904325, 0.02004751850421178, 3.3834164163335346e-05, 0.00416785380965594, 0.31677871878303854, 0.2662868484094792, 0.38336773029281057, 0.011865979842981258, 3.380547898296582e-05]"
+      ],
+      "log": ".build/universal-p0-compile/p8-rock-run-4.log"
+    },
+    {
+      "run": "run-5",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.681,
+      "replyRenderSeconds": 2.795966291683726,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.0061211250722408295,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 114.78256825619174,
+        "talkingAgainBytesPerSecond": 8053.179495104938,
+        "talkingBytesPerSecond": 6311.199869978985,
+        "unmuteSeconds": 0.02203420829027891,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-p0-compile/p8-rock-run-5.log"
+    }
+  ]
+}

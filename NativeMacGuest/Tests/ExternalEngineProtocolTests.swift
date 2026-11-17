@@ -8,9 +8,9 @@ import ConferenceCore
             guard value() else { throw NSError(domain: "NativeExternalEngineTests", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
             checks += 1
         }
-        let engine = NativeDesktopTelemostEngine()
+        let engine = TelemostAdapter()
         engine.snapshot.phase = .connecting; engine.localID = "self"; engine.name = "Tester"
-        let generation = engine.epoch
+        let generation = engine.supervisor.generation
         try await engine.receiveTelemost("updateDescription", ["description": [
             ["id": "audio-only", "meta": ["name": "Audio only", "sendAudio": true, "sendVideo": false]],
             ["id": "unknown", "meta": ["name": "Unknown media"]],
@@ -28,7 +28,7 @@ import ConferenceCore
         try await engine.receiveTelemost("slotsConfig", ["key": 0, "slots": [["vad": true, "participant": ["participantId": "unknown"]]]], attempt: generation)
         try expect(engine.snapshot.participants.first { $0.id == "unknown" }?.speaking == true, "Autonomous slot update reports real speech")
         let bootstrap = TelemostBootstrap(roomID: "room", participantID: "self", credentials: "fixture", serverURL: URL(string: "wss://example.invalid")!, serviceName: "fixture", iceServers: [], chatAllowed: true)
-        let hello = NativeDesktopExternalSession.telemostHello(bootstrap, name: "Tester", quiet: true)
+        let hello = TelemostAdapter.telemostHello(bootstrap, name: "Tester", quiet: true)
         try expect(hello["sendAudio"] as? Bool == false && hello["sendVideo"] as? Bool == false && hello["sendSharing"] as? Bool == false, "Provider hello is always media-off")
         try expect(hello["disableSubscriberAudio"] as? Bool == true, "Quiet joining preserves output intent")
         let sourceSlots: [[String: Any]] = [
@@ -46,7 +46,7 @@ import ConferenceCore
         let audioOnly = NativeDesktopSlotDemand.request(slots: sourceSlots, visible: [], focused: nil)
         try expect(audioOnly["shutdownAllVideo"] as? Bool == true && audioOnly["audioSlotsCount"] as? Int == 0 && audioOnly["disableSubscriberAudio"] == nil,
             "Audio-only suppresses video without changing the established audio subscription")
-        try await engine.setVisibleParticipantIDs([], focusedParticipantID: nil)
+        try await engine.setVideoDemand(.init(visibleParticipantIDs: [], focusedParticipantID: nil, preferredScreenParticipantID: nil, receivesCameras: true))
         try expect(engine.snapshot.playoutOn, "Viewport demand does not mute playout")
         let left = await engine.leave()
         try expect(left && engine.snapshot.phase == .left, "Leave completes without a media owner")
@@ -55,36 +55,38 @@ import ConferenceCore
             throw NSError(domain: "LateEventAccepted", code: 1)
         } catch is CancellationError { checks += 1 }
         try expect(engine.snapshot.participants.isEmpty, "Old generation cannot repopulate departed roster")
-        let failure = NativeDesktopTelemostEngine()
+        let failure = TelemostAdapter()
         failure.snapshot.phase = .connecting
         var terminalPhases: [NativeDesktopMeetingPhase] = []
         failure.onState = { terminalPhases.append($0.phase) }
         await failure.fail(TelemostError.removed)
         try expect(failure.snapshot.phase == .failed && !terminalPhases.contains(.left), "Terminal failure is never published as normal departure")
 
-        let tc = NativeDesktopTrueConfEngine()
+        let tc = TrueConfAdapter()
+        try expect(tc.capabilities == .trueconf && tc.chatService?.canRead == false && tc.chatService?.canSend == false && !tc.supportsScreenOnlyVideo,
+            "TrueConf capabilities keep chat and individual screen subscription unavailable")
         tc.snapshot.phase = .connecting; tc.localID = "self"
         // A socket object is sufficient to exercise the event dispatcher; it is
         // never started and no network or physical capture is used by this test.
-        tc.trueconf = TrueConfTransport(server: URL(string: "wss://example.invalid")!, session: URLSession(configuration: .ephemeral))
+        tc.transport = TrueConfTransport(server: URL(string: "wss://example.invalid")!, session: URLSession(configuration: .ephemeral))
         try await tc.receiveTrueConf(["method": "SendPartsList", "type": 1, "list": [
             ["trueconfId": "remote", "displayname": "Remote", "DeviceStatus": 0, "videoType": 2]
-        ]], attempt: tc.epoch)
+        ]], attempt: tc.supervisor.generation)
         let remote = tc.snapshot.participants.first { $0.id == "remote" }
         try expect(remote?.sharing == true && remote?.cameraOn == false, "TrueConf distinguishes content from camera")
         try expect(remote?.speaking == nil, "TrueConf does not invent per-person VAD")
         tc.microphoneIntent = true; tc.snapshot.microphoneOn = true
-        try await tc.receiveTrueConf(["method": "setDeviceState", "Type": "microphone", "Mute": true], attempt: tc.epoch)
+        try await tc.receiveTrueConf(["method": "setDeviceState", "Type": "microphone", "Mute": true], attempt: tc.supervisor.generation)
         try expect(!tc.microphoneIntent && !tc.snapshot.microphoneOn, "Forced mute withdraws user intent")
-        try await tc.receiveTrueConf(["method": "DeviceStatus", "UserName": "remote", "DeviceStatus": 262148], attempt: tc.epoch)
+        try await tc.receiveTrueConf(["method": "DeviceStatus", "UserName": "remote", "DeviceStatus": 262148], attempt: tc.supervisor.generation)
         try expect(tc.snapshot.participants.first { $0.id == "remote" }?.microphoneOn == false, "Device update refreshes roster")
-        try await tc.receiveTrueConf(["method": "SendPartsList", "type": 3, "list": [["trueconfId": "remote"]]], attempt: tc.epoch)
+        try await tc.receiveTrueConf(["method": "SendPartsList", "type": 3, "list": [["trueconfId": "remote"]]], attempt: tc.supervisor.generation)
         try expect(!tc.snapshot.participants.contains { $0.id == "remote" }, "Incremental TrueConf departure is applied")
         let clean = await tc.leave()
         try expect(clean, "Unstarted signaling socket closes cleanly")
-        tc.cleanupSucceeded = false
+        tc.supervisor.cleanupSucceeded = false
         do {
-            try await tc.connect(invitation: URL(string: "https://example.invalid/c/room")!, name: "Tester", quiet: false)
+            try await tc.connect(invitation: URL(string: "https://example.invalid/c/room")!, name: "Tester", quiet: false, sessionID: UUID())
             throw NSError(domain: "UnsafeRejoinAccepted", code: 1)
         } catch NativeDesktopRTCError.cleanupFailed { checks += 1 }
         print("PASS: \(checks) native external-engine protocol and lifecycle assertions; no live network or physical media")

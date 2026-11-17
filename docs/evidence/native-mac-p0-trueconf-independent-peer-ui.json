@@ -1,0 +1,21 @@
+{
+  "provider": "trueconf",
+  "status": "pass",
+  "signedAppBuild": "0.3.0 (112)",
+  "scenario": "Signed app received synthetic video from a separate test-only process",
+  "observations": [
+    "Two participants were visible",
+    "Two UI screenshots showed the synthetic pattern change",
+    "Local microphone and camera remained off",
+    "App returned Home after Leave",
+    "No error modal occurred in this second attempt"
+  ],
+  "probeFrameworkSHA256": "9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977",
+  "probeSHA256": "b8ec5244cdd614136a873e6cc78e5e9521d4cd485545e02abb8daf0f93db3ab0",
+  "limitations": [
+    "Visible inbound video witness only; no decoded counters, media latency, audio audibility, outgoing app tracks or physical audio quality verified.",
+    "The separate probe is a current-source test-only executable with synthetic audio and video, not the signed app.",
+    "Two UI screenshots are retained in computer-use output; no separate screenshot file was saved.",
+    "Earlier initial RTC error remains a separate unresolved baseline observation."
+  ]
+}

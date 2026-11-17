@@ -1409,7 +1409,7 @@ private final class DesktopActivitySpy: NSUserActivity {
     }
     /// A headset or system mute event can arrive while the room is still being reserved.
     func testMutingBeforeTheGuestSessionExistsSucceedsWithoutAnError() async throws {
-        let engine = NativeDesktopGuestEngine()
+        let engine = GuestAdapter()
         try await engine.setMicrophone(false)
         try await engine.setCamera(false)
         XCTAssertFalse(engine.snapshot.microphoneOn); XCTAssertFalse(engine.snapshot.cameraOn)
@@ -1540,6 +1540,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertTrue(report.hasPrefix("Rock'N'Roll for Mac diagnostics"))
         XCTAssertTrue(report.contains("macOS: "))
         XCTAssertTrue(report.contains("Audio devices: {"))
+        XCTAssertTrue(report.contains("Media ownership: {"))
         XCTAssertTrue(report.contains("Installed copies:"))
         XCTAssertTrue(report.contains("\"event\":\"diagnostics-test\""))
         XCTAssertFalse(report.contains(NativeDesktopDiagnostics.homeDirectory + "/"), "home paths are abbreviated")

@@ -407,8 +407,10 @@ struct NativeGuestApplication {
             // Audio devices are read off the main thread and bounded: a stalled system
             // audio service must not freeze the app while you ask for help with it.
             let route = await GuestAcousticEnvironment.boundedRoute(names: true)
+            let report = await NativeDesktopDiagnostics.reportWithMediaObservations(
+                route: route, meetings: workspace?.meetings ?? [], companion: controller)
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(NativeDesktopDiagnostics.report(route: route), forType: .string)
+            NSPasteboard.general.setString(report, forType: .string)
             let alert = NSAlert(); alert.messageText = L("Diagnostics copied")
             alert.informativeText = L("Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content.")
             alert.runModal()
@@ -423,8 +425,10 @@ struct NativeGuestApplication {
         NativeDiagnosticsLog.shared.flush()
         Task { @MainActor in
             let route = await GuestAcousticEnvironment.boundedRoute(names: true)
+            let report = await NativeDesktopDiagnostics.reportWithMediaObservations(
+                route: route, meetings: workspace?.meetings ?? [], companion: controller)
             do {
-                try NativeDiagnosticsArchive.make(report: NativeDesktopDiagnostics.report(route: route), logs: NativeDiagnosticsLog.shared.files,
+                try NativeDiagnosticsArchive.make(report: report, logs: NativeDiagnosticsLog.shared.files,
                     reports: NativeDiagnosticReports.shared.files, destination: url)
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } catch {
@@ -443,9 +447,23 @@ struct NativeGuestApplication {
     static var homeDirectory: String {
         getpwuid(getuid()).flatMap { $0.pointee.pw_dir.map { String(cString: $0) } } ?? NSHomeDirectory()
     }
+    private static let meetingLimit = 16
+    static func reportWithMediaObservations(route: [String: Any], meetings: [NativeDesktopMeetingModel],
+                                            companion: CompanionMeetingController?) async -> String {
+        var probes: [MediaSenderDiagnostics.Source: GuestMicrophoneTrackProbe] = [:]
+        for meeting in meetings.prefix(meetingLimit) {
+            probes[.meeting(meeting.sessionID)] = meeting.microphoneTrackProbe
+        }
+        probes[.companion] = companion?.microphoneTrackProbe
+        let observations = await MediaSenderDiagnostics.shared.sample(probes)
+        return report(route: route, meetings: meetings, companion: companion, microphoneTracks: observations)
+    }
+
     /// `route` is the audio devices as `GuestAcousticEnvironment.boundedRoute` read them;
     /// nothing here touches CoreAudio, so the report never waits on the audio service.
-    static func report(now: Date = Date(), route: [String: Any] = ["unavailable": "not read"]) -> String {
+    static func report(now: Date = Date(), route: [String: Any] = ["unavailable": "not read"],
+                       meetings: [NativeDesktopMeetingModel] = [], companion: CompanionMeetingController? = nil,
+                       microphoneTracks: [MediaSenderDiagnostics.Source: MediaSenderDiagnostics.Observation] = [:]) -> String {
         func string(_ key: String, _ bundle: Bundle) -> String { bundle.object(forInfoDictionaryKey: key) as? String ?? "?" }
         func version(_ bundle: Bundle) -> String { "\(string("CFBundleShortVersionString", bundle)) (\(string("CFBundleVersion", bundle)))" }
         func path(_ value: String) -> String {
@@ -465,6 +483,22 @@ struct NativeGuestApplication {
             @unknown default: "unknown"
             }
         }
+        func addingMicrophoneTrack(to state: [String: Any], source: MediaSenderDiagnostics.Source) -> [String: Any] {
+            var state = state
+            state["microphoneTrack"] = microphoneTracks[source]?.reportFields
+                ?? ["state": GuestMicrophoneTrackObservation.unavailable.rawValue]
+            return state
+        }
+        let ownership: [String: Any] = [
+            "audio": SharedAudioEngine.shared.ownershipDiagnostics,
+            "audioLeases": GuestAudioOwnerLease.ownershipDiagnostics,
+            "camera": NativeDesktopCameraLease.shared.ownershipDiagnostics,
+            "companion": companion.map { addingMicrophoneTrack(to: $0.ownershipDiagnostics, source: .companion) }
+                ?? ["state": "not-created"],
+            "meetings": meetings.prefix(meetingLimit).map {
+                addingMicrophoneTrack(to: $0.ownershipDiagnostics, source: .meeting($0.sessionID))
+            },
+            "meetingsTruncated": max(0, meetings.count - meetingLimit)]
         var model = [CChar](repeating: 0, count: 64), size = model.count
         let hardware = sysctlbyname("hw.model", &model, &size, nil, 0) == 0 ? String(cString: model) : "?"
         var lines = ["Rock'N'Roll for Mac diagnostics",
@@ -475,6 +509,7 @@ struct NativeGuestApplication {
             "Mac: \(hardware)", "Language: \(Locale.preferredLanguages.first ?? "?")",
             "Microphone: \(access(.audio)); camera: \(access(.video)); screen recording: \(CGPreflightScreenCaptureAccess() ? "allowed" : "not allowed")",
             "Audio devices: \(json(route))",
+            "Media ownership: \(json(ownership))",
             "Installed copies:"]
         let copies = Bundle.main.bundleIdentifier.map { NSWorkspace.shared.urlsForApplications(withBundleIdentifier: $0) } ?? []
         lines += copies.prefix(8).map { url in "  \(path(url.path)) \(Bundle(url: url).map(version) ?? "?")" }

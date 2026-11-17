@@ -440,6 +440,16 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         } else { audioTrack = track as? LKRTCAudioTrack }
     }
 
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard !closed else { return nil }
+        let track = audioTrack
+        let hadTrack = track != nil
+        return native.microphoneTrackProbe(track) { [weak self, weak track] in
+            guard let self, !closed else { return false }
+            return hadTrack == (track != nil) && audioTrack === track
+        }
+    }
+
     func setMuted(_ mute: Bool, video: Bool) async throws {
 #if DEBUG
         if !mute && video { videoEnableCallsForTesting += 1 }

@@ -76,7 +76,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     }()
     /// The app's one engine; its owner is created when the first meeting attaches.
     static let shared: SharedAudioEngine = {
-        let engine = SharedAudioEngine.live()
+        let engine = SharedAudioEngine.live(installIntoLiveKitOnCreate: true)
         engine.observeSystemSleep()
         return engine
     }()
@@ -134,21 +134,25 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     private var idleDeadline: Task<Void, Never>?
 
     private let reportFailedStop: () -> Void
+    private let installIntoLiveKitOnCreate: Bool
 
     /// `reportFailedStop` blocks every new physical owner in the process (tests replace it).
     init(timeouts: Timeouts = .init(), grace: Duration = .seconds(2),
          authorized: @escaping () -> Bool = { GuestSystemAudio.microphoneAuthorized },
          sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
          reportFailedStop: @escaping () -> Void = { GuestAudioOwnerLease.reportFailedStop() },
+         installIntoLiveKitOnCreate: Bool = false,
          makeModule: @escaping @MainActor () async throws -> SharedAudioModule) {
         self.timeouts = timeouts; self.grace = grace; self.authorized = authorized; self.sleep = sleep
-        self.reportFailedStop = reportFailedStop; self.makeModule = makeModule
+        self.reportFailedStop = reportFailedStop; self.installIntoLiveKitOnCreate = installIntoLiveKitOnCreate
+        self.makeModule = makeModule
     }
 
     /// The app's engine: one non-exclusive `GuestSystemAudio` owner whose factory
-    /// LiveKit can adopt (Rock, `installIntoLiveKit`).
-    static func live(manualRenderingForTesting: Bool = false) -> SharedAudioEngine {
-        SharedAudioEngine {
+    /// LiveKit adopts up front when `installIntoLiveKitOnCreate` is true.
+    static func live(manualRenderingForTesting: Bool = false,
+                     installIntoLiveKitOnCreate: Bool = false) -> SharedAudioEngine {
+        SharedAudioEngine(installIntoLiveKitOnCreate: installIntoLiveKitOnCreate) {
             try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false,
                 profile: manualRenderingForTesting ? .speech : .saved, concurrent: true,
                 manualRendering: manualRenderingForTesting, keepOutputAvailableWithInput: true,
@@ -168,6 +172,35 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     var busy: Bool { !attachments.isEmpty || privateCheckActive || cleanupFailed || idleSuspended }
     var meetingIDs: [UUID] { order }
     func attachment(_ id: UUID) -> MeetingAudioAttachment? { attachments[id] }
+    /// A bounded, content-free snapshot, sampled only on explicit diagnostics.
+    /// Object identifiers are process-local hashes, not addresses or persistent IDs.
+    var ownershipDiagnostics: [String: Any] {
+        let entries = order.prefix(16).compactMap { id -> [String: Any]? in
+            guard let attachment = attachments[id] else { return nil }
+            return ["attachment": id.uuidString, "talk": id == talkMeetingID,
+                    "senderEnabled": "unavailable", "soundOn": attachment.soundOn,
+                    "registeredSenderCount": attachment.registeredSenderCount,
+                    "lastAttachmentSenderCommand": attachment.lastSenderCommand,
+                    "transcriptionOutput": attachment.transcriptionOutput]
+        }
+        let ownerSnapshot = guestOwner?.snapshot ?? [:]
+        return ["owner": module.map { String(ObjectIdentifier($0).hashValue) } ?? "none",
+                "ownerIdentityScope": "shared-module-wrapper-not-adm",
+                "ownerLeaseID": ownerSnapshot["ownerLeaseID"] as? String ?? "unavailable",
+                "ownerGeneration": ownerSnapshot["ownerGeneration"] as? String ?? "unavailable",
+                "factoryGeneration": ownerSnapshot["factoryGeneration"] as? String ?? "unavailable",
+                "audioModuleGeneration": ownerSnapshot["audioModuleGeneration"] as? String ?? "unavailable",
+                "graphCreateCount": ownerSnapshot["enginesCreated"] ?? NSNull(),
+                "graphStartCount": ownerSnapshot["engineStarts"] ?? NSNull(),
+                "graphReleaseCount": ownerSnapshot["enginesReleased"] ?? NSNull(),
+                "factoryPurpose": "shared-audio-and-native-peers",
+                "attachmentCount": attachments.count, "attachments": entries,
+                "attachmentsTruncated": max(0, order.count - entries.count),
+                "talkEpoch": String(talkEpoch), "moduleMuted": moduleMuted,
+                "muteConfirmed": muteConfirmed, "pinnedForProcess": pinnedForProcess,
+                "privateCheckActive": privateCheckActive, "rebuilding": rebuilding,
+                "cleanupFailed": cleanupFailed]
+    }
     func waitForWork() async { await work.wait() }
 
     private var shouldPrepareForegroundInput: Bool {
@@ -438,12 +471,24 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     /// Only while no sender is enabled and the module is muted; unmuting is refused meanwhile.
     func beginPrivateCheck() async -> Bool {
         await work.run { [self] in
-            guard let module, !privateCheckActive, moduleMuted,
+            guard !privateCheckActive, moduleMuted,
                   attachments.values.allSatisfy({ !$0.anySenderEnabled }) else { return false }
+            let ensured: SharedAudioModule
+            if let existing = self.module {
+                ensured = existing
+            } else {
+                guard case .success(let created) = await ensureModuleLocked() else { return false }
+                ensured = created
+            }
+            let createdIdle = attachments.isEmpty && !foregroundPrepared && !pinnedForProcess
             // Without a talk meeting input is withdrawn; the check permits it for itself.
-            if talkMeetingID == nil, !(await module.setInputPermitted(true, keepWarm: false, timeout: timeouts.mute)) { return false }
-            guard await module.beginPrivateInputCheck(timeout: nil) else {
-                if talkMeetingID == nil { _ = await module.setInputPermitted(false, keepWarm: false, timeout: timeouts.activation) }
+            if talkMeetingID == nil, !(await ensured.setInputPermitted(true, keepWarm: false, timeout: timeouts.mute)) {
+                if createdIdle { _ = await retireIdleLocked() }
+                return false
+            }
+            guard await ensured.beginPrivateInputCheck(timeout: nil) else {
+                if talkMeetingID == nil { _ = await ensured.setInputPermitted(false, keepWarm: false, timeout: timeouts.activation) }
+                if createdIdle { _ = await retireIdleLocked() }
                 return false
             }
             privateCheckActive = true
@@ -459,7 +504,11 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
             let ended = await module.endPrivateInputCheck(timeout: timeouts.mute)
             guard talkMeetingID == nil else { return ended }
             let keepWarm = keepInputWarm || (attachments.isEmpty && shouldPrepareForegroundInput)
-            return await module.setInputPermitted(false, keepWarm: keepWarm, timeout: timeouts.activation) && ended
+            let released = await module.setInputPermitted(false, keepWarm: keepWarm, timeout: timeouts.activation) && ended
+            if attachments.isEmpty, !shouldPrepareForegroundInput {
+                return await retireIdleLocked() && released
+            }
+            return released
         }
     }
 
@@ -604,6 +653,9 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
                 Task { @MainActor in self?.engineChanged(change) }
             }
             module = created
+            if installIntoLiveKitOnCreate, !pinnedForProcess {
+                _ = installIntoLiveKit()
+            }
             return .success(created)
         } catch {
             return .failure(error)
@@ -688,19 +740,24 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     /// The epoch to pass when unmuting; refreshed each time the talk role arrives.
     var talkEpoch: UInt64? { isTalk ? engine?.talkEpoch : nil }
     var anySenderEnabled: Bool { senders.values.contains { $0.isEnabled } }
+    /// Last completed wrapper operation, not observed SDK state or remote media.
+    private(set) var lastSenderCommand = "none"
+    var registeredSenderCount: Int { senders.count }
 
     // Senders: registered disabled; only the engine enables them.
     func addSender(_ sender: MeetingAudioSender) {
         sender.isEnabled = false
+        lastSenderCommand = "register-disabled"
         guard !detached else { return }
         senders[ObjectIdentifier(sender)] = sender
     }
     func removeSender(_ sender: MeetingAudioSender) {
         sender.isEnabled = false
         senders[ObjectIdentifier(sender)] = nil
+        lastSenderCommand = "remove-disabled"
     }
     /// A finished connection attempt: its tracks are off and forgotten.
-    func removeAllSenders() { disableSenders(); senders.removeAll() }
+    func removeAllSenders() { disableSenders(); senders.removeAll(); lastSenderCommand = "remove-all" }
     /// Privacy barrier: senders off now, the module mute follows in order.
     func suppress() {
         disableSenders()
@@ -764,8 +821,14 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     }
     @discardableResult func detach() async -> Bool { await engine?.detach(self) ?? true }
 
-    fileprivate func enableSenders() { for sender in senders.values { sender.isEnabled = true } }
-    fileprivate func disableSenders() { for sender in senders.values { sender.isEnabled = false } }
+    fileprivate func enableSenders() {
+        for sender in senders.values { sender.isEnabled = true }
+        lastSenderCommand = "enable-all"
+    }
+    fileprivate func disableSenders() {
+        for sender in senders.values { sender.isEnabled = false }
+        lastSenderCommand = "disable-all"
+    }
     fileprivate func silenceReceived() { for entry in received.values { entry.setVolume(0) } }
     fileprivate func applyReceivedVolumes() { for entry in received.values { entry.setVolume(effectiveVolume(entry.participant)) } }
     fileprivate func markDetached() {

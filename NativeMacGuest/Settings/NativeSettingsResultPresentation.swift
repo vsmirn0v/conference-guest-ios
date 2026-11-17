@@ -70,7 +70,7 @@ enum NativeSettingsResultPresentation {
             return L("Open to view")
         case "settings.names", "settings.aliases", "settings.role", "settings.reply-style":
             return store == nil ? nil : L("Open to view")
-        case "settings.relay": return toggle(defaults.bool(forKey: NativeDesktopGuestEngine.forceTCPRelayKey))
+        case "settings.relay": return toggle(defaults.bool(forKey: UniversalMeetingEngine.forceTCPRelayKey))
         case "settings.mic-warm": return toggle(defaults.bool(forKey: NativeDesktopMeetingModel.keepMicrophoneWarmKey))
         case "settings.headset": return toggle(defaults.bool(forKey: NativeDesktopHeadsetMute.Platform.enabledKey))
         case "settings.sync": return toggle(library.sync.enabled)

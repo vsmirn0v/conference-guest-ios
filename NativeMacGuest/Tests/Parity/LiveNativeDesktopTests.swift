@@ -21,9 +21,11 @@ import XCTest
         let deadline = Date().addingTimeInterval(170)
         let invitation = try GuestInvitation.parse(url)
         let peer = NativeGuestEngine(label: "Native parity generated peer", verifyReceivedPixels: false)
-        let adapter = NativeDesktopGuestEngine()
-        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest),
-                                             name: "Native parity app", title: "Live native parity", engine: adapter)
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+        let destination = try JoinDestination.verified(url, engine: .guest)
+        let session = UniversalMeetingEngine.shared.makeSession(destination: destination, adapter: adapter)
+        let model = NativeDesktopMeetingModel(destination: destination,
+                                             name: "Native parity app", title: "Live native parity", engine: session)
         do {
             try await peer.join(invitation)
             try await peer.publishPattern(codec: "h264", audioMuted: false, videoMuted: false)
@@ -115,9 +117,11 @@ import XCTest
         store.voiceEngine = .system
         let coordinator = AttentionCoordinator(store: store)
         let peer = NativeGuestEngine(label: "Assistant live independent receiver", verifyReceivedPixels: false)
-        let adapter = NativeDesktopGuestEngine()
-        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest),
-            name: "Assistant acceptance", title: "Assistant acceptance", engine: adapter)
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+        let destination = try JoinDestination.verified(url, engine: .guest)
+        let session = UniversalMeetingEngine.shared.makeSession(destination: destination, adapter: adapter)
+        let model = NativeDesktopMeetingModel(destination: destination,
+            name: "Assistant acceptance", title: "Assistant acceptance", engine: session)
         coordinator.meetings = { [model] }
         coordinator.talk.targetMeetingID = model.sessionID
         func measure(_ seconds: UInt64 = 2) async -> (samples: Int, rms: Double) {
@@ -250,7 +254,7 @@ import XCTest
         }
     }
 
-    private func exercisePresenterCanvas(_ model: NativeDesktopMeetingModel, adapter: NativeDesktopGuestEngine,
+    private func exercisePresenterCanvas(_ model: NativeDesktopMeetingModel, adapter: GuestAdapter,
                                          peer: NativeGuestEngine, deadline: Date) async throws {
         let camera = model.localCamera, presenter = model.presenter
         let previousScreens = Set(peer.incomingVideo.filter { $0.source == "SCREEN_SHARE" }.map(\.id))
@@ -320,9 +324,11 @@ import XCTest
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         defer { window.close() }
         let peer = NativeGuestEngine(label: "Native window generated peer", verifyReceivedPixels: false)
-        let adapter = NativeDesktopGuestEngine()
-        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest),
-                                             name: "Native selected window app", title: "Selected synthetic window", quiet: true, engine: adapter)
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+        let destination = try JoinDestination.verified(url, engine: .guest)
+        let session = UniversalMeetingEngine.shared.makeSession(destination: destination, adapter: adapter)
+        let model = NativeDesktopMeetingModel(destination: destination,
+                                             name: "Native selected window app", title: "Selected synthetic window", quiet: true, engine: session)
         do {
             try await peer.join(try GuestInvitation.parse(url))
             try await peer.publishPattern(codec: "h264", audioMuted: true, videoMuted: false)
@@ -400,9 +406,11 @@ import XCTest
         executionTimeAllowance = 180
         let deadline = Date().addingTimeInterval(120)
         let peer = NativeGuestEngine(label: "Native physical recovery generated peer", verifyReceivedPixels: false)
-        let adapter = NativeDesktopGuestEngine()
-        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest),
-                                             name: "Native physical recovery app", title: "Physical automatic recovery", engine: adapter)
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+        let destination = try JoinDestination.verified(url, engine: .guest)
+        let session = UniversalMeetingEngine.shared.makeSession(destination: destination, adapter: adapter)
+        let model = NativeDesktopMeetingModel(destination: destination,
+                                             name: "Native physical recovery app", title: "Physical automatic recovery", engine: session)
         do {
             try await peer.join(try GuestInvitation.parse(url))
             try await peer.publishPattern(codec: "h264", audioMuted: false, videoMuted: false)
@@ -460,7 +468,7 @@ import XCTest
         }
     }
 
-    private func verifyPhysicalSending(_ model: NativeDesktopMeetingModel, adapter: NativeDesktopGuestEngine,
+    private func verifyPhysicalSending(_ model: NativeDesktopMeetingModel, adapter: GuestAdapter,
                                        native: NativeGuestEngine, peer: NativeGuestEngine,
                                        peerBaseline: GuestMediaSnapshot, phase: String, deadline: Date) async throws -> String {
         try await wait("\(phase) fresh physical camera at peer", timeout: 20, deadline: deadline) {
@@ -502,7 +510,7 @@ import XCTest
         return device.uniqueID
     }
 
-    private func exerciseSending(_ model: NativeDesktopMeetingModel, adapter: NativeDesktopGuestEngine,
+    private func exerciseSending(_ model: NativeDesktopMeetingModel, adapter: GuestAdapter,
                                  peer: NativeGuestEngine, phase: String, deadline: Date) async throws {
         guard let native = adapter.currentNativeEngine else { throw URLError(.notConnectedToInternet) }
         native.cameraFactoryForTesting = { NativeDesktopShareCapture(source: $0, canvasOnly: true) }
@@ -576,7 +584,7 @@ import XCTest
         throw URLError(.timedOut)
     }
     private func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }
-    private func record(_ phase: String, model: NativeDesktopMeetingModel, adapter: NativeDesktopGuestEngine,
+    private func record(_ phase: String, model: NativeDesktopMeetingModel, adapter: GuestAdapter,
                         peer: NativeGuestEngine, extra: [String: Any] = [:]) async {
         // Preserve the stalled operation before refreshSnapshot/statistics enqueue more work.
         let audio = adapter.currentNativeEngine?.systemAudio

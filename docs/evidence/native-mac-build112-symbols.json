@@ -1,0 +1,491 @@
+{
+  "schemaVersion": 1,
+  "manifestSHA256": "771a7e9c966a5729c10bf7c0fab8d04cc2eadc95e3e8b5ed7b04b5bb295e0fb7",
+  "binaries": [
+    {
+      "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/LiveKitWebRTC",
+      "sha256": "ae555a7290479a0a6d6cb39bc3739daffd046f68be680dcfa5e2afafd7d124d4",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/RustLiveKitUniFFI",
+      "sha256": "be784aedba1c739d1aec17e926a1a8a6adc58e9300b2c32b0dd75d62b5b33996",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate",
+      "sha256": "96ca823e097ee9ec817121ed877736a97b0471fcf288581bbc3263bbd4e921ea",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+      "sha256": "b62008c621b024c99dd529fd9dc578d7176ef25a8c96f9ffc9906104821f2a31",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater",
+      "sha256": "4a7ba9c78731c286e98b7aacbcb6d700674a00469d88567364c8d527ae2acb96",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader",
+      "sha256": "82e237ef0c83bb85c48c50cdf7632d39447096885f3068e9b990a8139421ee77",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer",
+      "sha256": "bdfa60036700870f39aa3f4d96bb014fa9b75ca518851b51e75d892ffe31ae79",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/MacOS/RockClonedVoiceGPUWorker",
+      "sha256": "a0fe749f8b2973e0b584d9dde6977b87b64b75317521ea6d280d3b67ea57f62b",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/MacOS/RockClonedVoiceWorker",
+      "sha256": "34e3029df3ae48e301ec9fb622512670248fb0331c2803a2c49859c1e3078a94",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "Contents/MacOS/RockNRoll Native Guest",
+      "sha256": "c9e43982bf486076e9b2f8512cf5cb48306dab200186544ab0d940b41305f7b0",
+      "scans": {
+        "definedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 92,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        },
+        "undefinedExternal": {
+          "status": "pass",
+          "swiftModuleMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          },
+          "objcClassPrefixMatches": {
+            "LiveKit": 0,
+            "LiveKitWebRTC": 0,
+            "WebRTC": 0,
+            "JazzSDK": 0,
+            "JazzCore": 0,
+            "TrueConfSDK": 0,
+            "TelemostSDK": 0
+          }
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Global symbol counts provide positive evidence only; absent matches do not establish absence of SDK code.",
+    "Swift matching uses encoded module identifiers; Objective-C matching uses a small fixed class-prefix list.",
+    "This does not identify local/stripped symbols, static archives, licenses, runtime loads or all transitive sources."
+  ]
+}

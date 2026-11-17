@@ -208,7 +208,7 @@ extension NativeStartupReceiverProxy {
     private let began = ProcessInfo.processInfo.systemUptime
     private var ownerID = UUID().uuidString
     private var model: NativeDesktopMeetingModel?
-    private var adapter: NativeDesktopGuestEngine?
+    private var adapter: GuestAdapter?
     private var peer: NativeStartupReceiverProxy?
     private var window: NSWindow?
     private var lastID: UUID?
@@ -371,8 +371,9 @@ extension NativeStartupReceiverProxy {
         emit("networkBegin")
         let invitation = try await peer.waitUntilReady(timeout: 30)
         guard let policy = GuestICEPolicy(rawValue: ProcessInfo.processInfo.environment["ROCK_MIC_TEST_ICE_POLICY"] ?? "auto") else { throw GuestAudioTestError.invalidCommand }
-        let adapter = NativeDesktopGuestEngine(icePolicy: policy); self.adapter = adapter
-        let model = NativeDesktopMeetingModel(destination: try .verified(invitation, engine: .guest), name: "Acoustic validation", title: "Disposable acoustic validation", engine: adapter)
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio, icePolicy: policy); self.adapter = adapter
+        let session = UniversalMeetingEngine.shared.makeSession(destination: try .verified(invitation, engine: .guest), adapter: adapter)
+        let model = NativeDesktopMeetingModel(destination: try .verified(invitation, engine: .guest), name: "Acoustic validation", title: "Disposable acoustic validation", engine: session)
         self.model = model
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         self.window = window; window.contentView = NSHostingView(rootView: NativeDesktopMeetingView(model: model, onMini: {}))

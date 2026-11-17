@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "provider": "trueconf",
+  "phase": "receiving",
+  "app": {
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "version": "0.3.0",
+    "build": "112",
+    "executableSHA256": "c9e43982bf486076e9b2f8512cf5cb48306dab200186544ab0d940b41305f7b0"
+  },
+  "intervalSeconds": 1,
+  "samples": [
+    {
+      "cpuPercent": 68.7,
+      "residentMiB": 244.09,
+      "elapsedSeconds": 0.028
+    },
+    {
+      "cpuPercent": 72.1,
+      "residentMiB": 244.14,
+      "elapsedSeconds": 1.03
+    },
+    {
+      "cpuPercent": 78.5,
+      "residentMiB": 244.31,
+      "elapsedSeconds": 2.03
+    },
+    {
+      "cpuPercent": 70.6,
+      "residentMiB": 244.62,
+      "elapsedSeconds": 3.031
+    },
+    {
+      "cpuPercent": 69.7,
+      "residentMiB": 244.89,
+      "elapsedSeconds": 4.031
+    },
+    {
+      "cpuPercent": 74.9,
+      "residentMiB": 245.05,
+      "elapsedSeconds": 5.028
+    },
+    {
+      "cpuPercent": 52.9,
+      "residentMiB": 245.42,
+      "elapsedSeconds": 6.031
+    },
+    {
+      "cpuPercent": 57.1,
+      "residentMiB": 245.58,
+      "elapsedSeconds": 7.048
+    },
+    {
+      "cpuPercent": 62.8,
+      "residentMiB": 245.05,
+      "elapsedSeconds": 8.035
+    },
+    {
+      "cpuPercent": 65.3,
+      "residentMiB": 245.28,
+      "elapsedSeconds": 9.044
+    }
+  ],
+  "limits": [
+    "CPU is the process statistic reported by ps, not energy use.",
+    "The phase and participant/route conditions are operator supplied; this recorder does not verify media.",
+    "Compare only runs on the same hardware, OS, route and media workload."
+  ]
+}

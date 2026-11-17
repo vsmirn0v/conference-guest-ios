@@ -192,7 +192,21 @@ struct SessionTests {
         first.assignedSessionID = "original-server-session"; second.assignedSessionID = "replacement-server-session"
         let harness = Harness([first, second]), session = harness.session
         try await connect(session, audioMuted: true, videoMuted: true)
+        let before = session.ownershipDiagnostics
+        guard let firstAttempt = before["attempt"] as? String else {
+            throw SessionTestError.assertion("Diagnostics omitted attempt identity")
+        }
+        try expect(firstAttempt != "none", "Connected attempt is identified")
+        try expect(JSONSerialization.isValidJSONObject(before), "Diagnostics are JSON serializable")
         try await session.reconnectForTesting()
+        let after = session.ownershipDiagnostics
+        try expect(after["attempt"] as? String != firstAttempt, "Recovery has a new attempt identity")
+        try expect(after["generation"] as? String == before["generation"] as? String,
+                   "Automatic recovery retains the session generation")
+        let encoded = try JSONSerialization.data(withJSONObject: after)
+        let text = String(decoding: encoded, as: UTF8.self)
+        try expect(!text.contains("original-server-session") && !text.contains("replacement-server-session") &&
+                   !text.contains("example.test"), "Diagnostics exclude provider identities and invitation")
         try expect(harness.made == 2 && harness.delays == [500_000_000], "Fresh engine after socket failure")
         try expect(first.leaves == [false], "Recovery must not send server leave")
         try expect(second.joins[0] == first.assignedSessionID, "Rejoin uses server-issued participant session")

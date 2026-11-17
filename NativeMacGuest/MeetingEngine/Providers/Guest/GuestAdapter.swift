@@ -1,4 +1,5 @@
 import AVFoundation
+import ConferenceCore
 import Foundation
 import LiveKitWebRTC
 
@@ -15,77 +16,54 @@ enum NativeDesktopGuestError: LocalizedError {
     }
 }
 
-/// Adapts the native guest session's confirmed media and per-connection feature
-/// state without replacing the session's failure, forced-mute, or permission callbacks.
-@MainActor final class NativeDesktopGuestEngine: NativeDesktopMeetingEngine {
+@MainActor final class GuestAdapter: MeetingProviderAdapter {
+    let kind: MeetingEngineKind = .guest
+    let recoveryExecutor: RecoveryExecutorKind = .guestSession
+
     var onState: ((NativeDesktopExternalSnapshot) -> Void)? { didSet { onState?(snapshot) } }
+    var onSessionSnapshot: ((MeetingSessionSnapshot) -> Void)? { didSet { onSessionSnapshot?(sessionSnapshot) } }
     var onVideo: (([NativeDesktopExternalVideo]) -> Void)? { didSet { onVideo?(incomingVideo) } }
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)? { didSet { onLocalCamera?(currentNativeEngine?.localCameraTrack) } }
     var onTitle: ((String) -> Void)? { didSet { if !guestSnapshot.title.isEmpty { onTitle?(guestSnapshot.title) } } }
     var onFeatures: ((GuestMeetingSnapshot) -> Void)? { didSet { onFeatures?(guestSnapshot) } }
     var onCapturedMessages: (([GuestMeetingMessage], Bool) -> Void)?
-    /// Chat/history/transcription errors belong to their feature and never end media.
     var onFeatureError: ((Error) -> Void)?
+
     private(set) var featureError: String?
     private(set) var snapshot = NativeDesktopExternalSnapshot()
     private(set) var incomingVideo: [NativeDesktopExternalVideo] = []
-    /// Remote audio tracks for local transcription, replaced on every change.
-    var onRemoteAudio: (([GuestRemoteAudio]) -> Void)? { didSet { onRemoteAudio?(currentNativeEngine?.remoteAudio ?? []) } }
-    /// Local transcription keeps output running (silently) while sound is off.
-    private var transcriptionOutputDemand = false
-    private var localAudioSink: ((AVAudioPCMBuffer) -> Void)?
-    var supportsLocalTranscription: Bool { true }
-    func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?) {
-        onRemoteAudio = handler.map { handler in { handler($0.map(\.source)) } }
-    }
-    func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
-        localAudioSink = sink; systemAudio?.setInputTranscriptionSink(sink)
-    }
     private(set) var guestSnapshot = GuestMeetingSnapshot()
     private(set) var currentNativeEngine: NativeGuestEngine?
     private(set) var microphoneStartupMilliseconds: [String: Double] = [:]
     var microphoneReadinessPolicy: (() -> Bool)?
-#if DEBUG
+    #if DEBUG
     var diagnosticICEPolicyForTesting: GuestICEPolicy = .automatic
-#endif
-    var factory: LKRTCPeerConnectionFactory? {
-        guard currentNativeEngine != nil, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { return nil }
-        return systemAudio?.factory
-    }
-    var privateAudioLevel: Float? { systemAudio?.privateInputLevel }
-    var microphoneReadinessApplied: Bool { session?.snapshot.microphoneActivated == true }
-    func cameraCaptureDevice() async -> AVCaptureDevice? {
-        let token = revision, native = currentNativeEngine
-        let device = await native?.cameraCaptureDevice()
-        guard token == revision, native === currentNativeEngine, !leaving else { return nil }
-        return device
-    }
-    func startPrivateAudioCheck() async throws {
-        guard inputPermitted else { throw NativeDesktopPrivateAudioError.unavailable }
-        guard let session, let owner = systemAudio, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
-        let token = revision
-        guard try await GuestCaptureAuthorization.request(.audio) else { throw NativeDesktopGuestError.permissionDenied }
-        try check(token, session: session)
-        guard await owner.beginPrivateInputCheck() else { throw NativeDesktopGuestError.cleanupFailed }
-        try check(token, session: session)
-    }
-    func stopPrivateAudioCheck() async throws {
-        guard let systemAudio else { return }
-        guard await systemAudio.endPrivateInputCheck() else { throw NativeDesktopGuestError.cleanupFailed }
-    }
+    #endif
 
+    var onRemoteAudio: (([GuestRemoteAudio]) -> Void)? { didSet { onRemoteAudio?(currentNativeEngine?.remoteAudio ?? []) } }
+    private var transcriptionOutputDemand = false
+    private var localAudioSink: ((AVAudioPCMBuffer) -> Void)?
+
+    private lazy var chatServiceImpl = GuestChatService(adapter: self)
+    private lazy var reactionServiceImpl = GuestReactionService(adapter: self)
+    private lazy var transcriptServiceImpl = GuestTranscriptService(adapter: self)
+    private lazy var participationServiceImpl = GuestParticipationService(adapter: self)
+
+    var chatService: (any MeetingChatService)? { chatServiceImpl }
+    var reactionService: (any MeetingReactionService)? { reactionServiceImpl }
+    var transcriptService: (any MeetingTranscriptService)? { transcriptServiceImpl }
+    var participationService: (any MeetingParticipationService)? { participationServiceImpl }
+
+    private var sessionID = UUID()
+    private var connectionAttemptToken: UUID?
     private var session: GuestSession?
     private var systemAudio: (any GuestMeetingAudio)?
-    /// R4: with one engine for all meetings, this meeting's attachment replaces the room.
     private let sharedAudio: SharedAudioEngine?
-    static let forceTCPRelayKey = "nativeDesktop.forceTCPRelay"
-    private let icePolicy: GuestICEPolicy?
     private var sharedMeeting: SharedGuestMeetingAudio?
     private var meetingVolume = 1.0
     private var participantVolumes: [String: Double] = [:]
     private var media: NativeDesktopSharedMedia<GuestSystemAudio>
     private var inputPermitted = true
-    private let microphoneAuthorized: () -> Bool
     private var room: NativeDesktopSharedMedia<GuestSystemAudio>.Room?
     private var revision = UUID()
     private var microphoneRevision: UInt64 = 0
@@ -106,33 +84,138 @@ enum NativeDesktopGuestError: LocalizedError {
     private var chatHistoryDrain: Task<Void, Never>?
     private var transcriptHistoryDrain: Task<Void, Never>?
 
-    init(media: NativeDesktopSharedMedia<GuestSystemAudio> = NativeDesktopMediaService.shared,
-         sharedAudio: SharedAudioEngine? = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared : nil,
+    private let microphoneAuthorized: () -> Bool
+    private let icePolicy: GuestICEPolicy?
+    private let exclusiveTalk: Bool
+
+    init(sharedAudio: SharedAudioEngine? = nil,
+         media: NativeDesktopSharedMedia<GuestSystemAudio>? = nil,
          microphoneAuthorized: (() -> Bool)? = nil,
-         icePolicy: GuestICEPolicy? = nil) {
-        self.media = media; self.sharedAudio = sharedAudio; self.icePolicy = icePolicy
+         icePolicy: GuestICEPolicy? = nil,
+         exclusiveTalk: Bool = false) {
+        self.media = media ?? NativeDesktopMediaService.shared
+        self.sharedAudio = sharedAudio
+        self.icePolicy = icePolicy
+        self.exclusiveTalk = exclusiveTalk
         self.microphoneAuthorized = microphoneAuthorized ?? { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
     }
 
-    func connect(invitation: URL, name: String, quiet: Bool) async throws {
+    var capabilities: MeetingSessionCapabilities {
+        let perms = guestSnapshot.permissions
+        let participationReady = snapshot.phase == .connected && guestSnapshot.connected &&
+            perms.canViewParticipants && perms.canViewChat && perms.canSendChat &&
+            currentNativeEngine?.participationRoomScope != nil
+        return .guest(
+            canViewChat: perms.canViewChat,
+            canSendChat: perms.canSendChat && guestSnapshot.connected,
+            canReact: perms.canSendReaction,
+            canViewTranscript: perms.canViewTranscript,
+            canManageTranscript: perms.canManageTranscript,
+            supportsAutonomousParticipation: participationReady,
+            supportsScreenShareVP9: supportedScreenCodecs.contains("video/vp9")
+        )
+    }
+
+    var connectionIdentity: MeetingConnectionIdentity? {
+        guard let token = connectionAttemptToken,
+              !leaving,
+              [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { return nil }
+        let scope = currentNativeEngine?.participationRoomScope.map { "\($0.room):\($0.group)" } ?? ""
+        return MeetingConnectionIdentity(sessionID: sessionID, provider: .guest, generation: token, providerScope: scope)
+    }
+
+    var sessionSnapshot: MeetingSessionSnapshot {
+        let state = session?.snapshot
+        let perms = state?.permissions
+        return MeetingSessionSnapshot(
+            phase: snapshot.phase,
+            connectionIdentity: connectionIdentity,
+            intent: MeetingMediaIntent(
+                microphoneOn: state?.desiredIntent?.audioMuted == false,
+                cameraOn: state?.desiredIntent?.videoMuted == false,
+                playoutOn: outputIntent,
+                sharing: guestSnapshot.screenSharing,
+                playoutVolume: meetingVolume
+            ),
+            effective: MeetingEffectiveMedia(
+                microphoneOn: snapshot.microphoneOn,
+                cameraOn: snapshot.cameraOn,
+                playoutOn: snapshot.playoutOn,
+                sharing: snapshot.sharing,
+                microphoneLevel: snapshot.microphoneLevel,
+                physicallyMuted: participationSenderPhysicallyMuted
+            ),
+            permissions: MeetingMediaPermission(
+                canShareMicrophone: inputPermitted && (perms?.canShareMicrophone ?? true),
+                canShareCamera: perms?.canShareCamera ?? true,
+                canShareScreen: true,
+                microphoneRestriction: nil
+            ),
+            capabilities: capabilities,
+            participants: snapshot.participants,
+            lastError: snapshot.lastError,
+            endedByOrganizer: snapshot.endedByOrganizer,
+            recoveryExecutor: recoveryExecutor
+        )
+    }
+
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard !leaving, let session else { return nil }
+        let revision = revision
+        return session.microphoneTrackProbe?.checking { [weak self, weak session] in
+            guard let self, let session else { return false }
+            return !leaving && self.revision == revision && self.session === session
+        }
+    }
+
+    var ownershipDiagnostics: [String: Any] {
+        ["executor": recoveryExecutor.rawValue,
+         "engineRevision": revision.uuidString,
+         "session": session?.ownershipDiagnostics ?? ["state": "not-created"]]
+    }
+
+    var factory: LKRTCPeerConnectionFactory? {
+        guard currentNativeEngine != nil, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { return nil }
+        return systemAudio?.factory
+    }
+
+    var privateAudioLevel: Float? { systemAudio?.privateInputLevel }
+    var microphoneReadinessApplied: Bool { session?.snapshot.microphoneActivated == true }
+    var startupAudioReport: [String: Any] { currentNativeEngine?.startupAudioReport ?? [:] }
+    var localScreenTrack: LKRTCVideoTrack? { currentNativeEngine?.localScreenTrack }
+    var supportsScreenSharePublication: Bool { true }
+    var supportedScreenCodecs: Set<String> { currentNativeEngine?.screenCodecs ?? [] }
+    var supportsLocalTranscription: Bool { true }
+    var supportsParticipantVolume: Bool { true }
+    var supportsScreenOnlyVideo: Bool { true }
+    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && systemAudio != nil }
+    var voiceMicrophoneGateIsClosed: Bool { systemAudio?.participationVoiceGateClosed == true }
+
+    var hasParticipationVoiceGraph: Bool { supportsVoiceReply && systemAudio?.hasParticipationVoiceGraph == true }
+    var participationVoiceMicrophoneAuthorized: Bool { microphoneAuthorized() }
+    var participationSenderPhysicallyMuted: Bool { systemAudio?.participationSenderPhysicallyMuted == true }
+    var participationVoiceUsesSharedOutput: Bool { systemAudio is SharedGuestMeetingAudio }
+
+    func connect(invitation: URL, name: String, quiet: Bool, sessionID: MeetingSessionID) async throws {
         guard session == nil, [.idle, .left, .failed].contains(snapshot.phase), cleanupSucceeded else {
             throw NativeDesktopGuestError.cleanupFailed
         }
         let target = try GuestInvitation.parse(invitation)
+        self.sessionID = sessionID
         revision = UUID(); let token = revision
         leaving = false; quietJoin = quiet; outputIntent = !quiet; featureError = nil
         relayRecovery = GuestRelayRecovery(); useSubscriberUDPRelay = false
-        let forceTCPRelay = icePolicy == nil && UserDefaults.standard.bool(forKey: Self.forceTCPRelayKey)
+        let forceTCPRelay = icePolicy == nil && UserDefaults.standard.bool(forKey: UniversalMeetingEngine.forceTCPRelayKey)
         var selectedPolicy = icePolicy ?? (forceTCPRelay ? .tcpRelay : .automatic)
-#if DEBUG
+        #if DEBUG
         if diagnosticICEPolicyForTesting != .automatic { selectedPolicy = diagnosticICEPolicyForTesting }
-#endif
+        #endif
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         guestSnapshot = .init(); onFeatures?(guestSnapshot); emit()
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         let profile = GuestAudioProfile.saved
         var reservedRoom: NativeDesktopSharedMedia<GuestSystemAudio>.Room?
-#endif
+        #endif
         if let sharedAudio {
             let meeting = try await SharedGuestMeetingAudio.attach(to: sharedAudio)
             sharedMeeting = meeting
@@ -140,32 +223,38 @@ enum NativeDesktopGuestError: LocalizedError {
                 _ = await meeting.shutdown(); sharedMeeting = nil; throw CancellationError()
             }
         } else {
-#if DEBUG || NATIVE_LEGACY_AUDIO
+            #if DEBUG || NATIVE_LEGACY_AUDIO
             let reserved = try await media.reserveRoom(profile: profile)
             self.room = reserved; reservedRoom = reserved
             guard revision == token, !leaving, !Task.isCancelled else {
                 _ = await media.releaseRoom(reserved, clean: true); self.room = nil; throw CancellationError()
             }
-#else
+            #else
             throw NativeDesktopGuestError.cleanupFailed
-#endif
+            #endif
         }
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         let room = reservedRoom
-#endif
+        #endif
         let session = GuestSession(makeEngine: { [weak self] in
             guard let self, revision == token, !leaving, !Task.isCancelled else { throw CancellationError() }
             let owner: any GuestMeetingAudio
             let release: (Bool) async -> Bool
             if let meeting = sharedMeeting {
                 guard await meeting.beginAttempt(sound: outputIntent) else { throw NativeDesktopGuestError.cleanupFailed }
+                if exclusiveTalk {
+                    guard await meeting.attachment.assumeTalkExclusively() else {
+                        _ = await meeting.endAttempt(clean: false)
+                        throw NativeDesktopGuestError.cleanupFailed
+                    }
+                }
                 guard revision == token, !leaving, !Task.isCancelled else {
                     _ = await meeting.endAttempt(clean: true); throw CancellationError()
                 }
                 owner = meeting
                 release = { [meeting] clean in await meeting.endAttempt(clean: clean) }
             } else {
-#if DEBUG || NATIVE_LEGACY_AUDIO
+                #if DEBUG || NATIVE_LEGACY_AUDIO
                 guard let room else { throw NativeDesktopGuestError.cleanupFailed }
                 let attempt = UUID()
                 let attached = try await media.attach(room, attempt: attempt, playout: outputIntent,
@@ -175,17 +264,15 @@ enum NativeDesktopGuestError: LocalizedError {
                 }
                 owner = attached
                 release = { [media] clean in await media.detach(room, attempt: attempt, clean: clean) }
-#else
+                #else
                 throw NativeDesktopGuestError.cleanupFailed
-#endif
+                #endif
             }
             systemAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
             owner.setInputTranscriptionSink(localAudioSink)
             if transcriptionOutputDemand { _ = await owner.setTranscriptionOutput(true) }
-            // On the shared engine the first meeting to connect takes the talk role;
-            // a later one joins without it unless the workspace moved it here.
-            let talk = sharedMeeting != nil && inputPermitted && sharedAudio?.talkMeetingID == nil
+            let talk = sharedMeeting != nil && !exclusiveTalk && inputPermitted && sharedAudio?.talkMeetingID == nil
             if talk, !(await owner.setInputPermitted(true)) {
                 _ = await release(false); throw NativeDesktopGuestError.cleanupFailed
             }
@@ -224,8 +311,6 @@ enum NativeDesktopGuestError: LocalizedError {
             sharedMeeting?.onLevelChange = { [weak engine] in engine?.reconcilePlaybackLevels() }
             engine.configureStartupPlayback(sound: outputIntent)
             engine.setParticipantVolumes(participantVolumes)
-            // Re-read actual policy/power after owner creation. Session control
-            // activates muted input before transport join, never during playout.
             self.session?.setMicrophonePreparationRequested(microphonePreparationEligible)
             engine.cameraCaptureFactory = { source in
                 let id = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")
@@ -248,8 +333,6 @@ enum NativeDesktopGuestError: LocalizedError {
                                       initialAudioMuted: true, initialVideoMuted: true,
                                       initialMicrophonePreparation: microphonePreparationEligible)
             try check(token, session: session)
-            // Make the output choice an explicit session intent so automatic
-            // replacement restores the same quiet/listening state.
             try await session.setPlayoutEnabled(outputIntent)
             try check(token, session: session)
             refresh(session.snapshot)
@@ -258,14 +341,14 @@ enum NativeDesktopGuestError: LocalizedError {
                 snapshot.phase = .failed; snapshot.lastError = error.localizedDescription; emit()
                 let engineStopped = await session.leave()
                 let stopped: Bool
-#if DEBUG || NATIVE_LEGACY_AUDIO
+                #if DEBUG || NATIVE_LEGACY_AUDIO
                 if let room { stopped = await media.releaseRoom(room, clean: engineStopped) }
                 else if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
                 else { stopped = engineStopped }
-#else
+                #else
                 if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
                 else { stopped = engineStopped }
-#endif
+                #endif
                 if revision == token, self.session === session {
                     cleanupSucceeded = stopped
                     self.session = nil; self.room = nil; sharedMeeting = nil; systemAudio = nil; bind(nil, token: token)
@@ -276,8 +359,13 @@ enum NativeDesktopGuestError: LocalizedError {
         }
     }
 
-    /// Uses the session's bounded recovery path, preserving only current media
-    /// intent and microphone authorization, while rebuilding all transport state.
+    func abortPendingStartup() {
+        session?.setLocalMuteIntent(true, video: false)
+        session?.setLocalMuteIntent(true, video: true)
+        session?.engine?.suppressOutgoingMedia()
+        systemAudio?.suppressMicrophone()
+    }
+
     func reconnect() async throws {
         guard let session, [.connected, .failed].contains(snapshot.phase) else { throw NativeDesktopGuestError.notConnected }
         let token = revision
@@ -291,12 +379,10 @@ enum NativeDesktopGuestError: LocalizedError {
     }
 
     func setMicrophone(_ enabled: Bool) async throws {
-        // Nothing captures before the session exists, and every join starts muted.
         if !enabled, session == nil { return }
         let session = try activeSession(), token = revision
         microphoneRevision &+= 1; let command = microphoneRevision
         if !enabled {
-            // Withdraw intent before any TCC/device/network suspension.
             session.setLocalMuteIntent(true)
             snapshot.microphoneOn = false; snapshot.microphoneLevel = nil; emit()
             try await session.mute(true)
@@ -337,8 +423,6 @@ enum NativeDesktopGuestError: LocalizedError {
             Task { @MainActor in
                 guard let self, let session, self.session === session,
                       self.revision == token, self.cameraRevision == command else { return }
-                // Session control is an independent task. Withdraw its intent
-                // directly so a suspended camera permission request is canceled.
                 session.setLocalMuteIntent(true, video: true)
             }
         })
@@ -348,7 +432,6 @@ enum NativeDesktopGuestError: LocalizedError {
     }
 
     func setPlayout(_ enabled: Bool) async throws {
-        // While the room is still being reserved, the intent applies at join.
         if session == nil, snapshot.phase == .connecting, !leaving { outputIntent = enabled; snapshot.playoutOn = enabled; emit(); return }
         let session = try activeSession(), token = revision
         outputIntent = enabled
@@ -357,69 +440,37 @@ enum NativeDesktopGuestError: LocalizedError {
         try check(token, session: session); refresh(session.snapshot)
     }
 
-    var supportsParticipantVolume: Bool { true }
+    func setPlayoutVolume(_ volume: Double) async {
+        meetingVolume = volume
+        _ = systemAudio?.setMeetingVolume(volume)
+    }
+
     func setParticipantVolume(_ volume: Double, participantID: String) async {
         participantVolumes[participantID] = volume == 1 ? nil : volume
         currentNativeEngine?.setParticipantVolumes(participantVolumes)
     }
-    /// A second simultaneous Guest meeting gets its own room service and owner.
+
     func configureConcurrentAudio(_ concurrent: Bool) {
-        // On the shared engine every meeting is an attachment; there is no separate owner.
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         guard concurrent, sharedAudio == nil, session == nil, room == nil else { return }
         media = NativeDesktopMediaService.makeConcurrentGuestMedia()
-#endif
+        #else
+        _ = concurrent
+        #endif
     }
-    func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
-        await setPhysicalInputPermitted(permitted, keepDeviceWarm: false)
-    }
+
     func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
         inputPermitted = permitted
         if !permitted { session?.setMicrophonePreparationRequested(false) }
         guard let systemAudio else { return true }
         return await systemAudio.setInputPermitted(permitted, keepWarm: keepDeviceWarm)
     }
+
     func prewarmInput() async -> Bool {
         guard !inputPermitted, let systemAudio else { return false }
         return await systemAudio.prewarmInput()
     }
-    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && systemAudio != nil }
-    var voiceMicrophoneGateIsClosed: Bool { systemAudio?.participationVoiceGateClosed == true }
-    func setMicrophoneGate(open: Bool) async -> Bool {
-        guard let systemAudio else { return open }
-        if !open, !snapshot.microphoneOn, !systemAudio.hasParticipationVoiceGraph {
-            try? await prepareMutedCaptureForAccessories()
-            guard self.systemAudio === systemAudio, !Task.isCancelled else { return false }
-        }
-        return systemAudio.setMicrophoneGate(open: open)
-    }
-    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await systemAudio?.playVoiceReply(buffer) ?? false }
-    var hasParticipationVoiceGraph: Bool { supportsVoiceReply && systemAudio?.hasParticipationVoiceGraph == true }
-    var participationVoiceMicrophoneAuthorized: Bool { microphoneAuthorized() }
-    var participationSenderPhysicallyMuted: Bool { systemAudio?.participationSenderPhysicallyMuted == true }
-    var participationVoiceUsesSharedOutput: Bool { systemAudio is SharedGuestMeetingAudio }
-    func setParticipationVoiceGate(open: Bool) -> Bool { systemAudio?.setMicrophoneGate(open: open) == true }
-    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
-                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
-                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
-        await systemAudio?.playParticipationVoice(buffer, permit: permit, canStart: canStart,
-                                                   localGain: localGain, onStarted: onStarted) ?? .notStarted
-    }
-    func setPlayoutVolume(_ volume: Double) async {
-        meetingVolume = volume
-        _ = systemAudio?.setMeetingVolume(volume)
-    }
 
-    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {
-        try await currentNativeEngine?.setVisibleParticipantIDs(ids, preferredScreenParticipantID: focusedParticipantID)
-    }
-    var supportsScreenOnlyVideo: Bool { true }
-    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {
-        try await currentNativeEngine?.setVisibleParticipantIDs(ids, preferredScreenParticipantID: focusedParticipantID, cameras: cameras)
-    }
-
-    /// The shell invokes this only when its join power policy permits preparation.
-    /// Authorization already exists; priming never changes the muted intent.
     func prepareMutedCaptureForAccessories() async throws {
         guard inputPermitted, microphoneAuthorized(),
               let session, !leaving, snapshot.phase == .connected,
@@ -435,15 +486,13 @@ enum NativeDesktopGuestError: LocalizedError {
 
     func setMicrophoneReadinessForRecovery(_ enabled: Bool) {
         microphoneReadinessAllowed = enabled
-        session?.setMicrophonePreparationRequested(enabled && !quietJoin && inputPermitted &&
-            microphoneAuthorized())
+        session?.setMicrophonePreparationRequested(enabled && !quietJoin && inputPermitted && microphoneAuthorized())
     }
 
     private var microphonePreparationEligible: Bool {
         inputPermitted && permitsMicrophonePreparation(quiet: quietJoin)
     }
-    /// A claimed room keeps the existing join/recovery policy even when no
-    /// speculative foreground lease existed before admission.
+
     func permitsMicrophonePreparation(quiet: Bool) -> Bool {
         !quiet && (microphoneReadinessPolicy?() ?? microphoneReadinessAllowed) && microphoneAuthorized()
     }
@@ -452,15 +501,20 @@ enum NativeDesktopGuestError: LocalizedError {
         guard track == nil else { throw NativeDesktopGuestError.useScreenCapturePublication }
         try await stopScreenShare()
     }
-    func startScreenShare(profile: GuestVideoProfile, codec: String = "h264",
-                          captureFactory: (LKRTCVideoSource) -> any GuestCameraCapture) async throws {
+
+    func startScreenShare(_ request: MeetingScreenShareRequest) async throws {
         let session = try activeSession(), token = revision
         guard let engine = currentNativeEngine, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
-        try await engine.startScreenShare(profile: profile, codec: codec, captureFactory: captureFactory)
+        try await engine.startScreenShare(profile: request.profile, codec: request.codec, captureFactory: request.captureFactory)
         try check(token, session: session)
         guard currentNativeEngine === engine else { throw NativeDesktopGuestError.staleOperation }
         refresh(session.snapshot)
     }
+
+    func updateScreenShareProfile(_ profile: GuestVideoProfile) throws {
+        try currentNativeEngine?.updateScreenShareProfile(profile)
+    }
+
     func stopScreenShare() async throws {
         guard let engine = currentNativeEngine else { return }
         engine.setScreenShareIntent(false)
@@ -469,13 +523,80 @@ enum NativeDesktopGuestError: LocalizedError {
         if let session { refresh(session.snapshot) }
     }
 
-    /// A timed-out model owns only this adapter/session. Close publication gates
-    /// synchronously before its asynchronous retirement begins.
-    func cancelPendingConnection() {
-        session?.setLocalMuteIntent(true, video: false)
-        session?.setLocalMuteIntent(true, video: true)
-        session?.engine?.suppressOutgoingMedia()
-        systemAudio?.suppressMicrophone()
+    func screenEncodingEvidence() async -> MeetingScreenShareEncodingEvidence? {
+        guard let evidence = await currentNativeEngine?.screenEncodingEvidence() else { return nil }
+        return MeetingScreenShareEncodingEvidence(codec: evidence.codec, powerEfficient: evidence.powerEfficient, encoder: evidence.encoder)
+    }
+
+    func setVideoDemand(_ demand: MeetingVideoDemand) async throws {
+        try await currentNativeEngine?.setVisibleParticipantIDs(
+            demand.visibleParticipantIDs,
+            preferredScreenParticipantID: demand.preferredScreenParticipantID,
+            cameras: demand.receivesCameras
+        )
+    }
+
+    func cameraCaptureDevice() async -> AVCaptureDevice? {
+        let token = revision, native = currentNativeEngine
+        let device = await native?.cameraCaptureDevice()
+        guard token == revision, native === currentNativeEngine, !leaving else { return nil }
+        return device
+    }
+
+    func startPrivateAudioCheck() async throws {
+        guard inputPermitted else { throw NativeDesktopPrivateAudioError.unavailable }
+        guard let session, let owner = systemAudio, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
+        let token = revision
+        guard try await GuestCaptureAuthorization.request(.audio) else { throw NativeDesktopGuestError.permissionDenied }
+        try check(token, session: session)
+        guard await owner.beginPrivateInputCheck() else { throw NativeDesktopPrivateAudioError.unavailable }
+        try check(token, session: session)
+    }
+
+    func stopPrivateAudioCheck() async throws {
+        if let systemAudio, !(await systemAudio.endPrivateInputCheck()) { throw NativeDesktopGuestError.cleanupFailed }
+    }
+
+    func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
+        localAudioSink = sink
+        systemAudio?.setInputTranscriptionSink(sink)
+    }
+
+    func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?) {
+        onRemoteAudio = handler.map { handler in { handler($0.map(\.source)) } }
+    }
+
+    func setTranscriptionOutput(_ keep: Bool) async -> Bool {
+        transcriptionOutputDemand = keep
+        return await systemAudio?.setTranscriptionOutput(keep) ?? !keep
+    }
+
+    func setTranscriptionRequested(_ requested: Bool) {
+        _ = requested
+    }
+
+    func setMicrophoneGate(open: Bool) async -> Bool {
+        guard let systemAudio else { return open }
+        if !open, !snapshot.microphoneOn, !systemAudio.hasParticipationVoiceGraph {
+            try? await prepareMutedCaptureForAccessories()
+            guard self.systemAudio === systemAudio, !Task.isCancelled else { return false }
+        }
+        return systemAudio.setMicrophoneGate(open: open)
+    }
+
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool {
+        await systemAudio?.playVoiceReply(buffer) ?? false
+    }
+
+    func setParticipationVoiceGate(open: Bool) -> Bool {
+        systemAudio?.setMicrophoneGate(open: open) == true
+    }
+
+    func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
+                                canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
+                                onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
+        await systemAudio?.playParticipationVoice(buffer, permit: permit, canStart: canStart,
+                                                   localGain: localGain, onStarted: onStarted) ?? .notStarted
     }
 
     func leave() async -> Bool {
@@ -487,24 +608,21 @@ enum NativeDesktopGuestError: LocalizedError {
         snapshot.microphoneLevel = nil; emit()
         let old = session
         let engineStopped = await old?.leave() ?? cleanupSucceeded
-        // The owner may serve the next room; it never inherits this meeting's demand.
         if transcriptionOutputDemand, let systemAudio {
             transcriptionOutputDemand = false; _ = await systemAudio.setTranscriptionOutput(false)
         }
-        // The shared owner may outlive this room; never hand it on without input.
-        // (On the shared engine a permit would take the talk role from another meeting.)
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         if sharedMeeting == nil, !inputPermitted, let systemAudio { _ = await systemAudio.setInputPermitted(true) }
-#endif
+        #endif
         let stopped: Bool
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         if let room { stopped = await media.releaseRoom(room, clean: engineStopped) }
         else if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
         else { stopped = engineStopped }
-#else
+        #else
         if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
         else { stopped = engineStopped }
-#endif
+        #endif
         revision = UUID(); cleanupSucceeded = stopped
         old?.onEngineChange = nil; old?.onStateChange = nil
         session = nil; room = nil; sharedMeeting = nil; systemAudio = nil; detachEngine()
@@ -514,20 +632,126 @@ enum NativeDesktopGuestError: LocalizedError {
         return stopped
     }
 
+    func retryInitialTranscriptHistory() {
+        guard let engine = currentNativeEngine, !leaving, guestSnapshot.connected,
+              guestSnapshot.permissions.canViewTranscript, !guestSnapshot.transcriptHistoryLoaded,
+              transcriptHistoryTask == nil else { return }
+        transcriptHistoryRequested = false
+        loadHistory(engine, token: revision)
+    }
+
+    var hasDesiredMediaIntent: Bool { session?.snapshot.desiredIntent != nil }
+    var desiredMediaIntent: (microphoneOn: Bool, cameraOn: Bool)? {
+        session?.snapshot.desiredIntent.map { (!$0.audioMuted, !$0.videoMuted) }
+    }
+    var appliedMediaIntent: (microphoneOn: Bool, cameraOn: Bool, playoutOn: Bool?) {
+        let state = session?.snapshot
+        return (state?.appliedIntent?.audioMuted == false, state?.appliedIntent?.videoMuted == false, state?.appliedPlayoutEnabled)
+    }
+    var mediaPermissions: (canShareMicrophone: Bool, canShareCamera: Bool) {
+        guard let perms = session?.snapshot.permissions else { return (false, false) }
+        return (perms.canShareMicrophone, perms.canShareCamera)
+    }
+
+    func prepareLocalMuteIntent(audioMuted: Bool?, videoMuted: Bool?) {
+        if let audioMuted { session?.setLocalMuteIntent(audioMuted, video: false) }
+        if let videoMuted { session?.setLocalMuteIntent(videoMuted, video: true) }
+    }
+
+    func suppressOutgoingMedia() {
+        currentNativeEngine?.suppressOutgoingMedia()
+    }
+
+    func activateCompanionMicrophone() async throws {
+        let session = try activeSession(), token = revision
+        try await session.activateMicrophone()
+        try check(token, session: session)
+    }
+
+    func setCompanionMute(_ muted: Bool, video: Bool) async throws {
+        let session = try activeSession(), token = revision
+        try await session.mute(muted, video: video)
+        try check(token, session: session)
+        refresh(session.snapshot)
+    }
+
+    func companionDiagnosticsSnapshot(includeStatistics: Bool) async -> MeetingCompanionDiagnosticsSnapshot {
+        let engine = currentNativeEngine
+        if snapshot.phase == .connected, !leaving {
+            _ = await engine?.systemAudio?.refreshSnapshot()
+        }
+        let state = session?.snapshot
+        let media = engine?.mediaSnapshot
+        let camera = engine?.cameraSnapshot
+        var cadence: MeetingFrameCadenceSnapshot?
+        var evidence: [String: Any] = [:]
+        if includeStatistics, let engine {
+            evidence = await engine.evidence()
+            let sampleUptime = ProcessInfo.processInfo.systemUptime
+            if let window = engine.subscriber?.renderer.window(from: sampleUptime - 5, to: sampleUptime) {
+                cadence = MeetingFrameCadenceSnapshot(complete: window.complete, frames: window.frames,
+                    fps: window.fps, maximumGap: window.maximumGap, endFrameAge: window.endFrameAge)
+            }
+        }
+        return MeetingCompanionDiagnosticsSnapshot(
+            hasDesiredIntent: state?.desiredIntent != nil,
+            desiredAudioMuted: state?.desiredIntent?.audioMuted,
+            desiredVideoMuted: state?.desiredIntent?.videoMuted,
+            appliedAudioMuted: state?.appliedIntent?.audioMuted,
+            appliedVideoMuted: state?.appliedIntent?.videoMuted,
+            appliedPlayoutEnabled: state?.appliedPlayoutEnabled,
+            canShareMicrophone: state?.permissions.canShareMicrophone ?? false,
+            canShareCamera: state?.permissions.canShareCamera ?? false,
+            connectionCount: session?.connectionCount ?? 0,
+            engineSessionID: engine?.sessionID,
+            remoteParticipants: engine?.connectedRemoteParticipants.count ?? 0,
+            remoteVideoTrackCount: engine?.incomingVideo.count ?? 0,
+            receivedAudioSamples: engine?.receivedAudioSamples ?? 0,
+            receivedAudioEnergy: media?.audio.energy ?? 0,
+            receivedAudioRMS: media?.audio.rms ?? 0,
+            mediaConnected: media?.connected ?? false,
+            rawVideoCallbacks: media?.render["frames"] as? Int ?? 0,
+            renderedVideoFrames: media?.render["advancingFrames"] as? Int ?? 0,
+            cameraPresent: camera != nil,
+            cameraFrames: camera?.frames ?? 0,
+            cameraPTS: camera?.advancingPTS ?? 0,
+            cameraWidth: camera?.width ?? 0,
+            cameraHeight: camera?.height ?? 0,
+            systemAudioSnapshot: engine?.systemAudio?.snapshot,
+            evidence: evidence,
+            decodedCadence: cadence
+        )
+    }
+
+    #if DEBUG
+    func bindHistoryForTesting(_ engine: NativeGuestEngine) { bind(engine, token: revision) }
+    func unbindHistoryForTesting() { cancelHistory(); detachEngine() }
+    var transcriptHistoryIdleForTesting: Bool { transcriptHistoryTask == nil }
+    #endif
+
+    // MARK: Internals
+
     private func activeSession() throws -> GuestSession {
         guard let session, !leaving, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else {
             throw NativeDesktopGuestError.notConnected
         }
         return session
     }
+
     private func check(_ token: UUID, session: GuestSession) throws {
         try Task.checkCancellation()
         guard revision == token, self.session === session, !leaving else { throw NativeDesktopGuestError.staleOperation }
     }
-    private func emit() { onState?(snapshot) }
+
+    private func emit() {
+        onState?(snapshot)
+        onSessionSnapshot?(sessionSnapshot)
+    }
+
     private func cancelHistory() {
         retireHistory(transcript: false); retireHistory(transcript: true)
     }
+
     private func retireHistory(transcript: Bool) {
         let old = transcript ? transcriptHistoryTask : chatHistoryTask
         let prior = transcript ? transcriptHistoryDrain : chatHistoryDrain
@@ -541,11 +765,9 @@ enum NativeDesktopGuestError: LocalizedError {
         let drain = Task { await prior?.value; await old.value }
         if transcript { transcriptHistoryDrain = drain } else { chatHistoryDrain = drain }
     }
-    func setTranscriptionOutput(_ keep: Bool) async -> Bool {
-        transcriptionOutputDemand = keep
-        return await systemAudio?.setTranscriptionOutput(keep) ?? !keep
-    }
+
     private func detachEngine() {
+        connectionAttemptToken = nil
         currentNativeEngine?.onRemoteAudioChange = nil
         if currentNativeEngine != nil { onRemoteAudio?([]) }
         currentNativeEngine?.onMeetingChange = nil
@@ -555,12 +777,14 @@ enum NativeDesktopGuestError: LocalizedError {
         currentNativeEngine = nil
         incomingVideo = []; onVideo?([]); onLocalCamera?(nil)
     }
+
     private func bind(_ engine: NativeGuestEngine?, token: UUID) {
         cancelHistory(); detachEngine()
         currentNativeEngine = engine
+        connectionAttemptToken = engine == nil ? nil : UUID()
         guard let engine else {
             systemAudio = nil; guestSnapshot = .init(); onFeatures?(guestSnapshot)
-            if let session { refresh(session.snapshot) }
+            if let session { refresh(session.snapshot) } else { emit() }
             return
         }
         engine.onCapturedMessages = { [weak self, weak engine] messages, transcript in
@@ -587,7 +811,7 @@ enum NativeDesktopGuestError: LocalizedError {
             }
             guestSnapshot = features; onFeatures?(features)
             if titleChanged, !features.title.isEmpty { onTitle?(features.title) }
-            if let session { refresh(session.snapshot) }
+            if let session { refresh(session.snapshot) } else { emit() }
             loadHistory(engine, token: token)
         }
         engine.onIncomingVideoChange = { [weak self, weak engine] streams in
@@ -653,16 +877,6 @@ enum NativeDesktopGuestError: LocalizedError {
         }
     }
 
-    /// A manual retry is available after an initial failure and never creates a
-    /// second concurrent history request for the same content.
-    func retryInitialTranscriptHistory() {
-        guard let engine = currentNativeEngine, !leaving, guestSnapshot.connected,
-              guestSnapshot.permissions.canViewTranscript, !guestSnapshot.transcriptHistoryLoaded,
-              transcriptHistoryTask == nil else { return }
-        transcriptHistoryRequested = false
-        loadHistory(engine, token: revision)
-    }
-
     private func startHistory(_ engine: NativeGuestEngine, token: UUID, transcript: Bool) {
         let id = UUID()
         let previous = transcript ? transcriptHistoryDrain : chatHistoryDrain
@@ -674,8 +888,6 @@ enum NativeDesktopGuestError: LocalizedError {
                 if !transcript, chatHistoryAttempt == id { chatHistoryTask = nil; chatHistoryAttempt = nil }
             }
             do {
-                // Canceling a transport request is asynchronous. Drain its owner
-                // before attempting a replacement so it cannot appear as a no-op.
                 await previous?.value
                 try Task.checkCancellation()
                 try await GuestHistoryRetry.run(isCurrent: {
@@ -718,13 +930,9 @@ enum NativeDesktopGuestError: LocalizedError {
         }
         if transcript { transcriptHistoryTask = task } else { chatHistoryTask = task }
     }
+
     private func featureFailed(_ error: Error, engine: NativeGuestEngine, token: UUID) {
         guard revision == token, currentNativeEngine === engine, !leaving, !(error is CancellationError) else { return }
         featureError = error.localizedDescription; onFeatureError?(error)
     }
-#if DEBUG
-    func bindHistoryForTesting(_ engine: NativeGuestEngine) { bind(engine, token: revision) }
-    func unbindHistoryForTesting() { cancelHistory(); detachEngine() }
-    var transcriptHistoryIdleForTesting: Bool { transcriptHistoryTask == nil }
-#endif
 }

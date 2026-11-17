@@ -1,0 +1,17 @@
+{
+  "provider": "rock",
+  "status": "pass",
+  "signedAppBuild": "0.3.0 (112)",
+  "scenario": "Bounded local UI join and leave of public Rock test jam",
+  "observations": [
+    "Meeting view showed one participant",
+    "Microphone and camera remained off",
+    "No chat or media was sent",
+    "Leave returned app to Home",
+    "Invitation field cleared"
+  ],
+  "limitations": [
+    "Local UI observation only; no independent peer, incoming or outgoing media, performance, device or network recovery was measured.",
+    "The app automatically added the test room to Recents."
+  ]
+}

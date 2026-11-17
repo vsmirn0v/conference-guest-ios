@@ -1,0 +1,1824 @@
+{
+  "schemaVersion": 1,
+  "label": "Installed build 112; lock and link lists from build 112 release",
+  "sourceRevision": "0fa7a7878ce73ae8ea8ea8c290462587c6545ec7",
+  "app": {
+    "bundleID": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "version": "0.3.0",
+    "build": "112",
+    "entries": [
+      {
+        "path": "Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/MacOS",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/_CodeSignature",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/CodeResources",
+        "kind": "file",
+        "size": 2094,
+        "sha256": "f2b558ef9b8500f10b4bf8e94948ec82feb295786d44426e4b8a0e707c63049a"
+      },
+      {
+        "path": "Contents/Info.plist",
+        "kind": "file",
+        "size": 2898,
+        "sha256": "039cc477f42f51b22c496a5e5fdf5c3192532689566bfde566150f05aea5396d"
+      },
+      {
+        "path": "Contents/PkgInfo",
+        "kind": "file",
+        "size": 8,
+        "sha256": "82502191c9484b04d685374f9879a0066069c49b8acae7a04b01d38d07e8eca0"
+      },
+      {
+        "path": "Contents/embedded.provisionprofile",
+        "kind": "file",
+        "size": 16098,
+        "sha256": "e354504a845f877e460da268db67adf5cfb4d4252d73263655ab7cb7dbbedc6d"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Resources",
+        "kind": "symlink",
+        "target": "Versions/Current/Resources"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/LiveKitWebRTC",
+        "kind": "symlink",
+        "target": "Versions/Current/LiveKitWebRTC"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/Current",
+        "kind": "symlink",
+        "target": "A"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/_CodeSignature",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/LiveKitWebRTC",
+        "kind": "file",
+        "size": 14319424,
+        "sha256": "ae555a7290479a0a6d6cb39bc3739daffd046f68be680dcfa5e2afafd7d124d4",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "@rpath/LiveKitWebRTC.framework/LiveKitWebRTC",
+            "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+            "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+            "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+            "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+            "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+            "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+            "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio",
+            "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+            "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+            "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+            "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+            "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+            "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+            "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit",
+            "/System/Library/Frameworks/AudioUnit.framework/Versions/A/AudioUnit",
+            "/System/Library/Frameworks/ScreenCaptureKit.framework/Versions/A/ScreenCaptureKit",
+            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libobjc.A.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/Resources/Info.plist",
+        "kind": "file",
+        "size": 1039,
+        "sha256": "116c4389a50459d317128f67c804dfeea80ae35f875de3cbed13d27e610a9a78"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/Resources/PrivacyInfo.xcprivacy",
+        "kind": "file",
+        "size": 845,
+        "sha256": "eb9337f2dee5992f74ae2b10f78f526d3eec1da8cfde029131081c0b18579614"
+      },
+      {
+        "path": "Contents/Frameworks/LiveKitWebRTC.framework/Versions/A/_CodeSignature/CodeResources",
+        "kind": "file",
+        "size": 2690,
+        "sha256": "c971e2d1793d68f51505c9498a33fb6a6749f72df45c3bfae918e2fc1be55929"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Resources",
+        "kind": "symlink",
+        "target": "Versions/Current/Resources"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/RustLiveKitUniFFI",
+        "kind": "symlink",
+        "target": "Versions/Current/RustLiveKitUniFFI"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/Current",
+        "kind": "symlink",
+        "target": "A"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/_CodeSignature",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/RustLiveKitUniFFI",
+        "kind": "file",
+        "size": 2382688,
+        "sha256": "be784aedba1c739d1aec17e926a1a8a6adc58e9300b2c32b0dd75d62b5b33996",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "@rpath/RustLiveKitUniFFI.framework/RustLiveKitUniFFI",
+            "/usr/lib/libiconv.2.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "<external>/RustLiveKitUniFFI (architecture arm64):",
+            "@rpath/RustLiveKitUniFFI.framework/RustLiveKitUniFFI",
+            "/usr/lib/libiconv.2.dylib",
+            "/usr/lib/libSystem.B.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/Resources/Info.plist",
+        "kind": "file",
+        "size": 898,
+        "sha256": "86172b4ffdb6aa837af122cd3b13de67b163eb6fa30535d39b6e7a1e3d6cec8d"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/Resources/PrivacyInfo.xcprivacy",
+        "kind": "file",
+        "size": 599,
+        "sha256": "10da67f217824f019288ec328ababc290ab0399c52e9be77a24d494339137da2"
+      },
+      {
+        "path": "Contents/Frameworks/RustLiveKitUniFFI.framework/Versions/A/_CodeSignature/CodeResources",
+        "kind": "file",
+        "size": 2690,
+        "sha256": "c45171c36df98ca0f163adc29542d3d0739b02a969b7541acfe5fd94b9c2057e"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Resources",
+        "kind": "symlink",
+        "target": "Versions/Current/Resources"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Updater.app",
+        "kind": "symlink",
+        "target": "Versions/Current/Updater.app"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/XPCServices",
+        "kind": "symlink",
+        "target": "Versions/Current/XPCServices"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Autoupdate",
+        "kind": "symlink",
+        "target": "Versions/Current/Autoupdate"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Sparkle",
+        "kind": "symlink",
+        "target": "Versions/Current/Sparkle"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/Current",
+        "kind": "symlink",
+        "target": "B"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/_CodeSignature",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate",
+        "kind": "file",
+        "size": 706528,
+        "sha256": "96ca823e097ee9ec817121ed877736a97b0471fcf288581bbc3263bbd4e921ea",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/usr/lib/libz.1.dylib",
+            "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libcompression.dylib",
+            "/usr/lib/libbz2.1.0.dylib",
+            "/usr/lib/libxar.1.dylib",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "<external>/Autoupdate (architecture arm64):",
+            "/usr/lib/libz.1.dylib",
+            "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libcompression.dylib",
+            "/usr/lib/libbz2.1.0.dylib",
+            "/usr/lib/libxar.1.dylib",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+        "kind": "file",
+        "size": 974464,
+        "sha256": "b62008c621b024c99dd529fd9dc578d7176ef25a8c96f9ffc9906104821f2a31",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "@rpath/Sparkle.framework/Versions/B/Sparkle",
+            "/usr/lib/libcompression.dylib",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+            "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/ServiceManagement.framework/Versions/A/ServiceManagement",
+            "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration",
+            "/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit",
+            "<external>/Sparkle (architecture arm64):",
+            "@rpath/Sparkle.framework/Versions/B/Sparkle",
+            "/usr/lib/libcompression.dylib",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+            "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/ServiceManagement.framework/Versions/A/ServiceManagement",
+            "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration",
+            "/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/Base.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ar.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ca.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/cs.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/da.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/de.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/el.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/es.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fa.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fi.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fr.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/he.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/hr.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/hu.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/is.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/it.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ja.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ko.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nb.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nl.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nn.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pl.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pt-BR.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pt-PT.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ro.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ru.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sk.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sl.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sv.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/th.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/tr.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/uk.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/vi.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_CN.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_HK.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_TW.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/Info.plist",
+        "kind": "file",
+        "size": 1341,
+        "sha256": "5fa024aa416c13614fb5588d378aa6c16371737d9980c57fcb3e32f8208f1b86"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ReleaseNotesColorStyle.css",
+        "kind": "file",
+        "size": 231,
+        "sha256": "76bd6999758fd8e51d17e6b482db434f9b4768c02b037af6bd2e3a000ce8cbc1"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUUpdateAlert.nib",
+        "kind": "file",
+        "size": 18490,
+        "sha256": "3987a333da7c2728ef2cb9656e5eeaf0832884873cabf78353fcb9099c5d8fbe"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUUpdatePermissionPrompt.nib",
+        "kind": "file",
+        "size": 25390,
+        "sha256": "2e62b9d5a736d53b1eaf217432c4d0ad05217e897787cf1bdf1071ff22308d46"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/Base.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 6249,
+        "sha256": "bf93bdde8ad020f2ba210ecfa0e84b5365d0342355a3ca39d88fec0acb1e4a40"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ar.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 3554,
+        "sha256": "441182787471a3998908044515fe13e92230edaa7e2730638e72a49610f56cba"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ca.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 3501,
+        "sha256": "7ed0d5ca300649a7f13304015008f2dede98ad743a625c17d5a5fedacc1a3b1a"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/cs.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 10774,
+        "sha256": "99e66decf9bc46cf5622eead4e65b3b502e3775a4e8e0f03ef1b41683ea8d518"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/da.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 4882,
+        "sha256": "8d0ff69b79460185f941372655433bad3934f49e63bef0b4171bd66da71e55f0"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/de.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 11559,
+        "sha256": "311035a15227fb12e85eba2a46f3f6198d98ac5590d1d38c43c4ff7430d06599"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/el.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5934,
+        "sha256": "638981a4f095d8b1dabb6230d452e470359711b81803bc5df8c21e1211fd3757"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/es.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 7026,
+        "sha256": "047b9affd0e995039072c24b8d7aa830624d03c89c524e4f58d7d6f13eca8352"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fa.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5716,
+        "sha256": "ed9dda9e271f7a97b8a7f327e71a1b6d06e5e061b367e7da3d153e47dc319263"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fi.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 3252,
+        "sha256": "c14af9bac3fce436222a4ea277a7a6c0f9b42b2d84aceea75e758ce7538acae2"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fr.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 7855,
+        "sha256": "3d554dcd167b085e25a75248533f21f389593aeace912ab9952c825ffe141ce1"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/he.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 9657,
+        "sha256": "1d795bd7329d04b7ce84b6bdc845f917369e858b2b292f117b89a6666a185723"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/hr.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 6367,
+        "sha256": "920041380a08b3ba50d44e8a83f59de551139845a72748d58f2387c65920b33a"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/hu.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 4449,
+        "sha256": "cc2a16e4d487c6fab357b4f7d0fbbf7ec882371b2130413ffcb1b69cd540d2cf"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/is.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 3954,
+        "sha256": "403feba503410e9455cd0eaafe592a2576eedb24130ccf2cdb13dda4b101f87e"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/it.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 10956,
+        "sha256": "56a7445c1b68d76849ac59b98aa5c20c9002d5e07e9f0a2720486160f85b7366"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ja.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 8697,
+        "sha256": "e404910028af70579cfa208bb4fadd9e3592505fc89af208f4071f2309553fb2"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ko.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 7797,
+        "sha256": "a6269eb3f5a07d0c4f5d7467d5065372085aef7484c518a9d784ffd6c8f5aae4"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nb.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5539,
+        "sha256": "ef6f0dcae90c440b47ece09909e9cdf35f3383f34e72a614c8c5c0752ecbffe0"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nl.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 9574,
+        "sha256": "ca9adf34fb93fe3f394ccc92114bf6a6b1f8a128bb5f362cb9f3247d7c26c77d"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nn.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5671,
+        "sha256": "1db8c6853a550aa25382da2d55431a1c1d308d6a37676c4f8593cc1633f8a5ae"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pl.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5453,
+        "sha256": "5c54b3f8e1eb3026e142e710e2167f2f839b73ab5ad7f18719230f33ae682aa9"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pt-BR.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 9976,
+        "sha256": "0292cadc2acfc34875c1e0b54e2d50de3833cd5e20c8660c8effe2b859aac84c"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pt-PT.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5827,
+        "sha256": "31b28f3e5b5f9fe3d7abf71a779751d51ff632f3190155ef3cd97d2791a40fb1"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ro.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 6115,
+        "sha256": "b2bf064222c38a3672b01fe09406f799718cb0fc4e715121662639d6fdfea6ed"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ru.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5784,
+        "sha256": "7193af28eb2a09b9fe7119cf6065a2150c6590971b22f98c56f356cd90851923"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sk.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5675,
+        "sha256": "e158daaa4f3f91b57cee05ab896f2c1bc467317932cc53bb7c01e7daee9e5238"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sl.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5646,
+        "sha256": "c62770c604a6c8c89e283357c8b322d8ce6a85f4d85c09002048331f65f8d980"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sv.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5160,
+        "sha256": "4a21ad5bcf8d836d265710c2e4a0a64f07c9551f1c49694d6734a931d23efd39"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/th.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5339,
+        "sha256": "4b6c8dc2ab69a0425de3aa9dc386c6539348e3983e47aa10f94c17e345a157a5"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/tr.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 6183,
+        "sha256": "b040d3f02d341eba047c15dfcafb60406d0847096a94466ecab512dcfb16abb5"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/uk.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 5842,
+        "sha256": "ff44d58635b3e8409d54b42b72c876a43e17fa98f6ea96b32583b9e88c747ab6"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/vi.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 12418,
+        "sha256": "2b3b4acbadf534cd0e812b97e589f80a4e1655b07c8907e98cc31df458ffd8b7"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_CN.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 7475,
+        "sha256": "e7f543b92977e9abc907241c411d8db0f59c4fee480859b3e88e4b495e0976c8"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_HK.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 6469,
+        "sha256": "3fc210132f33d89af3d25d27c7ea19426cf6d304be50254538456e0ec4fb7858"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_TW.lproj/Sparkle.strings",
+        "kind": "file",
+        "size": 7625,
+        "sha256": "76321e1dd844c9b6568cb4af7c63bb57d9d1b700109aeedd7e5721d78727b12d"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/_CodeSignature",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/Info.plist",
+        "kind": "file",
+        "size": 2400,
+        "sha256": "59ccb021c4e784681a2042e96feaf7c47eaa7c2a6468ce5c73d6f38274385c40"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/PkgInfo",
+        "kind": "file",
+        "size": 8,
+        "sha256": "82502191c9484b04d685374f9879a0066069c49b8acae7a04b01d38d07e8eca0"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater",
+        "kind": "file",
+        "size": 337968,
+        "sha256": "4a7ba9c78731c286e98b7aacbcb6d700674a00469d88567364c8d527ae2acb96",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "<external>/Updater (architecture arm64):",
+            "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/_CodeSignature/CodeResources",
+        "kind": "file",
+        "size": 2200,
+        "sha256": "6686de10a28a2fe11b36cbb86dcbacc827cfc4ea116b4dabf1845e5aee629e9b"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/_CodeSignature",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/Info.plist",
+        "kind": "file",
+        "size": 1717,
+        "sha256": "098634fc77fd96310eff2a63d6080b76139e3b2138dade393cf1cd0ef9a4dd93"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader",
+        "kind": "file",
+        "size": 170544,
+        "sha256": "82e237ef0c83bb85c48c50cdf7632d39447096885f3068e9b990a8139421ee77",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "<external>/Downloader (architecture arm64):",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/_CodeSignature/CodeResources",
+        "kind": "file",
+        "size": 2200,
+        "sha256": "6686de10a28a2fe11b36cbb86dcbacc827cfc4ea116b4dabf1845e5aee629e9b"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/_CodeSignature",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/Info.plist",
+        "kind": "file",
+        "size": 1605,
+        "sha256": "c382d031b287e64e0d4e6e7eec4208600e8b2abbe100f348c3b12f8baf4a348d"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer",
+        "kind": "file",
+        "size": 205296,
+        "sha256": "bdfa60036700870f39aa3f4d96bb014fa9b75ca518851b51e75d892ffe31ae79",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+            "/System/Library/Frameworks/ServiceManagement.framework/Versions/A/ServiceManagement",
+            "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "<external>/Installer (architecture arm64):",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+            "/System/Library/Frameworks/ServiceManagement.framework/Versions/A/ServiceManagement",
+            "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/_CodeSignature/CodeResources",
+        "kind": "file",
+        "size": 2200,
+        "sha256": "6686de10a28a2fe11b36cbb86dcbacc827cfc4ea116b4dabf1845e5aee629e9b"
+      },
+      {
+        "path": "Contents/Frameworks/Sparkle.framework/Versions/B/_CodeSignature/CodeResources",
+        "kind": "file",
+        "size": 18175,
+        "sha256": "e7cdf7440e5176114e478c8deea351008b719499982296b2de9ad5f564b16aba"
+      },
+      {
+        "path": "Contents/MacOS/RockClonedVoiceGPUWorker",
+        "kind": "file",
+        "size": 19110288,
+        "sha256": "a0fe749f8b2973e0b584d9dde6977b87b64b75317521ea6d280d3b67ea57f62b",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/usr/lib/libc++.1.dylib",
+            "/System/Library/Frameworks/CoreAI.framework/Versions/A/CoreAI",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+            "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio",
+            "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/System/Library/Frameworks/CoreML.framework/Versions/A/CoreML",
+            "/System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit",
+            "/System/Library/Frameworks/Network.framework/Versions/A/Network",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/usr/lib/libz.1.dylib",
+            "/usr/lib/swift/libswiftAVFoundation.dylib",
+            "/usr/lib/swift/libswiftAccelerate.dylib",
+            "/usr/lib/swift/libswiftCore.dylib",
+            "/usr/lib/swift/libswiftCoreAudio.dylib",
+            "/usr/lib/swift/libswiftCoreFoundation.dylib",
+            "/usr/lib/swift/libswiftCoreImage.dylib",
+            "/usr/lib/swift/libswiftCoreMIDI.dylib",
+            "/usr/lib/swift/libswiftDarwin.dylib",
+            "/usr/lib/swift/libswiftDispatch.dylib",
+            "/usr/lib/swift/libswiftIOKit.dylib",
+            "/usr/lib/swift/libswiftMetal.dylib",
+            "/usr/lib/swift/libswiftOSLog.dylib",
+            "/usr/lib/swift/libswiftObjectiveC.dylib",
+            "/usr/lib/swift/libswiftQuartzCore.dylib",
+            "/usr/lib/swift/libswiftRegexBuilder.dylib",
+            "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+            "/usr/lib/swift/libswiftXPC.dylib",
+            "/usr/lib/swift/libswift_Builtin_float.dylib",
+            "/usr/lib/swift/libswift_Concurrency.dylib",
+            "/usr/lib/swift/libswift_DarwinFoundation1.dylib",
+            "/usr/lib/swift/libswift_DarwinFoundation3.dylib",
+            "/usr/lib/swift/libswift_StringProcessing.dylib",
+            "/usr/lib/swift/libswiftos.dylib",
+            "/usr/lib/swift/libswiftsimd.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/MacOS/RockClonedVoiceWorker",
+        "kind": "file",
+        "size": 446752,
+        "sha256": "34e3029df3ae48e301ec9fb622512670248fb0331c2803a2c49859c1e3078a94",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/System/Library/Frameworks/CoreAI.framework/Versions/A/CoreAI",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/usr/lib/swift/libswiftAccelerate.dylib",
+            "/usr/lib/swift/libswiftCore.dylib",
+            "/usr/lib/swift/libswiftCoreFoundation.dylib",
+            "/usr/lib/swift/libswiftDarwin.dylib",
+            "/usr/lib/swift/libswiftDispatch.dylib",
+            "/usr/lib/swift/libswiftIOKit.dylib",
+            "/usr/lib/swift/libswiftMetal.dylib",
+            "/usr/lib/swift/libswiftObjectiveC.dylib",
+            "/usr/lib/swift/libswiftXPC.dylib",
+            "/usr/lib/swift/libswift_Concurrency.dylib",
+            "/usr/lib/swift/libswiftos.dylib",
+            "/usr/lib/swift/libswiftsimd.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/MacOS/RockNRoll Native Guest",
+        "kind": "file",
+        "size": 40332928,
+        "sha256": "c9e43982bf486076e9b2f8512cf5cb48306dab200186544ab0d940b41305f7b0",
+        "macho": {
+          "status": "pass",
+          "libraries": [
+            "/System/Library/Frameworks/FoundationModels.framework/Versions/A/FoundationModels",
+            "/System/Library/Frameworks/Translation.framework/Versions/A/Translation",
+            "/System/Library/Frameworks/CoreAI.framework/Versions/A/CoreAI",
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+            "/usr/lib/libc++.1.dylib",
+            "@rpath/LiveKitWebRTC.framework/LiveKitWebRTC",
+            "@rpath/RustLiveKitUniFFI.framework/RustLiveKitUniFFI",
+            "@rpath/Sparkle.framework/Versions/B/Sparkle",
+            "/usr/lib/libobjc.A.dylib",
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio",
+            "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+            "/System/Library/Frameworks/AVKit.framework/Versions/A/AVKit",
+            "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon",
+            "/System/Library/Frameworks/CloudKit.framework/Versions/A/CloudKit",
+            "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+            "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+            "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+            "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+            "/System/Library/Frameworks/CoreML.framework/Versions/A/CoreML",
+            "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+            "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText",
+            "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+            "/System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit",
+            "/System/Library/Frameworks/EventKit.framework/Versions/A/EventKit",
+            "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+            "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+            "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+            "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit",
+            "/System/Library/Frameworks/MetricKit.framework/Versions/A/MetricKit",
+            "/System/Library/Frameworks/NaturalLanguage.framework/Versions/A/NaturalLanguage",
+            "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+            "/System/Library/Frameworks/ReplayKit.framework/Versions/A/ReplayKit",
+            "/System/Library/Frameworks/ScreenCaptureKit.framework/Versions/A/ScreenCaptureKit",
+            "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+            "/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI",
+            "/System/Library/Frameworks/UserNotifications.framework/Versions/A/UserNotifications",
+            "/System/Library/Frameworks/Vision.framework/Versions/A/Vision",
+            "/System/Library/Frameworks/VisionKit.framework/Versions/A/VisionKit",
+            "/usr/lib/libcompression.dylib",
+            "/usr/lib/libsqlite3.dylib",
+            "/usr/lib/swift/libswiftAVFoundation.dylib",
+            "/usr/lib/swift/libswiftAccelerate.dylib",
+            "/usr/lib/swift/libswiftCompression.dylib",
+            "/usr/lib/swift/libswiftCore.dylib",
+            "/usr/lib/swift/libswiftCoreAudio.dylib",
+            "/usr/lib/swift/libswiftCoreFoundation.dylib",
+            "/usr/lib/swift/libswiftCoreImage.dylib",
+            "/usr/lib/swift/libswiftCoreLocation.dylib",
+            "/usr/lib/swift/libswiftCoreMIDI.dylib",
+            "/usr/lib/swift/libswiftDarwin.dylib",
+            "/usr/lib/swift/libswiftDispatch.dylib",
+            "/usr/lib/swift/libswiftIOKit.dylib",
+            "/usr/lib/swift/libswiftMetal.dylib",
+            "/usr/lib/swift/libswiftMetalKit.dylib",
+            "/usr/lib/swift/libswiftModelIO.dylib",
+            "/usr/lib/swift/libswiftNaturalLanguage.dylib",
+            "/usr/lib/swift/libswiftOSLog.dylib",
+            "/usr/lib/swift/libswiftObjectiveC.dylib",
+            "/usr/lib/swift/libswiftQuartzCore.dylib",
+            "/usr/lib/swift/libswiftSpatial.dylib",
+            "/usr/lib/swift/libswiftSynchronization.dylib",
+            "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+            "/usr/lib/swift/libswiftXPC.dylib",
+            "/usr/lib/swift/libswift_Concurrency.dylib",
+            "/usr/lib/swift/libswiftos.dylib",
+            "/usr/lib/swift/libswiftsimd.dylib",
+            "/usr/lib/swift/libswiftAppKit.dylib",
+            "/usr/lib/swift/libswiftCoreGraphics.dylib",
+            "/usr/lib/swift/libswiftCoreMedia.dylib",
+            "/usr/lib/swift/libswiftNetwork.dylib"
+          ]
+        }
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/en.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ru.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/AppIcon.icns",
+        "kind": "file",
+        "size": 106211,
+        "sha256": "0f9a354631cf8fafe2c543e624dcd062c62262d11867e859d91824bc2ca1604b"
+      },
+      {
+        "path": "Contents/Resources/Assets.car",
+        "kind": "file",
+        "size": 2100008,
+        "sha256": "0676506246e700581dd535fec39beac860d97e8cc9b30184dee0807c54419b38"
+      },
+      {
+        "path": "Contents/Resources/Info.plist",
+        "kind": "file",
+        "size": 1761,
+        "sha256": "ba71403a4d5d85e428e5b1d36d0fc56985199ac177ea43a01680b9f973fd58ca"
+      },
+      {
+        "path": "Contents/Resources/LICENSE",
+        "kind": "file",
+        "size": 1070,
+        "sha256": "fd330bb5d9adf9e65bfe4d8f6f90c808a4196ef5c98aad018a3344256fcb2374"
+      },
+      {
+        "path": "Contents/Resources/ListenModels.json",
+        "kind": "file",
+        "size": 9568,
+        "sha256": "463452b8ae3498ee8bbb00a298e0fe48deebac44fae4094119d79ca2c57587df"
+      },
+      {
+        "path": "Contents/Resources/Package.resolved",
+        "kind": "file",
+        "size": 3898,
+        "sha256": "c0ead196cb809c30bc75e02cee5611e5240ddf3187e9fc74cb9a8aeabae4848c"
+      },
+      {
+        "path": "Contents/Resources/PrivacyInfo.xcprivacy",
+        "kind": "file",
+        "size": 576,
+        "sha256": "5425b94e2067d8835cabcbf6fcd00bc59bee5cdfd8fd1531764bcb46272a7421"
+      },
+      {
+        "path": "Contents/Resources/Sparkle-LICENSE.txt",
+        "kind": "file",
+        "size": 6154,
+        "sha256": "389a4e4e9a32f059775b13a06e25a591445ba229d2838d26dd3e7c0c45127cfe"
+      },
+      {
+        "path": "Contents/Resources/VoiceModels.json",
+        "kind": "file",
+        "size": 359533,
+        "sha256": "6f32c5d6ece2533e707c66790291f14cd425da6b3fd87f4a07d45ecc1f322bb1"
+      },
+      {
+        "path": "Contents/Resources/VoxCPM2-NOTICE.txt",
+        "kind": "file",
+        "size": 12249,
+        "sha256": "226771d8ae98247e31659194e8c16982c0eb79262c748429c5bf8dc76dcf8e40"
+      },
+      {
+        "path": "Contents/Resources/voice-model-catalog.py",
+        "kind": "file",
+        "size": 4695,
+        "sha256": "44c484f8c85dfa46fba3ea25b9185eefb0b77b4448fd3cb6fa5c3d5c91a0d5d5"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Info.plist",
+        "kind": "file",
+        "size": 1265,
+        "sha256": "5f23d06637803ab5f89691615734765705a808caf8ff823e6f0700fd7fa477a1"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources/en.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources/ru.lproj",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources/en.lproj/Localizable.strings",
+        "kind": "file",
+        "size": 1145,
+        "sha256": "cc0e9b173fba59495daa5d9078676b728aa1b16b174577be7f6770a2f6a96ebe"
+      },
+      {
+        "path": "Contents/Resources/ConferenceCore_ConferenceCore.bundle/Contents/Resources/ru.lproj/Localizable.strings",
+        "kind": "file",
+        "size": 1551,
+        "sha256": "72ea32a803f58e89e5ca3da5e95917b9611f36821abcfc885c3517993ff62f31"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle/Contents/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle/Contents/Info.plist",
+        "kind": "file",
+        "size": 1246,
+        "sha256": "2487992bd1d3b5a36ca67737aa6669873a7a7e6cf764ac67ab3e9928d4bf6f3a"
+      },
+      {
+        "path": "Contents/Resources/LiveKit_LiveKit.bundle/Contents/Resources/PrivacyInfo.xcprivacy",
+        "kind": "file",
+        "size": 541,
+        "sha256": "7aed2e211fa5ee40e6457423bdb485a3fa0a60b4e182658e9fef5239c918dbc0"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/EventSource-LICENSE.md.txt",
+        "kind": "file",
+        "size": 1062,
+        "sha256": "2f9b695627d569a3ce452b2c03fdd34310df78c8ea94edfafd9ce38381e5b502"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/livekit-uniffi-xcframework-LICENSE.txt",
+        "kind": "file",
+        "size": 11357,
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-LICENSE.txt",
+        "kind": "file",
+        "size": 1067,
+        "sha256": "44326a4ea062241ae6fc26ee2ec90bdc81af7eb7b9d3966181b733fa69d42057"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-fmt-LICENSE.txt",
+        "kind": "file",
+        "size": 1431,
+        "sha256": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-json-LICENSE.MIT.txt",
+        "kind": "file",
+        "size": 1075,
+        "sha256": "62176251affdda17bece4ddd44271d68019e2448ca721d2c1af4c650f29c9898"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-metal-cpp-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11344,
+        "sha256": "f4e92c7fe2aa066e294c0da9d08683dc9fb741ee6e6debbfad99a0c96e07c1f2"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-mlx-LICENSE.txt",
+        "kind": "file",
+        "size": 1066,
+        "sha256": "ccfab7ccb2ea306f71531c8ca77bb55507606cd90768b1e32b8b52ab5b48cf01"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/mlx-swift-mlx-c-LICENSE.txt",
+        "kind": "file",
+        "size": 1067,
+        "sha256": "44326a4ea062241ae6fc26ee2ec90bdc81af7eb7b9d3966181b733fa69d42057"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-asn1-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11358,
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-asn1-NOTICE.txt.txt",
+        "kind": "file",
+        "size": 1446,
+        "sha256": "570ef2dc97e91403cb8a9b322a66cdd4107821d225a20e7df892700d7ad9586b"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-collections-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-crypto-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11358,
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-crypto-NOTICE.txt.txt",
+        "kind": "file",
+        "size": 1563,
+        "sha256": "b3ddc2ae068e76b3beb71be03c0400f90090f9469aa491bf7b1ac42320af37b8"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-docc-plugin-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-docc-symbolkit-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-huggingface-LICENSE.txt",
+        "kind": "file",
+        "size": 11347,
+        "sha256": "4d6ad72952a8329063a71de28329b493de96cf57459e2ac217110d1a6a5f84ae"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-jinja-LICENSE.txt",
+        "kind": "file",
+        "size": 11347,
+        "sha256": "648b81e6c6f9975c3b6cf6d630229b6c8d6f1ddaef55f5770f576adda19f3495"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-numerics-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-protobuf-LICENSE.txt.txt",
+        "kind": "file",
+        "size": 11751,
+        "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/swift-transformers-LICENSE.txt",
+        "kind": "file",
+        "size": 11347,
+        "sha256": "648b81e6c6f9975c3b6cf6d630229b6c8d6f1ddaef55f5770f576adda19f3495"
+      },
+      {
+        "path": "Contents/Resources/ThirdPartyNotices/yyjson-LICENSE.txt",
+        "kind": "file",
+        "size": 1084,
+        "sha256": "45e384d3d52c73cba3a64d6e6c25d47cd738cd8a55c30629e3201046eda62947"
+      },
+      {
+        "path": "Contents/Resources/en.lproj/InfoPlist.strings",
+        "kind": "file",
+        "size": 814,
+        "sha256": "60b26e5893f8c1cbf10fd0d162a27d2cb7646f397ddf74937cc085b80890dd61"
+      },
+      {
+        "path": "Contents/Resources/en.lproj/Localizable.strings",
+        "kind": "file",
+        "size": 216531,
+        "sha256": "671a5865ae7b49f808ecda1ebc660214c1cfb76e1a47b79ed4b1549328cb1581"
+      },
+      {
+        "path": "Contents/Resources/en.lproj/Localizable.stringsdict",
+        "kind": "file",
+        "size": 4031,
+        "sha256": "877380dd14634f4dbe71947e61aa23d6cc0f710f9de6b852a716ad286f76c1d0"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle/Contents",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources",
+        "kind": "directory"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Info.plist",
+        "kind": "file",
+        "size": 1235,
+        "sha256": "98d64a9f05bbcf41a40c5b954e4e9b7fb102d2a0a91cfe932c381382577ef5da"
+      },
+      {
+        "path": "Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib",
+        "kind": "file",
+        "size": 4716496,
+        "sha256": "1802f1eba2f0997d4eb0e538b64b261dd21e7fd7f3847b955361f272f4bbf69f"
+      },
+      {
+        "path": "Contents/Resources/ru.lproj/InfoPlist.strings",
+        "kind": "file",
+        "size": 1373,
+        "sha256": "4e6a6caa841fc78a54ed454ea5a3a09810a5a98832dca37fc11effdb11c4d78e"
+      },
+      {
+        "path": "Contents/Resources/ru.lproj/Localizable.strings",
+        "kind": "file",
+        "size": 315890,
+        "sha256": "85bca9bc58727b80063c90d4a6a822c398a170bcf85147aab51f15a1f9bbf25f"
+      },
+      {
+        "path": "Contents/Resources/ru.lproj/Localizable.stringsdict",
+        "kind": "file",
+        "size": 5650,
+        "sha256": "43e87729bf44130d9c816b78a4baa7a1ac034716c940c7eff25d561e604a0fbd"
+      },
+      {
+        "path": "Contents/_CodeSignature/CodeResources",
+        "kind": "file",
+        "size": 18521,
+        "sha256": "4072c8a7868ea0abc86685e491599704017e8da7dfa9109b0a2657ff0c14d593"
+      }
+    ]
+  },
+  "packageLock": {
+    "sha256": "c0ead196cb809c30bc75e02cee5611e5240ddf3187e9fc74cb9a8aeabae4848c",
+    "pins": [
+      {
+        "identity": "eventsource",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "bb4b61273b5a976bb571859c17f903ebc3439df1",
+          "version": "1.6.0"
+        }
+      },
+      {
+        "identity": "livekit-uniffi-xcframework",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "7a9bf91b1601d5c408ae0cac7dc2047b5a4f615e",
+          "version": "0.1.9"
+        }
+      },
+      {
+        "identity": "mlx-swift",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "7ede4fd6d05f63305c1c0ebf4f8c1909a637c574",
+          "version": "0.33.0"
+        }
+      },
+      {
+        "identity": "swift-asn1",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "917b472dbe53ba699cbb0495f9a95a084bc6364d",
+          "version": "1.7.4"
+        }
+      },
+      {
+        "identity": "swift-collections",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "88754449ab766a739610b660e117762115fabc9c",
+          "version": "1.7.6"
+        }
+      },
+      {
+        "identity": "swift-crypto",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
+          "version": "4.5.2"
+        }
+      },
+      {
+        "identity": "swift-docc-plugin",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "647c708be89f834fa6a6d4945442793a77ddf5b6",
+          "version": "1.5.0"
+        }
+      },
+      {
+        "identity": "swift-docc-symbolkit",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "b45d1f2ed151d057b54504d653e0da5552844e34",
+          "version": "1.0.0"
+        }
+      },
+      {
+        "identity": "swift-huggingface",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "f0a0cb43cb1b402d2bbf6fb10d8981328c449c48",
+          "version": "0.13.0"
+        }
+      },
+      {
+        "identity": "swift-jinja",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "66042420a9225c98ea9382d705e2285769dfdbe5",
+          "version": "3.1.0"
+        }
+      },
+      {
+        "identity": "swift-numerics",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+          "version": "1.1.1"
+        }
+      },
+      {
+        "identity": "swift-protobuf",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "fed2f76413026cb0ae90999a8c9116949dfe6aa6",
+          "version": "1.41.0"
+        }
+      },
+      {
+        "identity": "swift-transformers",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "402a8a1105f52038b0949d9596981fc9e32bed17",
+          "version": "1.4.0"
+        }
+      },
+      {
+        "identity": "yyjson",
+        "kind": "remoteSourceControl",
+        "state": {
+          "revision": "6447536015f3d600f3d65323b10976103b337ca7",
+          "version": "0.13.0"
+        }
+      }
+    ]
+  },
+  "linkFileLists": [
+    {
+      "path": "ConferenceCore.build/Release/ConferenceCore-t.build/Objects-normal/arm64/ConferenceCore.LinkFileList",
+      "sha256": "12cd7e19b764f1042865791af6eeec5010bbf7cbbffed35ddf4cfce177f0c9fd",
+      "lineCount": 28
+    },
+    {
+      "path": "ConferenceCore.build/Release/ConferenceCore-t.build/Objects-normal/x86_64/ConferenceCore.LinkFileList",
+      "sha256": "efc839b2e5bc7ac4a9063c891599d9f2d77ac77215f9a62f4736527e9beb873d",
+      "lineCount": 28
+    },
+    {
+      "path": "EventSource.build/Release/EventSource-t.build/Objects-normal/arm64/EventSource.LinkFileList",
+      "sha256": "ed71bf3430a8b157d0b966d2e2108281a44ea2a09871d448ad0eb84f61ee3600",
+      "lineCount": 4
+    },
+    {
+      "path": "EventSource.build/Release/EventSource-t.build/Objects-normal/x86_64/EventSource.LinkFileList",
+      "sha256": "d0d2c11d5ace56553d8a8775a7b0cb23c053bf3298d305845edaf336124b650f",
+      "lineCount": 4
+    },
+    {
+      "path": "Jinja.build/Release/Jinja-t.build/Objects-normal/arm64/Jinja.LinkFileList",
+      "sha256": "4902d30ccb5a66ef87eb2c94b5a485c20783400a6e92ee266da08ad651d219d9",
+      "lineCount": 16
+    },
+    {
+      "path": "Jinja.build/Release/Jinja-t.build/Objects-normal/x86_64/Jinja.LinkFileList",
+      "sha256": "10f511bf1392a3a4d253f918719da1d64e11817653329a55b89f5d632186eae5",
+      "lineCount": 16
+    },
+    {
+      "path": "LiveKit.build/Release/CLiveKitProto-t.build/Objects-normal/arm64/CLiveKitProto.LinkFileList",
+      "sha256": "a418443e167ff265dbb37d18ebd4145a1ff4225d6b6f59015d52048754fa1b0c",
+      "lineCount": 8
+    },
+    {
+      "path": "LiveKit.build/Release/CLiveKitProto-t.build/Objects-normal/x86_64/CLiveKitProto.LinkFileList",
+      "sha256": "79e63e56843ee8188535818f5a21f14100dbd19a362adda7cfe0a57ee8d5b7cb",
+      "lineCount": 8
+    },
+    {
+      "path": "LiveKit.build/Release/LKObjCHelpers-t.build/Objects-normal/arm64/LKObjCHelpers.LinkFileList",
+      "sha256": "7b006dc5d121538b5a79b4ee61471b7680cc297c29f9bd4b571f6047a14cb898",
+      "lineCount": 1
+    },
+    {
+      "path": "LiveKit.build/Release/LKObjCHelpers-t.build/Objects-normal/x86_64/LKObjCHelpers.LinkFileList",
+      "sha256": "bddc2cf156ce80ec68ca81a887ce67c0832e4382112374b6a14057112c5bb44c",
+      "lineCount": 1
+    },
+    {
+      "path": "LiveKit.build/Release/LiveKit-t.build/Objects-normal/arm64/LiveKit.LinkFileList",
+      "sha256": "78a6bba9d2f703f89d639ac345cebdaf502a4f9bafdf6eefe5ad63530a47bd52",
+      "lineCount": 304
+    },
+    {
+      "path": "LiveKit.build/Release/LiveKit-t.build/Objects-normal/x86_64/LiveKit.LinkFileList",
+      "sha256": "134953bec54f339523803e2c1672b7f3265df8cb9c0f9fd06eeaaa983fbd29f2",
+      "lineCount": 304
+    },
+    {
+      "path": "LiveKit.build/Release/LiveKitNanopb-t.build/Objects-normal/arm64/LiveKitNanopb.LinkFileList",
+      "sha256": "5cf4d2486b0d40ec31b9a782c9c1136968ae81c709fb5c877a3714bcc4bb7e78",
+      "lineCount": 3
+    },
+    {
+      "path": "LiveKit.build/Release/LiveKitNanopb-t.build/Objects-normal/x86_64/LiveKitNanopb.LinkFileList",
+      "sha256": "54937c9548b3db29d841918c7c8c9ceac828c46710d84381aa8eee76340ed661",
+      "lineCount": 3
+    },
+    {
+      "path": "LiveKitUniFFI.build/Release/LiveKitUniFFI-t.build/Objects-normal/arm64/LiveKitUniFFI.LinkFileList",
+      "sha256": "f7e58f2496d891525d13faa50eb5613f87ad5077f8012696d7fd3fa729f8b03b",
+      "lineCount": 3
+    },
+    {
+      "path": "LiveKitUniFFI.build/Release/LiveKitUniFFI-t.build/Objects-normal/x86_64/LiveKitUniFFI.LinkFileList",
+      "sha256": "78c1cb1ae9c169d4a8cdea514a8630de7e1bc76a5d48510f2b5204bff6ae3f9e",
+      "lineCount": 3
+    },
+    {
+      "path": "MLXAudioVoice.build/Release/MLXAudioCore-t.build/Objects-normal/arm64/MLXAudioCore.LinkFileList",
+      "sha256": "3402952c850443deed89fd391985f8dc9ac30139c434cf30b08767d43c453931",
+      "lineCount": 42
+    },
+    {
+      "path": "MLXAudioVoice.build/Release/MLXAudioCore-t.build/Objects-normal/x86_64/MLXAudioCore.LinkFileList",
+      "sha256": "3db75f5e25eb180c98745f8bb287636067cb069660622b4f1bc25a6e3dee014b",
+      "lineCount": 42
+    },
+    {
+      "path": "MLXAudioVoice.build/Release/MLXAudioTTS-t.build/Objects-normal/arm64/MLXAudioTTS.LinkFileList",
+      "sha256": "929c7c8b69e3f4a15fbd8ce73ae3aff83786bdde1f5b6e897c6b08f79887eac0",
+      "lineCount": 7
+    },
+    {
+      "path": "MLXAudioVoice.build/Release/MLXAudioTTS-t.build/Objects-normal/x86_64/MLXAudioTTS.LinkFileList",
+      "sha256": "911ac6b362ea453828d995738ef7fcb3c0d190bcd513c0527ab6ef067b289949",
+      "lineCount": 7
+    },
+    {
+      "path": "RockNativeGuest.build/Release/RockClonedVoiceGPUWorker.build/Objects-normal/arm64/RockClonedVoiceGPUWorker.LinkFileList",
+      "sha256": "55cda160b83523f4fb27c6e0a62b51ec96edcf17f0a1787e0062d120ae8e93b7",
+      "lineCount": 32
+    },
+    {
+      "path": "RockNativeGuest.build/Release/RockClonedVoiceWorker.build/Objects-normal/arm64/RockClonedVoiceWorker.LinkFileList",
+      "sha256": "aa66a4520c6044366c26841dc24814f4ce07fbf43642203583f0337f3b3e1843",
+      "lineCount": 10
+    },
+    {
+      "path": "RockNativeGuest.build/Release/RockNRollNativeGuest.build/Objects-normal/arm64/Rock'N'Roll for Mac.LinkFileList",
+      "sha256": "17ad0058538fd227d926a9e3c1d2e2cb46dbca2c1d2097c2163631b3d8b9ee56",
+      "lineCount": 229
+    },
+    {
+      "path": "SherpaOnnxKit.build/Release/SherpaOnnxKit-t.build/Objects-normal/arm64/SherpaOnnxKit.LinkFileList",
+      "sha256": "f5c03cb3c31805eb9e50ac5feb4cca17b6bfda6278f7a9a6ca58354a41bc122f",
+      "lineCount": 1
+    },
+    {
+      "path": "SherpaOnnxKit.build/Release/SherpaOnnxKit-t.build/Objects-normal/x86_64/SherpaOnnxKit.LinkFileList",
+      "sha256": "1477e1515c1c81ac30f9308e0bb96b3bda4c51893e485064b486901da0642a95",
+      "lineCount": 1
+    },
+    {
+      "path": "mlx-swift.build/Release/Cmlx-t.build/Objects-normal/arm64/Cmlx.LinkFileList",
+      "sha256": "2688efa90350cf6d6bf086f52db690c11c1a0f18397b4cedd34de26efdcaf57a",
+      "lineCount": 195
+    },
+    {
+      "path": "mlx-swift.build/Release/Cmlx-t.build/Objects-normal/x86_64/Cmlx.LinkFileList",
+      "sha256": "fa5b5f3fecfda8179dc3adc042408eb546580aa5f4ada8a3a8f3ce8cdaba6b34",
+      "lineCount": 195
+    },
+    {
+      "path": "mlx-swift.build/Release/MLX-t.build/Objects-normal/arm64/MLX.LinkFileList",
+      "sha256": "d00ef2369d1008719ff39b95a52f48317643c84b589e850f6c25f1efbc1f06e2",
+      "lineCount": 46
+    },
+    {
+      "path": "mlx-swift.build/Release/MLX-t.build/Objects-normal/x86_64/MLX.LinkFileList",
+      "sha256": "f5bcef293df5240f7d06a71d0ff134bc63c3012c6d6a74c08c4c5111934063e5",
+      "lineCount": 46
+    },
+    {
+      "path": "mlx-swift.build/Release/MLXFast-t.build/Objects-normal/arm64/MLXFast.LinkFileList",
+      "sha256": "cbccda8b171450f0f2bd15ebf787153ba19f5d53c90587c7db2bea9b5b5af7ea",
+      "lineCount": 2
+    },
+    {
+      "path": "mlx-swift.build/Release/MLXFast-t.build/Objects-normal/x86_64/MLXFast.LinkFileList",
+      "sha256": "170a417385ebee41c10bed7a64d8656c58c8d85c90e31e791c4b8a3479579d46",
+      "lineCount": 2
+    },
+    {
+      "path": "mlx-swift.build/Release/MLXNN-t.build/Objects-normal/arm64/MLXNN.LinkFileList",
+      "sha256": "aaba8d47c079e5d062f6d030025f735296f51d709ace3856ce40220317ae9050",
+      "lineCount": 20
+    },
+    {
+      "path": "mlx-swift.build/Release/MLXNN-t.build/Objects-normal/x86_64/MLXNN.LinkFileList",
+      "sha256": "276409177da77468cc18a3bf28e43cc7851d4701e7617646dfb9ba8bf7abd727",
+      "lineCount": 20
+    },
+    {
+      "path": "mlx-swift.build/Release/MLXRandom-t.build/Objects-normal/arm64/MLXRandom.LinkFileList",
+      "sha256": "431a693bfe038525c138cec8e937a85958379bbea16e15be1a54f0a06cde8268",
+      "lineCount": 1
+    },
+    {
+      "path": "mlx-swift.build/Release/MLXRandom-t.build/Objects-normal/x86_64/MLXRandom.LinkFileList",
+      "sha256": "88520bb7b71400d61f60544b2afd7a15577d1c759e79abe16f4d1f71ec1a9a4d",
+      "lineCount": 1
+    },
+    {
+      "path": "swift-collections.build/Release/InternalCollectionsUtilities-t.build/Objects-normal/arm64/InternalCollectionsUtilities.LinkFileList",
+      "sha256": "482bac2ffbad3e880d6bdc57d38485592738f9012d7589d516ee3dab7f419b95",
+      "lineCount": 31
+    },
+    {
+      "path": "swift-collections.build/Release/InternalCollectionsUtilities-t.build/Objects-normal/x86_64/InternalCollectionsUtilities.LinkFileList",
+      "sha256": "b0f1f11ae6c73051d0d628843dde55433ec166b4602752d470b5d495b0a441a6",
+      "lineCount": 31
+    },
+    {
+      "path": "swift-collections.build/Release/OrderedCollections-t.build/Objects-normal/arm64/OrderedCollections.LinkFileList",
+      "sha256": "cfda3aa2a69968c0520f4840fa628644e468e8e267d4b79682890a290b8cb0f6",
+      "lineCount": 63
+    },
+    {
+      "path": "swift-collections.build/Release/OrderedCollections-t.build/Objects-normal/x86_64/OrderedCollections.LinkFileList",
+      "sha256": "dbff287ac671e2e2a997e57181745194f54ef7cab97bda5b8318c5a838a0f3df",
+      "lineCount": 63
+    },
+    {
+      "path": "swift-crypto.build/Release/Crypto-t.build/Objects-normal/arm64/Crypto.LinkFileList",
+      "sha256": "0c21058c31b840a6107a65b22d4e64857cdd11d0f647ea788a2c06763a5639c3",
+      "lineCount": 95
+    },
+    {
+      "path": "swift-crypto.build/Release/Crypto-t.build/Objects-normal/x86_64/Crypto.LinkFileList",
+      "sha256": "a230bed34e962e509a809f7fb8ec9ba877a99f12031ed6e75ebc62e39b54e82f",
+      "lineCount": 95
+    },
+    {
+      "path": "swift-huggingface.build/Release/HuggingFace-t.build/Objects-normal/arm64/HuggingFace.LinkFileList",
+      "sha256": "7cc7bbb17dab8faa38d2e5ab277bc5747c39e1181d26d511275ff60863281f36",
+      "lineCount": 56
+    },
+    {
+      "path": "swift-huggingface.build/Release/HuggingFace-t.build/Objects-normal/x86_64/HuggingFace.LinkFileList",
+      "sha256": "05be44e0d27237330b0f3d7969736771f7b6f18bdd5b4211dc10a6c9e089d874",
+      "lineCount": 56
+    },
+    {
+      "path": "swift-numerics.build/Release/ComplexModule-t.build/Objects-normal/arm64/ComplexModule.LinkFileList",
+      "sha256": "e1abae8ecc4677da7bc6992cb6de4eb1a905cb187b30801b5c2a2132edcb63b4",
+      "lineCount": 11
+    },
+    {
+      "path": "swift-numerics.build/Release/ComplexModule-t.build/Objects-normal/x86_64/ComplexModule.LinkFileList",
+      "sha256": "a51f6f5ff36b1a05f1593aaba443677cfb9cc6a94edb2e96f8e95b33b1bec796",
+      "lineCount": 11
+    },
+    {
+      "path": "swift-numerics.build/Release/Numerics-t.build/Objects-normal/arm64/Numerics.LinkFileList",
+      "sha256": "92834890b944bb860d1b058ee65ec5f407c6ab3871400c2a810fe884f38eab74",
+      "lineCount": 1
+    },
+    {
+      "path": "swift-numerics.build/Release/Numerics-t.build/Objects-normal/x86_64/Numerics.LinkFileList",
+      "sha256": "665385add16bcd99b9c68900804e84ca1b69750da4f956a05ea01b7cf3925340",
+      "lineCount": 1
+    },
+    {
+      "path": "swift-numerics.build/Release/RealModule-t.build/Objects-normal/arm64/RealModule.LinkFileList",
+      "sha256": "8922080678855579a113167a1be98b24b54f35590ddaf282e20045c8a6430085",
+      "lineCount": 11
+    },
+    {
+      "path": "swift-numerics.build/Release/RealModule-t.build/Objects-normal/x86_64/RealModule.LinkFileList",
+      "sha256": "efc45b52cdc88d36a7b8d1f3bb44d9a55e743f945be856519c1a0dd335be8dde",
+      "lineCount": 11
+    },
+    {
+      "path": "swift-numerics.build/Release/_NumericsShims-t.build/Objects-normal/arm64/_NumericsShims.LinkFileList",
+      "sha256": "d68859d88d73c94077ef9b3c27f109ad4ae38deefcf9a7264f8bcad883e1576b",
+      "lineCount": 1
+    },
+    {
+      "path": "swift-numerics.build/Release/_NumericsShims-t.build/Objects-normal/x86_64/_NumericsShims.LinkFileList",
+      "sha256": "0a39ff383cbe15690c2108b2f3d5b3d522754f4ddafd5f7630893f225737baf6",
+      "lineCount": 1
+    },
+    {
+      "path": "swift-transformers.build/Release/Generation-t.build/Objects-normal/arm64/Generation.LinkFileList",
+      "sha256": "206b7bce6e15462b9c225c34d45a1c94524519ddd7519258ff9bfff608afc39b",
+      "lineCount": 9
+    },
+    {
+      "path": "swift-transformers.build/Release/Generation-t.build/Objects-normal/x86_64/Generation.LinkFileList",
+      "sha256": "38aff9d5cc0c515d695eed37c7d9f1a1a8e7320cbd7653f6dfcd01b1a0b65149",
+      "lineCount": 9
+    },
+    {
+      "path": "swift-transformers.build/Release/Hub-t.build/Objects-normal/arm64/Hub.LinkFileList",
+      "sha256": "be245ac4d116475184eaa8b00f689798f926a8575bf7093e2113895472acb515",
+      "lineCount": 6
+    },
+    {
+      "path": "swift-transformers.build/Release/Hub-t.build/Objects-normal/x86_64/Hub.LinkFileList",
+      "sha256": "6454244e03319ebf6c378b8979fb24f502ec9f9a90b1b756158253faf3ecfbf5",
+      "lineCount": 6
+    },
+    {
+      "path": "swift-transformers.build/Release/Models-t.build/Objects-normal/arm64/Models.LinkFileList",
+      "sha256": "c98d1a3326441aa3aa3ef823f801d1baeaa5360edc63d6a204d954a04096716f",
+      "lineCount": 3
+    },
+    {
+      "path": "swift-transformers.build/Release/Models-t.build/Objects-normal/x86_64/Models.LinkFileList",
+      "sha256": "1f7629a385cd5a40ae303935b17292e0760c89fb817a6f2594903a124a41e362",
+      "lineCount": 3
+    },
+    {
+      "path": "swift-transformers.build/Release/Tokenizers-t.build/Objects-normal/arm64/Tokenizers.LinkFileList",
+      "sha256": "7f5c074b0073891d93b5f00eba3dc588e3b9b19dce1f2d307789126daf49255f",
+      "lineCount": 12
+    },
+    {
+      "path": "swift-transformers.build/Release/Tokenizers-t.build/Objects-normal/x86_64/Tokenizers.LinkFileList",
+      "sha256": "8042befdc2b482ef7ee9f6e7a87eef91278844d9fc24bca14b55bb3aa18c6098",
+      "lineCount": 12
+    },
+    {
+      "path": "yyjson.build/Release/yyjson-t.build/Objects-normal/arm64/yyjson.LinkFileList",
+      "sha256": "ac92ebbefe918b49288da4b6247d25f73a0f129cc32c10e0d7d9f119fb5f9d58",
+      "lineCount": 1
+    },
+    {
+      "path": "yyjson.build/Release/yyjson-t.build/Objects-normal/x86_64/yyjson.LinkFileList",
+      "sha256": "9ce6e7642f9647ac45ca514e4acfc3dc00a59c55b039faa927ef93ac601d6525",
+      "lineCount": 1
+    }
+  ],
+  "limitations": [
+    "Dynamic libraries are observed with otool -L for each recognized Mach-O file; tool failures are explicit.",
+    "Hashes and dependency names do not prove that prohibited SDK code is absent or identify statically linked source.",
+    "Link-file-list hashes and package pins are build evidence, not proof that every static object was audited or linked.",
+    "Symlinks are inventoried without following directory symlinks; code signature, extended attributes and timestamps are not checked."
+  ]
+}

@@ -51,18 +51,21 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
             if let previousCamera { UserDefaults.standard.set(previousCamera, forKey: cameraKey) }
             else { UserDefaults.standard.removeObject(forKey: cameraKey) }
         }
-        let engine: any NativeDesktopMeetingEngine
-        switch provider {
-        case .telemost: engine = NativeDesktopTelemostEngine()
-        case .trueconf: engine = NativeDesktopTrueConfEngine()
-        case .rock: engine = NativeDesktopRockEngine(collectStatistics: true)
-        }
         let kind: MeetingEngineKind = switch provider {
         case .telemost: .telemost
         case .trueconf: .trueconf
         case .rock: .community
         }
-        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: kind),
+        let destination = try JoinDestination.verified(url, engine: kind)
+        let engine: any NativeDesktopMeetingEngine = switch provider {
+        case .telemost, .trueconf: UniversalMeetingEngine.shared.makeSession(destination: destination)
+        case .rock:
+            UniversalMeetingEngine.shared.makeSession(
+                destination: destination,
+                adapter: RockAdapter(collectStatistics: true, sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+            )
+        }
+        let model = NativeDesktopMeetingModel(destination: destination,
             name: environment["NATIVE_DESKTOP_LIVE_NAME"] ?? "Native Parity Probe",
             title: "External live parity", engine: engine)
         executionTimeAllowance = 180
@@ -94,9 +97,8 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
             model.toggleCamera(); try await drain(model, seconds: 20)
             try await wait(10) { model.snapshot.cameraOn && model.localCamera != nil }
             let cameraID: String?
-            if let rock = engine as? NativeDesktopRockEngine { cameraID = rock.liveMediaEvidence.cameraDeviceID }
-            else if let session = engine as? NativeDesktopExternalSession {
-                cameraID = try await bounded(5) { await session.publisher?.selectedCameraDeviceIDForTesting() }
+            if let session = engine as? MeetingSession {
+                cameraID = try await bounded(5) { await session.selectedCameraDeviceIDForTesting() }
             }
             else { cameraID = nil }
             evidence["actualCameraID"] = cameraID ?? "unavailable"
@@ -220,24 +222,8 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
         guard predicate() else { throw ExternalLiveFailure.deadline }
     }
     private func statistics(_ engine: any NativeDesktopMeetingEngine, screenOnly: Bool) async -> [[String: Any]] {
-        if let rock = engine as? NativeDesktopRockEngine {
-            return rock.liveMediaEvidence.outbound.filter { !screenOnly || $0["source"] as? String == "screen" }
-        }
-        guard let session = engine as? NativeDesktopExternalSession, let connection = session.publisher?.connection else { return [] }
-        let report: LKRTCStatisticsReport? = try? await bounded(3) {
-            try await withCheckedThrowingContinuation { continuation in connection.statistics { continuation.resume(returning: $0) } }
-        }
-        return report?.statistics.values.compactMap { row -> [String: Any]? in
-            guard row.type == "outbound-rtp", (row.values["kind"] ?? row.values["mediaType"]) as? String == "video" else { return nil }
-            var value: [String: Any] = ["id": row.id]
-            for field in ["bytesSent", "packetsSent", "framesEncoded", "framesSent", "frameWidth", "frameHeight", "framesPerSecond", "mid", "mediaSourceId", "codecId", "qpSum", "targetBitrate", "qualityLimitationReason"] {
-                if let fieldValue = row.values[field] { value[field] = fieldValue }
-            }
-            if let id = row.values["codecId"] as? String, let codec = report?.statistics[id] {
-                value["codec"] = codec.values["mimeType"]
-            }
-            return value
-        } ?? []
+        guard let session = engine as? MeetingSession else { return [] }
+        return (try? await bounded(3) { await session.outboundVideoStatisticsForTesting(screenOnly: screenOnly) }) ?? []
     }
     private func total(_ rows: [[String: Any]], _ field: String) -> UInt64 {
         rows.reduce(0) { $0 + (($1[field] as? NSNumber)?.uint64Value ?? 0) }

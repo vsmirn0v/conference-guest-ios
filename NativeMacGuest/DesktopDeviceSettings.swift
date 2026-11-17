@@ -14,6 +14,23 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
     func closePrivateCheck() async -> Bool { await shutdown() }
 }
 
+/// The prejoin microphone check while the shared owner is pinned: it borrows the shared
+/// engine's input (no meeting may be sending meanwhile) instead of a second owner.
+@MainActor final class SharedPrivateAudioCheck: NativeDesktopPrivateAudioOwner {
+    private let engine: SharedAudioEngine
+    init(engine: SharedAudioEngine) { self.engine = engine }
+    var privateInputLevel: Float? { engine.guestOwner?.privateInputLevel }
+    func startPrivateCheck() async -> Bool {
+        guard await engine.beginPrivateCheck() else { return false }
+        engine.guestOwner?.setPrivateInputMeterEnabled(true)
+        return true
+    }
+    func closePrivateCheck() async -> Bool {
+        engine.guestOwner?.setPrivateInputMeterEnabled(false)
+        return await engine.endPrivateCheck()
+    }
+}
+
 @MainActor final class NativeDesktopDeviceModel: ObservableObject {
     private static weak var activePreview: NativeDesktopDeviceModel?
     let audio = MacAudioDevices(isMac: true)
@@ -61,8 +78,7 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
          suspendReadiness: (() async throws -> ((Bool) -> Void))? = nil) {
         self.authorizeAudio = authorizeAudio ?? { try await GuestCaptureAuthorization.request(.audio) }
         self.createAudioOwner = createAudioOwner ?? {
-            // R4: once LiveKit holds the shared owner it lives for the process; the check borrows it.
-            if SharedAudioEngine.enabledAtLaunch, SharedAudioEngine.shared.pinnedForProcess {
+            if SharedAudioEngine.enabledAtLaunch {
                 return SharedPrivateAudioCheck(engine: SharedAudioEngine.shared)
             }
             // Same native setup as the meeting owner: without its media context the
@@ -72,7 +88,7 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
         }
         self.suspendReadiness = suspendReadiness ?? {
             if SharedAudioEngine.enabledAtLaunch {
-                if SharedAudioEngine.shared.pinnedForProcess { return { _ in } }
+                if SharedAudioEngine.shared.pinnedForProcess || !SharedAudioEngine.shared.hasModule { return { _ in } }
                 guard await SharedAudioEngine.shared.suspendIdle() else { throw NativeDesktopRTCError.cleanupFailed }
                 return { SharedAudioEngine.shared.resumeIdle(clean: $0) }
             }

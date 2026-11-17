@@ -114,6 +114,15 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
     private var cameraInclusionRequest = UUID()
     private var stoppingShare: Task<Void, Error>?, closing: Task<Bool, Never>?
     private var publicationMayExist = false, cleanupFailed = false, opened = false
+    /// Session bookkeeping; not proof that a capture device or remote sender is active.
+    var ownershipDiagnostics: [String: Any] {
+        ["generation": generation.uuidString, "cameraGeneration": cameraGeneration.uuidString,
+         "publicationGeneration": publicationGeneration.uuidString, "opened": opened,
+         "captureOwnerPresent": captureOwner != nil, "retiredCaptureOwners": retiredContentOwners.count,
+         "cameraOwnerPresent": cameraOwner != nil, "cameraLease": cameraLeaseToken != nil,
+         "cameraRetiring": cameraRetirement != nil, "publicationMayExist": publicationMayExist,
+         "shareStopping": stoppingShare != nil, "closing": closing != nil, "cleanupFailed": cleanupFailed]
+    }
     private var liveCameraHandover = false
     #if DEBUG
     var includedCameraTrackForTesting: LKRTCVideoTrack? { cameraTrack }

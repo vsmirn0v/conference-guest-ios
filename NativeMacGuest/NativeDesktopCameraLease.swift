@@ -97,6 +97,12 @@ import LiveKitWebRTC
     // for the process lifetime, including failures reported by a retired token.
     private var quarantinedOwners: [UUID: AnyObject] = [:]
 
+    var ownershipDiagnostics: [String: Any] {
+        ["reservation": owner.map { $0.kind == .live ? "live" : "private-preview" } ?? "none",
+         "liveTrack": liveTrack != nil, "retiring": retiring != nil,
+         "cleanupFailed": cleanupFailed, "quarantinedCount": quarantinedOwners.count]
+    }
+
     func acquirePrivate(owner id: UUID, revoke: @escaping @MainActor () async throws -> Void) async throws -> Acquisition {
         guard !cleanupFailed else { throw NativeDesktopRTCError.cleanupFailed }
         if owner?.kind == .live { return liveTrack.map(Acquisition.borrowed) ?? .livePending }

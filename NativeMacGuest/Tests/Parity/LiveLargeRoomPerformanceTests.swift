@@ -31,9 +31,11 @@ import XCTest
             else { UserDefaults.standard.removeObject(forKey: "nativeDesktop.headsetMuteControls") }
         }
         let prefix = "Large-\(UUID().uuidString.prefix(8))-"
-        let adapter = NativeDesktopGuestEngine()
-        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest),
-            name: prefix + "receiver", title: "Live generated large room · \(senders)", quiet: true, engine: adapter)
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+        let destination = try JoinDestination.verified(url, engine: .guest)
+        let session = UniversalMeetingEngine.shared.makeSession(destination: destination, adapter: adapter)
+        let model = NativeDesktopMeetingModel(destination: destination,
+            name: prefix + "receiver", title: "Live generated large room · \(senders)", quiet: true, engine: session)
         model.viewMode = .gallery
         let meeting = NativeDesktopMeetingWindow(model: model)
         let heartbeat = LargeRoomHeartbeat()
@@ -141,7 +143,7 @@ import XCTest
             XCTAssertFalse(model.snapshot.playoutOn)
             // An explicit mute is always exercised. Real microphone unmute has
             // its own opt-in and requires pre-existing TCC authorization.
-            try await bounded(10, deadline: deadline) { try await adapter.setMicrophone(false) }
+            try await bounded(10, deadline: deadline) { try await session.setMicrophone(false) }
             if environment["NATIVE_DESKTOP_LARGE_ROOM_PHYSICAL_MICROPHONE"] == "1" {
                 guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw LiveLargeRoomFailure.microphoneNotAuthorized }
                 model.toggleMicrophone(); await model.waitForMediaActionsForTesting()

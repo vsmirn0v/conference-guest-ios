@@ -1033,6 +1033,7 @@ import XCTest
     func testJudgeOnThisMacChecksMoreOftenAndStepsAsideWhenTheMacIsBusy() async throws {
         let store = store()
         store.enabled = true; store.provider = try XCTUnwrap(AttentionProvider.defaults[.rapidMLX])
+        store.situationModes[.background] = .watch // This test exercises the Watch cadence, not the default.
         let (infra, _) = try await meeting("infra")
         infra.receiveLocalLineForTesting(.init(id: "i1", trackID: "a", text: "Привет", start: Date(), end: Date()))
         let coordinator = AttentionCoordinator(store: store)

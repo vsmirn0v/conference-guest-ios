@@ -40,6 +40,9 @@ struct NativeDesktopExternalSnapshot: Equatable {
 /// The shell owns screen capture and stops it before releasing the engine.
 @MainActor
 protocol NativeDesktopMeetingEngine: AnyObject {
+    /// Cached control-plane data only; never synchronously inspect media or SDK state.
+    var ownershipDiagnostics: [String: Any] { get }
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? { get }
     var onState: ((NativeDesktopExternalSnapshot) -> Void)? { get set }
     var onVideo: (([NativeDesktopExternalVideo]) -> Void)? { get set }
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)? { get set }
@@ -107,6 +110,8 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     func leave() async -> Bool
 }
 extension NativeDesktopMeetingEngine {
+    var ownershipDiagnostics: [String: Any] { ["executor": "unavailable"] }
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? { nil }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {}
     var supportsScreenOnlyVideo: Bool { false }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {

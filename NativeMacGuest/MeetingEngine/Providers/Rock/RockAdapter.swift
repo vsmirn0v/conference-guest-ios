@@ -1,54 +1,188 @@
 import AVFoundation
 import ConferenceCore
-import CoreImage
+import CoreMedia
 import Foundation
 import LiveKit
 import LiveKitWebRTC
 
-enum NativeDesktopRockError: LocalizedError {
-    case notConnected, staleOperation, noScreenFrames, cameraUnavailable, microphoneAccessRequired, cleanupFailed, audioOwnerBusy, assistantGateBusy, sharedAudioInputUnavailable
-    var errorDescription: String? {
-        switch self {
-        case .notConnected: L("Join a jam before changing media.")
-        case .staleOperation: L("The meeting changed before this action completed.")
-        case .noScreenFrames: L("Screen capture did not provide a video frame.")
-        case .cameraUnavailable: L("The selected camera is no longer available.")
-        case .microphoneAccessRequired: L("Allow microphone access before enabling headset mute controls.")
-        case .cleanupFailed: L("Microphone preparation could not stop. Quit and reopen the app before joining again.")
-        case .audioOwnerBusy: L("Stop the private microphone check before joining a meeting.")
-        case .assistantGateBusy: L("Wait for the assistant to release the microphone before joining this meeting.")
-        case .sharedAudioInputUnavailable: L("You can listen and use chat in this jam. To use the microphone or assistant speech, reopen the app and join this jam first.")
+@MainActor final class RockChatService: MeetingChatService {
+    private weak var adapter: RockAdapter?
+    private let store: ChatStore
+    private var approvedChatID: String?
+    private var approvedChatTasks: [String: Task<Void, Never>] = [:]
+    var onApprovedChatOutcome: ((String, MeetingWorkspaceEvent.Status) -> Void)?
+
+    init(adapter: RockAdapter, store: ChatStore) {
+        self.adapter = adapter
+        self.store = store
+    }
+
+    var canRead: Bool { true }
+    var canSend: Bool { store.canSend }
+    var supportsSending: Bool { true }
+    var managesChatStoreSendCallbacks: Bool { true }
+    var isReadyToSend: Bool { canSend }
+    var observesStoreCaptures: Bool { true }
+    var supportsApprovedCorrelation: Bool { true }
+    var unavailableReason: String? { nil }
+
+    func setApprovedWorkspaceChatID(_ id: String?) {
+        approvedChatID = id
+    }
+
+    func send(_ text: String) async throws {
+        guard let adapter, let room = adapter.room, adapter.snapshot.phase == .connected else {
+            throw MeetingSessionError.unavailable(L("Chat is unavailable before connecting."))
+        }
+        let packet = RoomChatPacket(id: UUID().uuidString, text: text)
+        let payload = try packet.encoded()
+        store.append(.init(id: packet.id, sender: L("You"), text: text, sentAt: Date(), isOwn: true, delivery: .pending))
+        do {
+            try await room.localParticipant.publish(data: payload, options: DataPublishOptions(topic: RoomChatPacket.topic, reliable: true))
+            store.setDelivery(.sent, for: packet.id)
+        } catch {
+            store.setDelivery(.failed, for: packet.id)
+            throw error
+        }
+    }
+
+    func retry(entry: ChatEntry) async throws {
+        try await publishChatAsync(id: entry.id, text: entry.text)
+    }
+
+    func sendApproved(_ text: String, id: String, permit: GuestChatDispatchPermit?) async -> MeetingWorkspaceEvent.Status {
+        _ = permit
+        guard let adapter, let room = adapter.room, adapter.snapshot.phase == .connected,
+              let payload = try? RoomChatPacket(id: id, text: text).encoded() else {
+            onApprovedChatOutcome?(id, .failed)
+            return .failed
+        }
+        let token = adapter.revision
+        var outcome: MeetingWorkspaceEvent.Status = .cancelled
+        let task = Task { @MainActor [weak self, weak adapter] in
+            guard let self, let adapter else { return }
+            defer { approvedChatTasks[id] = nil }
+            guard !Task.isCancelled, adapter.revision == token, adapter.room === room, room.connectionState == .connected else {
+                onApprovedChatOutcome?(id, .cancelled)
+                outcome = .cancelled
+                return
+            }
+            do {
+                try await room.localParticipant.publish(data: payload, options: DataPublishOptions(topic: RoomChatPacket.topic, reliable: true))
+                onApprovedChatOutcome?(id, .submitted)
+                if adapter.revision == token {
+                    store.append(.init(id: id, sender: L("You"), text: text, sentAt: .now, isOwn: true))
+                }
+                outcome = .submitted
+            } catch {
+                onApprovedChatOutcome?(id, .unknown)
+                outcome = .unknown
+            }
+        }
+        approvedChatTasks[id] = task
+        await task.value
+        return outcome
+    }
+
+    func cancelApprovedOutputs() {
+        for task in approvedChatTasks.values { task.cancel() }
+    }
+
+    func dispatchFromChatStore(_ text: String) {
+        if let id = approvedChatID {
+            Task { @MainActor [weak self] in
+                _ = await self?.sendApproved(text, id: id, permit: nil)
+            }
+            return
+        }
+        guard let adapter, adapter.snapshot.phase == .connected else { return }
+        let packet = RoomChatPacket(id: UUID().uuidString, text: text)
+        guard (try? packet.encoded()) != nil else { return }
+        store.append(.init(id: packet.id, sender: L("You"), text: text, sentAt: Date(), isOwn: true, delivery: .pending))
+        retryFromChatStore(id: packet.id, text: text)
+    }
+
+    func retryFromChatStore(id: String, text: String) {
+        guard let adapter, let room = adapter.room, adapter.snapshot.phase == .connected else { return }
+        let token = adapter.revision
+        Task { @MainActor [weak self, weak adapter] in
+            do {
+                try await room.localParticipant.publish(data: RoomChatPacket(id: id, text: text).encoded(),
+                    options: DataPublishOptions(topic: RoomChatPacket.topic, reliable: true))
+                guard let self, let adapter, adapter.revision == token else { return }
+                store.setDelivery(.sent, for: id)
+            } catch {
+                guard let self, let adapter, adapter.revision == token else { return }
+                store.setDelivery(.failed, for: id)
+            }
+        }
+    }
+
+    private func publishChatAsync(id: String, text: String) async throws {
+        guard let adapter, let room = adapter.room, adapter.snapshot.phase == .connected else {
+            throw MeetingSessionError.notConnected
+        }
+        let token = adapter.revision
+        do {
+            try await room.localParticipant.publish(data: RoomChatPacket(id: id, text: text).encoded(),
+                options: DataPublishOptions(topic: RoomChatPacket.topic, reliable: true))
+            if adapter.revision == token { store.setDelivery(.sent, for: id) }
+        } catch {
+            if adapter.revision == token { store.setDelivery(.failed, for: id) }
+            throw error
         }
     }
 }
-#if DEBUG
-struct NativeRockLiveMediaEvidence {
-    let outbound: [[String: Any]]
-    let cameraDeviceID: String?
-}
-#endif
 
-/// Rock admission and chat retain their shipping contracts; LiveKit owns its room transports.
-/// The only video bridge uses public SDK render/capture APIs and the same M156 framework.
-@MainActor final class NativeDesktopRockEngine: NSObject, NativeDesktopMeetingEngine, RoomDelegate {
+/// Rock adapter owning the pinned LiveKit `Room` and SDK recovery, exposing the
+/// unified `MeetingProviderAdapter` contract and enforcing sender-off registration
+/// across track publications, replacements, and SDK reconnects.
+@MainActor final class RockAdapter: NSObject, MeetingProviderAdapter, RoomDelegate {
+    private static let microphoneDiagnosticsQueue = DispatchQueue(label: "rock.microphone-diagnostics", qos: .utility)
+
+    let kind: MeetingEngineKind = .community
+    let recoveryExecutor: RecoveryExecutorKind = .liveKitSDK
+
+    private(set) var microphoneDiagnosticsGeneration = UUID()
+    private(set) var microphoneStartupMilliseconds: [String: Double] = [:]
+    var microphoneReadinessPolicy: (() -> Bool)?
+
     var onState: ((NativeDesktopExternalSnapshot) -> Void)?
+    var onSessionSnapshot: ((MeetingSessionSnapshot) -> Void)?
     var onVideo: (([NativeDesktopExternalVideo]) -> Void)?
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)?
     var onTitle: ((String) -> Void)?
+    var onFeatures: ((GuestMeetingSnapshot) -> Void)?
+    var onCapturedMessages: (([GuestMeetingMessage], Bool) -> Void)?
+    var onFeatureError: ((Error) -> Void)?
+
     private(set) var snapshot = NativeDesktopExternalSnapshot()
     private(set) var incomingVideo: [NativeDesktopExternalVideo] = []
     let chat: ChatStore
-    var factory: LKRTCPeerConnectionFactory? { renderFactory }
+    var factory: LKRTCPeerConnectionFactory? { attachment?.factory ?? renderFactory }
+
+    private lazy var chatServiceImpl = RockChatService(adapter: self, store: chat)
+    private lazy var unavailableReactionTranscript = UnavailableMeetingFeatureServices(reason: L("This feature is unavailable in this meeting."))
+    var chatService: (any MeetingChatService)? { chatServiceImpl }
+    var reactionService: (any MeetingReactionService)? { unavailableReactionTranscript }
+    var transcriptService: (any MeetingTranscriptService)? { unavailableReactionTranscript }
+    var participationService: (any MeetingParticipationService)? { nil }
+
     private var renderFactory: LKRTCPeerConnectionFactory?
     private let service: JamService
     private let collectStatistics: Bool
-    private var room: Room?
+    fileprivate var room: Room?
+    private var sessionID = UUID()
     private var invitation: URL?
     private var displayName = ""
-    private var revision = UUID()
+    fileprivate var revision = UUID()
     private var playoutIntent = true
-    // Local transcription (opt-in for Rock): audio stays subscribed while sound
-    // is off; its volume stays at zero, so nothing is heard.
+    private var microphoneIntent = false
+    private var cameraIntent = false
+    private var leaving = false
+    private var authorizedTalkEpoch: UInt64?
+    private var registeredSenderTrackIDs: [ObjectIdentifier] = []
+
     private var transcriptionRequested = false
     private var transcriptionHandler: (([MeetingAudioSource]) -> Void)?
     private var transcriptionSourceIDs: [String]?
@@ -66,79 +200,187 @@ struct NativeRockLiveMediaEvidence {
     private var ownsPreparedCapture = false
     private var audioPreparation: Task<Void, Error>?
     private var voicePlayback: Task<Bool, Never>?
-    var approvedChatID: String?
-    var approvedChatOutcome: ((String, MeetingWorkspaceEvent.Status) -> Void)?
-    private var approvedChatTasks: [String: Task<Void, Never>] = [:]
     private var audioProfile = GuestAudioProfile.speech
     private var audioLease: GuestAudioOwnerLease?
     private var concurrentAudio = false
     private var inputPermitted = true
-    /// R4: with one engine for all meetings, Rock's LiveKit factory is the shared owner's
-    /// and this room is one attachment on it; its microphone track is the attachment's sender.
     private let sharedAudio: SharedAudioEngine?
     private var attachment: MeetingAudioAttachment?
-#if DEBUG
+
+    #if DEBUG
     /// Tests: admission against a local LiveKit dev server (plain ws, no Jam service).
     var admissionForTesting: (() async throws -> (server: String, token: String, title: String))?
     var sharedAttachmentForTesting: MeetingAudioAttachment? { attachment }
-#endif
+    var roomForTesting: Room? { room }
+    #endif
 
     init(service: JamService = JamService(), chat: ChatStore? = nil, collectStatistics: Bool = false,
-         sharedAudio: SharedAudioEngine? = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared : nil) {
-        self.service = service; self.chat = chat ?? ChatStore(); self.collectStatistics = collectStatistics
+         sharedAudio: SharedAudioEngine? = nil) {
+        self.service = service
+        self.chat = chat ?? ChatStore()
+        self.collectStatistics = collectStatistics
         self.sharedAudio = sharedAudio
         super.init()
         subscriptions.onError = { [weak self] error in
             guard let self else { return }
-            subscriptionFailure = error; snapshot.lastError = error.localizedDescription; emit()
+            self.subscriptionFailure = error
+            self.snapshot.lastError = error.localizedDescription
+            self.emit()
         }
     }
 
-    func connect(invitation: URL, name: String, quiet: Bool) async throws {
+    var capabilities: MeetingSessionCapabilities {
+        .rock(supportsMicrophone: microphoneRestriction == nil)
+    }
+
+    var connectionIdentity: MeetingConnectionIdentity? {
+        guard let room, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { return nil }
+        let scope = room.name ?? invitation?.lastPathComponent ?? ""
+        return MeetingConnectionIdentity(sessionID: sessionID, provider: .community, generation: revision, providerScope: scope)
+    }
+
+    var sessionSnapshot: MeetingSessionSnapshot {
+        MeetingSessionSnapshot(
+            phase: snapshot.phase,
+            connectionIdentity: connectionIdentity,
+            intent: MeetingMediaIntent(microphoneOn: microphoneIntent, cameraOn: cameraIntent, playoutOn: playoutIntent, sharing: screenPublication != nil, playoutVolume: meetingVolume),
+            effective: MeetingEffectiveMedia(microphoneOn: snapshot.microphoneOn, cameraOn: snapshot.cameraOn, playoutOn: snapshot.playoutOn, sharing: snapshot.sharing, microphoneLevel: snapshot.microphoneLevel, physicallyMuted: !(attachment?.anySenderEnabled ?? snapshot.microphoneOn)),
+            permissions: MeetingMediaPermission(canShareMicrophone: inputPermitted && microphoneRestriction == nil, canShareCamera: true, canShareScreen: true, microphoneRestriction: microphoneRestriction),
+            capabilities: capabilities,
+            participants: snapshot.participants,
+            lastError: snapshot.lastError,
+            endedByOrganizer: snapshot.endedByOrganizer,
+            recoveryExecutor: recoveryExecutor
+        )
+    }
+
+    var ownershipDiagnostics: [String: Any] {
+        ["executor": recoveryExecutor.rawValue,
+         "revision": revision.uuidString,
+         "microphoneDiagnosticsGeneration": microphoneDiagnosticsGeneration.uuidString,
+         "registeredSenderCount": attachment?.registeredSenderCount ?? 0,
+         "senderEnabled": attachment?.anySenderEnabled ?? false,
+         "talkRole": attachment?.isTalk ?? false]
+    }
+
+    var privateAudioLevel: Float? { nil }
+    var supportsLocalTranscription: Bool { true }
+    var supportsParticipantVolume: Bool { true }
+    var supportsScreenOnlyVideo: Bool { true }
+    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && room != nil && !waitingForSharedAudioInput }
+    var voiceMicrophoneGateIsClosed: Bool {
+        ownsVoiceInput && hasSharedAudioInputRoute && AudioManager.shared.mixer.micVolume == 0
+    }
+    var microphoneRestriction: String? {
+        waitingForSharedAudioInput ? NativeDesktopRockError.sharedAudioInputUnavailable.localizedDescription : nil
+    }
+
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard snapshot.phase == .connected, let room else { return nil }
+        let revision = revision, generation = microphoneDiagnosticsGeneration
+        return GuestMicrophoneTrackProbe(queue: .rockSDK, isCurrent: { [weak self, weak room] in
+            guard let self, let room else { return false }
+            return self.snapshot.phase == .connected && self.room === room && self.revision == revision
+                && self.microphoneDiagnosticsGeneration == generation
+        }, start: { [weak room] deadline, finish in
+            Self.microphoneDiagnosticsQueue.async { [weak room] in
+                guard DispatchTime.now() < deadline, let tracks = Self.diagnosticMicrophoneTracks(room) else {
+                    finish(.unavailable, ProcessInfo.processInfo.systemUptime)
+                    return
+                }
+                var state: GuestMicrophoneTrackObservation = tracks.isEmpty ? .noTrack : .disabled
+                for track in tracks {
+                    guard DispatchTime.now() < deadline, let enabled = track.read() else {
+                        finish(.unavailable, ProcessInfo.processInfo.systemUptime)
+                        return
+                    }
+                    if enabled { state = .enabled; break }
+                }
+                let uptime = ProcessInfo.processInfo.systemUptime
+                guard DispatchTime.now() < deadline, let current = Self.diagnosticMicrophoneTracks(room),
+                      Set(current.map(\.identity)) == Set(tracks.map(\.identity)) else {
+                    finish(.unavailable, uptime)
+                    return
+                }
+                finish(state, uptime)
+            }
+        })
+    }
+
+    private struct DiagnosticMicrophoneTrack {
+        let identity: ObjectIdentifier
+        let read: @Sendable () -> Bool?
+    }
+
+    private nonisolated static func diagnosticMicrophoneTracks(_ room: Room?) -> [DiagnosticMicrophoneTrack]? {
+        guard let room, room.connectionState == .connected else { return nil }
+        let publications = room.localParticipant.audioTracks.filter { $0.source == .microphone }
+        guard publications.count <= 4 else { return nil }
+        let tracks = publications.compactMap { publication -> DiagnosticMicrophoneTrack? in
+            guard let track = publication.track as? LocalAudioTrack else { return nil }
+            return DiagnosticMicrophoneTrack(identity: ObjectIdentifier(track),
+                                             read: { [weak track] in track?.sharedEngineSenderEnabled })
+        }
+        return tracks.count == publications.count ? tracks : nil
+    }
+
+    func connect(invitation: URL, name: String, quiet: Bool, sessionID: MeetingSessionID) async throws {
+        self.sessionID = sessionID
         try await connect(invitation: invitation, name: name, quiet: quiet, resetChat: true)
     }
+
     private func connect(invitation: URL, name: String, quiet: Bool, resetChat: Bool) async throws {
         guard !ownsPreparedCapture, audioLease == nil, attachment == nil else { throw NativeDesktopRockError.cleanupFailed }
         guard room == nil else { throw NativeDesktopRockError.staleOperation }
         let target = try JamTarget.parseCompatibleInvitation(invitation.absoluteString)
         let token = UUID(); revision = token
+        leaving = false
+        microphoneIntent = false
+        cameraIntent = false
+        authorizedTalkEpoch = nil
+        registeredSenderTrackIDs = []
         self.invitation = target.invitationURL; displayName = name; playoutIntent = !quiet
         if resetChat { chat.clear(); audioProfile = .saved }
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         emit()
         do {
             let admitted: (server: String, token: String, title: String)
-#if DEBUG
+            #if DEBUG
             if let admissionForTesting { admitted = try await admissionForTesting() } else {
                 let credentials = try await service.join(target, name: name)
                 admitted = (credentials.serverURL.absoluteString, credentials.participantToken, credentials.jam.title)
             }
-#else
+            #else
             let credentials = try await service.join(target, name: name)
             admitted = (credentials.serverURL.absoluteString, credentials.participantToken, credentials.jam.title)
-#endif
+            #endif
             guard revision == token, !Task.isCancelled else { throw CancellationError() }
             if let shared = try await attachSharedAudio(quiet: quiet) {
                 attachment = shared
                 guard revision == token, !Task.isCancelled else { throw CancellationError() }
             } else {
-#if DEBUG || NATIVE_LEGACY_AUDIO
-                guard let lease = GuestAudioOwnerLease(privateCheck: false, concurrent: concurrentAudio) else { throw NativeDesktopRockError.audioOwnerBusy }
+                #if DEBUG || NATIVE_LEGACY_AUDIO
+                guard let lease = GuestAudioOwnerLease(privateCheck: false, concurrent: concurrentAudio) else {
+                    throw NativeDesktopRockError.audioOwnerBusy
+                }
                 audioLease = lease
-#else
-                // The shared-only release must never silently start a second engine.
+                #else
                 throw NativeDesktopRockError.audioOwnerBusy
-#endif
+                #endif
             }
-            if renderFactory == nil {
-                renderFactory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            if attachment == nil && renderFactory == nil {
+                let fallback = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
                     decoderFactory: LKRTCDefaultVideoDecoderFactory())
+                var unavailable = LKRTCAudioEngineAvailability()
+                unavailable.isInputAvailable = ObjCBool(false)
+                unavailable.isOutputAvailable = ObjCBool(false)
+                _ = fallback.audioDeviceModule.setEngineAvailability(unavailable)
+                renderFactory = fallback
             }
             let room = Room(delegate: self, roomOptions: RoomOptions(defaultAudioCaptureOptions: NativeRockAudioPolicy.captureOptions(audioProfile),
                 adaptiveStream: false, dynacast: true,
                 suspendLocalVideoTracksInBackground: false, reportRemoteTrackStatistics: collectStatistics))
             self.room = room
-            // No automatic microphone publication and no receive-audio race for quiet joins.
             try await room.connect(url: admitted.server, token: admitted.token,
                 connectOptions: ConnectOptions(autoSubscribe: false, enableMicrophone: false))
             guard revision == token, self.room === room, !Task.isCancelled else {
@@ -147,8 +389,9 @@ struct NativeRockLiveMediaEvidence {
             snapshot.phase = .connected
             onTitle?(admitted.title)
             chat.canSend = true
-            chat.onSend = { [weak self] in self?.sendChat($0) }
-            chat.onRetry = { [weak self] in self?.publishChat(id: $0.id, text: $0.text) }
+            chat.onSend = { [weak chatServiceImpl] in chatServiceImpl?.dispatchFromChatStore($0) }
+            chat.onRetry = { [weak chatServiceImpl] in chatServiceImpl?.retryFromChatStore(id: $0.id, text: $0.text) }
+            reconcileLocalAudioPublication(in: room, reason: "connect")
             try await subscribe(room)
             refresh(room)
         } catch {
@@ -157,7 +400,8 @@ struct NativeRockLiveMediaEvidence {
                 let failedRoom = room; room = nil
                 await failedRoom?.disconnect()
                 let clean = await releaseAudioOwnership(after: failedRoom)
-                snapshot.phase = .failed; snapshot.lastError = clean ? error.localizedDescription : NativeDesktopRockError.cleanupFailed.localizedDescription
+                snapshot.phase = .failed
+                snapshot.lastError = clean ? error.localizedDescription : NativeDesktopRockError.cleanupFailed.localizedDescription
                 snapshot.microphoneOn = false; snapshot.cameraOn = false; chat.canSend = false
                 emit()
             }
@@ -165,16 +409,30 @@ struct NativeRockLiveMediaEvidence {
         }
     }
 
-    /// Manual retry obtains a fresh bounded admission token and starts with capture off.
+    func abortPendingStartup() {
+        revision = UUID()
+        microphoneIntent = false
+        cameraIntent = false
+        authorizedTalkEpoch = nil
+        voicePlayback?.cancel()
+        attachment?.suppress()
+        chatServiceImpl.cancelApprovedOutputs()
+    }
+
     func reconnect() async throws {
         guard let invitation else { throw NativeDesktopRockError.notConnected }
         let name = displayName, quiet = !playoutIntent
         guard await disconnect(clearChat: false) else { throw NativeDesktopRockError.cleanupFailed }
         try await connect(invitation: invitation, name: name, quiet: quiet, resetChat: false)
     }
+
     func setMicrophone(_ enabled: Bool) async throws {
         let room = try connectedRoom(), token = revision
-        if !enabled { voicePlayback?.cancel() }
+        if !enabled {
+            microphoneIntent = false
+            authorizedTalkEpoch = nil
+            voicePlayback?.cancel()
+        }
         if enabled {
             guard inputPermitted else { throw NativeDesktopRockError.notConnected }
             guard !waitingForSharedAudioInput else { throw NativeDesktopRockError.sharedAudioInputUnavailable }
@@ -184,21 +442,21 @@ struct NativeRockLiveMediaEvidence {
         }
         if let attachment, let sharedAudio {
             try await setSharedMicrophone(enabled, room: room, attachment: attachment, engine: sharedAudio, token: token)
-            refresh(room); return
+            refresh(room)
+            return
         }
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         _ = try await room.localParticipant.setMicrophone(enabled: enabled, captureOptions: NativeRockAudioPolicy.captureOptions(audioProfile))
         guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
+        microphoneIntent = enabled
         refresh(room)
-#else
+        #else
         throw NativeDesktopRockError.audioOwnerBusy
-#endif
+        #endif
     }
 
-    // MARK: Shared audio engine (R4)
+    // MARK: Shared audio engine (R4/P6)
 
-    /// Attaches to the shared engine and hands LiveKit its factory. Nil keeps Rock on its
-    /// own engine (flag off, or LiveKit already made its own factory in this process).
     private func attachSharedAudio(quiet: Bool) async throws -> MeetingAudioAttachment? {
         guard let sharedAudio else { return nil }
         guard await sharedAudio.retirePrewarmedOwnerBeforeLiveKit() else { throw NativeDesktopRockError.cleanupFailed }
@@ -217,43 +475,136 @@ struct NativeRockLiveMediaEvidence {
             throw NativeDesktopRockError.cleanupFailed
         }
         _ = await attached.setSound(!quiet)
-        if inputPermitted, sharedAudio.talkMeetingID == nil { _ = await attached.assumeTalk() }
+        if inputPermitted, sharedAudio.talkMeetingID == nil {
+            if await attached.assumeTalk() {
+                authorizedTalkEpoch = attached.talkEpoch
+            }
+        }
         return attached
     }
 
-    /// Input is activated and the module unmuted before LiveKit publishes (publishing waits
-    /// for a captured frame); the published track is then this room's sender, enabled only
-    /// by the engine. Muting turns the sender off at once, then LiveKit and the module.
     private func setSharedMicrophone(_ enabled: Bool, room: Room, attachment: MeetingAudioAttachment,
                                      engine: SharedAudioEngine, token: UUID) async throws {
         guard enabled else {
+            microphoneIntent = false
+            authorizedTalkEpoch = nil
             attachment.suppress()
             _ = try await room.localParticipant.setMicrophone(enabled: false)
             _ = await attachment.setMuted(true)
+            reconcileLocalAudioPublication(in: room, reason: "mute")
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             return
         }
-        guard attachment.isTalk, !waitingForSharedAudioInput, await engine.activateInput(for: attachment),
+        guard attachment.isTalk, let expectedEpoch = attachment.talkEpoch,
+              !waitingForSharedAudioInput, await engine.activateInput(for: attachment),
               hasSharedAudioInputRoute else { throw NativeDesktopRockError.sharedAudioInputUnavailable }
-        guard revision == token, self.room === room, await attachment.setMuted(false),
-              hasSharedAudioInputRoute else { attachment.suppress(); throw NativeDesktopRockError.staleOperation }
+        authorizedTalkEpoch = expectedEpoch
+        microphoneIntent = true
+        guard revision == token, self.room === room, await attachment.setMuted(false, epoch: expectedEpoch),
+              hasSharedAudioInputRoute else {
+            microphoneIntent = false
+            authorizedTalkEpoch = nil
+            attachment.suppress()
+            throw NativeDesktopRockError.staleOperation
+        }
         do {
             _ = try await room.localParticipant.setMicrophone(enabled: true, captureOptions: NativeRockAudioPolicy.captureOptions(audioProfile))
-        } catch { attachment.suppress(); throw error }
+        } catch {
+            microphoneIntent = false
+            authorizedTalkEpoch = nil
+            attachment.suppress()
+            throw error
+        }
         registerMicrophoneSender(room, attachment: attachment)
-        guard revision == token, self.room === room, hasSharedAudioInputRoute, await attachment.setMuted(false) else {
-            attachment.suppress(); _ = try? await room.localParticipant.setMicrophone(enabled: false)
+        guard revision == token, self.room === room, attachment.isTalk,
+              attachment.talkEpoch == expectedEpoch, hasSharedAudioInputRoute,
+              await attachment.setMuted(false, epoch: expectedEpoch) else {
+            microphoneIntent = false
+            authorizedTalkEpoch = nil
+            attachment.suppress()
+            _ = try? await room.localParticipant.setMicrophone(enabled: false)
             throw NativeDesktopRockError.staleOperation
         }
     }
 
     private func registerMicrophoneSender(_ room: Room, attachment: MeetingAudioAttachment) {
+        let tracks = room.localParticipant.audioTracks
+            .filter { $0.source == .microphone }
+            .compactMap { $0.track as? LocalAudioTrack }
         attachment.removeAllSenders()
-        for publication in room.localParticipant.audioTracks where publication.source == .microphone {
-            guard let track = publication.track as? LocalAudioTrack else { continue }
+        for track in tracks {
             attachment.addSender(NativeRockMicrophoneSender(track: track))
         }
+        registeredSenderTrackIDs = tracks.map(ObjectIdentifier.init)
     }
+
+    /// Ensures every new, replaced, or reconnected `LocalAudioTrack` starts with
+    /// `sharedEngineSenderEnabled = false`, and only enables when the current room,
+    /// active talk epoch, connection state, and explicit user/voice-reply authorization still hold.
+    @MainActor func reconcileLocalAudioPublication(in room: Room, reason: String) {
+        guard self.room === room else { return }
+        microphoneDiagnosticsGeneration = UUID()
+        let tracks = room.localParticipant.audioTracks
+            .filter { $0.source == .microphone }
+            .compactMap { $0.track as? LocalAudioTrack }
+        let currentIDs = tracks.map(ObjectIdentifier.init)
+        let tracksChanged = currentIDs != registeredSenderTrackIDs || reason == "reconnect"
+
+        if let attachment {
+            if tracksChanged {
+                attachment.removeAllSenders()
+                for track in tracks {
+                    attachment.addSender(NativeRockMicrophoneSender(track: track))
+                }
+                registeredSenderTrackIDs = currentIDs
+            }
+            let currentEpoch = attachment.talkEpoch
+            let epochMatches = authorizedTalkEpoch == nil || currentEpoch == authorizedTalkEpoch
+            let authorized = !leaving &&
+                room.connectionState == .connected &&
+                attachment.isTalk &&
+                epochMatches &&
+                inputPermitted &&
+                hasSharedAudioInputRoute &&
+                (microphoneIntent || voicePlayback != nil)
+            if !authorized {
+                attachment.suppress()
+                for track in tracks { track.sharedEngineSenderEnabled = false }
+                if !attachment.isTalk || !inputPermitted || !epochMatches {
+                    microphoneIntent = false
+                    authorizedTalkEpoch = nil
+                }
+                if !microphoneIntent && voicePlayback == nil && room.localParticipant.isMicrophoneEnabled() {
+                    let token = revision
+                    Task { @MainActor [weak self, weak room] in
+                        guard let self, let room, self.room === room, self.revision == token,
+                              !self.microphoneIntent, self.voicePlayback == nil else { return }
+                        _ = try? await room.localParticipant.setMicrophone(enabled: false)
+                    }
+                }
+            } else if tracksChanged && microphoneIntent, let expectedEpoch = currentEpoch {
+                let token = revision
+                Task { @MainActor [weak self, weak room, weak attachment] in
+                    guard let self, let room, let attachment,
+                          self.room === room, self.revision == token,
+                          !self.leaving, self.microphoneIntent,
+                          attachment.isTalk, attachment.talkEpoch == expectedEpoch else {
+                        attachment?.suppress()
+                        return
+                    }
+                    if !(await attachment.setMuted(false, epoch: expectedEpoch)) {
+                        attachment.suppress()
+                    }
+                }
+            }
+        } else {
+            registeredSenderTrackIDs = currentIDs
+            if leaving || (!microphoneIntent && voicePlayback == nil) {
+                for track in tracks { track.sharedEngineSenderEnabled = false }
+            }
+        }
+    }
+
     func setCamera(_ enabled: Bool) async throws {
         let room = try connectedRoom(), token = revision
         var options: CameraCaptureOptions?
@@ -286,12 +637,14 @@ struct NativeRockLiveMediaEvidence {
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             try Task.checkCancellation()
         }
+        cameraIntent = enabled
         _ = try await room.localParticipant.setCamera(enabled: enabled,
             captureOptions: options,
             publishOptions: VideoPublishOptions(preferredCodec: .h264))
         guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
         refresh(room)
     }
+
     func prepareMutedCaptureForAccessories() async throws {
         let room = try connectedRoom(), token = revision
         guard inputPermitted, !snapshot.microphoneOn, !ownsPreparedCapture else { return }
@@ -299,13 +652,12 @@ struct NativeRockLiveMediaEvidence {
             throw NativeDesktopRockError.microphoneAccessRequired
         }
         if let audioPreparation { try await audioPreparation.value; return }
-        // Shared engine: the talk meeting's input starts muted there; nothing is published.
         if let attachment, let sharedAudio {
             guard !waitingForSharedAudioInput, await sharedAudio.activateInput(for: attachment),
                   hasSharedAudioInputRoute else { throw NativeDesktopRockError.sharedAudioInputUnavailable }
             return
         }
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         let task = Task { @MainActor in
             let previous = await Task.detached { AudioManager.shared.isRecordingAlwaysPreparedMode }.value
             guard !previous else { return }
@@ -318,19 +670,21 @@ struct NativeRockLiveMediaEvidence {
                 ownsPreparedCapture = false
                 throw NativeDesktopRockError.staleOperation
             }
-            // No LocalAudioTrack is published by preparation; only the input pipeline is ready.
             refresh(room)
         }
         audioPreparation = task
         defer { audioPreparation = nil }
         try await task.value
-#else
+        #else
         throw NativeDesktopRockError.audioOwnerBusy
-#endif
+        #endif
     }
+
+    func setMicrophoneReadinessForRecovery(_ enabled: Bool) { _ = enabled }
+
     func setPlayout(_ enabled: Bool) async throws {
         let room = try connectedRoom(), token = revision, previous = playoutIntent
-        if !enabled { voicePlayback?.cancel(); cancelApprovedChat() }
+        if !enabled { voicePlayback?.cancel(); chatServiceImpl.cancelApprovedOutputs() }
         playoutIntent = enabled
         do {
             if let attachment { _ = await attachment.setSound(enabled) }
@@ -338,13 +692,17 @@ struct NativeRockLiveMediaEvidence {
             try await subscribe(room)
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             refresh(room)
-        } catch { if revision == token { playoutIntent = previous }; throw error }
+        } catch {
+            if revision == token { playoutIntent = previous }
+            throw error
+        }
     }
-    var supportsLocalTranscription: Bool { true }
+
     func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?) {
         transcriptionHandler = handler; transcriptionSourceIDs = nil
         if let room { publishAudioSources(room) } else { handler?([]) }
     }
+
     func setTranscriptionRequested(_ requested: Bool) {
         guard transcriptionRequested != requested else { return }
         transcriptionRequested = requested
@@ -355,27 +713,24 @@ struct NativeRockLiveMediaEvidence {
             try? await subscribe(room); refresh(room)
         }
     }
+
     func setTranscriptionOutput(_ keep: Bool) async -> Bool {
         setTranscriptionRequested(keep)
-        // On the shared engine output must run (silenced) for transcription while sound is off.
         return await attachment?.setTranscriptionOutput(keep) ?? true
     }
-    // Voice replies go through LiveKit's own input mixer: its microphone volume
-    // is the gate, and app audio is mixed into what the room receives.
-    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && room != nil && !waitingForSharedAudioInput }
+
+    func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
+        _ = sink
+    }
+
     private var ownsVoiceInput: Bool { inputPermitted && (attachment?.isTalk ?? (audioLease != nil)) }
     private var waitingForSharedAudioInput: Bool {
         attachment != nil && sharedAudio?.guestOwner?.waitingForForwardedInputRoute == true
     }
-    var microphoneRestriction: String? {
-        waitingForSharedAudioInput ? NativeDesktopRockError.sharedAudioInputUnavailable.localizedDescription : nil
-    }
     private var hasSharedAudioInputRoute: Bool {
         attachment == nil || sharedAudio?.guestOwner?.hasForwardedInputRoute == true
     }
-    var voiceMicrophoneGateIsClosed: Bool {
-        ownsVoiceInput && hasSharedAudioInputRoute && AudioManager.shared.mixer.micVolume == 0
-    }
+
     func setMicrophoneGate(open: Bool) async -> Bool {
         guard ownsVoiceInput else { return false }
         if open { voicePlayback?.cancel() }
@@ -387,27 +742,29 @@ struct NativeRockLiveMediaEvidence {
         mixer.micVolume = open ? 1 : 0
         return (mixer.micVolume != 0) == open
     }
+
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool {
         await playVoiceReply(buffer, monitorLocally: true)
     }
-#if DEBUG
-    // LiveKit manual rendering has an outgoing input graph and no device output graph.
+
+    #if DEBUG
     func playVoiceReplyWithoutMonitorForTesting(_ buffer: AVAudioPCMBuffer) async -> Bool {
         await playVoiceReply(buffer, monitorLocally: false)
     }
-#endif
+    #endif
+
     private func playVoiceReply(_ buffer: AVAudioPCMBuffer, monitorLocally: Bool) async -> Bool {
         guard !Task.isCancelled, voicePlayback == nil, let room else { return false }
         let token = revision, mixer = AudioManager.shared.mixer
         let playback = Task { @MainActor [weak self, weak room] in
             guard let self else { return false }
-            let localGain = monitorLocally ? Float(meetingVolume) : nil
+            let localGain: Float? = (monitorLocally && meetingVolume > 0) ? Float(meetingVolume) : nil
             return await mixer.playNativeAppReply(buffer, localGain: localGain) {
-                guard let room, revision == token, self.room === room,
+                guard let room, self.revision == token, self.room === room,
                       room.connectionState == .connected, room.localParticipant.isMicrophoneEnabled(),
-                      inputPermitted, playoutIntent, meetingVolume > 0, hasSharedAudioInputRoute,
+                      self.inputPermitted, self.playoutIntent, self.meetingVolume > 0, self.hasSharedAudioInputRoute,
                       mixer.micVolume == 0 else { return false }
-                return attachment?.isTalk ?? (audioLease != nil)
+                return self.attachment?.isTalk ?? (self.audioLease != nil)
             }
         }
         voicePlayback = playback
@@ -418,7 +775,7 @@ struct NativeRockLiveMediaEvidence {
             playback.cancel()
         }
     }
-    /// Each remote participant's audio track, reported when the set changes.
+
     private func publishAudioSources(_ room: Room) {
         guard let transcriptionHandler else { return }
         var sources: [MeetingAudioSource] = []
@@ -432,25 +789,21 @@ struct NativeRockLiveMediaEvidence {
         guard ids != transcriptionSourceIDs else { return }
         transcriptionSourceIDs = ids; transcriptionHandler(sources)
     }
-    var supportsParticipantVolume: Bool { true }
+
     func setParticipantVolume(_ volume: Double, participantID: String) async {
         participantVolumes[participantID] = volume == 1 ? nil : volume
         if let room { await applyVolume(room) }
     }
+
     func setPlayoutVolume(_ volume: Double) async {
-        meetingVolume = volume.isFinite ? min(1, max(0, volume)) : 1
-        if meetingVolume == 0 { voicePlayback?.cancel() }
-        else if voicePlayback != nil, attachment?.isTalk ?? (audioLease != nil) {
-            AudioManager.shared.mixer.setNativeAppReplyMonitorGain(Float(meetingVolume))
-        }
+        meetingVolume = volume
         if let room { await applyVolume(room) }
     }
-    /// Newly subscribed tracks start at full level, so every subscription reapplies it.
+
     private func applyVolume(_ room: Room) async {
         for participant in room.remoteParticipants.values {
             let id = identifier(participant)
             for publication in participant.audioTracks {
-                // Read per track so an overlapping later change always wins.
                 let volume = playoutIntent ? meetingVolume * (participantVolumes[id] ?? 1) : 0
                 if let track = publication.track as? RemoteAudioTrack {
                     await Task.detached { track.volume = volume }.value
@@ -458,17 +811,30 @@ struct NativeRockLiveMediaEvidence {
             }
         }
     }
-    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {
-        try await setVisibleParticipantIDs(ids, focusedParticipantID: focusedParticipantID, cameras: true)
-    }
-    var supportsScreenOnlyVideo: Bool { true }
-    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {
-        guard visibleParticipantIDs != ids || self.focusedParticipantID != focusedParticipantID || receivesCameras != cameras else { return }
-        visibleParticipantIDs = ids; self.focusedParticipantID = focusedParticipantID; receivesCameras = cameras
+
+    func setVideoDemand(_ demand: MeetingVideoDemand) async throws {
+        guard visibleParticipantIDs != demand.visibleParticipantIDs ||
+              focusedParticipantID != demand.focusedParticipantID ||
+              receivesCameras != demand.receivesCameras else { return }
+        visibleParticipantIDs = demand.visibleParticipantIDs
+        focusedParticipantID = demand.focusedParticipantID
+        receivesCameras = demand.receivesCameras
         guard let room else { return }
         refresh(room)
         try await subscribe(room)
     }
+
+    func cameraCaptureDevice() async -> AVCaptureDevice? {
+        let camera = room?.localParticipant.videoTracks.first { $0.source == .camera && !$0.isMuted }?.track as? LocalVideoTrack
+        return (camera?.capturer as? CameraCapturer)?.device
+    }
+
+    func startPrivateAudioCheck() async throws {
+        throw NativeDesktopPrivateAudioError.unavailable
+    }
+
+    func stopPrivateAudioCheck() async throws {}
+
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {
         let room = try connectedRoom(), token = revision
         let oldBridge = screenBridge; screenBridge = nil
@@ -487,12 +853,10 @@ struct NativeRockLiveMediaEvidence {
             let local = await LocalVideoTrack.createBufferTrack(name: Track.screenShareVideoName, source: .screenShareVideo,
                 options: BufferCaptureOptions(dimensions: Dimensions(width: Int32(dimensions.width), height: Int32(dimensions.height)),
                     fps: NativeRockScreenPolicy.maximumFPS),
-                // Manual buffer tracks do not inherit the room's statistics option.
                 reportStatistics: collectStatistics)
             guard let capturer = local.capturer as? BufferCapturer else { throw NativeDesktopRockError.staleOperation }
             await bridge.setCapturer(capturer)
-            let publication = try await room.localParticipant.publish(videoTrack: local,
-                options: NativeRockScreenPolicy.publishOptions)
+            let publication = try await room.localParticipant.publish(videoTrack: local, options: NativeRockScreenPolicy.publishOptions)
             guard revision == token, self.room === room else {
                 try? await room.localParticipant.unpublish(publication: publication)
                 await bridge.detach(); throw NativeDesktopRockError.staleOperation
@@ -504,15 +868,29 @@ struct NativeRockLiveMediaEvidence {
             throw error
         }
     }
-    func configureConcurrentAudio(_ concurrent: Bool) { if room == nil { concurrentAudio = concurrent } }
-    /// LiveKit rooms share one ADM: releasing means unpublishing this room's
-    /// microphone and any prepared capture it owns, so it sends and holds nothing.
+
+    func configureConcurrentAudio(_ concurrent: Bool) {
+        if room == nil { concurrentAudio = concurrent }
+    }
+
     func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
+        await setPhysicalInputPermitted(permitted, keepDeviceWarm: false)
+    }
+
+    func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
+        _ = keepDeviceWarm
         inputPermitted = permitted
-        if !permitted { voicePlayback?.cancel() }
-        if permitted, let attachment { return await attachment.assumeTalk() }
+        if !permitted {
+            microphoneIntent = false
+            authorizedTalkEpoch = nil
+            voicePlayback?.cancel()
+        }
+        if permitted, let attachment {
+            let granted = await attachment.assumeTalk()
+            if granted { authorizedTalkEpoch = attachment.talkEpoch }
+            return granted
+        }
         guard !permitted, let room else { return true }
-        // The sender is off before LiveKit unpublishes it.
         attachment?.suppress()
         var clean = true
         do { _ = try await room.localParticipant.setMicrophone(enabled: false) } catch { clean = false }
@@ -521,25 +899,34 @@ struct NativeRockLiveMediaEvidence {
             do { try await room.localParticipant.unpublish(publication: local) } catch { clean = false }
         }
         audioPreparation?.cancel(); _ = try? await audioPreparation?.value; audioPreparation = nil
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         if ownsPreparedCapture {
             do {
                 try await Task.detached { try await AudioManager.shared.setRecordingAlwaysPreparedMode(false) }.value
                 ownsPreparedCapture = false
             } catch { clean = false }
         }
-#endif
+        #endif
         if let attachment {
             attachment.removeAllSenders()
+            registeredSenderTrackIDs = []
             clean = await attachment.relinquishTalk() && clean
         }
-        if self.room === room { refresh(room) }
+        refresh(room)
         return clean
     }
+
+    func prewarmInput() async -> Bool { false }
+
     func leave() async -> Bool { await disconnect(clearChat: true) }
+
     private func disconnect(clearChat: Bool) async -> Bool {
+        leaving = true
+        microphoneIntent = false
+        cameraIntent = false
+        authorizedTalkEpoch = nil
         voicePlayback?.cancel()
-        cancelApprovedChat()
+        chatServiceImpl.cancelApprovedOutputs()
         revision = UUID(); snapshot.phase = .leaving; emit()
         subscriptions.reset(); subscriptionFailure = nil
         audioPreparation?.cancel(); _ = try? await audioPreparation?.value; audioPreparation = nil
@@ -551,46 +938,56 @@ struct NativeRockLiveMediaEvidence {
         renderers = [:]; localRenderer = nil; incomingVideo = []
         onVideo?([]); onLocalCamera?(nil)
         for renderer in old { await renderer.detach() }
+        attachment?.suppress()
         await room?.disconnect()
         let clean = await releaseAudioOwnership(after: room)
+        registeredSenderTrackIDs = []
         if clearChat { chat.clear() } else { chat.canSend = false }
         let error = snapshot.lastError
         snapshot = .init(phase: clean ? .left : .failed, playoutOn: playoutIntent,
             lastError: clean ? nil : error); emit()
+        leaving = false
         return clean
     }
+
     private func releaseAudioOwnership(after room: Room?) async -> Bool {
         var preparedStopped = true
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         if ownsPreparedCapture {
             do {
                 try await Task.detached { try await AudioManager.shared.setRecordingAlwaysPreparedMode(false) }.value
                 ownsPreparedCapture = false
             } catch { preparedStopped = false; snapshot.lastError = error.localizedDescription }
         }
-#endif
+        #endif
         var clean = preparedStopped && (room == nil || room?.connectionState == .disconnected)
         if let attachment {
-            // The shared engine quarantines itself if the release fails.
             self.attachment = nil
             clean = await attachment.detach() && clean
             return clean
         }
-#if DEBUG || NATIVE_LEGACY_AUDIO
+        #if DEBUG || NATIVE_LEGACY_AUDIO
         if clean { audioLease = nil } else { GuestAudioOwnerLease.reportFailedStop() }
-#endif
+        #endif
         return clean
     }
+
     private func connectedRoom() throws -> Room {
         guard let room, room.connectionState == .connected, snapshot.phase == .connected else {
             throw NativeDesktopRockError.notConnected
         }
         return room
     }
-    private func emit() { onState?(snapshot) }
+
+    private func emit() {
+        onState?(snapshot)
+        onSessionSnapshot?(sessionSnapshot)
+    }
+
     private func identifier(_ participant: Participant) -> String {
         participant.identity?.stringValue ?? participant.sid?.stringValue ?? "local"
     }
+
     private func subscribe(_ room: Room) async throws {
         let token = revision
         let values = demands(in: room)
@@ -598,11 +995,11 @@ struct NativeRockLiveMediaEvidence {
             -> MediaConfigurationCoordinator<ObjectIdentifier, NativeRockTrackDemand>.Request? in
             guard let remote = publication as? RemoteTrackPublication, let demand = values[remote.sid.stringValue] else { return nil }
             return .init(key: ObjectIdentifier(remote), value: demand) { [weak self] requested in
-                guard let self, revision == token, self.room === room else { throw CancellationError() }
+                guard let self, self.revision == token, self.room === room else { throw CancellationError() }
                 try await remote.set(subscribed: requested.subscribed)
-                guard revision == token, self.room === room else { throw CancellationError() }
+                guard self.revision == token, self.room === room else { throw CancellationError() }
                 guard requested.subscribed, requested.ready, remote.kind == .video,
-                      demands(in: room)[remote.sid.stringValue] == requested else { return }
+                      self.demands(in: room)[remote.sid.stringValue] == requested else { return }
                 try await remote.set(enabled: true)
                 try await remote.set(videoQuality: requested.primary ? .high : .low)
                 try await remote.set(preferredFPS: requested.preferredFPS)
@@ -610,7 +1007,7 @@ struct NativeRockLiveMediaEvidence {
         }
         subscriptions.update(requests)
         await subscriptions.waitForReconciliation()
-        guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
+        guard revision == token, self.room === room else { return }
         let current = demands(in: room)
         if room.remoteParticipants.values.flatMap({ $0.trackPublications.values }).contains(where: { publication in
             current[publication.sid.stringValue].map { subscriptions.didFail(ObjectIdentifier(publication), value: $0) } == true
@@ -618,6 +1015,7 @@ struct NativeRockLiveMediaEvidence {
             throw subscriptionFailure ?? NativeDesktopRockError.staleOperation
         }
     }
+
     private func demands(in room: Room) -> [String: NativeRockTrackDemand] {
         let tracks = room.remoteParticipants.values.flatMap { participant in
             participant.trackPublications.values.compactMap { publication -> NativeRockRemoteTrack? in
@@ -627,11 +1025,12 @@ struct NativeRockLiveMediaEvidence {
                     muted: publication.isMuted, ready: publication.track != nil)
             }
         }
-        return NativeRockVideoPolicy.demand(for: tracks, visible: visibleParticipantIDs, focused: focusedParticipantID,
-                                            playout: playoutIntent || transcriptionRequested, cameras: receivesCameras)
+        return NativeRockVideoPolicy.demand(for: tracks, visible: visibleParticipantIDs,
+            focused: focusedParticipantID, playout: playoutIntent || transcriptionRequested, cameras: receivesCameras)
     }
+
     private func refresh(_ room: Room) {
-        guard self.room === room, let factory = renderFactory else { return }
+        guard self.room === room, let factory = self.factory else { return }
         let connected = room.connectionState == .connected
         if !connected { voicePlayback?.cancel() }
         snapshot.microphoneOn = connected && room.localParticipant.isMicrophoneEnabled()
@@ -679,57 +1078,10 @@ struct NativeRockLiveMediaEvidence {
         incomingVideo = videos; onVideo?(videos); emit()
         Task { [weak self] in
             do { try await self?.subscribe(room) }
-            catch { guard let self, self.room === room else { return }; snapshot.lastError = error.localizedDescription; emit() }
+            catch { guard let self, self.room === room else { return }; self.snapshot.lastError = error.localizedDescription; self.emit() }
         }
     }
-    private func sendChat(_ text: String) {
-        if let id = approvedChatID {
-            sendApprovedChat(text, id: id)
-            return
-        }
-        guard snapshot.phase == .connected else { return }
-        let packet = RoomChatPacket(id: UUID().uuidString, text: text)
-        guard (try? packet.encoded()) != nil else { return }
-        chat.append(.init(id: packet.id, sender: L("You"), text: text, sentAt: Date(), isOwn: true, delivery: .pending))
-        publishChat(id: packet.id, text: text)
-    }
-    func cancelApprovedChat() { for task in approvedChatTasks.values { task.cancel() } }
 
-    private func sendApprovedChat(_ text: String, id: String) {
-        guard let room, snapshot.phase == .connected,
-              let payload = try? RoomChatPacket(id: id, text: text).encoded() else {
-            approvedChatOutcome?(id, .failed)
-            return
-        }
-        let token = revision
-        approvedChatTasks[id] = Task { [weak self] in
-            guard let self else { return }
-            defer { approvedChatTasks[id] = nil }
-            guard !Task.isCancelled, revision == token, self.room === room, room.connectionState == .connected else {
-                approvedChatOutcome?(id, .cancelled)
-                return
-            }
-            do {
-                try await room.localParticipant.publish(data: payload,
-                    options: DataPublishOptions(topic: RoomChatPacket.topic, reliable: true))
-                approvedChatOutcome?(id, .submitted)
-                if revision == token {
-                    chat.append(.init(id: id, sender: L("You"), text: text, sentAt: .now, isOwn: true))
-                }
-            } catch { approvedChatOutcome?(id, .unknown) }
-        }
-    }
-    private func publishChat(id: String, text: String) {
-        guard let room, snapshot.phase == .connected else { return }
-        let token = revision
-        Task { [weak self] in
-            do {
-                try await room.localParticipant.publish(data: RoomChatPacket(id: id, text: text).encoded(),
-                    options: DataPublishOptions(topic: RoomChatPacket.topic, reliable: true))
-                guard let self, revision == token else { return }; chat.setDelivery(.sent, for: id)
-            } catch { guard let self, revision == token else { return }; chat.setDelivery(.failed, for: id) }
-        }
-    }
     #if DEBUG
     var liveMediaEvidence: NativeRockLiveMediaEvidence {
         let camera = room?.localParticipant.videoTracks.first { $0.source == .camera }?.track as? LocalVideoTrack
@@ -757,6 +1109,25 @@ struct NativeRockLiveMediaEvidence {
     }
     #endif
 
+    func selectedCameraDeviceIDForTesting() async -> String? {
+        #if DEBUG
+        return liveMediaEvidence.cameraDeviceID
+        #else
+        return nil
+        #endif
+    }
+
+    func outboundVideoStatisticsForTesting(screenOnly: Bool) async -> [[String: Any]] {
+        #if DEBUG
+        return liveMediaEvidence.outbound.filter { !screenOnly || $0["source"] as? String == "screen" }
+        #else
+        _ = screenOnly
+        return []
+        #endif
+    }
+
+    // MARK: RoomDelegate
+
     nonisolated func room(_ room: Room, participantDidConnect participant: RemoteParticipant) { changed(room) }
     nonisolated func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) { changed(room) }
     nonisolated func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) { changed(room) }
@@ -765,22 +1136,44 @@ struct NativeRockLiveMediaEvidence {
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) { changed(room) }
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didUnpublishTrack publication: RemoteTrackPublication) { changed(room) }
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
-        if publication.kind == .audio {
-            Task { @MainActor [weak self] in if let self, self.room === room { await applyVolume(room) } }
+        Task { @MainActor [weak self] in
+            guard let self, self.room === room else { return }
+            await applyVolume(room)
+            refresh(room)
         }
-        changed(room)
     }
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) { changed(room) }
+    nonisolated func room(_ room: Room, participant: LocalParticipant, didPublishTrack publication: LocalTrackPublication) {
+        microphonePublicationsChanged(room, reason: "publish")
+    }
+    nonisolated func room(_ room: Room, participant: LocalParticipant, didUnpublishTrack publication: LocalTrackPublication) {
+        microphonePublicationsChanged(room, reason: "unpublish")
+    }
+    nonisolated private func microphonePublicationsChanged(_ room: Room, reason: String) {
+        Task { @MainActor [weak self, weak room] in
+            guard let self, let room, self.room === room else { return }
+            reconcileLocalAudioPublication(in: room, reason: reason)
+        }
+    }
     nonisolated private func changed(_ room: Room) { Task { @MainActor [weak self] in self?.refresh(room) } }
     nonisolated func room(_ room: Room, didUpdateConnectionState state: ConnectionState, from oldState: ConnectionState) {
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
             switch state {
-            case .connected: snapshot.phase = .connected; snapshot.lastError = nil; chat.canSend = true
-            case .connecting: snapshot.phase = .connecting; chat.canSend = false
-            case .reconnecting: snapshot.phase = .reconnecting; chat.canSend = false; subscriptions.reset()
-            case .disconnecting: snapshot.phase = .leaving; chat.canSend = false
-            case .disconnected: snapshot.phase = .failed; chat.canSend = false
+            case .connected:
+                snapshot.phase = .connected; snapshot.lastError = nil; chat.canSend = true
+                reconcileLocalAudioPublication(in: room, reason: oldState == .reconnecting ? "reconnect" : "connected")
+            case .connecting:
+                snapshot.phase = .connecting; chat.canSend = false; microphoneDiagnosticsGeneration = UUID()
+            case .reconnecting:
+                snapshot.phase = .reconnecting; chat.canSend = false; subscriptions.reset(); microphoneDiagnosticsGeneration = UUID()
+                attachment?.suppress()
+            case .disconnecting:
+                snapshot.phase = .leaving; chat.canSend = false; microphoneDiagnosticsGeneration = UUID()
+                attachment?.suppress()
+            case .disconnected:
+                snapshot.phase = .failed; chat.canSend = false; microphoneDiagnosticsGeneration = UUID()
+                attachment?.suppress()
             @unknown default: break
             }
             refresh(room)
@@ -789,6 +1182,7 @@ struct NativeRockLiveMediaEvidence {
     nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
+            attachment?.suppress()
             snapshot.lastError = error?.localizedDescription; snapshot.phase = .failed; chat.canSend = false
             refresh(room)
         }
@@ -801,150 +1195,5 @@ struct NativeRockLiveMediaEvidence {
             chat.append(.init(id: packet.id, sender: participant?.name ?? L("Musician"), text: packet.text,
                 sentAt: Date(), isOwn: false))
         }
-    }
-}
-
-/// SDK sink attachment/detachment stays off the UI executor and is serialized.
-private final class NativeRockVideoBridge: NSObject, LiveKit.VideoRenderer, @unchecked Sendable {
-    let sdkTrack: VideoTrack
-    let track: LKRTCVideoTrack
-    private let source: LKRTCVideoSource
-    private let capturer: LKRTCVideoCapturer
-    private let queue = DispatchQueue(label: "native-rock-render-bridge", qos: .userInitiated)
-    private let frameGate = NSLock()
-    private var forwarding = true
-    private var attached = false
-    private var closed = false
-    @MainActor var isAdaptiveStreamEnabled: Bool { false }
-    @MainActor var adaptiveStreamSize: CGSize { .zero }
-    init(track: VideoTrack, factory: LKRTCPeerConnectionFactory) {
-        sdkTrack = track
-        source = factory.videoSource(forScreenCast: track.source == .screenShareVideo)
-        capturer = LKRTCVideoCapturer(delegate: source)
-        self.track = factory.videoTrack(with: source, trackId: "native-rock-" + UUID().uuidString)
-        super.init()
-    }
-    func attach() async {
-        await withCheckedContinuation { continuation in queue.async {
-            if !self.closed && !self.attached { self.sdkTrack.add(videoRenderer: self); self.attached = true }
-            continuation.resume()
-        } }
-    }
-    func detach() async {
-        retire()
-        await withCheckedContinuation { continuation in queue.async {
-            self.closed = true
-            if self.attached { self.sdkTrack.remove(videoRenderer: self); self.attached = false }
-            continuation.resume()
-        } }
-    }
-    func retire() { frameGate.lock(); forwarding = false; frameGate.unlock() }
-    func render(frame: LiveKit.VideoFrame) {
-        guard frameGate.try() else { return }; defer { frameGate.unlock() }
-        guard forwarding else { return }
-        guard let buffer = frame.toCVPixelBuffer(), let rotation = LKRTCVideoRotation(rawValue: frame.rotation.rawValue) else { return }
-        let native = LKRTCVideoFrame(buffer: LKRTCCVPixelBuffer(pixelBuffer: buffer), rotation: rotation, timeStampNs: frame.timeStampNs)
-        source.capturer(capturer, didCapture: native)
-    }
-}
-
-final class NativeRockScreenBridge: NSObject, LKRTCVideoRenderer, @unchecked Sendable {
-    private let track: LKRTCVideoTrack
-    private var capturer: BufferCapturer?
-    private let converter = NativeVideoPixelBuffer()
-    private let context = CIContext(options: [.cacheIntermediates: false])
-    private let queue = DispatchQueue(label: "native-rock-screen-bridge", qos: .userInitiated)
-    private let lock = NSLock()
-    private var active = true
-    private var queued = false
-    private var latest: LKRTCVideoFrame?
-    // Conversion, attachment and continuation state belong to the media queue.
-    private var attached = false
-    private var firstDimensions: CGSize?
-    private var dimensionWaiter: CheckedContinuation<CGSize, Error>?
-    private var buffered: (CVPixelBuffer, Int64, LiveKit.VideoRotation)?
-    private var pool: CVPixelBufferPool?
-    private var poolSize = CGSize.zero
-    init(track: LKRTCVideoTrack) { self.track = track }
-    private func locked<T>(_ operation: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return operation() }
-    func attachAndWaitForDimensions() async throws -> CGSize {
-        try await withTaskCancellationHandler(operation: {
-            try await withCheckedThrowingContinuation { continuation in queue.async {
-                guard self.locked({ self.active }) else { continuation.resume(throwing: CancellationError()); return }
-                if !self.attached { self.track.add(self); self.attached = true }
-                if let dimensions = self.firstDimensions { continuation.resume(returning: dimensions); return }
-                guard self.dimensionWaiter == nil else { continuation.resume(throwing: NativeDesktopRockError.staleOperation); return }
-                self.dimensionWaiter = continuation
-                self.queue.asyncAfter(deadline: .now() + 5) {
-                    self.dimensionWaiter?.resume(throwing: NativeDesktopRockError.noScreenFrames)
-                    self.dimensionWaiter = nil
-                }
-            } }
-        }, onCancel: { [weak self] in self?.cancel() })
-    }
-    func setCapturer(_ capturer: BufferCapturer) async {
-        await withCheckedContinuation { continuation in queue.async {
-            self.locked {
-                if self.active {
-                    self.capturer = capturer
-                    if let (pixels, timestamp, rotation) = self.buffered { capturer.capture(pixels, timeStampNs: timestamp, rotation: rotation) }
-                }
-            }
-            continuation.resume()
-        } }
-    }
-    private func cancel() {
-        locked { active = false; latest = nil }
-        queue.async {
-            self.dimensionWaiter?.resume(throwing: CancellationError()); self.dimensionWaiter = nil
-        }
-    }
-    func detach() async {
-        cancel()
-        await withCheckedContinuation { continuation in queue.async {
-            if self.attached { self.track.remove(self); self.attached = false }
-            self.capturer = nil; self.buffered = nil; self.pool = nil
-            continuation.resume()
-        } }
-    }
-    func setSize(_ size: CGSize) {}
-    func renderFrame(_ frame: LKRTCVideoFrame?) {
-        guard let frame else { return }
-        let enqueue = locked { () -> Bool in
-            guard active else { return false }
-            latest = frame
-            guard !queued else { return false }; queued = true; return true
-        }
-        if enqueue { queue.async { self.drain() } }
-    }
-    private func drain() {
-        let frame = locked { () -> LKRTCVideoFrame? in queued = false; defer { latest = nil }; return active ? latest : nil }
-        guard let frame, let input = converter.convert(frame), let buffer = fitted(input),
-              let rotation = LiveKit.VideoRotation(rawValue: frame.rotation.rawValue) else { return }
-        let dimensions = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
-        locked {
-            guard active else { return }
-            buffered = (buffer, frame.timeStampNs, rotation)
-            capturer?.capture(buffer, timeStampNs: frame.timeStampNs, rotation: rotation)
-            if firstDimensions == nil {
-                firstDimensions = dimensions; dimensionWaiter?.resume(returning: dimensions); dimensionWaiter = nil
-            }
-        }
-    }
-    private func fitted(_ buffer: CVPixelBuffer) -> CVPixelBuffer? {
-        let input = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
-        guard let output = NativeRockScreenPolicy.dimensions(input) else { return nil }
-        guard output != input else { return buffer }
-        if pool == nil || poolSize != output {
-            let fields: [CFString: Any] = [kCVPixelBufferWidthKey: Int(output.width), kCVPixelBufferHeightKey: Int(output.height),
-                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA, kCVPixelBufferIOSurfacePropertiesKey: [:]]
-            guard CVPixelBufferPoolCreate(nil, nil, fields as CFDictionary, &pool) == kCVReturnSuccess else { return nil }
-            poolSize = output
-        }
-        var resized: CVPixelBuffer?
-        guard let pool, CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool,
-            [kCVPixelBufferPoolAllocationThresholdKey: 4] as CFDictionary, &resized) == kCVReturnSuccess, let resized else { return nil }
-        let image = CIImage(cvPixelBuffer: buffer).transformed(by: CGAffineTransform(scaleX: output.width / input.width, y: output.height / input.height))
-        context.render(image, to: resized); return resized
     }
 }

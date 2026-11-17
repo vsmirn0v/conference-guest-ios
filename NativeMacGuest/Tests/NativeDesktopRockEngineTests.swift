@@ -164,9 +164,9 @@ private final class RockFrameSink: NSObject, LiveKit.VideoRenderer, @unchecked S
         var privateLease = GuestAudioOwnerLease(privateCheck: true)
         try expect(privateLease != nil, "A private fixture check acquired exclusive ownership")
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [AdmissionResponse.self]
-        let engine = NativeDesktopRockEngine(service: JamService(session: URLSession(configuration: configuration)))
+        let engine = RockAdapter(service: JamService(session: URLSession(configuration: configuration)), sharedAudio: nil)
         do {
-            try await engine.connect(invitation: URL(string: "https://rock.example.test/jams/audio-busy")!, name: "Guest", quiet: true)
+            try await engine.connect(invitation: URL(string: "https://rock.example.test/jams/audio-busy")!, name: "Guest", quiet: true, sessionID: UUID())
             throw RockTestError.assertion("Rock created audio beside a private physical owner")
         } catch NativeDesktopRockError.audioOwnerBusy { }
         try expect(engine.factory == nil && engine.snapshot.phase == .failed,
@@ -184,13 +184,13 @@ private final class RockFrameSink: NSObject, LiveKit.VideoRenderer, @unchecked S
             try demandPolicy(); try capturePolicies(); try await latestDemand(); try await nativeAspectScreenBridge(); try await sharedAudioOwnership()
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [AdmissionResponse.self]
-            let engine = NativeDesktopRockEngine(service: JamService(session: URLSession(configuration: configuration)))
+            let engine = RockAdapter(service: JamService(session: URLSession(configuration: configuration)))
             var states: [NativeDesktopExternalSnapshot] = []
             engine.onState = { states.append($0) }
             do { try await engine.setMicrophone(true); throw RockTestError.assertion("Microphone accepted before admission") }
             catch NativeDesktopRockError.notConnected { }
             do {
-                try await engine.connect(invitation: URL(string: "https://rock.example.test/jams/team")!, name: "Guest", quiet: true)
+                try await engine.connect(invitation: URL(string: "https://rock.example.test/jams/team")!, name: "Guest", quiet: true, sessionID: UUID())
                 throw RockTestError.assertion("A rejected admission connected")
             } catch JamServiceError.invalidName { }
             try expect(engine.snapshot.phase == .failed && !engine.chat.canSend && engine.factory == nil,
@@ -200,7 +200,7 @@ private final class RockFrameSink: NSObject, LiveKit.VideoRenderer, @unchecked S
             let firstLeave = await engine.leave(), secondLeave = await engine.leave()
             try expect(firstLeave && secondLeave && engine.snapshot.phase == .left, "Leave is safe before successful media admission")
             let pending = Task { @MainActor in
-                try await engine.connect(invitation: URL(string: "https://rock.example.test/jams/delayed")!, name: "Guest", quiet: false)
+                try await engine.connect(invitation: URL(string: "https://rock.example.test/jams/delayed")!, name: "Guest", quiet: false, sessionID: UUID())
             }
             while engine.snapshot.phase != .connecting { await Task.yield() }
             let left = await engine.leave()

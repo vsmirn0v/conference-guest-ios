@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "artifact": "native-macos-m156-screen-r5",
-  "destination": ".build/webrtc-m156-desktop-audio/native-framework-screen-r5",
-  "archive": "LiveKitWebRTC-m156-screen-r5.tar.gz",
-  "archiveSHA256": "9a8bd477b61fcce5c9e482b0ddaa31f3a91f3daee4352a418b2bc0368f65b52c",
-  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
-  "webrtcRevision": "19576e37870bfe5a0a910a32f98ff411f722f43a",
+  "artifact": "native-macos-m157-audio-route-r1",
+  "destination": ".build/webrtc-m157-desktop-audio/native-framework-audio-route-r1",
+  "archive": "LiveKitWebRTC-m157-audio-route-r1.tar.gz",
+  "archiveSHA256": "d988f9a69fd6cad70475981ab4c3ea39dace62e9c3d2f99fbe3a6dd73d5136d9",
+  "frameworkBinarySHA256": "87214268a7a0837ef1e85e1202f623c62c34fbc6c8a9f1a3381eed20acf67519",
+  "webrtcRevision": "95554e4a0c5c343fdc989387d9d0ce18e2a2294b",
   "files": {
     "LiveKitWebRTC.xcframework/Info.plist": {
       "type": "file",
@@ -161,7 +161,7 @@
     },
     "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCFieldTrials.h": {
       "type": "file",
-      "sha256": "addef2d91a571d2742aa829b7b5b320d184d5722e4d9673b05fb00f3fdaeeb8a"
+      "sha256": "112125b921496db60c4372ab5367a4cdd007024987522391b4101b49cd7a1f14"
     },
     "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Headers/RTCFileLogger.h": {
       "type": "file",
@@ -473,7 +473,7 @@
     },
     "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/LiveKitWebRTC": {
       "type": "file",
-      "sha256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845"
+      "sha256": "87214268a7a0837ef1e85e1202f623c62c34fbc6c8a9f1a3381eed20acf67519"
     },
     "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Modules/module.modulemap": {
       "type": "file",
@@ -481,7 +481,7 @@
     },
     "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Resources/Info.plist": {
       "type": "file",
-      "sha256": "072dd335624dbb21e45b846c08088e6b89a91012bc9ef20d50eaca0607d77ad6"
+      "sha256": "116c4389a50459d317128f67c804dfeea80ae35f875de3cbed13d27e610a9a78"
     },
     "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/Versions/A/Resources/PrivacyInfo.xcprivacy": {
       "type": "file",
@@ -493,7 +493,11 @@
     },
     "build-evidence.json": {
       "type": "file",
-      "sha256": "4625bb6734ce074d17cad699e3287d837bf786fed239002022b7729d67aaef0f"
+      "sha256": "ca9fd0699053d5e45cef9ee84ffed75c1d6d87dba7097e43a8a026a23f7c9113"
+    },
+    "licenses/THIRD_PARTY_NOTICES.md": {
+      "type": "file",
+      "sha256": "5397245633b50bc63821f82bae24b3209f2d5aa25de73e9ca4734a7fb38e1422"
     }
   }
 }

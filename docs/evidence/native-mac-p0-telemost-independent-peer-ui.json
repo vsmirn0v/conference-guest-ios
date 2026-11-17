@@ -1,0 +1,19 @@
+{
+  "provider": "telemost",
+  "status": "pass",
+  "signedAppBuild": "0.3.0 (112)",
+  "scenario": "Signed app received synthetic video from a separate test-only process",
+  "observations": [
+    "Two participants were visible",
+    "Two UI screenshots showed the synthetic pattern change",
+    "Local microphone and camera remained off",
+    "App returned Home after Leave"
+  ],
+  "probeFrameworkSHA256": "9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977",
+  "probeSHA256": "b2438270d8d6649ddf00b1f45178a4b9de83b10ea3fc78090c3eaa5afdc2d0de",
+  "limitations": [
+    "Visual inbound video witness only; no decoded counters, media latency, audio audibility, outgoing app tracks or physical audio quality verified.",
+    "The separate probe is a current-source test-only executable with synthetic audio and video, not the signed app.",
+    "A pair of UI screenshots is retained in computer-use output; no separate screenshot file was saved."
+  ]
+}

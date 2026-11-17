@@ -20,31 +20,46 @@ import XCTest
         GuestSystemAudio.microphoneAuthorizationOverrideForTesting = true
         defer { GuestSystemAudio.microphoneAuthorizationOverrideForTesting = nil }
 
-        let engine = SharedAudioEngine.live(manualRenderingForTesting: true)
+        let engine = SharedAudioEngine.live(manualRenderingForTesting: true, installIntoLiveKitOnCreate: true)
+        // P1: private check before any meeting installs the LiveKit factory/observer cleanly and releases cleanly.
+        ok(await engine.beginPrivateCheck(), "Cold private check succeeds on the shared owner")
+        ok(await engine.endPrivateCheck(), "Private check releases cleanly before meetings join")
+        XCTAssertTrue(engine.pinnedForProcess)
+        XCTAssertFalse(engine.privateCheckActive)
+
+        // P1: foreground prewarm before Rock adopts the already-pinned shared owner without restart.
+        engine.setForeground(true, microphone: true)
+        await engine.waitForWork()
         let firstGuest = try await engine.attach(meetingID: UUID())
         ok(await firstGuest.assumeTalk())
         let firstOwner = try XCTUnwrap(engine.guestOwner)
-        let legacyFixture = SpikeToneObserver()
-        firstOwner.setManualLegacyInputFixtureForTesting(legacyFixture)
-        defer { firstOwner.setManualLegacyInputFixtureForTesting(nil) }
-        ok(await firstOwner.prepareIdleInput(), "Start the original Guest owner's manual audio engine")
+        ok(await firstOwner.prepareIdleInput(), "Start the Guest owner's manual audio engine with forwarding active")
         XCTAssertTrue(firstOwner.hasCreatedAudioEngines)
         XCTAssertGreaterThan(firstOwner.snapshot["engineStarts"] as? Int ?? 0, 0)
         let roomName = "r4-rock-engine-\(UUID().uuidString.prefix(6))"
-        let rock = NativeDesktopRockEngine(sharedAudio: engine)
+        let rock = RockAdapter(sharedAudio: engine)
         rock.admissionForTesting = {
             ("ws://127.0.0.1:7880", SharedEngineRockSpikeTests.token(identity: "rock-talker", room: roomName), "R4")
         }
         let invitation = try XCTUnwrap(URL(string: "https://rock.example.test/jams/r4"))
-        try await rock.connect(invitation: invitation, name: "Talker", quiet: true)
+        try await rock.connect(invitation: invitation, name: "Talker", quiet: true, sessionID: UUID())
         let attachment = try XCTUnwrap(rock.sharedAttachmentForTesting, "Rock attached to the shared engine")
         XCTAssertTrue(engine.pinnedForProcess)
         XCTAssertEqual(engine.meetingIDs, [firstGuest.meetingID, attachment.meetingID])
         XCTAssertEqual(engine.talkMeetingID, firstGuest.meetingID)
-        XCTAssertTrue(firstOwner.waitingForForwardedInputRoute)
-        XCTAssertFalse(firstOwner.hasForwardedInputRoute)
+        XCTAssertFalse(firstOwner.waitingForForwardedInputRoute, "P1: factory/observer installed before first AVAudioEngine")
+        XCTAssertTrue(firstOwner.hasForwardedInputRoute, "P1: Guest-first engine already runs the forwarded LiveKit route")
         XCTAssertFalse(attachment.anySenderEnabled)
-        let legacyReleaseCount = firstOwner.snapshot["enginesReleased"] as? Int ?? 0
+
+        // While Guest holds talk, Guest closes gate, plays a voice reply on the forwarded mixer, and reopens gate.
+        ok(await firstGuest.setSound(true))
+        ok(await firstGuest.setMuted(false))
+        ok(firstGuest.setMicrophoneGate(open: false), "Guest closes forwarded microphone gate while Rock is attached")
+        XCTAssertTrue(firstGuest.participationVoiceGateClosed)
+        ok(await firstGuest.playVoiceReply(Self.voicedFixture(seconds: 0.25)), "Guest plays voice reply through forwarded mixer")
+        ok(firstGuest.setMicrophoneGate(open: true), "Guest reopens forwarded microphone gate")
+        ok(await firstGuest.setMuted(true))
+        ok(await firstGuest.setSound(false))
 
         let chatReceiver = RockLegacyChatReceiver()
         let listener = Room(delegate: chatReceiver, roomOptions: RoomOptions(reportRemoteTrackStatistics: true))
@@ -67,9 +82,16 @@ import XCTest
         try await rock.setPlayout(true)
         XCTAssertTrue(rock.snapshot.playoutOn)
         // The manual module has no microphone device. The other LiveKit peer
-        // publishes its synthetic capture so Rock can receive and transcribe it.
+        // publishes app audio through the shared forwarded mixer so Rock can receive and transcribe it.
         ok(await firstGuest.setMuted(false))
         _ = try await listener.localParticipant.setMicrophone(enabled: true)
+        let listenerTone = MicrophoneMoveTests.tone(seconds: 0.5, frequency: 440, amplitude: 0.3)
+        let listenerFeeder = Task { @MainActor in
+            while !Task.isCancelled {
+                AudioManager.shared.mixer.capture(appAudio: listenerTone)
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
         let receivedAudio = GuestPCMMeter()
         var currentAudioSource: MeetingAudioSource?
         var audioSink: MeetingAudioSink?
@@ -84,45 +106,29 @@ import XCTest
             if receivedAudio.snapshot.rms > 0.01 { break }
             try await Task.sleep(for: .milliseconds(20))
         }
+        listenerFeeder.cancel()
+        await listenerFeeder.value
         XCTAssertNotNil(currentAudioSource, "Rock subscribes to the remote audio track while Guest owns the engine")
-        XCTAssertGreaterThan(receivedAudio.snapshot.rms, 0.01, "Rock receives the legacy source's nonzero decoded PCM")
+        XCTAssertGreaterThan(receivedAudio.snapshot.rms, 0.01, "Rock receives the forwarded remote track's nonzero decoded PCM")
         if let audioSink { currentAudioSource?.detach(audioSink) }
         rock.setTranscriptionAudioHandler(nil)
         XCTAssertFalse(listener.remoteParticipants.values.contains { !$0.audioTracks.isEmpty }, "Rock has not published its microphone")
+
+        // P1: Move talk from Guest to Rock WITHOUT detaching Guest, and Rock unmutes immediately!
+        let unmuteStarted = ProcessInfo.processInfo.systemUptime
         ok(await rock.setPhysicalInputPermitted(true))
         XCTAssertEqual(engine.talkMeetingID, attachment.meetingID)
-        do { try await rock.setMicrophone(true); XCTFail("The legacy shared route cannot activate a Rock microphone") }
-        catch NativeDesktopRockError.sharedAudioInputUnavailable {}
-        let closedLegacyGate = await rock.setMicrophoneGate(open: false)
-        XCTAssertFalse(closedLegacyGate)
-        XCTAssertFalse(attachment.anySenderEnabled)
-        XCTAssertTrue(firstOwner.waitingForForwardedInputRoute)
-        let hasRawSender = listener.remoteParticipants.values.contains { !$0.audioTracks.isEmpty }
-        XCTAssertFalse(hasRawSender)
-        print("ROCK-LEGACY-LISTENER samples=\(receivedAudio.snapshot.samples) rms=\(receivedAudio.snapshot.rms) chatRoundTrip=\(chatRoundTrip) rawSender=\(hasRawSender)")
+        XCTAssertNil(rock.microphoneRestriction)
+        try await rock.setMicrophone(true)
+        let unmuteSeconds = ProcessInfo.processInfo.systemUptime - unmuteStarted
+        XCTAssertTrue(rock.snapshot.microphoneOn)
+        XCTAssertTrue(firstOwner.hasForwardedInputRoute)
+        XCTAssertTrue(attachment.anySenderEnabled, "Rock's published track is the attachment's sender and is on")
 
         for publication in listener.localParticipant.audioTracks {
             if let local = publication as? LocalTrackPublication { try await listener.localParticipant.unpublish(publication: local) }
         }
-        try await rock.setPlayout(false)
-        ok(await firstGuest.detach())
-        // The synthetic ADM forces output availability, unlike the physical
-        // engine. Simulate a native route loss after both senders are off.
-        let unavailable = LKRTCAudioEngineAvailability()
-        XCTAssertEqual(firstOwner.factory.audioDeviceModule.setEngineAvailability(unavailable), 0)
-        XCTAssertGreaterThan(firstOwner.snapshot["enginesReleased"] as? Int ?? 0, legacyReleaseCount)
-        XCTAssertFalse(firstOwner.waitingForForwardedInputRoute)
         let other = try await engine.attach(meetingID: UUID())
-        ok(await rock.setPhysicalInputPermitted(true))
-        XCTAssertEqual(engine.talkMeetingID, attachment.meetingID)
-
-        let unmuteStarted = ProcessInfo.processInfo.systemUptime
-        try await rock.setMicrophone(true)
-        let unmuteSeconds = ProcessInfo.processInfo.systemUptime - unmuteStarted
-
-        XCTAssertTrue(rock.snapshot.microphoneOn)
-        XCTAssertTrue(firstOwner.hasForwardedInputRoute, "A fresh SDK-owned graph authorized the Rock microphone")
-        XCTAssertTrue(attachment.anySenderEnabled, "Rock's published track is the attachment's sender and is on")
         let track = try await SharedEngineRockSpikeTests.remoteAudio(in: listener)
         try await Task.sleep(for: .seconds(1))
         let silent = try await Self.rate(track, seconds: 1.5)   // no microphone: silence (Opus DTX)
@@ -227,13 +233,61 @@ import XCTest
         let reopenedGate = await rock.setMicrophoneGate(open: true)
         XCTAssertTrue(reopenedGate)
 
-        // Leaving keeps the pinned owner (LiveKit holds its factory); the other meeting still runs on it.
+        // P6: Track-replacement / reconnect sender suppression while muted and after talk handover.
+        try await rock.setMicrophone(false)
+        XCTAssertFalse(rock.snapshot.microphoneOn)
+        XCTAssertFalse(attachment.anySenderEnabled)
+        try await Task.sleep(for: .milliseconds(300))
+        meter.reset()
+        if let rockRoom = rock.roomForTesting {
+            let genBefore = rock.microphoneDiagnosticsGeneration
+            rock.reconcileLocalAudioPublication(in: rockRoom, reason: "reconnect")
+            XCTAssertNotEqual(rock.microphoneDiagnosticsGeneration, genBefore)
+            XCTAssertFalse(attachment.anySenderEnabled, "Reconnect while muted keeps sender disabled")
+            let mutedTone = Task { @MainActor in
+                while !Task.isCancelled {
+                    AudioManager.shared.mixer.capture(appAudio: tone)
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            }
+            defer { mutedTone.cancel() }
+            try await Task.sleep(for: .milliseconds(600))
+            mutedTone.cancel()
+            await mutedTone.value
+            XCTAssertLessThan(meter.audibleSeconds, 0.05, "Muted reconnect transmits zero audible speech: \(meter.diagnostics)")
+
+            ok(await rock.setPhysicalInputPermitted(false))
+            ok(await other.assumeTalk())
+            let replacement = await LocalAudioTrack.createTrack()
+            XCTAssertTrue(replacement.sharedEngineSenderEnabled, "Fresh LiveKit track defaults to sender enabled before RoomDelegate registration")
+            let replacementPub = try await rockRoom.localParticipant.publish(audioTrack: replacement)
+            for _ in 0..<50 {
+                if !replacement.sharedEngineSenderEnabled { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTAssertFalse(replacement.sharedEngineSenderEnabled, "RoomDelegate didPublishTrack registers replacement track disabled when Rock lacks talk role")
+            XCTAssertFalse(attachment.anySenderEnabled, "Handover replacement track keeps sender disabled")
+            try await rockRoom.localParticipant.unpublish(publication: replacementPub)
+            ok(await other.relinquishTalk())
+        }
+
+        // P1: Rock-first -> move talk to Guest -> Guest unmutes, closes gate, plays voice reply on forwarded mixer, reopens gate.
+        ok(await firstGuest.setSound(false))
+        // Detach Rock cleanly and verify Guest stays active on the pinned engine.
         ok(await rock.leave())
         XCTAssertNotNil(engine.factory)
-        XCTAssertEqual(engine.meetingIDs, [other.meetingID])
+        XCTAssertEqual(Set(engine.meetingIDs), Set([firstGuest.meetingID, other.meetingID]))
+        ok(await firstGuest.assumeTalk())
+        ok(await firstGuest.setSound(true))
+        ok(await firstGuest.setMuted(false))
+        ok(firstGuest.setMicrophoneGate(open: false), "Guest closes gate on Rock-initialized forwarded mixer")
+        ok(await firstGuest.playVoiceReply(Self.voicedFixture(seconds: 0.25)), "Guest plays reply after Rock leaves")
+        ok(firstGuest.setMicrophoneGate(open: true))
+        ok(await firstGuest.detach())
         ok(await other.detach())
         XCTAssertNotNil(engine.factory, "The last meeting out idles a pinned owner instead of shutting it down")
         XCTAssertFalse(engine.cleanupFailed)
+        engine.setForeground(false, microphone: false)
     }
 
     /// Bytes a second received on the track; a counter reset (track unpublished) counts as none.

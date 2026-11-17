@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import ConferenceCore
 import Foundation
 import LiveKitWebRTC
 
@@ -22,7 +23,8 @@ import LiveKitWebRTC
     private var tiles: [String: CompanionVideoTile] = [:]
     private var videoOrder: [String] = []
     private var localTile: CompanionVideoTile?
-    private var session: GuestSession!
+    private var injectedSession: GuestSession?
+    private var meetingSession: MeetingSession?
     private var watcher: Task<Void, Never>?
     private var diagnosticsTask: Task<Void, Never>?
     private var connecting: Task<Void, Never>?
@@ -44,6 +46,32 @@ import LiveKitWebRTC
     private var terminalError: NativeGuestErrorCode?
     private(set) var finished = false
     private(set) var cleanupSucceeded = true
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard !finishing, !finished else { return nil }
+        if let meetingSession {
+            return meetingSession.microphoneTrackProbe?.checking { [weak self, weak meetingSession] in
+                guard let self, let meetingSession else { return false }
+                return !finishing && !finished && self.meetingSession === meetingSession
+            }
+        }
+        guard let session = injectedSession else { return nil }
+        return session.microphoneTrackProbe?.checking { [weak self, weak session] in
+            guard let self, let session else { return false }
+            return !finishing && !finished && self.injectedSession === session
+        }
+    }
+    /// Camera values describe session intent, not a hardware or remote-media witness.
+    var ownershipDiagnostics: [String: Any] {
+        let executor = meetingSession != nil ? "universal-meeting-engine" : "guest-session"
+        let sessionDiagnostics = meetingSession?.ownershipDiagnostics
+            ?? injectedSession?.ownershipDiagnostics
+            ?? ["state": "not-created"]
+        return ["executor": executor, "session": sessionDiagnostics,
+                "cameraDesired": desiredMedia.cameraOn,
+                "cameraAppliedUnmuted": currentAppliedIntent.cameraOn,
+                "connectionTaskPresent": connecting != nil, "finishing": finishing,
+                "finished": finished, "cleanupSucceeded": cleanupSucceeded]
+    }
     #if DEBUG
     private var captureDiagnosticsRequested = false
     private var reconnectSequence: UInt64 = 0
@@ -104,53 +132,87 @@ import LiveKitWebRTC
             videos.heightAnchor.constraint(greaterThanOrEqualToConstant: 220)
         ])
         stateLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        session = makeSession?() ?? GuestSession(makeEngine: { [weak self] in
-            guard let self, !finishing else { throw CancellationError() }
-#if DEBUG || NATIVE_LEGACY_AUDIO
-            if !SharedAudioEngine.enabledAtLaunch {
-                let audio = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: outputOn)
-                return NativeGuestEngine(label: displayName, systemAudio: audio, verifyReceivedPixels: false)
-            }
-#endif
-            let audio = try await SharedGuestMeetingAudio.attach(to: SharedAudioEngine.shared)
-            guard !finishing, !Task.isCancelled, await audio.beginAttempt(sound: outputOn),
-                  await audio.attachment.assumeTalkExclusively() else {
-                _ = await audio.shutdown(); throw NativeDesktopGuestError.cleanupFailed
-            }
-            guard !finishing, !Task.isCancelled else {
-                _ = await audio.shutdown(); throw CancellationError()
-            }
-            let engine = NativeGuestEngine(label: displayName, systemAudio: audio, verifyReceivedPixels: false)
-            engine.configureStartupPlayback(sound: outputOn)
-            audio.onLevelChange = { [weak engine] in engine?.reconcilePlaybackLevels() }
-            engine.releaseSystemAudio = { [audio] clean in
-                let ended = await audio.endAttempt(clean: clean)
-                let detached = await audio.shutdown()
-                return ended && detached
-            }
-            return engine
-        })
-        session.onEngineChange = { [weak self] engine in self?.bind(engine) }
-        session.onStateChange = { [weak self] snapshot in
-            guard let self, !finishing else { return }
-            // A server-forced mute must also replace the window's desired state;
-            // a later, unrelated camera/sound action may never restore it.
-            let audioMuted = snapshot.desiredIntent?.audioMuted
-            let videoMuted = snapshot.desiredIntent?.videoMuted
-            var revised = desiredMedia
-            if observedAudioMuted == false, audioMuted == true { revised.microphoneOn = false }
-            if observedVideoMuted == false, videoMuted == true { revised.cameraOn = false }
-            observedAudioMuted = audioMuted; observedVideoMuted = videoMuted
-            if revised != desiredMedia { requestMedia(revised) }
-            updateControls()
-            applyPending()
-            Task { @MainActor [weak self] in
-                guard let self, !finishing else { return }
-                if session.state == .failed { await finish(error: .connectionFailed) }
-                else { await publishStatus() }
-            }
+        if let makeSession {
+            let session = makeSession()
+            injectedSession = session
+            session.onEngineChange = { [weak self] engine in self?.bind(engine) }
+            session.onStateChange = { [weak self] _ in self?.handleSessionStateChange() }
+        } else if let destination = try? JoinDestination.verified(invitationURL, engine: .guest) {
+            let session = UniversalMeetingEngine.shared.makeSession(destination: destination, exclusiveTalk: true)
+            meetingSession = session
+            session.onVideo = { [weak self] streams in self?.updateExternalVideo(streams) }
+            session.onLocalCamera = { [weak self] track in self?.updateLocalVideo(track) }
+            session.onSessionSnapshot = { [weak self] _ in self?.handleSessionStateChange() }
         }
         updateControls()
+    }
+    private func handleSessionStateChange() {
+        guard !finishing else { return }
+        // A server-forced mute must also replace the window's desired state;
+        // a later, unrelated camera/sound action may never restore it.
+        let desired = currentDesiredAudioVideo
+        var revised = desiredMedia
+        if observedAudioMuted == false, desired.audioMuted == true { revised.microphoneOn = false }
+        if observedVideoMuted == false, desired.videoMuted == true { revised.cameraOn = false }
+        observedAudioMuted = desired.audioMuted; observedVideoMuted = desired.videoMuted
+        if revised != desiredMedia { requestMedia(revised) }
+        updateControls()
+        applyPending()
+        Task { @MainActor [weak self] in
+            guard let self, !finishing else { return }
+            if isSessionFailed { await finish(error: .connectionFailed) }
+            else { await publishStatus() }
+        }
+    }
+    private var isSessionConnected: Bool {
+        meetingSession?.snapshot.phase == .connected || injectedSession?.state == .connected
+    }
+    private var isSessionRecovering: Bool {
+        meetingSession?.snapshot.phase == .reconnecting || injectedSession?.state == .recovering
+    }
+    private var isSessionConnecting: Bool {
+        meetingSession?.snapshot.phase == .connecting || injectedSession?.state == .connecting
+    }
+    private var isSessionFailed: Bool {
+        meetingSession?.snapshot.phase == .failed || injectedSession?.state == .failed
+    }
+    private var isSessionTerminal: Bool {
+        if let meetingSession {
+            return meetingSession.snapshot.phase == .failed || meetingSession.snapshot.phase == .left
+        }
+        if let injectedSession {
+            return injectedSession.state == .failed || injectedSession.state == .left
+        }
+        return true
+    }
+    private var hasDesiredIntent: Bool {
+        meetingSession?.hasDesiredMediaIntent ?? (injectedSession?.desiredIntent != nil)
+    }
+    private var currentDesiredAudioVideo: (audioMuted: Bool?, videoMuted: Bool?) {
+        if let meetingSession {
+            guard let desired = meetingSession.desiredMediaIntent else { return (nil, nil) }
+            return (!desired.microphoneOn, !desired.cameraOn)
+        }
+        if let injectedSession {
+            return (injectedSession.snapshot.desiredIntent?.audioMuted, injectedSession.snapshot.desiredIntent?.videoMuted)
+        }
+        return (nil, nil)
+    }
+    private var currentAppliedIntent: (microphoneOn: Bool, cameraOn: Bool, playoutOn: Bool?) {
+        if let meetingSession { return meetingSession.appliedMediaIntent }
+        if let injectedSession {
+            let applied = injectedSession.snapshot.appliedIntent
+            return (applied?.audioMuted == false, applied?.videoMuted == false, injectedSession.snapshot.appliedPlayoutEnabled)
+        }
+        return (false, false, nil)
+    }
+    private var currentPermissions: (canShareMicrophone: Bool, canShareCamera: Bool) {
+        if let meetingSession { return meetingSession.mediaPermissions }
+        if let injectedSession {
+            let permissions = injectedSession.snapshot.permissions
+            return (permissions.canShareMicrophone, permissions.canShareCamera)
+        }
+        return (false, false)
     }
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -169,13 +231,19 @@ import LiveKitWebRTC
                     let to = ProcessInfo.processInfo.systemUptime
                     let remote = tiles.values.map { $0.sink.presentationWindow(from: from, to: to) }
                     let local = localTile?.sink.presentationWindow(from: from, to: to)
+                    let audioSamples: Int
+                    if let meetingSession {
+                        audioSamples = await meetingSession.companionDiagnosticsSnapshot(includeStatistics: false).receivedAudioSamples
+                    } else {
+                        audioSamples = injectedSession?.engine?.receivedAudioSamples ?? 0
+                    }
                     probeLog("native-render-window", ["remoteCount": remote.count,
                         "remoteMinFPS": remote.map(\.fps).min() ?? 0,
                         "remoteMaxGap": remote.map(\.maximumGap).max() ?? 0,
                         "remoteSmoothCount": remote.filter(\.smooth).count,
                         "localFPS": local?.fps ?? 0,
                         "localMaxGap": local?.maximumGap ?? 0,
-                        "receivedAudioSamples": session.engine?.receivedAudioSamples ?? 0,
+                        "receivedAudioSamples": audioSamples,
                         "seconds": to - from])
                     from = to
                 }
@@ -191,9 +259,15 @@ import LiveKitWebRTC
         connecting = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let invitation = try GuestInvitation.parse(invitationURL)
-                try await session.connect(invitation, publish: true, codec: "h264", camera: true,
-                                          initialAudioMuted: true, initialVideoMuted: true)
+                if let meetingSession {
+                    try await meetingSession.connect(invitation: invitationURL, name: displayName, quiet: !outputOn)
+                } else if let injectedSession {
+                    let invitation = try GuestInvitation.parse(invitationURL)
+                    try await injectedSession.connect(invitation, publish: true, codec: "h264", camera: true,
+                                                      initialAudioMuted: true, initialVideoMuted: true)
+                } else {
+                    throw NativeGuestEntryError.invalidInvitation
+                }
                 guard !finishing else { return }
                 updateControls(); await publishStatus()
             } catch {
@@ -208,11 +282,20 @@ import LiveKitWebRTC
         engine?.onLocalCameraTrackChange = { [weak self] track in self?.updateLocalVideo(track) }
         if let engine { updateVideo(engine.incomingVideo); updateLocalVideo(engine.localCameraTrack) }
     }
+    private func updateExternalVideo(_ available: [NativeDesktopExternalVideo]) {
+        let names = Dictionary(uniqueKeysWithValues: (meetingSession?.sessionSnapshot.participants ?? []).map { ($0.id, $0.name) })
+        let items = available.map { (id: $0.id, isScreenShare: $0.source == .screen, track: $0.track,
+                                     title: names[$0.participantID] ?? "Participant") }
+        applyVideoTiles(items)
+    }
     private func updateVideo(_ available: [GuestRemoteVideo]) {
+        let items = available.map { (id: $0.id, isScreenShare: CompanionMediaPolicy.isScreenShare($0.source),
+                                     track: $0.track, title: $0.participantName ?? "Participant") }
+        applyVideoTiles(items)
+    }
+    private func applyVideoTiles(_ available: [(id: String, isScreenShare: Bool, track: LKRTCVideoTrack, title: String)]) {
         let streams = Array(available.sorted {
-            let left = CompanionMediaPolicy.isScreenShare($0.source)
-            let right = CompanionMediaPolicy.isScreenShare($1.source)
-            return left == right ? $0.id < $1.id : left
+            $0.isScreenShare == $1.isScreenShare ? $0.id < $1.id : $0.isScreenShare
         }.prefix(6))
         videoOrder = streams.map(\.id)
         let ids = Set(streams.map(\.id))
@@ -220,8 +303,7 @@ import LiveKitWebRTC
         for stream in streams {
             if let old = tiles[stream.id], !old.track.isEqual(stream.track) { old.detach(); tiles.removeValue(forKey: stream.id) }
             if tiles[stream.id] == nil {
-                let name = stream.participantName ?? "Participant"
-                tiles[stream.id] = CompanionVideoTile(track: stream.track, title: name)
+                tiles[stream.id] = CompanionVideoTile(track: stream.track, title: stream.title)
             }
         }
         rebuildVideo()
@@ -230,7 +312,11 @@ import LiveKitWebRTC
         if let track, localTile?.track.isEqual(track) == true { return }
         localTile?.detach(); localTile = nil
         if let track { localTile = CompanionVideoTile(track: track, title: "You", mirrored: true) }
-        updateVideo(session.engine?.incomingVideo ?? [])
+        if let meetingSession {
+            updateExternalVideo(meetingSession.incomingVideo)
+        } else {
+            updateVideo(injectedSession?.engine?.incomingVideo ?? [])
+        }
     }
     private func rebuildVideo() {
         for view in videos.arrangedSubviews { videos.removeArrangedSubview(view); view.removeFromSuperview() }
@@ -271,7 +357,10 @@ import LiveKitWebRTC
                 reconnectSequence = sequence
                 diagnosticReconnect = Task { @MainActor [weak self] in
                     guard let self, !finishing else { return }
-                    do { try await session.reconnectForTesting() }
+                    do {
+                        if let meetingSession { try await meetingSession.reconnect() }
+                        else if let injectedSession { try await injectedSession.reconnectForTesting() }
+                    }
                     catch { if !finishing { await finish(error: .connectionFailed) } }
                 }
             }
@@ -285,7 +374,7 @@ import LiveKitWebRTC
     }
     private func applyPending() {
         guard applying == nil, !finishing, desiredRevision > appliedRevision,
-              session.desiredIntent != nil, session.state != .failed, session.state != .left else { return }
+              hasDesiredIntent, !isSessionTerminal else { return }
         applying = Task { @MainActor [weak self] in
             guard let self else { return }
             while desiredRevision > appliedRevision, !finishing, !Task.isCancelled {
@@ -300,10 +389,10 @@ import LiveKitWebRTC
                     if revision != desiredRevision { continue }
                     terminalError = error is CompanionMediaControlError ? .permissionDenied : .commandFailed
                     // Reflect only completed operations after a refused request.
-                    let applied = session.snapshot.appliedIntent
-                    desiredMedia.microphoneOn = applied?.audioMuted == false
-                    desiredMedia.cameraOn = applied?.videoMuted == false
-                    desiredMedia.outputOn = session.snapshot.appliedPlayoutEnabled ?? outputOn
+                    let applied = currentAppliedIntent
+                    desiredMedia.microphoneOn = applied.microphoneOn
+                    desiredMedia.cameraOn = applied.cameraOn
+                    desiredMedia.outputOn = applied.playoutOn ?? outputOn
                 }
                 guard revision == desiredRevision, !finishing else { continue }
                 appliedRevision = revision
@@ -318,8 +407,14 @@ import LiveKitWebRTC
         guard !finishing, controlRevision.advance() else { return }
         desiredMedia = intent
         // This also changes the session's recovery intent, before any TCC/network wait.
-        if !intent.microphoneOn { session.setLocalMuteIntent(true) }
-        if !intent.cameraOn { session.setLocalMuteIntent(true, video: true) }
+        if !intent.microphoneOn {
+            injectedSession?.setLocalMuteIntent(true)
+            meetingSession?.prepareLocalMuteIntent(audioMuted: true, videoMuted: nil)
+        }
+        if !intent.cameraOn {
+            injectedSession?.setLocalMuteIntent(true, video: true)
+            meetingSession?.prepareLocalMuteIntent(audioMuted: nil, videoMuted: true)
+        }
         updateControls(); applyPending()
     }
     private func checkRevision(_ revision: UInt64) throws {
@@ -327,12 +422,21 @@ import LiveKitWebRTC
     }
     private func setMedia(_ intent: CompanionMediaIntent, revision: UInt64) async throws {
         try await CompanionMediaPolicy.apply(intent, validate: { try self.checkRevision(revision) },
-            permitted: { field in field == .microphone ? self.session.snapshot.permissions.canShareMicrophone :
-                self.session.snapshot.permissions.canShareCamera },
+            permitted: { field in field == .microphone ? self.currentPermissions.canShareMicrophone :
+                self.currentPermissions.canShareCamera },
             authorize: { field in await Self.authorize(field == .microphone ? .audio : .video) },
-            activateMicrophone: { try await self.session.activateMicrophone() },
-            mute: { muted, video in try await self.session.mute(muted, video: video) },
-            setOutput: { try await self.session.setPlayoutEnabled($0) })
+            activateMicrophone: {
+                if let meetingSession = self.meetingSession { try await meetingSession.activateCompanionMicrophone() }
+                else if let injectedSession = self.injectedSession { try await injectedSession.activateMicrophone() }
+            },
+            mute: { muted, video in
+                if let meetingSession = self.meetingSession { try await meetingSession.setCompanionMute(muted, video: video) }
+                else if let injectedSession = self.injectedSession { try await injectedSession.mute(muted, video: video) }
+            },
+            setOutput: { enabled in
+                if let meetingSession = self.meetingSession { try await meetingSession.setPlayout(enabled) }
+                else if let injectedSession = self.injectedSession { try await injectedSession.setPlayoutEnabled(enabled) }
+            })
         outputOn = intent.outputOn
     }
     private static func authorize(_ type: AVMediaType) async -> Bool {
@@ -346,16 +450,17 @@ import LiveKitWebRTC
     @objc private func toggleCamera() { localChange(video: !desiredMedia.cameraOn) }
     @objc private func toggleSound() { localChange(output: !desiredMedia.outputOn) }
     private func localChange(mic: Bool? = nil, video: Bool? = nil, output: Bool? = nil) {
-        guard session.state == .connected, !finishing else { return }
+        guard isSessionConnected, !finishing else { return }
         requestMedia(CompanionMediaIntent(microphoneOn: mic ?? desiredMedia.microphoneOn,
                                  cameraOn: video ?? desiredMedia.cameraOn,
                                  outputOn: output ?? desiredMedia.outputOn))
     }
     @objc private func leaveMeeting() { Task { await finish() } }
     private func updateControls() {
-        let active = session.state == .connected && !finishing
-        microphone.isEnabled = active && session.snapshot.permissions.canShareMicrophone
-        camera.isEnabled = active && session.snapshot.permissions.canShareCamera
+        let active = isSessionConnected && !finishing
+        let permissions = currentPermissions
+        microphone.isEnabled = active && permissions.canShareMicrophone
+        camera.isEnabled = active && permissions.canShareCamera
         sound.isEnabled = active
         leave.isEnabled = !finishing
         microphone.title = desiredMedia.microphoneOn ? "Mute" : "Unmute"
@@ -364,14 +469,10 @@ import LiveKitWebRTC
         if finishing { stateLabel.stringValue = "Leaving…" }
         else if terminalError == .permissionDenied { stateLabel.stringValue = "Media permission was denied. You can keep listening." }
         else if terminalError == .commandFailed { stateLabel.stringValue = "The media change could not be completed." }
-        else {
-            switch session.state {
-            case .connected: stateLabel.stringValue = "Connected · Microphone and camera are under your control"
-            case .recovering: stateLabel.stringValue = "Reconnecting…"
-            case .failed: stateLabel.stringValue = "Could not connect"
-            default: stateLabel.stringValue = "Connecting with microphone and camera off…"
-            }
-        }
+        else if isSessionConnected { stateLabel.stringValue = "Connected · Microphone and camera are under your control" }
+        else if isSessionRecovering { stateLabel.stringValue = "Reconnecting…" }
+        else if isSessionFailed { stateLabel.stringValue = "Could not connect" }
+        else { stateLabel.stringValue = "Connecting with microphone and camera off…" }
     }
     private func publishStatus(state override: NativeGuestState? = nil) async {
         guard let files, let metadata else { return }
@@ -380,67 +481,135 @@ import LiveKitWebRTC
         }, write: { record in try? await files.status(record) })
     }
     private func prepareStatus(state override: NativeGuestState?, metadata: NativeGuestMetadata) async -> NativeGuestStatus {
-        if session.state == .connected, !finishing {
-            _ = await session.engine?.systemAudio?.refreshSnapshot()
+        let state: NativeGuestState = override ?? (finishing ? .leaving : companionPhase)
+        lastStatus = Date()
+        if let meetingSession {
+            #if DEBUG
+            let includeStats = captureDiagnosticsRequested
+            #else
+            let includeStats = false
+            #endif
+            let diagSnapshot = await meetingSession.companionDiagnosticsSnapshot(includeStatistics: includeStats)
+            #if DEBUG
+            var diagnostics = includeStats ? Self.captureDiagnostics(snapshot: diagSnapshot) : nil
+            if let end = diagnostics?.videoSampleUptime {
+                diagnostics?.presentationCadence = tiles.keys.sorted().compactMap { id in
+                    guard let sink = tiles[id]?.sink else { return nil }
+                    let value = sink.presentationWindow(from: end - 5, to: end)
+                    return .init(sourceID: id, complete: value.complete, frames: value.frames, fps: value.fps,
+                        maximumGap: value.maximumGap, endFrameAge: value.endFrameAge)
+                }
+            }
+            #endif
+            let audioSnapshot = diagSnapshot.systemAudioSnapshot
+            var status = NativeGuestStatus(metadata: metadata, acknowledgedSequence: acknowledged, state: state,
+                microphoneOn: diagSnapshot.appliedAudioMuted == false && state == .active,
+                cameraOn: diagSnapshot.appliedVideoMuted == false && state == .active,
+                outputOn: diagSnapshot.appliedPlayoutEnabled ?? outputOn,
+                microphoneCapturing: state == .active && CompanionMediaPolicy.microphoneCapturing(
+                    audioSnapshot, uptime: ProcessInfo.processInfo.systemUptime),
+                errorCode: terminalError, roomTitle: roomTitle, helperPID: getpid(),
+                remoteVideoFrames: tiles.values.reduce(0) { $0 + $1.sink.frames },
+                receivedAudioSamples: diagSnapshot.receivedAudioSamples,
+                canShareMicrophone: diagSnapshot.canShareMicrophone,
+                canShareCamera: diagSnapshot.canShareCamera,
+                captureDisabledVerified: state == .active && CompanionMediaPolicy.captureDisabled(
+                    audioSnapshot, cameraAbsent: !diagSnapshot.cameraPresent,
+                    uptime: ProcessInfo.processInfo.systemUptime),
+                receiveConnected: diagSnapshot.mediaConnected,
+                decodedVideoFrames: diagSnapshot.renderedVideoFrames,
+                playoutRunning: audioSnapshot?["playing"] as? Bool,
+                receivedAudioRMS: diagSnapshot.receivedAudioRMS)
+            #if DEBUG
+            status.captureDiagnostics = diagnostics
+            #endif
+            return status
         }
-        #if DEBUG
-        var diagnostics = captureDiagnosticsRequested ? await Self.captureDiagnostics(engine: session.engine, connections: session.connectionCount) : nil
-        if let end = diagnostics?.videoSampleUptime {
-            diagnostics?.presentationCadence = tiles.keys.sorted().compactMap { id in
-                guard let sink = tiles[id]?.sink else { return nil }
-                let value = sink.presentationWindow(from: end - 5, to: end)
-                return .init(sourceID: id, complete: value.complete, frames: value.frames, fps: value.fps,
-                    maximumGap: value.maximumGap, endFrameAge: value.endFrameAge)
+        if let injectedSession {
+            if injectedSession.state == .connected, !finishing {
+                _ = await injectedSession.engine?.systemAudio?.refreshSnapshot()
+            }
+            #if DEBUG
+            var diagnostics = captureDiagnosticsRequested ? await Self.captureDiagnostics(engine: injectedSession.engine, connections: injectedSession.connectionCount) : nil
+            if let end = diagnostics?.videoSampleUptime {
+                diagnostics?.presentationCadence = tiles.keys.sorted().compactMap { id in
+                    guard let sink = tiles[id]?.sink else { return nil }
+                    let value = sink.presentationWindow(from: end - 5, to: end)
+                    return .init(sourceID: id, complete: value.complete, frames: value.frames, fps: value.fps,
+                        maximumGap: value.maximumGap, endFrameAge: value.endFrameAge)
+                }
+            }
+            #endif
+            let applied = injectedSession.snapshot.appliedIntent
+            var status = NativeGuestStatus(metadata: metadata, acknowledgedSequence: acknowledged, state: state,
+                microphoneOn: applied?.audioMuted == false && state == .active,
+                cameraOn: applied?.videoMuted == false && state == .active,
+                outputOn: injectedSession.snapshot.appliedPlayoutEnabled ?? outputOn,
+                microphoneCapturing: state == .active && CompanionMediaPolicy.microphoneCapturing(
+                    injectedSession.engine?.systemAudio?.snapshot, uptime: ProcessInfo.processInfo.systemUptime),
+                errorCode: terminalError, roomTitle: roomTitle, helperPID: getpid(),
+                remoteVideoFrames: tiles.values.reduce(0) { $0 + $1.sink.frames }, receivedAudioSamples: injectedSession.engine?.receivedAudioSamples ?? 0,
+                canShareMicrophone: injectedSession.snapshot.permissions.canShareMicrophone,
+                canShareCamera: injectedSession.snapshot.permissions.canShareCamera,
+                captureDisabledVerified: state == .active && CompanionMediaPolicy.captureDisabled(
+                    injectedSession.engine?.systemAudio?.snapshot, cameraAbsent: injectedSession.engine?.cameraSnapshot == nil,
+                    uptime: ProcessInfo.processInfo.systemUptime),
+                receiveConnected: injectedSession.engine?.mediaSnapshot.connected,
+                decodedVideoFrames: injectedSession.engine?.mediaSnapshot.render["advancingFrames"] as? Int,
+                playoutRunning: injectedSession.engine?.systemAudio?.snapshot["playing"] as? Bool,
+                receivedAudioRMS: injectedSession.engine?.mediaSnapshot.audio.rms)
+            #if DEBUG
+            status.captureDiagnostics = diagnostics
+            #endif
+            return status
+        }
+        return NativeGuestStatus(metadata: metadata, acknowledgedSequence: acknowledged, state: state,
+            microphoneOn: false, cameraOn: false, outputOn: outputOn,
+            microphoneCapturing: false, errorCode: terminalError, roomTitle: roomTitle, helperPID: getpid(),
+            remoteVideoFrames: tiles.values.reduce(0) { $0 + $1.sink.frames }, receivedAudioSamples: 0,
+            canShareMicrophone: false, canShareCamera: false)
+    }
+    private var companionPhase: NativeGuestState {
+        if let meetingSession {
+            switch meetingSession.snapshot.phase {
+            case .connected: return .active
+            case .connecting, .reconnecting: return .connecting
+            case .leaving: return .leaving
+            case .failed: return .failed
+            case .left: return .left
+            case .idle: return .launching
             }
         }
-        #endif
-        lastStatus = Date()
-        let state: NativeGuestState = override ?? (finishing ? .leaving : {
-            switch session.state {
+        if let injectedSession {
+            switch injectedSession.state {
             case .connected: return .active
             case .recovering, .connecting: return .connecting
             case .failed: return .failed
             case .left: return .left
             case .idle: return .launching
             }
-        }())
-        let applied = session.snapshot.appliedIntent
-        var status = NativeGuestStatus(metadata: metadata, acknowledgedSequence: acknowledged, state: state,
-            microphoneOn: applied?.audioMuted == false && state == .active,
-            cameraOn: applied?.videoMuted == false && state == .active,
-            outputOn: session.snapshot.appliedPlayoutEnabled ?? outputOn,
-            microphoneCapturing: state == .active && CompanionMediaPolicy.microphoneCapturing(
-                session.engine?.systemAudio?.snapshot, uptime: ProcessInfo.processInfo.systemUptime),
-            errorCode: terminalError, roomTitle: roomTitle, helperPID: getpid(),
-            remoteVideoFrames: tiles.values.reduce(0) { $0 + $1.sink.frames }, receivedAudioSamples: session.engine?.receivedAudioSamples ?? 0,
-            canShareMicrophone: session.snapshot.permissions.canShareMicrophone,
-            canShareCamera: session.snapshot.permissions.canShareCamera,
-            captureDisabledVerified: state == .active && CompanionMediaPolicy.captureDisabled(
-                session.engine?.systemAudio?.snapshot, cameraAbsent: session.engine?.cameraSnapshot == nil,
-                uptime: ProcessInfo.processInfo.systemUptime),
-            receiveConnected: session.engine?.mediaSnapshot.connected,
-            decodedVideoFrames: session.engine?.mediaSnapshot.render["advancingFrames"] as? Int,
-            playoutRunning: session.engine?.systemAudio?.snapshot["playing"] as? Bool,
-            receivedAudioRMS: session.engine?.mediaSnapshot.audio.rms)
-        #if DEBUG
-        status.captureDiagnostics = diagnostics
-        #endif
-        return status
+        }
+        return .failed
     }
     func finish(error: NativeGuestErrorCode? = nil) async {
         if let task = shutdown.task { await task.value; return }
         finishing = true; terminalError = error
         controlRevision.stop()
         desiredMedia.microphoneOn = false; desiredMedia.cameraOn = false
-        session.setLocalMuteIntent(true); session.setLocalMuteIntent(true, video: true)
-        session.engine?.suppressOutgoingMedia()
+        injectedSession?.setLocalMuteIntent(true); injectedSession?.setLocalMuteIntent(true, video: true)
+        injectedSession?.engine?.suppressOutgoingMedia()
+        meetingSession?.prepareLocalMuteIntent(audioMuted: true, videoMuted: true)
+        meetingSession?.suppressOutgoingMedia()
         watcher?.cancel(); diagnosticsTask?.cancel(); applying?.cancel(); connecting?.cancel(); updateControls()
         #if DEBUG
         diagnosticReconnect?.cancel()
         #endif
         let task = shutdown.start { [self] in
             await publishStatus(state: .leaving)
-            let clean = await session.leave()
+            let clean: Bool
+            if let meetingSession { clean = await meetingSession.leave() }
+            else if let injectedSession { clean = await injectedSession.leave() }
+            else { clean = true }
             cleanupSucceeded = clean
             detachVideo()
             if !clean { terminalError = .mediaFailed }

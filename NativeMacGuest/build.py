@@ -2,7 +2,7 @@
 """Provision/build the external Mac companion; never modify the iOS app bundle."""
 import argparse, hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, tempfile
 from native_dependencies import (AUDIO_ROUTE_RECOVERY_PATCHES, audio_route_recovery_lock_paths,
-    ensure_framework, verify_audio_route_recovery_framework)
+    default_framework_root, ensure_framework, verify_audio_route_recovery_framework)
 from distribution.build_support import (APP_NAME, APP_BUNDLE_NAME, EXECUTABLE_NAME,
     application_executable, configure_distribution, find_application, installation_destination, resolve_source_paths)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -11,7 +11,7 @@ p.add_argument('--identity', help='Apple Development signing identity for the fi
 p.add_argument('--compile-only', action='store_true', help='Compile without signing or running the app; no Apple team membership required')
 p.add_argument('--install', action='store_true', help='Install the verified build in /Applications (required by the host sandbox)')
 p.add_argument('--allow-provisioning-updates', action='store_true', help='Allow Xcode to register/update the Mac app-group profile')
-p.add_argument('--framework-root', type=pathlib.Path, default=ROOT/'.build/webrtc-m156-desktop-audio/native-framework-screen-r5',
+p.add_argument('--framework-root', type=pathlib.Path, default=default_framework_root(ROOT),
                help='Directory containing LiveKitWebRTC.xcframework and build-evidence.json')
 p.add_argument('--output-dir', type=pathlib.Path, default=ROOT/'.build/native-mac-guest')
 p.add_argument('--configuration', choices=('Debug', 'Release'), default='Debug')
@@ -122,7 +122,7 @@ sources += sorted((ROOT/'Dependencies/native-macos/livekit-patches').glob('*.pat
 sources += [ROOT/'NativeMacGuest/native_dependencies.py', ROOT/'Dependencies/native-macos/sdk.lock.json']
 if a.distribution == 'direct':
     sources += audio_route_recovery_lock_paths(ROOT)
-    sources += [ROOT/'Experiments/WebRTCM156'/(name+'.patch') for name in AUDIO_ROUTE_RECOVERY_PATCHES]
+    sources += [ROOT/'Experiments/WebRTCM157'/(name+'.patch') for name in AUDIO_ROUTE_RECOVERY_PATCHES]
 sources += [ROOT/'NativeMacGuest/prepare-sherpa.py', ROOT/'Dependencies/native-macos/sherpa-onnx.lock.json']
 sources += sorted(x for x in (ROOT/'Dependencies/SherpaOnnxKit').rglob('*') if x.is_file() and x.suffix in {'.swift'} and '.build' not in x.parts)
 sources += sorted(x for x in (ROOT/'Dependencies/MLXAudioVoice').rglob('*') if x.is_file() and '.build' not in x.parts)

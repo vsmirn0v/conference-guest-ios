@@ -28,7 +28,7 @@ import XCTest
             let keys: [String: [String]] = ["nemo_transducer": ["encoder", "decoder", "joiner", "tokens"],
                 "nemo_ctc": ["model", "tokens"], "whisper": ["encoder", "decoder", "tokens"], "silero_vad": ["model"],
                 ListenModelStore.coreMLGigaAMKind: ["encoder", "decoder", "joint", "tokens"],
-                VoiceCloneSupport.kind: []]
+                VoiceCloneSupport.kind: [], VoxCPM2GPUModelCatalog.kind: []]
             if model.kind == VoiceCloneSupport.kind {
                 XCTAssertNotNil(model.config["architecture"])
                 XCTAssertTrue(model.files.contains { $0.name == "model.json" })

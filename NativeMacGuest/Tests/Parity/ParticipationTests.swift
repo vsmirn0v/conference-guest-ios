@@ -133,8 +133,9 @@ final class ParticipationTests: XCTestCase {
 
     @MainActor
     func testReplacedConnectionMustBeConnectedBeforeARecoveryGateCanReopen() {
-        let previousEngine = NSObject(), replacementEngine = NSObject()
-        let previous = ObjectIdentifier(previousEngine), replacement = ObjectIdentifier(replacementEngine)
+        let sessionID = UUID()
+        let previous = MeetingConnectionIdentity(sessionID: sessionID, provider: .guest, generation: UUID(), providerScope: "room:group")
+        let replacement = MeetingConnectionIdentity(sessionID: sessionID, provider: .guest, generation: UUID(), providerScope: "room:group")
         XCTAssertFalse(NativeDesktopMeetingModel.canReleaseVoiceGate(heldFor: previous, current: nil, connected: false))
         XCTAssertFalse(NativeDesktopMeetingModel.canReleaseVoiceGate(heldFor: previous, current: previous, connected: true))
         XCTAssertFalse(NativeDesktopMeetingModel.canReleaseVoiceGate(heldFor: previous, current: replacement, connected: false))
@@ -563,7 +564,8 @@ final class ParticipationTests: XCTestCase {
 
         let currentSetup = try XCTUnwrap(model.participation.setup(for: model, store: store))
         XCTAssertTrue(model.participation.start(currentSetup, objective: "", model: model, store: store))
-        model.participationAudienceForTesting = audience(withPeer, members: withPeer.members, connection: ObjectIdentifier(store))
+        let replacementConnection = MeetingConnectionIdentity(sessionID: withPeer.sessionID, provider: .guest, generation: UUID(), providerScope: "room:group")
+        model.participationAudienceForTesting = audience(withPeer, members: withPeer.members, connection: replacementConnection)
         model.receiveFeaturesForTesting(.init())
         XCTAssertEqual(model.participation.status, .review)
         XCTAssertEqual(model.participation.reason, .connectionChanged)
@@ -757,7 +759,7 @@ final class ParticipationTests: XCTestCase {
     }
 
     private func audience(_ template: ParticipationAudience, members: [String: String],
-                          connection: ObjectIdentifier? = nil) -> ParticipationAudience {
+                          connection: MeetingConnectionIdentity? = nil) -> ParticipationAudience {
         .init(sessionID: template.sessionID, room: template.room, providerRoom: template.providerRoom,
             providerGroup: template.providerGroup, localParticipant: template.localParticipant,
             members: members, connection: connection ?? template.connection)
@@ -782,7 +784,8 @@ final class ParticipationTests: XCTestCase {
         let url = URL(string: "https://example.test/calls/local-participation")!
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Me", title: "Local room")
         let room = try XCTUnwrap(MeetingRoomIdentity(url, engine: .guest))
+        let identity = MeetingConnectionIdentity(sessionID: model.sessionID, provider: .guest, generation: UUID(), providerScope: "room:group")
         return (model, .init(sessionID: model.sessionID, room: room, providerRoom: "room", providerGroup: "group",
-            localParticipant: "me", members: ["me": "Me", "peer": "Remote attendee"], connection: ObjectIdentifier(model)))
+            localParticipant: "me", members: ["me": "Me", "peer": "Remote attendee"], connection: identity))
     }
 }

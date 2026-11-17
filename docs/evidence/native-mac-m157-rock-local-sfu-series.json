@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "stage": "M157",
+  "test": "NativeDesktopTests/SharedEngineRockEngineTests/testRockRunsOnTheSharedOwnerAndSendsOnlyWithTheTalkRole",
+  "environment": {
+    "configuration": "Debug (CODE_SIGNING_ALLOWED=NO, manual rendering)",
+    "framework": ".build/webrtc-m157-desktop-audio/native-framework-audio-route-r1",
+    "livekitSDK": "2.19.0 (43c1c0870e51eedbfd95b20b1b5c43a767886786)",
+    "livekitFFI": "0.13.1 (685cfd95e23edf734450125eb58bb3bb21b4133b)",
+    "fieldTrials": "WebRTC-IceHandshakeDtls/Enabled/",
+    "sfu": "local livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1"
+  },
+  "passedCount": 5,
+  "measuredRuns": 5,
+  "summary": {
+    "medianTestCaseSeconds": 17.556,
+    "p95TestCaseSeconds": 17.62,
+    "medianUnmuteMs": 22.214,
+    "medianMoveMs": 6.436
+  },
+  "comparisonVsP8": {
+    "p8MedianTestCaseSeconds": 17.57,
+    "m157MedianTestCaseSeconds": 17.556,
+    "testCaseDeltaPct": -0.08,
+    "p8MedianUnmuteMs": 19.945,
+    "m157MedianUnmuteMs": 22.214,
+    "unmuteDeltaPct": 11.38,
+    "p8MedianMoveMs": 6.121,
+    "m157MedianMoveMs": 6.436,
+    "moveDeltaPct": 5.15,
+    "within10PercentTrigger": true
+  },
+  "comparisonVsP0": {
+    "p0MedianTestCaseSeconds": 16.166,
+    "m157MedianTestCaseSeconds": 17.556,
+    "testCaseDeltaPct": 8.6,
+    "p0MedianUnmuteMs": 21.467,
+    "m157MedianUnmuteMs": 22.214,
+    "unmuteDeltaPct": 3.48,
+    "p0MedianMoveMs": 8.683,
+    "m157MedianMoveMs": 6.436,
+    "moveDeltaPct": -25.88,
+    "within10PercentTrigger": true
+  },
+  "runs": [
+    {
+      "run": "warmup",
+      "isWarmup": true,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.751,
+      "replyRenderSeconds": 2.798715458251536,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.00839983334299177,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 113.76773407042099,
+        "talkingAgainBytesPerSecond": 8308.51729670257,
+        "talkingBytesPerSecond": 4599.372179774873,
+        "unmuteSeconds": 0.020683875074610114,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-m157-test/m157-rock-warmup.log"
+    },
+    {
+      "run": "run-1",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.51,
+      "replyRenderSeconds": 2.7939180833054706,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.006436458323150873,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 114.9757101484145,
+        "talkingAgainBytesPerSecond": 9016.00576320524,
+        "talkingBytesPerSecond": 6562.025391203443,
+        "unmuteSeconds": 0.02232062502298504,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-m157-test/m157-rock-run-1.log"
+    },
+    {
+      "run": "run-2",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.598,
+      "replyRenderSeconds": 2.7955811249557883,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.006410166737623513,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 114.0059042776197,
+        "talkingAgainBytesPerSecond": 8604.379672037547,
+        "talkingBytesPerSecond": 6465.96666163283,
+        "unmuteSeconds": 0.02221391664352268,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-m157-test/m157-rock-run-2.log"
+    },
+    {
+      "run": "run-3",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.409,
+      "replyRenderSeconds": 2.7928358332719654,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.006969874957576394,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 77.30723270908818,
+        "talkingAgainBytesPerSecond": 9050.287108390796,
+        "talkingBytesPerSecond": 4538.424421685262,
+        "unmuteSeconds": 0.016181500046513975,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-m157-test/m157-rock-run-3.log"
+    },
+    {
+      "run": "run-4",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.556,
+      "replyRenderSeconds": 2.7924710833467543,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.007100041722878814,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 114.96915462789889,
+        "talkingAgainBytesPerSecond": 8815.40803650401,
+        "talkingBytesPerSecond": 6081.590140724643,
+        "unmuteSeconds": 0.020692291669547558,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-m157-test/m157-rock-run-4.log"
+    },
+    {
+      "run": "run-5",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "testCaseSeconds": 17.62,
+      "replyRenderSeconds": 2.790612999931909,
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.00545400008559227,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 117.21236545899369,
+        "talkingAgainBytesPerSecond": 9259.38639063497,
+        "talkingBytesPerSecond": 4202.766580885384,
+        "unmuteSeconds": 0.024306291714310646,
+        "unpublishedAfterMove": true
+      },
+      "failures": [],
+      "log": ".build/universal-m157-test/m157-rock-run-5.log"
+    }
+  ]
+}

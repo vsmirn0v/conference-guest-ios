@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rocknroll:native-mac-engine-baseline:v1",
+  "title": "Native Mac meeting engine baseline evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sourceRevision", "artifact", "environment", "checks", "measurements"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "sourceRevision": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "identity", "sha256", "configuration", "provenance"],
+      "properties": {
+        "kind": {"enum": ["installed-app", "test-host", "archive", "exported-app", "unavailable"]},
+        "identity": {"type": ["string", "null"], "maxLength": 200},
+        "sha256": {"anyOf": [{"type": "string", "pattern": "^[a-f0-9]{64}$"}, {"type": "null"}]},
+        "configuration": {"type": ["string", "null"], "maxLength": 80},
+        "provenance": {"type": "string", "maxLength": 500}
+      }
+    },
+    "environment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["os", "hardware", "audioRoute", "provider", "serverVersion"],
+      "properties": {
+        "os": {"type": ["string", "null"], "maxLength": 100},
+        "hardware": {"type": ["string", "null"], "maxLength": 100},
+        "audioRoute": {"type": ["string", "null"], "maxLength": 100},
+        "provider": {"enum": ["guest", "telemost", "trueconf", "rock", "mixed", null]},
+        "serverVersion": {"type": ["string", "null"], "maxLength": 100}
+      }
+    },
+    "checks": {
+      "type": "array", "maxItems": 500,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "status", "evidence", "limitations"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 120},
+          "status": {"enum": ["pass", "fail", "skip", "unavailable", "not-run"]},
+          "evidence": {"type": ["string", "null"], "maxLength": 500},
+          "limitations": {"type": "string", "maxLength": 1000}
+        }
+      }
+    },
+    "measurements": {
+      "type": "array", "maxItems": 500,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "status", "value", "unit", "scenario", "evidence"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 120},
+          "status": {"enum": ["measured", "unavailable", "not-run"]},
+          "value": {"type": ["number", "null"]},
+          "unit": {"type": "string", "maxLength": 40},
+          "scenario": {"type": "string", "maxLength": 300},
+          "evidence": {"type": ["string", "null"], "maxLength": 500}
+        },
+        "allOf": [
+          {"if": {"properties": {"status": {"const": "measured"}}}, "then": {"properties": {"value": {"type": "number"}, "evidence": {"type": "string", "minLength": 1}}}},
+          {"if": {"properties": {"status": {"enum": ["unavailable", "not-run"]}}}, "then": {"properties": {"value": {"type": "null"}}}}
+        ]
+      }
+    }
+  }
+}

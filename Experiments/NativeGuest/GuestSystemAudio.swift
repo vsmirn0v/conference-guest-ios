@@ -423,8 +423,17 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private var createdAudioEngines: Set<ObjectIdentifier> = []
     private var forwardedAudioEngines: Set<ObjectIdentifier> = []
     private var forwardedInputRoutes: Set<ObjectIdentifier> = []
+    struct ForwardedVoiceReplyController {
+        let setGateOpen: (Bool) -> Bool
+        let isGateOpen: () -> Bool
+        let setMonitorGain: (Float) -> Void
+        let play: @MainActor (AVAudioPCMBuffer, Float?, @escaping @MainActor @Sendable () -> Bool) async -> Bool
+    }
+
     typealias InputRouteProof = (AVAudioEngine, AVAudioNode?, AVAudioNode) -> Bool
     private var proveForwardedInput: InputRouteProof?
+    private var forwardedVoiceController: ForwardedVoiceReplyController?
+    private var startedRecordingForPrivateCheck = false
     var hasCreatedAudioEngines: Bool { locked { !createdAudioEngines.isEmpty } }
 #if DEBUG
     // A synthetic source on the test's manual legacy ADM, never a device route.
@@ -450,7 +459,8 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     /// its observer. Both SDK calls run outside the owner's state lock.
     func installForwardObserver(installFactory: (LKRTCPeerConnectionFactory) -> Bool,
                                 makeObserver: () -> LKRTCAudioDeviceModuleDelegate?,
-                                proveInput: @escaping InputRouteProof) -> ForwardObserverInstallation {
+                                proveInput: @escaping InputRouteProof,
+                                voiceController: ForwardedVoiceReplyController? = nil) -> ForwardObserverInstallation {
         let reservation = locked { () -> Result<LKRTCPeerConnectionFactory, ForwardObserverInstallation> in
             guard microphoneGateOpen, !forwardObserverInstallationPending else { return .failure(.assistantGateHeld) }
             guard let ownedFactory else { return .failure(.factoryUnavailable) }
@@ -468,6 +478,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         locked {
             forwardObserverStorage = observer
             proveForwardedInput = proveInput
+            forwardedVoiceController = voiceController
         }
         return .installed
     }
@@ -584,29 +595,45 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     }
     /// Closing is acknowledged only when this owner has the active input graph.
     func setMicrophoneGate(open: Bool) -> Bool {
-        let graph = locked { () -> GuestVoiceReplyGraph? in
-            guard !forwardObserverInstallationPending, let voiceReply, let engine = voiceReply.engine,
-                  !forwardedAudioEngines.contains(ObjectIdentifier(engine)) else {
-                if open { microphoneGateOpen = true }
-                return nil
+        let state = locked { () -> (graph: GuestVoiceReplyGraph?, forwarded: ForwardedVoiceReplyController?) in
+            if !forwardObserverInstallationPending, let voiceReply, let engine = voiceReply.engine,
+               !forwardedAudioEngines.contains(ObjectIdentifier(engine)) {
+                // Latch before touching the graph, so a concurrent rebuild also closes
+                // its gate and a forwarding observer cannot adopt this owner's input.
+                if !open { microphoneGateOpen = false }
+                return (voiceReply, nil)
             }
-            // Latch before touching the graph, so a concurrent rebuild also closes
-            // its gate and a forwarding observer cannot adopt this owner's input.
-            if !open { microphoneGateOpen = false }
-            return voiceReply
+            if !forwardObserverInstallationPending, let forwardedVoiceController,
+               !forwardedInputRoutes.isEmpty, createdAudioEngines.isSubset(of: forwardedAudioEngines) {
+                if !open { microphoneGateOpen = false }
+                return (nil, forwardedVoiceController)
+            }
+            if open { microphoneGateOpen = true }
+            return (nil, nil)
         }
-        guard let graph else { return open }
-        guard (open || graph.isConnected), graph.setGate(open: open), locked({
-            guard voiceReply === graph, let engine = graph.engine,
-                  !forwardedAudioEngines.contains(ObjectIdentifier(engine)) else { return false }
-            microphoneGateOpen = open
-            return true
-        }) else { return false }
-        update(["microphoneGateOpen": open])
+        if let graph = state.graph {
+            guard (open || graph.isConnected), graph.setGate(open: open), locked({
+                guard voiceReply === graph, let engine = graph.engine,
+                      !forwardedAudioEngines.contains(ObjectIdentifier(engine)) else { return false }
+                microphoneGateOpen = open
+                return true
+            }) else { return false }
+            update(["microphoneGateOpen": open])
 #if DEBUG
-        update(["voiceReplyTopology": graph.evidence])
+            update(["voiceReplyTopology": graph.evidence])
 #endif
-        return true
+            return true
+        }
+        if let controller = state.forwarded {
+            guard controller.setGateOpen(open), locked({
+                guard !forwardedInputRoutes.isEmpty, createdAudioEngines.isSubset(of: forwardedAudioEngines) else { return false }
+                microphoneGateOpen = open
+                return true
+            }) else { return false }
+            update(["microphoneGateOpen": open, "voiceReplyGraph": true])
+            return true
+        }
+        return open
     }
 
     /// Plays one reply in the room and on the existing local output route.
@@ -614,11 +641,22 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         await playVoiceReply(buffer, localGain: 1)
     }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer, localGain: Float) async -> Bool {
-        guard let graph = assistantVoiceGraph(), !graph.gateOpen else { return false }
-        return await graph.play(buffer, localGain: localGain)
+        if let graph = assistantVoiceGraph(), !graph.gateOpen {
+            return await graph.play(buffer, localGain: localGain)
+        }
+        guard let controller = forwardedAssistantVoiceController(), !controller.isGateOpen() else { return false }
+        let effectiveGain: Float? = (locked({ manualRenderingMode }) || localGain <= 0) ? nil : localGain
+        return await controller.play(buffer, effectiveGain) { [weak self] in
+            guard let self, let active = self.forwardedAssistantVoiceController() else { return false }
+            return !active.isGateOpen()
+        }
     }
     func setVoiceReplyMonitorGain(_ gain: Float) {
-        assistantVoiceGraph()?.setApprovedLocalGain(gain)
+        if let graph = assistantVoiceGraph() {
+            graph.setApprovedLocalGain(gain)
+        } else {
+            locked { forwardedVoiceController }?.setMonitorGain(gain)
+        }
     }
 
     private func assistantVoiceGraph() -> GuestVoiceReplyGraph? {
@@ -629,10 +667,25 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         }
     }
 
-    @MainActor var hasParticipationVoiceGraph: Bool { assistantVoiceGraph()?.isConnected == true }
+    private func forwardedAssistantVoiceController() -> ForwardedVoiceReplyController? {
+        locked {
+            guard !forwardObserverInstallationPending, let controller = forwardedVoiceController,
+                  !forwardedInputRoutes.isEmpty, createdAudioEngines.isSubset(of: forwardedAudioEngines) else { return nil }
+            return controller
+        }
+    }
+
+    @MainActor var hasParticipationVoiceGraph: Bool {
+        assistantVoiceGraph()?.isConnected == true || forwardedAssistantVoiceController() != nil
+    }
     @MainActor var participationVoiceGateClosed: Bool {
-        let graph = assistantVoiceGraph()
-        return graph?.isConnected == true && graph?.gateOpen == false
+        if let graph = assistantVoiceGraph() {
+            return graph.isConnected && !graph.gateOpen
+        }
+        if let controller = forwardedAssistantVoiceController() {
+            return !controller.isGateOpen()
+        }
+        return false
     }
     @MainActor var participationSenderPhysicallyMuted: Bool { snapshot["microphoneMuted"] as? Bool == true }
 
@@ -649,7 +702,15 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     @MainActor func playParticipationVoice(_ buffer: AVAudioPCMBuffer, permit: GuestAutonomousVoicePlayback,
                                            canStart: @escaping @MainActor () -> Bool, localGain: @escaping @MainActor () -> Float?,
                                            onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
-        guard let graph = assistantVoiceGraph(), graph.isConnected, !graph.gateOpen, permit.canStart else { return .notStarted }
+        let graph = assistantVoiceGraph()
+        let forwarded = graph == nil ? forwardedAssistantVoiceController() : nil
+        if let graph {
+            guard graph.isConnected, !graph.gateOpen, permit.canStart else { return .notStarted }
+        } else if let forwarded {
+            guard !forwarded.isGateOpen(), permit.canStart else { return .notStarted }
+        } else {
+            return .notStarted
+        }
         // This tap is upstream of the injection and microphone gate. A local
         // participant's outgoing WebRTC level includes the assistant itself.
         let meter = participationInputMeter
@@ -660,7 +721,15 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         let monitor = Task { @MainActor in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
-                guard assistantVoiceGraph() === graph, graph.isConnected, !graph.gateOpen,
+                let routeReady: Bool
+                if let graph {
+                    routeReady = self.assistantVoiceGraph() === graph && graph.isConnected && !graph.gateOpen
+                } else if let forwarded {
+                    routeReady = self.forwardedAssistantVoiceController() != nil && !forwarded.isGateOpen()
+                } else {
+                    routeReady = false
+                }
+                guard routeReady,
                       !permit.started || (permit.captureIsOpen && LKRTCApplicationCaptureMuted() == 0),
                       let level = meter.level, level < 0.025 else {
                     permit.cancel()
@@ -669,15 +738,59 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             }
         }
         defer { monitor.cancel() }
-        return await graph.playAutonomous(buffer, permit: permit, canStart: {
-            self.assistantVoiceGraph() === graph && graph.isConnected && !graph.gateOpen
-                && (self.snapshot["microphoneMuted"] as? Bool) == false
-                && (meter.level.map { $0 < 0.025 } ?? false) && canStart()
-        }, localGain: localGain, captureReady: { LKRTCApplicationCaptureMuted() == 0 }, onStarted: {
-            probeLog("participation-voice-capture", ["stage": "playback-started",
-                "processMuted": LKRTCApplicationCaptureMuted() != 0, "voiceProcessing": self.snapshot["voiceProcessingActive"] as? Bool == true])
-            onStarted()
-        })
+        if let graph {
+            return await graph.playAutonomous(buffer, permit: permit, canStart: {
+                self.assistantVoiceGraph() === graph && graph.isConnected && !graph.gateOpen
+                    && (self.snapshot["microphoneMuted"] as? Bool) == false
+                    && (meter.level.map { $0 < 0.025 } ?? false) && canStart()
+            }, localGain: localGain, captureReady: { LKRTCApplicationCaptureMuted() == 0 }, onStarted: {
+                probeLog("participation-voice-capture", ["stage": "playback-started",
+                    "processMuted": LKRTCApplicationCaptureMuted() != 0, "voiceProcessing": self.snapshot["voiceProcessingActive"] as? Bool == true])
+                onStarted()
+            })
+        }
+        guard let forwarded else { return .notStarted }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled, permit.canStart,
+                      self.forwardedAssistantVoiceController() != nil, !forwarded.isGateOpen(),
+                      (self.snapshot["microphoneMuted"] as? Bool) == false,
+                      (meter.level.map { $0 < 0.025 } ?? false), canStart() else {
+                    continuation.resume(returning: .notStarted)
+                    return
+                }
+                let requestedGain = localGain()
+                let effectiveGain: Float? = (self.locked({ self.manualRenderingMode }) || (requestedGain ?? 0) <= 0) ? nil : requestedGain
+                guard permit.openCapture(), LKRTCApplicationCaptureMuted() == 0 else {
+                    permit.cancel()
+                    continuation.resume(returning: .notStarted)
+                    return
+                }
+                var playTask: Task<Void, Never>?
+                permit.start(stop: { playTask?.cancel() }, localGain: { forwarded.setMonitorGain(max(0, $0)) }) { outcome in
+                    continuation.resume(returning: outcome)
+                }
+                playTask = Task { @MainActor in
+                    let completed = await forwarded.play(buffer, effectiveGain) {
+                        guard permit.canStart,
+                              self.forwardedAssistantVoiceController() != nil, !forwarded.isGateOpen(),
+                              (self.snapshot["microphoneMuted"] as? Bool) == false,
+                              (meter.level.map { $0 < 0.025 } ?? false), canStart() else {
+                            return false
+                        }
+                        probeLog("participation-voice-capture", ["stage": "playback-started",
+                            "processMuted": LKRTCApplicationCaptureMuted() != 0,
+                            "voiceProcessing": self.snapshot["voiceProcessingActive"] as? Bool == true])
+                        onStarted()
+                        return true
+                    }
+                    let outcome: GuestAutonomousVoicePlayback.Outcome = !permit.captureIsOpen || Task.isCancelled ? .interrupted : (completed ? .completed : .interrupted)
+                    permit.finish(outcome, stopping: false)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in permit.cancel() }
+        }
     }
 
     private init(microphoneEnabled: Bool, playoutEnabled: Bool, profile: GuestAudioProfile,
@@ -690,7 +803,8 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         self.sharedInputOutputDependency = sharedNativeOwner || sharedInputOutputDependency
         sharedPlayoutGate = GuestSharedPlayoutGate(enabled: sharedNativeOwner)
         self.playoutEnabled = playoutEnabled
-        cached = ["mode": "system", "module": "audioEngine", "microphoneOptIn": microphoneEnabled,
+        cached = ["mode": "system", "module": "audioEngine", "ownerLeaseID": lease.diagnosticID,
+                  "ownerGeneration": UUID().uuidString, "microphoneOptIn": microphoneEnabled,
                   "playoutOptIn": playoutEnabled, "microphoneMutedRequested": !microphoneEnabled,
                   "playoutEnabledRequested": playoutEnabled, "cleanupSucceeded": false,
                   "sharedInputOutputDependency": self.sharedInputOutputDependency,
@@ -748,6 +862,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                     decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioProcessingModule: nil)
             }
             owner.locked { owner.ownedFactory = factory }
+            owner.update(["factoryGeneration": UUID().uuidString])
             if exclusive || concurrent {
                 // The first media peer initializes WebRtcVoiceEngine and binds
                 // its audio transport. Doing this after manual recording starts
@@ -770,6 +885,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                     "mediaContextGatheringNew": true])
             }
             let module = factory.audioDeviceModule
+            owner.update(["audioModuleGeneration": UUID().uuidString])
             owner.nativeCall("set-observer") { module.observer = owner }
             if manualRendering {
                 // Tests only: the engine renders offline, so no device is opened. Its render
@@ -821,8 +937,23 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             guard !self.closed, self.inputPermitted, let module = self.currentModule,
                   GuestSystemAudio.microphoneAuthorized else { return false }
             self.inputActivation.beginCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
-            let success = self.applyAvailability(module)
-            if !success { self.inputActivation.endCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable; _ = self.applyAvailability(module) }
+            let shouldStartRecording = !module.isRecording && (self.mediaContext != nil || self.manualRenderingMode)
+            let success: Bool
+            if shouldStartRecording {
+                success = GuestMutedInputPreparation.start(
+                    mute: { self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0 },
+                    makeAvailable: { self.applyAvailability(module) },
+                    startRecording: { module.isRecording || self.nativeCall("start-recording", { module.initAndStartRecording(audioProcessingOptions: nil) }) == 0 },
+                    isMuted: { module.isMicrophoneMuted })
+                self.startedRecordingForPrivateCheck = success
+            } else {
+                self.startedRecordingForPrivateCheck = false
+                success = self.applyAvailability(module)
+            }
+            if !success {
+                self.startedRecordingForPrivateCheck = false
+                self.inputActivation.endCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable; _ = self.applyAvailability(module)
+            }
             self.readSnapshot(module)
             return success
         }
@@ -842,6 +973,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         return await perform("foreground-input-prepare", timeout: remaining) {
             guard !self.closed, let module = self.currentModule,
                   GuestSystemAudio.microphoneAuthorized else { return false }
+            self.startedRecordingForPrivateCheck = false
             self.inputPermitted = true
             self.inputActivation = .init(persistent: true); self.microphoneOptIn = true
             self.deferredActivation = false
@@ -865,6 +997,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         if sharedNativeOwner, !(await sharedPlayoutGate.reset(sound: playout)) { _ = await shutdown(); return false }
         return await perform("room-audio-reset", timeout: 8) {
             guard !self.closed, let module = self.currentModule else { return false }
+            self.startedRecordingForPrivateCheck = false
             // A new room or recovery attempt starts permitted; the meeting reapplies
             // its own withdrawal before any session can activate input.
             self.inputPermitted = true
@@ -887,9 +1020,17 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         return await perform("private-input-release", timeout: timeout) {
             guard !self.closed, let module = self.currentModule else { return true }
             self.inputActivation.endCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
-            let success = self.applyAvailability(module)
+            let available = self.applyAvailability(module)
+            let stoppedRecording: Bool
+            if self.startedRecordingForPrivateCheck, !self.microphoneOptIn {
+                self.startedRecordingForPrivateCheck = false
+                stoppedRecording = self.nativeCall("stop-recording", { module.stopRecording() }) == 0
+            } else {
+                self.startedRecordingForPrivateCheck = false
+                stoppedRecording = true
+            }
             self.readSnapshot(module)
-            return success
+            return available && stoppedRecording
         }
     }
 
@@ -967,7 +1108,15 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                 self.update(["lastRejectedOperation": "microphone-not-authorized"]); return false
             }
             if !muted, !self.locked({ self.microphoneGateOpen }) {
-                guard let graph = self.assistantVoiceGraph(), graph.isConnected, !graph.gateOpen else {
+                let hasConnectedGate: Bool
+                if let graph = self.assistantVoiceGraph() {
+                    hasConnectedGate = graph.isConnected && !graph.gateOpen
+                } else if let controller = self.forwardedAssistantVoiceController() {
+                    hasConnectedGate = !controller.isGateOpen()
+                } else {
+                    hasConnectedGate = false
+                }
+                guard hasConnectedGate else {
                     self.update(["lastRejectedOperation": "assistant-microphone-gate-unavailable"])
                     return false
                 }
@@ -1307,19 +1456,23 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         let id = ObjectIdentifier(engine)
         let forwarding = forwardObserver(for: engine)
         if let forwarding {
-            let gateOpen = locked {
+            let (gateOpen, controller) = locked { () -> (Bool, ForwardedVoiceReplyController?) in
                 forwardedInputRoutes.remove(id)
-                return microphoneGateOpen
+                return (microphoneGateOpen, forwardedVoiceController)
             }
             // A replacement SDK graph may not bypass a held Guest gate.
             let inputMixer = engine.isInManualRenderingMode ? engine.mainMixerNode :
                 context[kLKRTCAudioEngineInputMixerNodeKey] as? AVAudioMixerNode
-            guard gateOpen, let inputMixer else { return -1 }
+            guard let inputMixer, controller != nil || gateOpen else { return -1 }
             let result = forwarding.audioDeviceModule(audioDeviceModule, engine: engine, configureInputFromSource: source,
                 toDestination: destination, format: format, context: context)
             guard result == 0 else { return result }
             let prove = locked { proveForwardedInput }
             guard prove?(engine, source, inputMixer) == true else { return -1 }
+            if let controller {
+                guard controller.setGateOpen(gateOpen) else { return -1 }
+                update(["voiceReplyGraph": true, "microphoneGateOpen": gateOpen])
+            }
             locked { _ = forwardedInputRoutes.insert(id) }
         }
         update(["inputSampleRate": format.sampleRate, "inputChannels": Int(format.channelCount), "inputASBD": Self.signature(format)])
@@ -1360,7 +1513,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             if connected { return 0 }
         }
         // An unwired callback lets the ADM fall back to its default raw input.
-        guard locked({ microphoneGateOpen }) else { return -1 }
+        guard (forwarding != nil && locked({ forwardedVoiceController != nil })) || locked({ microphoneGateOpen }) else { return -1 }
 #if DEBUG
         if forwarding == nil, engine.isInManualRenderingMode, let fixture = locked({ manualLegacyInputFixture }) {
             return fixture.audioDeviceModule(audioDeviceModule, engine: engine, configureInputFromSource: source,

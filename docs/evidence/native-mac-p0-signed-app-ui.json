@@ -1,0 +1,59 @@
+{
+  "scenario": "Signed build 112 local UI smoke tests in user-provided test rooms",
+  "status": "partial",
+  "artifact": {
+    "version": "0.3.0",
+    "build": "112",
+    "executableSHA256": "c9e43982bf486076e9b2f8512cf5cb48306dab200186544ab0d940b41305f7b0"
+  },
+  "checks": [
+    {
+      "provider": "telemost",
+      "status": "pass",
+      "joinObservedBySeconds": 4.7,
+      "observations": [
+        "UI showed one participant",
+        "local microphone toggled on and off",
+        "local camera preview appeared and was turned off",
+        "left to Home"
+      ],
+      "limitations": [
+        "Observation timing is an upper bound and not a performance benchmark.",
+        "No independent participant or remote audio/video witness."
+      ]
+    },
+    {
+      "provider": "trueconf",
+      "status": "fail",
+      "joinObservedBySeconds": null,
+      "observations": [
+        "Error modal reported NativeDesktopRTCError code 1",
+        "A one-participant meeting appeared after error dismissal; admission identity was not independently confirmed",
+        "left to Home"
+      ],
+      "limitations": [
+        "Outcome is ambiguous and not a verified join.",
+        "No media or remote peer verified."
+      ]
+    },
+    {
+      "provider": "guest",
+      "status": "pass",
+      "joinObservedBySeconds": 6.4,
+      "observations": [
+        "UI showed one participant and muted local microphone",
+        "left to Home"
+      ],
+      "limitations": [
+        "Observation timing is an upper bound and not a performance benchmark.",
+        "No independent participant or remote audio/video witness."
+      ]
+    }
+  ],
+  "finalState": "Home with test invitation field cleared",
+  "limits": [
+    "UI observations only; no measurements of media latency, CPU, memory or network recovery.",
+    "Test joins were automatically added to app Recents.",
+    "The camera test displayed the user’s live preview in a computer-use screenshot; no separate screenshot file was saved."
+  ]
+}

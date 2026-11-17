@@ -162,6 +162,13 @@ final class NativeGuestEngine {
     private var lastMediaEvent = ProcessInfo.processInfo.systemUptime
     private(set) var subscriber: GuestPeer?
     private var publisher: GuestPeer?
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard !closing, let publisher else { return nil }
+        return publisher.microphoneTrackProbe?.checking { [weak self, weak publisher] in
+            guard let self, let publisher else { return false }
+            return !closing && self.publisher === publisher
+        }
+    }
     private var transport: GuestTransport?
     private var reader: Task<Void, Never>?
     private var ping: Task<Void, Never>?

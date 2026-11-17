@@ -138,7 +138,7 @@ import XCTest
         XCTAssertFalse(model.previewing); XCTAssertFalse(model.checkingAudio)
     }
     func testCancelExternalCameraEnableWithdrawsIndependentMediaTaskIntent() async throws {
-        let engine = NativeDesktopTelemostEngine()
+        let engine = TelemostAdapter()
         engine.snapshot.phase = .connected
         var entered = false
         let worker = Task {

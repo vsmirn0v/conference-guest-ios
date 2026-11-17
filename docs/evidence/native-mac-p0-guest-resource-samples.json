@@ -1,0 +1,32 @@
+{
+  "scenario": "Signed build 112 Guest UI with synthetic peers; snapshot sampling",
+  "pidMatchesPreviouslyObservedProcess": true,
+  "intervalSeconds": 1,
+  "samples": [
+    {
+      "cpuPercent": 8.1,
+      "residentMiB": 213.27
+    },
+    {
+      "cpuPercent": 25.1,
+      "residentMiB": 214.8
+    },
+    {
+      "cpuPercent": 11.7,
+      "residentMiB": 215.12
+    },
+    {
+      "cpuPercent": 22.4,
+      "residentMiB": 215.25
+    },
+    {
+      "cpuPercent": 10.4,
+      "residentMiB": 215.61
+    }
+  ],
+  "limitations": [
+    "Single run, short sampling period; not a steady-state performance benchmark.",
+    "ps CPU is a point-in-time process statistic and may include multi-core usage.",
+    "No remote audio, network recovery, battery, or device-route quality established."
+  ]
+}

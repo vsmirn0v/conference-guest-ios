@@ -1,26 +1,8 @@
 import AVFoundation
 import Combine
 import Foundation
-import LiveKit
-import LiveKitWebRTC
 import SherpaOnnxKit
 
-/// One remote audio stream a meeting can transcribe: a WebRTC track (Guest,
-/// Telemost, TrueConf) or a LiveKit track (Rock). A mixed stream has no identity.
-struct MeetingAudioSource {
-    let id: String
-    let participantIdentity: String?
-    let attach: (MeetingAudioSink) -> Void
-    let detach: (MeetingAudioSink) -> Void
-
-    static func webRTC(_ track: LKRTCAudioTrack, identity: String?) -> Self {
-        .init(id: track.trackId, participantIdentity: identity, attach: { track.add($0) }, detach: { track.remove($0) })
-    }
-    static func liveKit(_ track: RemoteAudioTrack, id: String, identity: String?) -> Self {
-        .init(id: id, participantIdentity: identity, attach: { track.add(audioRenderer: $0.liveKit) },
-              detach: { track.remove(audioRenderer: $0.liveKit) })
-    }
-}
 extension GuestRemoteAudio {
     var source: MeetingAudioSource { .webRTC(track, identity: participantIdentity) }
 }
@@ -463,38 +445,5 @@ final class MeetingTranscriber: @unchecked Sendable {
         }
         guard error == nil, let data = output.floatChannelData else { return nil }
         return Array(UnsafeBufferPointer(start: data[0], count: Int(output.frameLength)))
-    }
-}
-
-/// LiveKit's renderer protocol has its own Objective-C selector; this forwards to the sink.
-final class LiveKitAudioSink: NSObject, AudioRenderer, @unchecked Sendable {
-    let sink: MeetingAudioSink
-    init(_ sink: MeetingAudioSink) { self.sink = sink }
-    func render(pcmBuffer: AVAudioPCMBuffer) { sink.render(pcmBuffer: pcmBuffer) }
-}
-
-/// A sink on one remote track. It copies each buffer and returns at once: the
-/// audio thread never waits for conversion or recognition.
-final class MeetingAudioSink: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
-    /// The same sink as a LiveKit renderer, one object for add and remove.
-    lazy var liveKit = LiveKitAudioSink(self)
-    let trackID: String
-    let deliver: (String, AVAudioPCMBuffer) -> Void
-    init(trackID: String, deliver: @escaping (String, AVAudioPCMBuffer) -> Void) { self.trackID = trackID; self.deliver = deliver }
-    func render(pcmBuffer: AVAudioPCMBuffer) {
-        guard let copy = Self.copy(pcmBuffer) else { return }
-        deliver(trackID, copy)
-    }
-    static func copy(_ pcmBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard pcmBuffer.frameLength > 0,
-              let copy = AVAudioPCMBuffer(pcmFormat: pcmBuffer.format, frameCapacity: pcmBuffer.frameLength) else { return nil }
-        copy.frameLength = pcmBuffer.frameLength
-        let source = UnsafeMutableAudioBufferListPointer(pcmBuffer.mutableAudioBufferList)
-        let target = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
-        for (from, to) in zip(source, target) {
-            guard let input = from.mData, let output = to.mData else { continue }
-            memcpy(output, input, Int(min(from.mDataByteSize, to.mDataByteSize)))
-        }
-        return copy
     }
 }

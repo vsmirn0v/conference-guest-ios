@@ -12,7 +12,7 @@ import posixpath
 import subprocess
 
 FORK_SHA = "0385653a83f21acf3c916466d4088b29fe2f160b"
-LIVEKIT_SHA = "57a84d71c33e97349963c1cbd442fb4b01428b7c"
+LIVEKIT_SHA = "43c1c0870e51eedbfd95b20b1b5c43a767886786"
 CODE_SUFFIXES = {".h", ".m", ".mm", ".cc", ".cpp", ".c"}
 NATIVE_ROOTS = ("api", "audio", "call", "common_audio", "common_video",
                 "logging", "media", "modules", "p2p", "pc", "rtc_base", "test", "video")
@@ -720,11 +720,17 @@ def swift_namespace_audit(root, audit):
         for token in lex(data.decode("utf-8")):
             if token.kind == "identifier" and token.text.startswith(("LKRTC", "kLKRTC")):
                 references.setdefault(token.text, []).append({"path": name, "line": token.line})
-    missing = sorted(set(references) - available)
+    synthesized_protocol_references = sorted(
+        ident for ident in references
+        if ident not in available and ident.endswith("Protocol") and ident[:-len("Protocol")] in available
+    )
+    missing = sorted(set(references) - available - set(synthesized_protocol_references))
     if missing:
         raise ValueError(f"Pinned Swift namespace references missing from overlay: {missing}")
     return {"revision": revision, "inputs": inputs, "references": references,
-            "namespace_identifiers": len(references), "missing_namespace_identifiers": missing,
+            "namespace_identifiers": len(references),
+            "synthesized_protocol_references": synthesized_protocol_references,
+            "missing_namespace_identifiers": missing,
             "scope": "Identifier presence only; method signatures, Swift import and linkage require compilation."}
 
 

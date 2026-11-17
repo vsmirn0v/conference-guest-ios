@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "label": "universal-p8-release-candidate",
+  "sourceRevision": "0f2ea2651cda4473e8bc64a12aac367e9194207f+universal-p8",
+  "notes": "Unsigned Release candidate arm64 LinkMap closure audit across main app and both voice workers",
+  "status": "pass",
+  "linkmaps": [
+    {
+      "linkmapName": "Rock'N'Roll for Mac-LinkMap-normal-arm64.txt",
+      "linkmapSHA256": "acd9bdf41361279171ed420b934d87180e32933cad76138ade9b368d814cccb3",
+      "totalObjectEntries": 1299,
+      "bucketCounts": {
+        "ConferenceCore": 1,
+        "LiveKit-Swift-SDK": 5,
+        "LiveKitWebRTC": 1,
+        "RustLiveKitUniFFI": 1,
+        "SherpaOnnx": 952,
+        "app-target": 238,
+        "apple-sdk": 101
+      },
+      "webrtcEntries": [
+        "Release/LiveKitWebRTC.framework/LiveKitWebRTC"
+      ],
+      "unexpectedWebRTCEntries": [],
+      "prohibitedEntries": [],
+      "unknownEntries": [],
+      "status": "pass"
+    },
+    {
+      "linkmapName": "RockClonedVoiceWorker-LinkMap-normal-arm64.txt",
+      "linkmapSHA256": "b5f79a1fc16d1fb07788b1a09a5ebfc6fa9503c8235618e3c1296597e98e7495",
+      "totalObjectEntries": 44,
+      "bucketCounts": {
+        "app-target": 11,
+        "apple-sdk": 33
+      },
+      "webrtcEntries": [],
+      "unexpectedWebRTCEntries": [],
+      "prohibitedEntries": [],
+      "unknownEntries": [],
+      "status": "pass"
+    },
+    {
+      "linkmapName": "RockClonedVoiceGPUWorker-LinkMap-normal-arm64.txt",
+      "linkmapSHA256": "82c306f2609a6936adc38616a475e6dfed97b8b443cf62b3095734c2a1dfa5cd",
+      "totalObjectEntries": 100,
+      "bucketCounts": {
+        "MLXAudioVoice-Dependencies": 22,
+        "app-target": 11,
+        "apple-sdk": 67
+      },
+      "webrtcEntries": [],
+      "unexpectedWebRTCEntries": [],
+      "prohibitedEntries": [],
+      "unknownEntries": [],
+      "status": "pass"
+    }
+  ]
+}

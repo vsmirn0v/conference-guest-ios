@@ -1,0 +1,31 @@
+{
+  "scenario": "Guest synthetic sender and receiver in one standalone process",
+  "status": "pass",
+  "probeSHA256": "08237c9e9608c317f58b2bf4871f02c90211c266fefacc5a4e6b97eeb9238923",
+  "frameworkSHA256": "9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977",
+  "durationSecondsRequested": 15,
+  "receiver": {
+    "joined": true,
+    "rtcJoined": true,
+    "subscriberConnected": true,
+    "decodedAudioRMS": 0.06236411161448049
+  },
+  "render": {
+    "frames": 251,
+    "advancingFrames": 251,
+    "pixelChanges": 250,
+    "width": 480,
+    "height": 270
+  },
+  "checks": {
+    "pair": true,
+    "codecRequested": "h264",
+    "physicalMicrophoneVerified": false,
+    "physicalPlayoutVerified": false
+  },
+  "limits": [
+    "Standalone current-source debug probe, not the signed Mac app.",
+    "Two clients share one process and are not an independent application or a physical audio test.",
+    "H.264 was requested; negotiation was not independently recorded here."
+  ]
+}

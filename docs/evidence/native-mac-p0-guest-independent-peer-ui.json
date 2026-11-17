@@ -1,0 +1,22 @@
+{
+  "scenario": "Signed build 112 receives synthetic video from a separately launched test probe",
+  "status": "pass",
+  "artifact": {
+    "version": "0.3.0",
+    "build": "112",
+    "executableSHA256": "c9e43982bf486076e9b2f8512cf5cb48306dab200186544ab0d940b41305f7b0"
+  },
+  "observations": [
+    "The UI showed three participants including the app and two test-probe participants.",
+    "Two computer-use observations showed the remote generated pattern visibly change.",
+    "The app microphone and camera stayed off.",
+    "The app left the meeting and returned Home; the invitation field was cleared."
+  ],
+  "witness": "Visual comparison of two computer-use screenshots of the signed app while a separate synthetic probe process was publishing. Screenshots are in the computer-use output; no separate image file was saved.",
+  "limitations": [
+    "This establishes visible fresh inbound synthetic video only.",
+    "No decoded-frame counters, remote audio audibility, outgoing media, real-person device quality, media latency or network recovery were independently established.",
+    "The two synthetic participants were hosted within the same separate probe process.",
+    "Test-room joining updates app Recents."
+  ]
+}

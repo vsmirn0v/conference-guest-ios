@@ -1,0 +1,300 @@
+{
+  "schemaVersion": 1,
+  "sourceRevision": "fb491b0825dfe44b7db320e558000fc7158ec98f",
+  "artifact": {
+    "kind": "installed-app",
+    "identity": "dev.vsmirn0v.conferenceguest.nativeguest 0.3.0 (112), main executable",
+    "sha256": "c9e43982bf486076e9b2f8512cf5cb48306dab200186544ab0d940b41305f7b0",
+    "configuration": "Release",
+    "provenance": "Build 112 matches committed product source at fb491b08; installed/export bundles match by file hashes, type, mode and symlink target. P0 edits excluded."
+  },
+  "environment": {
+    "os": "macOS 27.2 (26B123)",
+    "hardware": "Apple Silicon",
+    "audioRoute": null,
+    "provider": null,
+    "serverVersion": null
+  },
+  "checks": [
+    {
+      "id": "installed-signature",
+      "status": "pass",
+      "evidence": "docs/native-mac-universal-p0-inventory.md",
+      "limitations": "Installed app verified; installed/export comparison excludes timestamps and extended attributes."
+    },
+    {
+      "id": "rock-guest-first-input-route",
+      "status": "pass",
+      "evidence": ".build/universal-p0-compile/p0-rock-shared-audio.xcresult",
+      "limitations": "Test passed by confirming the expected Guest-first Rock microphone refusal, followed by safe recovery after the prior graph retired. Manual rendering/local LiveKit SFU; not physical-device or signed-release evidence. This is an open product limitation, not parity acceptance."
+    },
+    {
+      "id": "current-source-tests",
+      "status": "pass",
+      "evidence": "NativeMacGuest/Tests/Parity/MediaSenderDiagnosticsTests.swift",
+      "limitations": "39 Debug XCTests (MediaSenderDiagnosticsTests, SharedAudioEngineTests, SharedGuestMeetingAudioTests, ExternalRecoveryTests, DesktopParityTests diagnostics) + 17 Python unittests passed on P0 working tree with MediaSenderDiagnostics.swift fix."
+    },
+    {
+      "id": "full-static-dependency-closure",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-build112-reconstructed-linkmap.json",
+      "limitations": "Reconstructed Release LinkMaps from 0fa7a787 (1285 main app entries, 44 voice worker, 100 GPU worker) passed with single LiveKitWebRTC, zero unknown, and zero prohibited provider SDKs; paired with build 112 Mach-O manifest."
+    },
+    {
+      "id": "standalone-presenter-and-share-runners",
+      "status": "pass",
+      "evidence": "NativeMacGuest/Tests/run-meeting-engine-fixtures.sh",
+      "limitations": "All 4 standalone fixture suites (external, rock, presenter, share-capture; 24 assertions) + AudioOwnerDiagnosticsTests passed against .build/webrtc-m156-desktop-audio/native-framework-audio-route-r1."
+    },
+    {
+      "id": "p0-rock-local-sfu-series",
+      "status": "fail",
+      "evidence": "docs/evidence/native-mac-p0-rock-local-sfu-series.json",
+      "limitations": "1 warm-up + 5 isolated runs under local livekit-server manual rendering: warm-up and runs 1-4 passed (median 16.166 s, unmute 21.467 ms, move 8.683 ms); run-5 failed on pre-existing longestGap == 2 bucket jitter; pre-P1 Guest-first Rock limitation retained."
+    },
+    {
+      "id": "live-provider-parity",
+      "status": "not-run",
+      "evidence": null,
+      "limitations": "Requires independent peers and disposable rooms."
+    },
+    {
+      "id": "p0-audio-owner-diagnostics-unit",
+      "status": "pass",
+      "evidence": "NativeMacGuest/Tests/AudioOwnerDiagnosticsTests.swift",
+      "limitations": "Standalone compiled test on uncommitted P0 source; not run on signed build 112."
+    },
+    {
+      "id": "external-protocol-fixtures",
+      "status": "pass",
+      "evidence": ".build/native-rock-unit/9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977/external-baseline.log",
+      "limitations": "25 assertions on uncommitted P0 source using build 112 WebRTC input. No live network, physical media, signed Release app or SDK artifact qualification."
+    },
+    {
+      "id": "rock-isolated-fixture",
+      "status": "pass",
+      "evidence": ".build/native-rock-unit/9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977/rock-baseline-retry.log",
+      "limitations": "Synthetic Rock assertions on uncommitted P0 source and build 112 WebRTC input; private lease test explicitly uses legacy audio. Not a live provider or shared audio input-route qualification."
+    },
+    {
+      "id": "p0-debug-app-compile",
+      "status": "pass",
+      "evidence": ".build/universal-p0-compile/p0-compile.log",
+      "limitations": "Unsigned Debug compile of uncommitted P0 source; no runtime or signed Release qualification."
+    },
+    {
+      "id": "guest-live-synthetic-pair",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-p0-guest-synthetic.json",
+      "limitations": "Current-source standalone debug probe; two peers in one process; no physical audio, independent app, signed-app qualification or verified codec negotiation."
+    },
+    {
+      "id": "p0-diagnostics-xctests",
+      "status": "pass",
+      "evidence": ".build/universal-p0-compile/p0-diagnostics.xcresult",
+      "limitations": "Two focused tests, unsigned Debug app host built from uncommitted P0 source; not signed Release."
+    },
+    {
+      "id": "p0-native-engine-regressions",
+      "status": "pass",
+      "evidence": ".build/universal-p0-compile/p0-engine-baseline.xcresult",
+      "limitations": "89 selected tests; unsigned Debug app host built from uncommitted P0 source. No live-provider or physical media qualification."
+    },
+    {
+      "id": "signed-build112-ui-guest",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-p0-signed-app-ui.json",
+      "limitations": "Local UI join and leave only; no independent peer or physical media."
+    },
+    {
+      "id": "signed-build112-ui-telemost",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-p0-signed-app-ui.json",
+      "limitations": "Local UI join, local microphone and camera controls only; no independent peer."
+    },
+    {
+      "id": "signed-build112-ui-trueconf",
+      "status": "fail",
+      "evidence": "docs/evidence/native-mac-p0-signed-app-ui.json",
+      "limitations": "NativeDesktopRTCError code 1 followed by an ambiguous meeting view; not a verified join."
+    },
+    {
+      "id": "signed-build112-guest-independent-incoming-video",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-p0-guest-independent-peer-ui.json",
+      "limitations": "Fresh changing synthetic video observed in signed app from a separate process. No remote audio, outgoing media, recovery or physical quality verification."
+    },
+    {
+      "id": "p0-cached-sender-command-retest",
+      "status": "pass",
+      "evidence": ".build/universal-p0-compile/p0-diagnostics-retest.xcresult",
+      "limitations": "22 selected tests, unsigned Debug build including final cached sender-command witness. Command witness does not prove effective SDK track state."
+    },
+    {
+      "id": "signed-build112-telemost-independent-incoming-video",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-p0-telemost-independent-peer-ui.json",
+      "limitations": "Changing synthetic video observed in the signed app from a separate process. Audio, outgoing media and physical quality were not verified."
+    },
+    {
+      "id": "signed-build112-trueconf-independent-incoming-video",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-p0-trueconf-independent-peer-ui.json",
+      "limitations": "Successful second attempt: changing synthetic video observed in signed app from separate process; first attempt RTC error remains unresolved. Audio, outgoing media and physical quality were not verified."
+    },
+    {
+      "id": "signed-build112-rock-ui",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-p0-rock-local-ui.json",
+      "limitations": "Local UI join and leave with microphone and camera off; no independent peer, media or performance verified."
+    },
+    {
+      "id": "rock-shared-audio-repeat-run-1",
+      "status": "fail",
+      "evidence": ".build/universal-p0-compile/repeat-rock/run-1.xcresult",
+      "limitations": "Manual-rendering local SFU: initial Guest-first refusal reproduced, but assistant reply audible coverage and longest-gap assertions failed. This was one uncontrolled run; no physical audio."
+    },
+    {
+      "id": "p0-extended-ownership-diagnostics-tests",
+      "status": "pass",
+      "evidence": ".build/universal-p0-compile/p0-diagnostics-v2-tests.xcresult",
+      "limitations": "91 selected tests on unsigned Debug app/test host built from uncommitted source; SDK-internal recovery generation and actual sender-enabled state not witnessed."
+    },
+    {
+      "id": "signed-build112-trueconf-five-receive-windows",
+      "status": "pass",
+      "evidence": "docs/evidence/native-mac-p0-trueconf-controlled-series.json",
+      "limitations": "Generated pattern observed for five sequential joins, one device and publisher. No exact join or first-frame latency, verified frame changes per run, physical mic, outbound audio/video or recovery. One earlier RTC error remains unresolved."
+    }
+  ],
+  "measurements": [
+    {
+      "id": "join",
+      "status": "not-run",
+      "value": null,
+      "unit": "ms",
+      "scenario": "cold join to connected, per provider",
+      "evidence": null
+    },
+    {
+      "id": "first-decoded-media",
+      "status": "not-run",
+      "value": null,
+      "unit": "ms",
+      "scenario": "cold join to fresh decoded audio and moving video",
+      "evidence": null
+    },
+    {
+      "id": "microphone-activation",
+      "status": "not-run",
+      "value": null,
+      "unit": "ms",
+      "scenario": "explicit unmute to independent peer audio",
+      "evidence": null
+    },
+    {
+      "id": "talk-handover",
+      "status": "not-run",
+      "value": null,
+      "unit": "ms",
+      "scenario": "A to B with prior sender muted, independent peer evidence",
+      "evidence": null
+    },
+    {
+      "id": "steady-cpu",
+      "status": "not-run",
+      "value": null,
+      "unit": "percent",
+      "scenario": "fixed room and media workload",
+      "evidence": null
+    },
+    {
+      "id": "steady-memory",
+      "status": "not-run",
+      "value": null,
+      "unit": "MiB",
+      "scenario": "fixed room and media workload",
+      "evidence": null
+    },
+    {
+      "id": "capture-cadence",
+      "status": "not-run",
+      "value": null,
+      "unit": "frames/s",
+      "scenario": "fixed camera and screen workloads",
+      "evidence": null
+    },
+    {
+      "id": "render-cadence",
+      "status": "not-run",
+      "value": null,
+      "unit": "frames/s",
+      "scenario": "fixed moving video workload",
+      "evidence": null
+    },
+    {
+      "id": "resource-counts",
+      "status": "not-run",
+      "value": null,
+      "unit": "count",
+      "scenario": "owner, attachment, capture and sink counts before and after drain",
+      "evidence": null
+    },
+    {
+      "id": "guest-join-cpu-sample-median",
+      "status": "measured",
+      "value": 11.7,
+      "unit": "percent",
+      "scenario": "Five one-second process snapshots during one signed-app Guest join with synthetic peers; not steady state.",
+      "evidence": "docs/evidence/native-mac-p0-guest-resource-samples.json"
+    },
+    {
+      "id": "guest-join-rss-sample-median",
+      "status": "measured",
+      "value": 215.12,
+      "unit": "MiB",
+      "scenario": "Five one-second process snapshots during one signed-app Guest join with synthetic peers; not steady state.",
+      "evidence": "docs/evidence/native-mac-p0-guest-resource-samples.json"
+    },
+    {
+      "id": "rock-manual-rendering-talk-move",
+      "status": "measured",
+      "value": 8.683,
+      "unit": "ms",
+      "scenario": "Median of 5 local livekit-server manual-rendering P0 runs after warm-up (Guest-first Rock limitation active).",
+      "evidence": "docs/evidence/native-mac-p0-rock-local-sfu-series.json"
+    },
+    {
+      "id": "rock-manual-rendering-unmute",
+      "status": "measured",
+      "value": 21.467,
+      "unit": "ms",
+      "scenario": "Median of 5 local livekit-server manual-rendering P0 runs after warm-up (fresh input route).",
+      "evidence": "docs/evidence/native-mac-p0-rock-local-sfu-series.json"
+    },
+    {
+      "id": "rock-local-sfu-test-case-median",
+      "status": "measured",
+      "value": 16.166,
+      "unit": "seconds",
+      "scenario": "Median of 5 local livekit-server manual-rendering P0 SharedEngineRockEngineTests runs after warm-up (4/5 pass).",
+      "evidence": "docs/evidence/native-mac-p0-rock-local-sfu-series.json"
+    },
+    {
+      "id": "trueconf-receive-cpu-window-median",
+      "status": "measured",
+      "value": 51.599999999999994,
+      "unit": "percent",
+      "scenario": "Median of five 10-second signed-app receive windows after a warm-up; same app and synthetic publisher processes. Not established as steady state.",
+      "evidence": "docs/evidence/native-mac-p0-trueconf-controlled-series.json"
+    },
+    {
+      "id": "trueconf-receive-rss-window-median",
+      "status": "measured",
+      "value": 294.86,
+      "unit": "MiB",
+      "scenario": "Median of five 10-second signed-app receive windows after a warm-up; same app and synthetic publisher processes. Not established as steady state.",
+      "evidence": "docs/evidence/native-mac-p0-trueconf-controlled-series.json"
+    }
+  ]
+}

@@ -23,7 +23,7 @@ struct ParticipationAudience: Equatable {
     let providerGroup: String
     let localParticipant: String
     let members: [String: String]
-    let connection: ObjectIdentifier
+    let connection: MeetingConnectionIdentity
 }
 
 struct ParticipationSetup: Equatable {

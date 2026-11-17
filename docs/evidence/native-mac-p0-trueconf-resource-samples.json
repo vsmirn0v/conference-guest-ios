@@ -1,0 +1,90 @@
+{
+  "scenario": "Signed Mac build 112, one TrueConf meeting, receiving synthetic video from separate process; microphone/camera off.",
+  "intervalSeconds": 1,
+  "sampleCount": 15,
+  "samples": [
+    {
+      "elapsedSeconds": 0,
+      "cpuPercent": 48.8,
+      "residentMiB": 192.11
+    },
+    {
+      "elapsedSeconds": 1,
+      "cpuPercent": 41.3,
+      "residentMiB": 178.84
+    },
+    {
+      "elapsedSeconds": 2,
+      "cpuPercent": 52.9,
+      "residentMiB": 171.03
+    },
+    {
+      "elapsedSeconds": 3,
+      "cpuPercent": 59.0,
+      "residentMiB": 164.2
+    },
+    {
+      "elapsedSeconds": 4,
+      "cpuPercent": 47.1,
+      "residentMiB": 165.69
+    },
+    {
+      "elapsedSeconds": 5,
+      "cpuPercent": 53.4,
+      "residentMiB": 168.36
+    },
+    {
+      "elapsedSeconds": 6,
+      "cpuPercent": 58.1,
+      "residentMiB": 168.59
+    },
+    {
+      "elapsedSeconds": 7,
+      "cpuPercent": 57.2,
+      "residentMiB": 169.36
+    },
+    {
+      "elapsedSeconds": 8,
+      "cpuPercent": 52.7,
+      "residentMiB": 170.09
+    },
+    {
+      "elapsedSeconds": 9,
+      "cpuPercent": 52.6,
+      "residentMiB": 170.22
+    },
+    {
+      "elapsedSeconds": 10,
+      "cpuPercent": 53.4,
+      "residentMiB": 170.67
+    },
+    {
+      "elapsedSeconds": 11,
+      "cpuPercent": 67.7,
+      "residentMiB": 170.73
+    },
+    {
+      "elapsedSeconds": 12,
+      "cpuPercent": 55.2,
+      "residentMiB": 170.8
+    },
+    {
+      "elapsedSeconds": 13,
+      "cpuPercent": 54.8,
+      "residentMiB": 170.94
+    },
+    {
+      "elapsedSeconds": 14,
+      "cpuPercent": 72.4,
+      "residentMiB": 171.23
+    }
+  ],
+  "limits": [
+    "Short single-call sample; background system load is uncontrolled.",
+    "CPU reflects ps reporting at each sample and is not energy usage.",
+    "No independent audio reception or outgoing media verification.",
+    "An independent Rock test overlapped this sampling. These observations cannot be used as a controlled performance baseline.",
+    "The synthetic publisher was terminated after the signed app left, so its graceful protocol leave was not verified."
+  ],
+  "status": "not-comparable"
+}

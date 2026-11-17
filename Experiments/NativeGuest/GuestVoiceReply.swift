@@ -33,18 +33,18 @@ import Foundation
         capture = admission
         return true
     }
-    fileprivate func openCapture() -> Bool { capture?.open() ?? true }
+    func openCapture() -> Bool { capture?.open() ?? true }
     var captureIsOpen: Bool { capture?.isOpen() ?? true }
 
-    fileprivate func start(stop: @escaping () -> Void, localGain: @escaping (Float) -> Void,
-                           resolve: @escaping (Outcome) -> Void) {
+    func start(stop: @escaping () -> Void, localGain: @escaping (Float) -> Void,
+               resolve: @escaping (Outcome) -> Void) {
         started = true
         stopPlayer = stop
         self.localGain = localGain
         self.resolve = resolve
     }
 
-    fileprivate func finish(_ outcome: Outcome, stopping: Bool = false) {
+    func finish(_ outcome: Outcome, stopping: Bool = false) {
         guard !stopped else { return }
         stopped = true
         let resolve = resolve, stop = stopPlayer

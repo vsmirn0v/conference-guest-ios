@@ -1,0 +1,17 @@
+{
+  "scenario": "TrueConf synthetic publisher",
+  "status": "pass",
+  "probeSHA256": "b8ec5244cdd614136a873e6cc78e5e9521d4cd485545e02abb8daf0f93db3ab0",
+  "frameworkSHA256": "9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977",
+  "durationSecondsRequested": 90,
+  "publisherFinished": true,
+  "cleanStopEvent": true,
+  "capture": "Synthetic audio and video; no physical microphone, camera, or playout.",
+  "logging": "Test-only event-name allowlist; stdout and stderr discarded.",
+  "limits": [
+    "Standalone test-only executable, not the signed app.",
+    "Probe passed its own connected transport and encoded-frame threshold; remote rendering is separate evidence.",
+    "Its self-receive frame requirement was removed to allow a publisher-only test.",
+    "The invitation file was unlinked; storage erasure and Apple system networking logs cannot be independently verified."
+  ]
+}

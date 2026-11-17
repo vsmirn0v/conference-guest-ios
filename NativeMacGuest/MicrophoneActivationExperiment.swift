@@ -11,7 +11,7 @@ import SwiftUI
     private let began = ProcessInfo.processInfo.systemUptime
     private var window: NSWindow?
     private var model: NativeDesktopMeetingModel?
-    private var adapter: NativeDesktopGuestEngine?
+    private var adapter: GuestAdapter?
     private var peer: NativeStartupReceiverProxy?
     private var logger: LKRTCFileLogger?
     private var logDirectory: URL?
@@ -33,7 +33,7 @@ import SwiftUI
     private var mainGapStart = 0.0, mainGapEnd = 0.0
     private var acceptance = true
     private weak var releasedModel: NativeDesktopMeetingModel?
-    private weak var releasedAdapter: NativeDesktopGuestEngine?
+    private weak var releasedAdapter: GuestAdapter?
     private weak var releasedNative: NativeGuestEngine?
     private weak var releasedPeer: NativeStartupReceiverProxy?
     private var now: Double { ProcessInfo.processInfo.systemUptime }
@@ -603,9 +603,10 @@ import SwiftUI
         emit("independentReceiverReady", peer.ipcEvidence)
         let policy = GuestICEPolicy(rawValue: ProcessInfo.processInfo.environment["ROCK_MIC_TEST_ICE_POLICY"] ?? "auto")
         guard let policy else { throw Failure("Invalid diagnostic ICE policy") }
-        let adapter = NativeDesktopGuestEngine(icePolicy: policy); self.adapter = adapter; releasedAdapter = adapter
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio, icePolicy: policy); self.adapter = adapter; releasedAdapter = adapter
+        let session = UniversalMeetingEngine.shared.makeSession(destination: try .verified(invitation, engine: .guest), adapter: adapter)
         let model = NativeDesktopMeetingModel(destination: try .verified(invitation, engine: .guest),
-            name: "Physical microphone activation validation", title: "Disposable microphone activation", engine: adapter)
+            name: "Physical microphone activation validation", title: "Disposable microphone activation", engine: session)
         self.model = model; releasedModel = model
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         self.window = window; window.contentView = NSHostingView(rootView: NativeDesktopMeetingView(model: model, onMini: {}))
@@ -1086,7 +1087,7 @@ import SwiftUI
         guard result["passed"] as? Bool == true else { throw Failure("Private Sound enabled-window qualification failed") }
         return result
     }
-    private func qualifyPreOptInPrivateRejection(_ adapter: NativeDesktopGuestEngine, model: NativeDesktopMeetingModel,
+    private func qualifyPreOptInPrivateRejection(_ adapter: GuestAdapter, model: NativeDesktopMeetingModel,
                                                 native: NativeGuestEngine, peer: NativeStartupReceiverProxy) async throws {
         #if ROCK_COREAUDIO_DUPLEX_R6
         guard let owner = native.systemAudio, !owner.backend.usesAudioEngine,
@@ -1158,7 +1159,7 @@ import SwiftUI
     }
 
     /// A separate fallback case: Off precedes admission, not only an active check.
-    private func qualifySoundOffPrivateAdmission(_ adapter: NativeDesktopGuestEngine, model: NativeDesktopMeetingModel,
+    private func qualifySoundOffPrivateAdmission(_ adapter: GuestAdapter, model: NativeDesktopMeetingModel,
                                                  native: NativeGuestEngine, peer: NativeStartupReceiverProxy) async throws {
         #if ROCK_VPIO_BUILTIN_RELEASE
         let phase = "sound-off-before-private-admission"
@@ -1288,7 +1289,7 @@ import SwiftUI
         #endif
     }
 
-    private func qualifyPrivateCheck(_ adapter: NativeDesktopGuestEngine, model: NativeDesktopMeetingModel,
+    private func qualifyPrivateCheck(_ adapter: GuestAdapter, model: NativeDesktopMeetingModel,
                                      native: NativeGuestEngine, peer: NativeStartupReceiverProxy, phase: String) async throws {
         guard !model.snapshot.microphoneOn, LKRTCApplicationCaptureMuted() == 1 else { throw Failure("Private check must start muted") }
         guard let owner = native.systemAudio else { throw Failure("Private check physical owner is unavailable") }
@@ -1497,7 +1498,7 @@ import SwiftUI
             throw Failure("Private input check privacy or telemetry qualification failed")
         }
     }
-    private func leaveDuringPrivateStart(_ model: NativeDesktopMeetingModel, adapter: NativeDesktopGuestEngine,
+    private func leaveDuringPrivateStart(_ model: NativeDesktopMeetingModel, adapter: GuestAdapter,
                                         native: NativeGuestEngine, peer: NativeStartupReceiverProxy) async throws {
         let id = UUID().uuidString, scenario = "leave-during-private-start"
         emit("privateStartLeaveCaseEntered", ["id": id, "scenario": scenario])
@@ -1666,7 +1667,7 @@ import SwiftUI
         throw Failure("Private-start Leave fault requires the DEBUG private input SDK experiment")
 #endif
     }
-    private func leaveDuringWarmup(_ model: NativeDesktopMeetingModel, adapter: NativeDesktopGuestEngine) async throws {
+    private func leaveDuringWarmup(_ model: NativeDesktopMeetingModel, adapter: GuestAdapter) async throws {
         let joining = Task { try await model.connect() }
         try await wait {
             let active = adapter.currentNativeEngine?.systemAudio?.snapshot["audioActiveOperation"] as? [String: Any]
@@ -1686,7 +1687,7 @@ import SwiftUI
             "physical": audio, "safetyChecksPassed": safe, "requiresRetainedSDKLogReview": true])
         guard await cleanup(), safe else { throw Failure("Leave during stopped preparation failed") }
     }
-    private func soundOffDuringWarmup(_ model: NativeDesktopMeetingModel, adapter: NativeDesktopGuestEngine) async throws {
+    private func soundOffDuringWarmup(_ model: NativeDesktopMeetingModel, adapter: GuestAdapter) async throws {
         let joinStart = now, joining = Task { try await model.connect() }
         do {
             var operation: [String: Any] = [:]

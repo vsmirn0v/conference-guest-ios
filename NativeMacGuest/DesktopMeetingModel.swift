@@ -43,7 +43,7 @@ import UniformTypeIdentifiers
     private(set) var workspaceSoundRevision = 0
     private var workspaceApprovedVoice: (cancel: () -> Void, drain: () async -> Void)?
     func approvedWorkspaceChatLink(id: String) -> String? {
-        guard engine is NativeDesktopGuestEngine || engine is NativeDesktopRockEngine else { return nil }
+        guard (engine as? MeetingSession)?.capabilities.supportsApprovedChatCorrelation == true else { return nil }
         return "chat:" + kind.rawValue + ":" + id
     }
     var canSpeakApprovedWorkspaceReply: Bool { ownsMicrophone }
@@ -84,54 +84,25 @@ import UniformTypeIdentifiers
     @Published private(set) var sharingPending = false
     @Published var controlsHidden = false
     @Published var floatingReactions: [MeetingReactionEvent] = []
-    private var presenterStorage: NativeDesktopPresenterSession?
     var presenter: NativeDesktopPresenterSession {
-        if let presenterStorage { return presenterStorage }
-        let session = NativeDesktopPresenterSession(factory: { [weak self] in self?.engine.factory },
+        captureCoordinator.presenter(
+            engine: { [weak self] in self?.engine },
             liveCamera: { [weak self] in self?.localCamera },
-            publish: { [weak self] track, profile in
-                guard let self, !closed, !transferHeld, connected else { throw CancellationError() }
-                guard await retireShare(waitForStartup: true) else { throw NativeDesktopRTCError.cleanupFailed }
-                if let guest = engine as? NativeDesktopGuestEngine {
-                    let preference = presenterStorage?.activeEncodingPreference ?? .efficient
-                    try await guest.startScreenShare(profile: profile, codec: preference.codec) { NativeDesktopRelayCapture(track: track, source: $0) }
-                    refreshShareEncodingReport(guest: guest, track: track)
-                } else { try await engine.setScreenTrack(track) }
-                guard !closed, !transferHeld else { throw CancellationError() }
-                localShare = track
-            }, unpublish: { [weak self] in
-                guard let self else { return }
-                if let guest = engine as? NativeDesktopGuestEngine { try await guest.stopScreenShare() }
-                else { try await engine.setScreenTrack(nil) }
-                localShare = nil
-            })
-        session.onDimensions = { [weak self] profile in
-            guard let self, !closed, let guest = engine as? NativeDesktopGuestEngine else { return }
-            do { try guest.currentNativeEngine?.updateScreenShareProfile(profile) }
-            catch { self.error = error.localizedDescription }
-        }
-        session.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send(); Task { @MainActor in self?.refreshSystemReactions(); self?.noteShareState() }
-        }.store(in: &subscriptions)
-        session.supportsVP9 = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine?.screenCodecs.contains("video/vp9") == true
-        session.vp9UnavailableReason = session.supportsVP9 ? nil : L("VP9 sharing is unavailable in this meeting.")
-        presenterStorage = session; return session
-    }
-    private var shareReportTask: Task<Void, Never>?
-    private func refreshShareEncodingReport(guest: NativeDesktopGuestEngine, track: LKRTCVideoTrack) {
-        shareReportTask?.cancel()
-        shareReportTask = Task { @MainActor [weak self, weak guest] in
-            for _ in 0..<4 {
-                do { try await Task.sleep(for: .seconds(1)) } catch { return }
-                guard let self, let guest, !closed, !Task.isCancelled,
-                      localShare === track, engine === guest else { return }
-                if let evidence = await guest.currentNativeEngine?.screenEncodingEvidence(),
-                   !Task.isCancelled, localShare === track, engine === guest {
-                    presenterStorage?.encodingReport = .measured(codec: evidence.codec, powerEfficient: evidence.powerEfficient, encoder: evidence.encoder)
-                    return
+            isConnected: { [weak self] in self?.connected == true },
+            isTransferHeld: { [weak self] in self?.transferHeld == true },
+            isClosed: { [weak self] in self?.closed == true },
+            isSnapshotSharing: { [weak self] in self?.snapshot.sharing == true },
+            localShare: { [weak self] in self?.localShare },
+            setLocalShare: { [weak self] track in self?.localShare = track },
+            setSharingPending: { [weak self] pending in self?.sharingPending = pending },
+            onPresenterChange: { [weak self] in
+                self?.objectWillChange.send()
+                Task { @MainActor in
+                    self?.refreshSystemReactions()
+                    self?.noteShareState()
                 }
-            }
-        }
+            },
+            onError: { [weak self] message in self?.error = message })
     }
     var onConnected: (() -> Void)?
     var onLeave: (() async -> Void)?
@@ -323,7 +294,7 @@ import UniformTypeIdentifiers
     }
     private func updateLocalMicrophoneCapture() { localTranscriber?.setLocalCapture(transcribesMicrophone) }
     private func updateParticipationAudioSources(_ sources: [MeetingAudioSource]) {
-        guard kind == .guest, engine is NativeDesktopGuestEngine else { return }
+        guard (engine as? MeetingSession)?.participationService != nil else { return }
         let previous = participationAudioSources, now = Date()
         participationAudioSources = Dictionary(grouping: sources, by: \.id).compactMapValues { matches in
             guard matches.count == 1, let source = matches.first else { return nil }
@@ -444,14 +415,16 @@ import UniformTypeIdentifiers
     }
 
     func withApprovedWorkspaceChat<T>(id: String, _ action: () -> T) -> T {
-        let rock = engine as? NativeDesktopRockEngine
-        rock?.approvedChatID = id
+        let chatService = (engine as? MeetingSession)?.chatService
+        chatService?.setApprovedWorkspaceChatID(id)
         approvedWorkspaceChatID = id
-        defer { approvedWorkspaceChatID = nil; rock?.approvedChatID = nil }
+        defer { approvedWorkspaceChatID = nil; chatService?.setApprovedWorkspaceChatID(nil) }
         return action()
     }
 
-    var canCorrelateApprovedWorkspaceReaction: Bool { engine is NativeDesktopGuestEngine }
+    var canCorrelateApprovedWorkspaceReaction: Bool {
+        (engine as? MeetingSession)?.reactionService?.supportsApprovedCorrelation == true
+    }
 
     func withApprovedWorkspaceReaction(id: String, _ action: () -> Void) {
         approvedWorkspaceReactionID = id
@@ -620,7 +593,7 @@ import UniformTypeIdentifiers
     @Published private(set) var assistantCaptureActive = false
     /// The mute after a reply was not confirmed, so the gate stays closed until it is.
     private var voiceReplyGateHeld = false
-    private var voicePrivacyConnection: ObjectIdentifier?
+    private var voicePrivacyConnection: MeetingConnectionIdentity?
     /// What you chose with the microphone button during a reply; it wins afterwards.
     private var voiceReplyUserChoice: Bool?
     var supportsVoiceReply: Bool { connected && engine.supportsVoiceReply }
@@ -717,7 +690,7 @@ import UniformTypeIdentifiers
 
     func cancelWorkspaceApprovedOutputs() {
         workspaceApprovedVoice?.cancel()
-        (engine as? NativeDesktopRockEngine)?.cancelApprovedChat()
+        (engine as? MeetingSession)?.chatService?.cancelApprovedOutputs()
         for task in approvedWorkspaceReactionTasks.values { task.cancel() }
         for (id, permit) in approvedWorkspaceChatPermits {
             permit.cancel()
@@ -764,11 +737,8 @@ import UniformTypeIdentifiers
     func setMicrophoneForTesting(_ enabled: Bool) async { setMicrophoneEnabled(enabled); await microphoneControl?.value }
 #endif
     private(set) var engine: any NativeDesktopMeetingEngine
-    private var capture: NativeDesktopShareCapture?
-    private var sharingTask: Task<Void, Never>?
-    private var shareGeneration = UUID()
-    private var stoppingShare: Task<Bool, Never>?
-    private var shareCleanupSucceeded = true
+    private let captureCoordinator: MeetingCaptureCoordinator
+    private let usesInjectedSharedMedia: Bool
     private var generation = UUID()
     private var everConnected = false
     private var closed = false
@@ -776,8 +746,6 @@ import UniformTypeIdentifiers
     private var connection: GuestCompletion<Void>?
     private var connectionTask: Task<Void, Error>?
     private let joinTimeout: TimeInterval
-    private var shareSource: LKRTCVideoSource?
-    private var telemostChat: TelemostChat?
     private var subscriptions = Set<AnyCancellable>()
     private var receivedReactions = Set<UUID>()
     private var reactionExpiry: Task<Void, Never>?
@@ -785,7 +753,6 @@ import UniformTypeIdentifiers
     private var reactionDeviceLookup: Task<Void, Never>?
     private var reactionSourceKey: String?
     private let headset = NativeDesktopHeadsetMute()
-    private var cameraLease: NativeDesktopCameraLease.Token?
     private var authorizedMicrophoneRequest: NativeDesktopHeadsetMute.Request?
     private var controlTasks: [UUID: Task<Void, Never>] = [:]
     private var controlTail: Task<Void, Never>?
@@ -822,11 +789,6 @@ import UniformTypeIdentifiers
     private let power: NativeDesktopPowerMonitor
     private var joinReadinessPolicy = NativeDesktopJoinReadinessPolicy()
     private var joinPower = NativeDesktopPowerSnapshot(pluggedIn: false, lowPowerMode: true)
-    private var joinCameraPrime: NativeDesktopJoinCameraPrime?
-    private var joinCameraPrimeTask: Task<Void, Never>?
-    private let cameraMetadata: NativeDesktopCameraMetadataPreparation
-    private var cameraMetadataTask: Task<NativeDesktopCameraMetadataPreparation.Outcome, Error>?
-    private var cameraMetadataReport: [String: Any] = [:]
     private var externalMediaSuspension: NativeDesktopSharedMedia<GuestSystemAudio>.Suspension?
     private let sharedMedia: NativeDesktopSharedMedia<GuestSystemAudio>
     /// Simultaneous meetings: only the talk meeting holds the microphone, camera and
@@ -849,21 +811,17 @@ import UniformTypeIdentifiers
          readinessPolicy: (() -> NativeDesktopJoinReadinessPolicy)? = nil,
          sharedMedia: NativeDesktopSharedMedia<GuestSystemAudio>? = nil,
          listenStore: ListenModelStore? = nil) {
+        self.usesInjectedSharedMedia = sharedMedia != nil
         self.sharedMedia = sharedMedia ?? NativeDesktopMediaService.shared
         self.listenStore = listenStore ?? .shared
         invitation = destination.invitationURL; kind = destination.engineKind; displayName = name; self.quiet = quiet
         self.readinessPolicy = readinessPolicy ?? { joinReadiness ?? .current() }
-        self.power = power ?? NativeDesktopPowerMonitor(); self.joinCameraPrime = joinCameraPrime
-        self.cameraMetadata = cameraMetadata ?? .shared
+        self.power = power ?? NativeDesktopPowerMonitor()
+        self.captureCoordinator = MeetingCaptureCoordinator(joinCameraPrime: joinCameraPrime, cameraMetadata: cameraMetadata)
         precondition(joinTimeout.isFinite && joinTimeout > 0)
         self.joinTimeout = joinTimeout
         self.title = title?.isEmpty == false ? title! : destination.roomIdentifier
-        switch destination {
-        case .guest: engine = makeEngine ?? NativeDesktopGuestEngine()
-        case .telemost: engine = makeEngine ?? NativeDesktopTelemostEngine()
-        case .trueconf: engine = makeEngine ?? NativeDesktopTrueConfEngine()
-        case .jam: engine = makeEngine ?? NativeDesktopRockEngine(chat: chat)
-        }
+        engine = makeEngine ?? UniversalMeetingEngine.shared.makeSession(destination: destination, chat: chat)
         reactionObserver.onReaction = { [weak self] kind, _ in self?.sendReaction(kind) }
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).sink { [weak self] _ in
             Task { @MainActor in self?.refreshSystemReactions(); self?.refreshReadinessEligibility() }
@@ -892,60 +850,63 @@ import UniformTypeIdentifiers
         engine.onTitle = { [weak self] title in
             guard let self, !closed, !title.isEmpty else { return }; self.title = title
         }
-        if let guest = engine as? NativeDesktopGuestEngine {
-            guest.onFeatureError = { [weak self] error in
+        if let session = engine as? MeetingSession {
+            session.onFeatureError = { [weak self] error in
                 guard let self, !closed else { return }; self.error = error.localizedDescription
             }
-            guest.onFeatures = { [weak self] features in self?.updateFeatures(features) }
-            guest.onCapturedMessages = { [weak self] messages, transcript in
+            session.onFeatures = { [weak self] features in self?.updateFeatures(features) }
+            session.onCapturedMessages = { [weak self] messages, transcript in
                 self?.captureGuestMessages(messages, transcript: transcript)
             }
-            chat.onSend = { [weak self, weak guest] text in
-                guard let self, let native = guest?.currentNativeEngine else { return }
-                self.participation.yieldToUser()
-                if self.chat.draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { self.chat.draft = "" }
-                if let id = self.approvedWorkspaceChatID {
-                    let permit = GuestChatDispatchPermit(deadline: Date().addingTimeInterval(20))
-                    self.approvedWorkspaceChatPermits[id] = permit
-                    self.perform { _ in
-                        defer { self.approvedWorkspaceChatPermits[id] = nil }
-                        let chatID = "chat:guest:" + id
-                        do {
-                            try await native.sendAttributedChat(text, id: id, permit: permit)
-                            self.workspaceJournal?.observeApprovedChat(sessionID: self.sessionID, chatID: chatID,
-                                status: permit.didDispatch ? .accepted : .cancelled)
-                        } catch {
-                            let status: MeetingWorkspaceEvent.Status
-                            if !permit.didDispatch {
-                                let current = self.workspaceJournal?.session(id: self.sessionID)?.events
-                                    .first(where: { $0.linkedChatID == chatID })?.status
-                                status = current == .cancelled ? .cancelled : .failed
+            if let chatService = session.chatService {
+                chatService.onApprovedChatOutcome = { [weak self] id, status in
+                    guard let self, let chatID = approvedWorkspaceChatLink(id: id) else { return }
+                    workspaceJournal?.observeApprovedChat(sessionID: sessionID, chatID: chatID, status: status)
+                }
+                if !chatService.managesChatStoreSendCallbacks {
+                    if chatService.supportsSending {
+                        chat.onSend = { [weak self, weak chatService] text in
+                            guard let self, let chatService, chatService.isReadyToSend else { return }
+                            self.participation.yieldToUser()
+                            if self.chat.draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { self.chat.draft = "" }
+                            if let id = self.approvedWorkspaceChatID {
+                                let permit = GuestChatDispatchPermit(deadline: Date().addingTimeInterval(20))
+                                self.approvedWorkspaceChatPermits[id] = permit
+                                self.perform { _ in
+                                    defer { self.approvedWorkspaceChatPermits[id] = nil }
+                                    let chatID = self.approvedWorkspaceChatLink(id: id) ?? ("chat:" + self.kind.rawValue + ":" + id)
+                                    do {
+                                        let status = try await chatService.send(text, permit: permit, approvedID: id)
+                                        self.workspaceJournal?.observeApprovedChat(sessionID: self.sessionID, chatID: chatID, status: status)
+                                    } catch {
+                                        let current = self.workspaceJournal?.session(id: self.sessionID)?.events
+                                            .first(where: { $0.linkedChatID == chatID })?.status
+                                        let status = chatService.classifyError(error, permit: permit, currentStatus: current)
+                                        self.workspaceJournal?.observeApprovedChat(sessionID: self.sessionID, chatID: chatID, status: status)
+                                        throw error
+                                    }
+                                }
+                            } else {
+                                self.perform { _ in try await chatService.send(text) }
                             }
-                            else if case GuestTransportError.server = error { status = .failed }
-                            else { status = .unknown }
-                            self.workspaceJournal?.observeApprovedChat(sessionID: self.sessionID, chatID: chatID, status: status)
-                            throw error
                         }
+                        chat.onRetry = { [weak self, weak chatService] entry in
+                            guard let self, let chatService, chatService.isReadyToSend else { return }
+                            self.participation.yieldToUser()
+                            self.perform { _ in
+                                do { try await chatService.retry(entry: entry) }
+                                catch { self.chat.setDelivery(.failed, for: entry.id); throw error }
+                            }
+                        }
+                    } else if !chatService.canRead {
+                        chat.unavailableReason = chatService.unavailableReason
                     }
-                } else {
-                    self.perform { _ in _ = try await native.sendChatMessage(text) }
                 }
             }
-            chat.onRetry = { [weak self, weak guest] entry in
-                guard let self, let native = guest?.currentNativeEngine else { return }
-                self.participation.yieldToUser()
-                self.perform { _ in
-                    do { _ = try await native.sendChatMessage(entry.text) }
-                    catch { self.chat.setDelivery(.failed, for: entry.id); throw error }
-                }
-            }
-        } else if let telemost = engine as? NativeDesktopExternalSession, kind == .telemost {
-            let transport = TelemostChat(store: chat); telemostChat = transport
-            telemost.onTelemostChatContext = { [weak transport] url, id in transport?.start(invitation: url, roomID: id) }
         } else if kind == .trueconf {
             chat.unavailableReason = L("Chat is unavailable for this meeting service.")
         }
-        if !(engine is NativeDesktopGuestEngine) {
+        if (engine as? MeetingSession)?.chatService?.observesStoreCaptures ?? true {
             chat.onCapture = { [weak self] entries in
                 guard let self, let workspaceJournal = self.workspaceJournal else { return }
                 workspaceJournal.observe(sessionID: self.sessionID, events: entries.map { entry in
@@ -961,19 +922,42 @@ import UniformTypeIdentifiers
                 })
             }
         }
-        if let rock = engine as? NativeDesktopRockEngine {
-            rock.approvedChatOutcome = { [weak self] id, status in
-                guard let self, let chatID = approvedWorkspaceChatLink(id: id) else { return }
-                workspaceJournal?.observeApprovedChat(sessionID: sessionID, chatID: chatID, status: status)
-            }
-        }
     }
     var connected: Bool { snapshot.phase == .connected }
-    var participationConnection: ObjectIdentifier? {
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard !closed, connected else { return nil }
+        let generation = generation
+        return engine.microphoneTrackProbe?.checking { [weak self] in
+            guard let self else { return false }
+            return !closed && connected && self.generation == generation
+        }
+    }
+    /// IDs are random session/command generations and never contain room identifiers.
+    var ownershipDiagnostics: [String: Any] {
+        let recovery: String
+        if let session = engine as? MeetingSession {
+            recovery = session.sessionSnapshot.recoveryExecutor.rawValue
+        } else {
+            switch kind {
+            case .guest: recovery = "guest-session"
+            case .telemost, .trueconf: recovery = "external-session"
+            case .community: recovery = "livekit-sdk"
+            }
+        }
+        return ["session": sessionID.uuidString, "generation": generation.uuidString,
+                "provider": kind.rawValue, "phase": snapshot.phase.rawValue,
+                "configuredRecoveryExecutor": recovery, "cameraLease": captureCoordinator.hasActiveCameraLease,
+                "providerState": engine.ownershipDiagnostics,
+                "presenter": captureCoordinator.presenterOwnershipDiagnostics,
+                "shareGeneration": captureCoordinator.shareGeneration.uuidString, "sharePending": sharingPending,
+                "shareRetiring": captureCoordinator.isShareRetiring, "shareCleanupSucceeded": captureCoordinator.shareCleanupSucceeded,
+                "sharing": snapshot.sharing, "microphoneOn": snapshot.microphoneOn]
+    }
+    var participationConnection: MeetingConnectionIdentity? {
 #if DEBUG
         if let participationAudienceForTesting { return participationAudienceForTesting.connection }
 #endif
-        return (engine as? NativeDesktopGuestEngine)?.currentNativeEngine.map(ObjectIdentifier.init)
+        return (engine as? MeetingSession)?.participationService?.connectionIdentity
     }
     var participationSomeoneSpeaking: Bool {
         guestFeatures.participants.contains(where: \.isSpeaking) || snapshot.participants.contains { $0.speaking == true }
@@ -986,10 +970,10 @@ import UniformTypeIdentifiers
 #if DEBUG
         if let participationVoiceAvailableForTesting { return participationVoiceAvailableForTesting }
 #endif
-        return connected && kind == .guest && engine.supportsVoiceReply
+        return connected && (engine as? MeetingSession)?.participationService != nil && engine.supportsVoiceReply
     }
     var participationVoiceMicrophoneAuthorized: Bool {
-        (engine as? NativeDesktopGuestEngine)?.participationVoiceMicrophoneAuthorized == true
+        (engine as? MeetingSession)?.participationService?.voiceMicrophoneAuthorized == true
     }
     var participationVoiceCanRequestMicrophoneAccess: Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
@@ -1001,7 +985,8 @@ import UniformTypeIdentifiers
     }
     var participationTranscriptSource: ParticipationTranscriptSource {
         if guestFeatures.permissions.canViewTranscript && guestFeatures.transcriptionStatus == .active { return .service }
-        if kind == .guest, transcribingLocally, !localTranscriptionPaused { return .localRoomAudio }
+        let supportsRoomAudioParticipation = (engine as? MeetingSession).map { $0.participationService != nil } ?? (kind == .guest)
+        if supportsRoomAudioParticipation, transcribingLocally, !localTranscriptionPaused { return .localRoomAudio }
         return .unavailable
     }
     var participationVoiceHasTranscript: Bool { participationTranscriptSource != .unavailable }
@@ -1013,7 +998,7 @@ import UniformTypeIdentifiers
     var participationMeetingSoundOn: Bool { snapshot.playoutOn && requestedPlayout != false && meetingVolume > 0 }
     private var participationVoiceLocalGain: Float? {
         guard participationMeetingSoundOn else { return nil }
-        let shared = (engine as? NativeDesktopGuestEngine)?.participationVoiceUsesSharedOutput == true
+        let shared = (engine as? MeetingSession)?.participationService?.usesSharedOutput == true
         return shared ? Float(meetingVolume) : 1
     }
     func playParticipationVoice(_ buffer: AVAudioPCMBuffer, audience: ParticipationAudience,
@@ -1021,8 +1006,8 @@ import UniformTypeIdentifiers
                                 canStart: @escaping @MainActor () -> Bool,
                                 onStarted: @escaping @MainActor () -> Void) async -> GuestAutonomousVoicePlayback.Outcome {
         guard permit.canStart, participationVoiceEligible, !voiceReplyActive, !participationSomeoneSpeaking,
-              participationAudience == audience, let native = engine as? NativeDesktopGuestEngine,
-              let transport = native.currentNativeEngine else { return .notStarted }
+              participationAudience == audience,
+              let service = (engine as? MeetingSession)?.participationService else { return .notStarted }
         let borrowsMutedSender = !snapshot.microphoneOn
         if borrowsMutedSender, !headset.prepareParticipationCapture(permit) {
             probeLog("participation-voice-capture", ["stage": "preparation-refused", "headsetActive": headset.isActive,
@@ -1038,29 +1023,29 @@ import UniformTypeIdentifiers
                 voicePrivacyConnection = audience.connection
                 voiceReplyGateHeld = true
             } else if participationConnection == audience.connection {
-                restoreParticipationVoiceGate { _ = native.setParticipationVoiceGate(open: true) }
+                restoreParticipationVoiceGate { _ = service.setVoiceGate(open: true) }
             }
             voiceReplyActive = false; voiceReplyUserChoice = nil; updateLocalMicrophoneCapture()
             recoverParticipationVoiceGateIfSafe()
         }
-        if !native.hasParticipationVoiceGraph {
-            guard borrowsMutedSender, await transport.prepareParticipationVoiceAudio(permit),
-                  native.hasParticipationVoiceGraph else { return .notStarted }
+        if !service.hasVoiceGraph {
+            guard borrowsMutedSender, await service.prepareVoiceAudio(permit),
+                  service.hasVoiceGraph else { return .notStarted }
         }
-        guard native.setParticipationVoiceGate(open: false) else { return .notStarted }
+        guard service.setVoiceGate(open: false) else { return .notStarted }
         do { try await Task.sleep(for: .milliseconds(GuestVoiceReplyGraph.gateSettleMilliseconds)) }
         catch { return .notStarted }
         guard permit.canStart, await preflight() else { return .notStarted }
         var ready = true
-        if borrowsMutedSender { ready = await transport.borrowParticipationVoiceSender(permit) }
+        if borrowsMutedSender { ready = await service.borrowVoiceSender(permit) }
         let outcome = if ready, permit.canStart, await preflight() {
-            await native.playParticipationVoice(buffer, permit: permit, canStart: {
+            await service.playVoice(buffer, permit: permit, canStart: {
                 self.participationVoiceEligible && self.participationAudience == audience
                     && !self.participationRemoteSpeaking && canStart()
             }, localGain: { self.participationVoiceLocalGain }, onStarted: onStarted)
         } else { GuestAutonomousVoicePlayback.Outcome.notStarted }
         if borrowsMutedSender {
-            restoredMutedSender = await Task { @MainActor in await transport.restoreParticipationVoiceSender(permit) }.value
+            restoredMutedSender = await Task { @MainActor in await service.restoreVoiceSender(permit) }.value
         }
         return outcome
     }
@@ -1068,7 +1053,7 @@ import UniformTypeIdentifiers
         guard !closed else { return }
         let muteExpected = !snapshot.microphoneOn || requestedMicrophone == false
             || voiceReplyUserChoice == false || !ownsMicrophone || transferHeld
-        let physicallyMuted = (engine as? NativeDesktopGuestEngine)?.participationSenderPhysicallyMuted
+        let physicallyMuted = (engine as? MeetingSession)?.participationService?.senderPhysicallyMuted
             ?? !snapshot.microphoneOn
         if muteExpected && !physicallyMuted {
             voiceReplyGateHeld = true
@@ -1081,15 +1066,15 @@ import UniformTypeIdentifiers
         Self.canReleaseVoiceGate(heldFor: voicePrivacyConnection, current: participationConnection, connected: connected)
     }
 
-    static func canReleaseVoiceGate(heldFor previous: ObjectIdentifier?, current: ObjectIdentifier?, connected: Bool) -> Bool {
+    static func canReleaseVoiceGate(heldFor previous: MeetingConnectionIdentity?, current: MeetingConnectionIdentity?, connected: Bool) -> Bool {
         guard let previous else { return true }
         return connected && current.map { $0 != previous } == true
     }
 
     private func recoverParticipationVoiceGateIfSafe() {
         guard voiceReplyGateHeld, !snapshot.microphoneOn, !voiceReplyActive, canReleaseHeldVoiceGate,
-              let guest = engine as? NativeDesktopGuestEngine, guest.participationSenderPhysicallyMuted,
-              guest.setParticipationVoiceGate(open: true) else { return }
+              let service = (engine as? MeetingSession)?.participationService, service.senderPhysicallyMuted,
+              service.setVoiceGate(open: true) else { return }
         voiceReplyGateHeld = false
         voicePrivacyConnection = nil
     }
@@ -1101,26 +1086,27 @@ import UniformTypeIdentifiers
 #if DEBUG
         if let participationAudienceForTesting { return participationAudienceForTesting }
 #endif
-        guard kind == .guest, !closed, connected, guestFeatures.connected, guestFeatures.permissions.canViewParticipants,
+        guard !closed, connected, guestFeatures.connected, guestFeatures.permissions.canViewParticipants,
               guestFeatures.permissions.canViewChat, guestFeatures.permissions.canSendChat,
               let room = MeetingRoomIdentity(invitation, engine: kind),
-              let native = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine,
-              let provider = native.participationRoomScope,
+              let service = (engine as? MeetingSession)?.participationService,
+              let provider = service.roomScope,
+              let connection = service.connectionIdentity,
               let local = guestFeatures.localParticipantID,
               guestFeatures.participants.contains(where: { $0.id == local && $0.isLocal }) else { return nil }
         let participants = guestFeatures.participants
         let members = Dictionary(participants.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         guard members.count == participants.count else { return nil }
         return .init(sessionID: sessionID, room: room, providerRoom: provider.room, providerGroup: provider.group,
-                     localParticipant: local, members: members, connection: ObjectIdentifier(native))
+                     localParticipant: local, members: members, connection: connection)
     }
     func sendParticipationChat(_ text: String, id: String, audience: ParticipationAudience,
                                permit: GuestChatDispatchPermit) async throws {
         guard participationMeetingSoundOn, participationAudience == audience,
-              let native = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine else {
-            throw NativeDesktopGuestError.notConnected
+              let service = (engine as? MeetingSession)?.participationService else {
+            throw MeetingSessionError.unavailable(L("Chat is unavailable before connecting."))
         }
-        try await native.sendAttributedChat(text, id: id, permit: permit)
+        try await service.sendAttributedChat(text, id: id, permit: permit)
     }
     var canReact: Bool { connected && guestFeatures.permissions.canSendReaction }
     var transcript: [GuestMeetingMessage] {
@@ -1238,15 +1224,17 @@ import UniformTypeIdentifiers
         let headsetReady = ownsMicrophone ? headset.begin { [weak self] muted in self?.setMicrophoneEnabled(!muted) } : true
         guard await NativeDesktopDeviceModel.stopPrivatePreview() else { throw NativeDesktopRTCError.cleanupFailed }
         try Task.checkCancellation()
-        if concurrentAudio {
-            mediaClaim = try await sharedMedia.suspendAlongside()
-            try Task.checkCancellation()
-        } else if kind != .guest {
-            externalMediaSuspension = try await sharedMedia.suspend()
-            try Task.checkCancellation()
+        if usesInjectedSharedMedia || !SharedAudioEngine.enabledAtLaunch {
+            if concurrentAudio {
+                mediaClaim = try await sharedMedia.suspendAlongside()
+                try Task.checkCancellation()
+            } else if kind != .guest {
+                externalMediaSuspension = try await sharedMedia.suspend()
+                try Task.checkCancellation()
+            }
         }
         if !ownsMicrophone, !(await engine.setPhysicalInputPermitted(false)) { throw NativeDesktopRTCError.cleanupFailed }
-        if kind == .guest {
+        if supportsPreJoinReadiness {
             engine.microphoneReadinessPolicy = { [weak self] in self?.microphonePreparationEligible ?? false }
             updateMicrophoneRecoveryReadiness()
         }
@@ -1260,35 +1248,24 @@ import UniformTypeIdentifiers
         }, onCancel: { completion.finish(.failure(CancellationError())) })
         try Task.checkCancellation()
         if ownsMicrophone, !headsetReady { useEngineOnlyHeadsetFallback() }
-        if kind != .guest, !quiet, ownsMicrophone, !concurrentAudio, joinReadinessPolicy.microphoneExplicit,
+        if !supportsPreJoinReadiness, !quiet, ownsMicrophone, !concurrentAudio, joinReadinessPolicy.microphoneExplicit,
            joinReadinessPolicy.microphone.allows(joinPower), joinReadinessPolicy.microphone.allows(power.snapshot) {
             try await engine.prepareMutedCaptureForAccessories()
         }
         beginJoinReadiness()
     }
+    private var supportsPreJoinReadiness: Bool {
+        (engine as? MeetingSession)?.capabilities.supportsPreJoinReadiness ?? (kind == .guest)
+    }
     private var cameraMetadataEligible: Bool {
-        kind == .guest && !quiet && !closed && !transferHeld && display != .audioOnly && ownsMicrophone && !concurrentAudio &&
+        supportsPreJoinReadiness && !quiet && !closed && !transferHeld && display != .audioOnly && ownsMicrophone && !concurrentAudio &&
             joinReadinessPolicy.camera.allows(joinPower) && readinessPolicy().camera.allows(power.snapshot)
     }
     private func prepareJoinCameraMetadata() async throws {
-        let began = ProcessInfo.processInfo.systemUptime
-        let task = Task { @MainActor [weak self] in
-            guard let self else { throw CancellationError() }
-            // Completed foreground metadata is cached. An eligible cold join
-            // finishes discovery before audio starts, avoiding its main-thread
-            // AVFoundation refresh during the first camera action.
-            return try await cameraMetadata.prepare(eligible: { [weak self] in self?.cameraMetadataEligible == true },
-                deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID"))
-        }
-        cameraMetadataTask = task
-        defer { cameraMetadataTask = nil }
-        let outcome = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
-        cameraMetadataReport = ["state": outcome.rawValue, "startedUptime": began,
-            "completedUptime": ProcessInfo.processInfo.systemUptime,
-            "milliseconds": (ProcessInfo.processInfo.systemUptime - began) * 1000]
+        try await captureCoordinator.prepareJoinCameraMetadata { [weak self] in self?.cameraMetadataEligible == true }
     }
     private func beginJoinReadiness() {
-        guard kind == .guest, !quiet, !closed, !transferHeld, snapshot.phase == .connected else {
+        guard supportsPreJoinReadiness, !quiet, !closed, !transferHeld, snapshot.phase == .connected else {
             joinReadinessReport = ["state": "skipped", "reason": "meetingPolicy"]; return
         }
         guard ownsMicrophone, !concurrentAudio else {
@@ -1299,34 +1276,34 @@ import UniformTypeIdentifiers
             "microphonePolicy": joinReadinessPolicy.microphone.rawValue, "cameraPolicy": joinReadinessPolicy.camera.rawValue,
             "microphoneRequested": joinReadinessPolicy.microphone.allows(joinPower),
             "cameraRequested": joinReadinessPolicy.camera.allows(joinPower)]
-        joinReadinessReport["cameraMetadata"] = cameraMetadataReport
-        if let guest = engine as? NativeDesktopGuestEngine {
-            joinReadinessReport["microphoneActivated"] = guest.microphoneReadinessApplied
+        joinReadinessReport["cameraMetadata"] = captureCoordinator.cameraMetadataReport
+        if let session = engine as? MeetingSession {
+            joinReadinessReport["microphoneActivated"] = session.microphoneReadinessApplied
             joinReadinessReport["microphonePreparationTiming"] = "beforeTransportJoin"
-            joinReadinessReport["startupAudio"] = guest.currentNativeEngine?.startupAudioReport ?? [:]
+            joinReadinessReport["startupAudio"] = session.startupAudioReport
         }
         guard joinReadinessPolicy.camera.allows(joinPower) else { return }
-        guard cameraMetadata.isPrepared(deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")) else {
+        guard captureCoordinator.cameraMetadata.isPrepared(deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")) else {
             joinReadinessReport["camera"] = ["state": "skipped", "reason": "metadataUnavailable"]; return
         }
         guard display != .audioOnly else {
             joinReadinessReport["camera"] = ["state": "skipped", "reason": "audioOnly"]; return
         }
-        let prime = joinCameraPrime ?? NativeDesktopJoinCameraPrime(); joinCameraPrime = prime
-        // Camera first-frame initialization never occupies the media-control queue.
-        joinCameraPrimeTask = Task { @MainActor [weak self] in
-            guard let self, token == generation, !closed, !transferHeld,
-                  display != .audioOnly,
-                  self.readinessPolicy().camera.allows(power.snapshot),
-                  cameraMetadata.isPrepared(deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")),
-                  snapshot.phase == .connected, cameraCommand == self.cameraCommand,
-                  !snapshot.cameraOn, requestedCamera != true else { prime.cancel(); return }
-            do { try await prime.run(source: { self.engine.factory?.videoSource() }) }
-            catch { if !prime.cleanupSucceeded { self.error = error.localizedDescription } }
-            self.joinReadinessReport["camera"] = prime.report
-        }
+        captureCoordinator.scheduleJoinCameraPrime(
+            isEligible: { [weak self] in
+                guard let self else { return false }
+                return token == generation && !closed && !transferHeld &&
+                    display != .audioOnly &&
+                    readinessPolicy().camera.allows(power.snapshot) &&
+                    captureCoordinator.cameraMetadata.isPrepared(deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")) &&
+                    snapshot.phase == .connected && cameraCommand == self.cameraCommand &&
+                    !snapshot.cameraOn && requestedCamera != true
+            },
+            videoSource: { [weak self] in self?.engine.factory?.videoSource() },
+            onReport: { [weak self] report in self?.joinReadinessReport["camera"] = report },
+            onCleanupError: { [weak self] message in self?.error = message })
     }
-    private func cancelJoinCameraPrime() { joinCameraPrime?.cancel(); joinCameraPrimeTask?.cancel() }
+    private func cancelJoinCameraPrime() { captureCoordinator.cancelJoinCameraPrime() }
     private func refreshReadinessEligibility() {
         if !readinessPolicy().camera.allows(power.snapshot) { cancelJoinCameraPrime() }
         // Backoff may outlive a power transition. Only replacement preparation
@@ -1338,7 +1315,7 @@ import UniformTypeIdentifiers
             readinessPolicy().microphone.allows(power.snapshot)
     }
     private func updateMicrophoneRecoveryReadiness() {
-        guard kind == .guest else { return }
+        guard supportsPreJoinReadiness else { return }
         engine.setMicrophoneReadinessForRecovery(microphonePreparationEligible)
     }
     private func update(_ value: NativeDesktopExternalSnapshot) {
@@ -1368,15 +1345,12 @@ import UniformTypeIdentifiers
         noteShareState()
         if value.phase == .reconnecting || value.phase == .failed { cancelJoinCameraPrime() }
         if previous.phase != .reconnecting, value.phase == .reconnecting { updateMicrophoneRecoveryReadiness() }
-        if let presenterStorage {
-            presenterStorage.supportsVP9 = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine?.screenCodecs.contains("video/vp9") == true
-            presenterStorage.vp9UnavailableReason = presenterStorage.supportsVP9 ? nil : L("VP9 sharing is unavailable in this meeting.")
-        }
+        captureCoordinator.updateVP9Support(engine: engine)
         if value.phase == .connected { connection?.finish(.success(())) }
         if value.phase == .failed { connection?.finish(.failure(NativeDesktopError.unavailable(value.lastError ?? L("Could not connect to meeting.")))) }
         // A reply held the gate closed because the mute after it was not confirmed:
         // once the microphone is confirmed off, reopening is safe.
-        if engine is NativeDesktopGuestEngine {
+        if (engine as? MeetingSession)?.participationService != nil {
             recoverParticipationVoiceGateIfSafe()
         } else if voiceReplyGateHeld, !value.microphoneOn, !voiceReplyActive {
             voiceReplyGateHeld = false
@@ -1416,9 +1390,9 @@ import UniformTypeIdentifiers
         guard !closed else { return }
         localCamera = track
         NativeDesktopCameraLease.shared.setLiveTrack(track, owner: sessionID)
-        Task { [weak self] in await self?.presenterStorage?.refreshBorrowedCamera(); self?.refreshSystemReactions() }
+        Task { [weak self] in await self?.captureCoordinator.refreshBorrowedCamera(); self?.refreshSystemReactions() }
     }
-    var microphoneRestriction: String? { (engine as? NativeDesktopRockEngine)?.microphoneRestriction }
+    var microphoneRestriction: String? { (engine as? MeetingSession)?.microphoneRestriction }
     func toggleMicrophone() {
         let enabled = !(requestedMicrophone ?? snapshot.microphoneOn)
         guard !assistantCaptureActive || !enabled else { return }
@@ -1508,7 +1482,7 @@ import UniformTypeIdentifiers
         }
     }
     private func useEngineOnlyHeadsetFallback() {
-        let physicalMute = (engine as? NativeDesktopGuestEngine)?.participationSenderPhysicallyMuted ?? true
+        let physicalMute = (engine as? MeetingSession)?.participationService?.senderPhysicallyMuted ?? true
         _ = headset.useEngineOnlyFallback(confirmedMuted: ownsMicrophone && !snapshot.microphoneOn && physicalMute)
     }
     private func setMicrophoneEnabled(_ enabled: Bool) {
@@ -1565,33 +1539,14 @@ import UniformTypeIdentifiers
             authorizedMicrophoneRequest = nil; _ = headset.requestIntent(muted: true)
         }
         cameraControl = perform(priorityOff: !enabled) { engine in
-            // Reserve the transition before lease revocation can emit a nil
-            // track; Presenter must wait until the live owner is settled.
-            self.presenterStorage?.beginLiveCameraHandover()
             do {
-                try await self.joinCameraPrime?.stop()
-                if enabled {
-                    self.cameraLease = try await NativeDesktopCameraLease.shared.acquireLive(owner: self.sessionID) { [weak self] in
-                        guard let self else { return }; try await self.engine.setCamera(false)
-                    }
-                    try await self.presenterStorage?.releasePrivateCameraBeforeLiveCapture()
-                }
-                if enabled, !(await NativeDesktopDeviceModel.stopPrivateCameraPreview()) { throw NativeDesktopRTCError.cleanupFailed }
-                if enabled {
-                    try Task.checkCancellation()
-                    guard command == self.cameraCommand, !self.closed, !self.transferHeld else { throw CancellationError() }
-                }
-                try await engine.setCamera(enabled)
-                if !enabled, let lease = self.cameraLease { NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
-                await self.presenterStorage?.finishLiveCameraHandover()
+                try await self.captureCoordinator.applyCameraEnabled(
+                    enabled, sessionID: self.sessionID,
+                    isValid: { !enabled || (command == self.cameraCommand && !self.closed && !self.transferHeld) },
+                    setCamera: { value in try await engine.setCamera(value) })
             } catch {
-                var stopped = true
-                if let lease = self.cameraLease {
-                    do { try await Task { @MainActor in try await engine.setCamera(false) }.value; NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
-                    catch { stopped = false; NativeDesktopCameraLease.shared.reportFailedStop(lease) }
-                }
-                if stopped { await self.presenterStorage?.finishLiveCameraHandover() }
-                if command == self.cameraCommand { self.requestedCamera = nil }; throw error
+                if command == self.cameraCommand { self.requestedCamera = nil }
+                throw error
             }
         }
     }
@@ -1641,19 +1596,21 @@ import UniformTypeIdentifiers
         updateMicrophoneRecoveryReadiness()
         authorizedMicrophoneRequest = nil; _ = headset.requestIntent(muted: true)
         perform { engine in
-            guard await self.presenterStorage?.close() ?? true, await self.retireShare(waitForStartup: true) else { throw NativeDesktopRTCError.cleanupFailed }
+            guard await self.captureCoordinator.closePresenter(), await self.retireShare(waitForStartup: true) else { throw NativeDesktopRTCError.cleanupFailed }
             // Failed guest attempts have already retired their media owner.
             // Their retry path resets both publication intents before rejoining.
             if self.kind != .guest || self.snapshot.phase != .failed {
                 try await engine.setMicrophone(false)
                 try await engine.setCamera(false)
             }
-            if let lease = self.cameraLease { NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
+            self.captureCoordinator.releaseCameraLease()
             try await engine.reconnect()
         }
     }
     private static func isNotConnected(_ error: Error) -> Bool {
-        (error as? NativeDesktopGuestError) == .notConnected || (error as? NativeDesktopRockError) == .notConnected
+        (error as? NativeDesktopGuestError) == .notConnected
+            || (error as? NativeDesktopRockError) == .notConnected
+            || (error as? MeetingSessionError) == .notConnected
     }
     @discardableResult private func perform(priorityOff: Bool = false, _ action: @escaping (any NativeDesktopMeetingEngine) async throws -> Void) -> Task<Void, Never>? {
         guard !closed, !transferHeld else { return nil }
@@ -1688,7 +1645,7 @@ import UniformTypeIdentifiers
     func receiveFeaturesForTesting(_ features: GuestMeetingSnapshot) { updateFeatures(features) }
 #endif
     func waitForJoinReadinessForTesting() async {
-        await joinCameraPrimeTask?.value
+        await captureCoordinator.waitForJoinReadinessForTesting()
     }
     #endif
     func setTransferHeld(_ held: Bool, restoreSending: Bool = true) async throws {
@@ -1704,13 +1661,12 @@ import UniformTypeIdentifiers
             tasks.forEach { $0.cancel() }
             let operation = Task { @MainActor in
                 for task in tasks { await task.value }
-                await self.joinCameraPrimeTask?.value
-                try await self.joinCameraPrime?.stop()
+                try await self.captureCoordinator.drainJoinPrimeForTransferHold()
                 try Task.checkCancellation()
                 guard !self.closed else { throw CancellationError() }
                 if self.heldState == nil { self.heldState = (self.snapshot.microphoneOn, self.snapshot.cameraOn, self.snapshot.playoutOn) }
                 try await self.engine.setMicrophone(false); try await self.engine.setCamera(false)
-                if let presenter = self.presenterStorage, !(await presenter.close()) { throw NativeDesktopRTCError.cleanupFailed }
+                if !(await self.captureCoordinator.closePresenter()) { throw NativeDesktopRTCError.cleanupFailed }
                 guard await self.stopSharing() else { throw NativeDesktopRTCError.cleanupFailed }
                 try await self.engine.setPlayout(false)
                 self.holdConfirmed = true
@@ -1727,24 +1683,20 @@ import UniformTypeIdentifiers
             authorizedMicrophoneRequest = microphone && engine.snapshot.microphoneOn ? request : nil
             headset.confirm(muted: !engine.snapshot.microphoneOn, request: request)
             try await engine.setCamera(restoreSending && state.camera && ownsMicrophone)
-            if !(restoreSending && state.camera && ownsMicrophone), let lease = cameraLease { NativeDesktopCameraLease.shared.release(lease); cameraLease = nil }
+            if !(restoreSending && state.camera && ownsMicrophone) { captureCoordinator.releaseCameraLease() }
             heldState = nil; transferHeld = false; holdConfirmed = false
         }
     }
     /// Live means visible to the meeting, not a private Presenter preview.
-    var isSharingLive: Bool { snapshot.sharing || presenterStorage?.isSharing == true }
-    var presenterSharing: Bool { presenterStorage?.isSharing == true }
+    var isSharingLive: Bool { captureCoordinator.isSharingLive(snapshotSharing: snapshot.sharing) }
+    var presenterSharing: Bool { captureCoordinator.isPresenterSharing }
     @Published private(set) var shareStartedAt: Date?
     @Published private(set) var quickSharePending = false
     private func noteShareState() {
         let live = !closed && isSharingLive
         if live, shareStartedAt == nil { shareStartedAt = Date() } else if !live, shareStartedAt != nil { shareStartedAt = nil }
     }
-    var shareSourceTitle: String {
-        guard let presenter = presenterStorage, presenter.isSharing else { return L("Screen") }
-        if presenter.source == .screen { return L("Screen or window") }
-        return presenter.scene.image != nil ? L("Image or slides") : L("Presenter studio")
-    }
+    var shareSourceTitle: String { captureCoordinator.shareSourceTitle }
     var shareIncludesCamera: Bool {
         get { UserDefaults.standard.bool(forKey: "nativeDesktop.shareIncludesCamera") }
         set { objectWillChange.send(); UserDefaults.standard.set(newValue, forKey: "nativeDesktop.shareIncludesCamera") }
@@ -1752,7 +1704,7 @@ import UniformTypeIdentifiers
     /// Share popover path: the macOS picker (or an image file) is the only extra
     /// step. Cancelling the picker shares nothing; a live share switches content.
     func quickShare(image: Data? = nil) {
-        guard connected, !closed, !transferHeld, !quickSharePending, !sharingPending, capture == nil else { return }
+        guard connected, !closed, !transferHeld, !quickSharePending, !sharingPending, !captureCoordinator.hasActiveCapture else { return }
         let session = presenter, includeCamera = shareIncludesCamera, live = session.isSharing
         quickSharePending = true
         Task { @MainActor [weak self] in
@@ -1783,7 +1735,7 @@ import UniformTypeIdentifiers
     /// Stop from the control bar or banner; a Presenter not open in the panel is released.
     func endShare() async {
         guard await stopSharing() else { return }
-        if panel != .presenter, let presenter = presenterStorage, !presenter.isSharing { _ = await presenter.close() }
+        if panel != .presenter, !captureCoordinator.isPresenterSharing { _ = await captureCoordinator.closePresenter() }
     }
     var soundSymbol: String {
         guard snapshot.playoutOn else { return "speaker.slash" }
@@ -1795,81 +1747,34 @@ import UniformTypeIdentifiers
     }
     func startSharing(presenter: Bool, canvas: Bool = false) {
         if presenter { panel = .presenter; Task { await self.presenter.open() }; return }
-        guard !closed, !transferHeld, connected, !sharingPending, capture == nil, stoppingShare == nil, shareCleanupSucceeded else { return }
-        sharingPending = true; let token = generation; shareGeneration = UUID(); let shareToken = shareGeneration
-        sharingTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { if token == generation && shareToken == shareGeneration { sharingPending = false; sharingTask = nil } }
-            do {
-                if let presenter = presenterStorage, !(await presenter.close()) { throw NativeDesktopRTCError.cleanupFailed }
-                let profile = GuestVideoProfile(width: 3840, height: 2160, fps: 30, maximumBitrate: 18_000_000)
-                if let guest = engine as? NativeDesktopGuestEngine {
-                    try await guest.startScreenShare(profile: profile) { [weak self] source in
-                        let capture = NativeDesktopShareCapture(source: source, canvasOnly: canvas)
-                        self?.configure(capture, token: token, shareToken: shareToken)
-                        return capture
-                    }
-                    localShare = guest.currentNativeEngine?.localScreenTrack
-                } else {
-                    guard let factory = engine.factory else { throw NativeDesktopError.unavailable(L("Connect before sharing.")) }
-                    let source = factory.videoSource(forScreenCast: true); shareSource = source
-                    let capture = NativeDesktopShareCapture(source: source, canvasOnly: canvas)
-                    configure(capture, token: token, shareToken: shareToken)
-                    _ = try await capture.start()
-                    guard token == generation, shareToken == shareGeneration, !closed else { throw CancellationError() }
-                    let track = factory.videoTrack(with: source, trackId: UUID().uuidString)
-                    try await engine.setScreenTrack(track); localShare = track
-                }
-                guard token == generation, shareToken == shareGeneration, !closed else { throw CancellationError() }
-            } catch {
-                let cancelled = Task.isCancelled
-                if !cancelled { _ = await retireShare(waitForStartup: false) }
-                if token == generation, !cancelled, !closed { self.error = error.localizedDescription }
-            }
-        }
-    }
-    private func configure(_ capture: NativeDesktopShareCapture, token: UUID, shareToken: UUID) {
-        self.capture = capture
-        capture.onDimensions = { [weak self] size in Task { @MainActor in
-            guard let self, token == self.generation, shareToken == self.shareGeneration, !self.closed else { return }
-            if let guest = self.engine as? NativeDesktopGuestEngine {
-                try? guest.currentNativeEngine?.updateScreenShareProfile(.init(width: Int32(size.width), height: Int32(size.height), fps: 30, maximumBitrate: 18_000_000))
-            }
-        } }
-        capture.onEnd = { [weak self] failure in Task { @MainActor in
-            guard let self, token == self.generation, shareToken == self.shareGeneration else { return }
-            await self.stopSharing(); if let failure { self.error = failure.localizedDescription }
-        } }
+        guard !closed, !transferHeld, connected, !sharingPending else { return }
+        let token = generation
+        captureCoordinator.startSharing(
+            canvas: canvas,
+            isValidGeneration: { [weak self] in self?.generation == token },
+            isClosed: { [weak self] in self?.closed == true },
+            isSnapshotSharing: { [weak self] in self?.snapshot.sharing == true },
+            engine: { [weak self] in self?.engine },
+            setSharingPending: { [weak self] pending in self?.sharingPending = pending },
+            setLocalShare: { [weak self] track in self?.localShare = track },
+            onError: { [weak self] message in self?.error = message })
     }
     @discardableResult func stopSharing() async -> Bool {
-        do { try await presenterStorage?.stopSharing() }
-        catch { self.error = error.localizedDescription; return false }
-        return await retireShare(waitForStartup: true)
+        await captureCoordinator.stopSharing(
+            engine: engine,
+            isSnapshotSharing: snapshot.sharing,
+            setSharingPending: { [weak self] pending in self?.sharingPending = pending },
+            setLocalShare: { [weak self] track in self?.localShare = track },
+            onError: { [weak self] message in self?.error = message })
     }
     private func retireShare(waitForStartup: Bool) async -> Bool {
-        if let stoppingShare { return await stoppingShare.value }
-        guard capture != nil || sharingTask != nil || snapshot.sharing else { return shareCleanupSucceeded }
-        shareGeneration = UUID()
-        let startup = sharingTask; sharingTask = nil
-        if waitForStartup { startup?.cancel() }
-        let capture = capture; self.capture = nil
-        capture?.cancel(); localShare = nil; shareSource = nil
-        sharingPending = false
-        let cleanup = Task { @MainActor [engine] () -> Bool in
-            if waitForStartup { await startup?.value }
-            var clean = true
-            do {
-                if let guest = engine as? NativeDesktopGuestEngine { try await guest.stopScreenShare() }
-                else { try await engine.setScreenTrack(nil) }
-            } catch { clean = false }
-            do { try await capture?.stop() } catch { clean = false }
-            return clean
-        }
-        stoppingShare = cleanup
-        let clean = await cleanup.value
-        stoppingShare = nil; shareCleanupSucceeded = clean
-        if !clean { error = L("Screen capture could not stop cleanly. Leave the meeting before sharing again.") }
-        return clean
+        await captureCoordinator.retireShare(
+            waitForStartup: waitForStartup,
+            engine: engine,
+            isSnapshotSharing: snapshot.sharing,
+            setSharingPending: { [weak self] pending in self?.sharingPending = pending },
+            setLocalShare: { [weak self] track in self?.localShare = track },
+            onError: { [weak self] message in self?.error = message })
     }
     private func updateFeatures(_ features: GuestMeetingSnapshot) {
         guard !closed else { return }
@@ -1904,25 +1809,25 @@ import UniformTypeIdentifiers
     private func refreshSystemReactions() {
         let enabled = UserDefaults.standard.object(forKey: "nativeDesktop.shareCameraReactions") == nil || UserDefaults.standard.bool(forKey: "nativeDesktop.shareCameraReactions")
         let ordinary = snapshot.cameraOn && localCamera != nil
-        let presenting = presenterStorage?.isSharing == true && presenterStorage?.includeCamera == true
+        let presenting = captureCoordinator.isPresenterSharingWithCamera
         guard !closed, connected, enabled, ordinary || presenting else {
             reactionDeviceLookup?.cancel(); reactionSourceKey = nil; reactionObserver.stop(); return
         }
         let source = ordinary ? "camera" : "presenter"
-        let key = source + ":" + String(describing: localCamera.map(ObjectIdentifier.init)) + ":" + String(presenterStorage?.cameraPreparing ?? false)
+        let key = source + ":" + String(describing: localCamera.map(ObjectIdentifier.init)) + ":" + String(captureCoordinator.presenterCameraPreparing)
         guard key != reactionSourceKey else { return }
         reactionSourceKey = key; reactionDeviceLookup?.cancel()
         reactionDeviceLookup = Task { [weak self] in
             guard let self else { return }
-            let device = ordinary ? await engine.cameraCaptureDevice() : await presenterStorage?.privateCameraDevice()
+            let device = ordinary ? await engine.cameraCaptureDevice() : await captureCoordinator.privatePresenterCameraDevice()
             guard !Task.isCancelled, !closed, reactionSourceKey == key else { return }
             if let device { reactionObserver.bind(device, sourceID: sessionID.uuidString + ":" + source) }
             else { reactionObserver.stop(); reactionSourceKey = nil }
         }
     }
     func sendReaction(_ kind: MeetingReaction) {
-        guard let guest = engine as? NativeDesktopGuestEngine, canReact,
-              let wire = GuestMeetingReaction.allCases.first(where: { $0.symbol == kind.emoji }) else { return }
+        guard let reactionService = (engine as? MeetingSession)?.reactionService,
+              canReact, reactionService.canSendReactions else { return }
         let approvedID = approvedWorkspaceReactionID
         let id = approvedID ?? UUID().uuidString
         if let recorded = chat.reactionHistory.recordLocalSubmission(kind: kind,
@@ -1934,15 +1839,21 @@ import UniformTypeIdentifiers
                     workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .cancelled)
                     return
                 }
-                guard guest.currentNativeEngine != nil else {
-                    workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .failed)
-                    return
-                }
                 guard workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .sending) != false else { return }
             }
             do {
-                try await guest.currentNativeEngine?.sendReaction(wire)
+                try await reactionService.sendReaction(kind, approvedID: approvedID)
                 if let approvedID { workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .submitted) }
+            } catch let sessionError as MeetingSessionError {
+                if let approvedID {
+                    let status: MeetingWorkspaceEvent.Status = switch sessionError {
+                    case .cancelled: .cancelled
+                    case .unavailable, .notConnected, .permissionDenied, .cleanupFailed, .staleCommand: .failed
+                    }
+                    workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: status)
+                }
+                chat.reactionHistory.setLocalDelivery(.failed, submissionID: id)
+                self.error = sessionError.localizedDescription
             } catch {
                 if let approvedID { workspaceJournal?.updateActionStatus(sessionID: sessionID, id: approvedID, status: .unknown) }
                 chat.reactionHistory.setLocalDelivery(.failed, submissionID: id)
@@ -1959,12 +1870,12 @@ import UniformTypeIdentifiers
             self?.floatingReactions = []
         }
     }
-    func loadMoreChat() { perform { if let guest = $0 as? NativeDesktopGuestEngine {
-        do { try await guest.currentNativeEngine?.loadChatHistory() } catch GuestHistoryError.busy {} } } }
-    func loadMoreTranscript() { perform { if let guest = $0 as? NativeDesktopGuestEngine {
-        do { try await guest.currentNativeEngine?.loadTranscriptHistory() } catch GuestHistoryError.busy {} } } }
-    func retryInitialTranscript() { (engine as? NativeDesktopGuestEngine)?.retryInitialTranscriptHistory() }
-    func setTranscription(_ enabled: Bool) { perform { if let guest = $0 as? NativeDesktopGuestEngine { try await guest.currentNativeEngine?.setTranscriptionEnabled(enabled) } } }
+    func loadMoreChat() { perform { if let session = $0 as? MeetingSession {
+        try await session.chatService?.loadChatHistory() } } }
+    func loadMoreTranscript() { perform { if let session = $0 as? MeetingSession {
+        try await session.transcriptService?.loadTranscriptHistory() } } }
+    func retryInitialTranscript() { (engine as? MeetingSession)?.transcriptService?.retryInitialTranscriptHistory() }
+    func setTranscription(_ enabled: Bool) { perform { if let session = $0 as? MeetingSession { try await session.transcriptService?.setEnabled(enabled) } } }
     func focus(participantID: String, source: NativeDesktopVideoSource) {
         pinnedSource = display == .screenShares ? .screen : source; pinnedID = participantID; viewMode = .focused
     }
@@ -2044,8 +1955,9 @@ import UniformTypeIdentifiers
         demandTask = Task { [weak self] in
             guard let self else { return }
             do {
-                if let guest = engine as? NativeDesktopGuestEngine {
-                    try await guest.currentNativeEngine?.setVisibleParticipantIDs(ids, preferredScreenParticipantID: preferredScreen, cameras: cameras)
+                if let session = engine as? MeetingSession {
+                    try await session.setVideoDemand(.init(visibleParticipantIDs: ids, focusedParticipantID: focused,
+                                                           preferredScreenParticipantID: preferredScreen, receivesCameras: cameras))
                 } else { try await engine.setVisibleParticipantIDs(ids, focusedParticipantID: focused, cameras: cameras) }
             }
             catch { if !Task.isCancelled { demandKey = nil } }
@@ -2059,19 +1971,18 @@ import UniformTypeIdentifiers
         let leftAt = Date()
         cancelWorkspaceApprovedOutputs()
         participation.stop(.meetingEnded)
-        cancelJoinCameraPrime(); power.stop()
-        floatingSpeakerTask?.cancel(); floatingSpeakerTask = nil
-        cameraMetadataTask?.cancel()
+        captureCoordinator.beginLeave(sessionID: sessionID); power.stop()
         closed = true; generation = UUID(); snapshot.phase = .leaving; headset.end()
         updateLocalTranscription()
         let startup = connectionTask; connectionTask = nil; startup?.cancel()
-        (engine as? NativeDesktopGuestEngine)?.cancelPendingConnection()
+        (engine as? MeetingSession)?.abortPendingStartup()
         requestedMicrophone = nil; requestedCamera = nil; requestedPlayout = nil; authorizedMicrophoneRequest = nil
         snapshot.microphoneOn = false; snapshot.cameraOn = false; snapshot.sharing = false; snapshot.playoutOn = false
         localCamera = nil; videos = []
-        NativeDesktopCameraLease.shared.setLiveTrack(nil, owner: sessionID)
         engine.onState = nil; engine.onVideo = nil; engine.onLocalCamera = nil; engine.onTitle = nil
-        if let guest = engine as? NativeDesktopGuestEngine { guest.onFeatures = nil; guest.onFeatureError = nil }
+        if let session = engine as? MeetingSession {
+            session.onFeatures = nil; session.onFeatureError = nil; session.onCapturedMessages = nil
+        }
         connection?.finish(.failure(CancellationError())); connection = nil
         let cleanup = Task { @MainActor in
             // Leave can unblock a suspended native/session connect. Its result
@@ -2080,30 +1991,25 @@ import UniformTypeIdentifiers
             let controls = Array(self.controlTasks.values)
             controls.forEach { $0.cancel() }; self.holdTask?.cancel(); self.demandTask?.cancel()
             for task in controls { await task.value }
-            _ = try? await self.cameraMetadataTask?.value
-            await self.joinCameraPrimeTask?.value
-            do { try await self.joinCameraPrime?.stop() } catch {}
+            await self.captureCoordinator.awaitJoinPrimeAndMetadata()
             _ = try? await self.holdTask?.value; await self.demandTask?.value
             self.reactionDeviceLookup?.cancel(); self.reactionObserver.stop()
             self.reactionExpiry?.cancel()
             let previewsStopped = await NativeDesktopDeviceModel.stopPrivatePreview()
-            let presenterStopped = await self.presenterStorage?.close() ?? true
-            let shareStopped = await self.stopSharing(); self.telemostChat?.stop()
+            let presenterStopped = await self.captureCoordinator.closePresenter()
+            let shareStopped = await self.stopSharing()
             self.localCamera = nil; self.videos = []
             _ = try? await startup?.value
             let initiallyStopped = await initialEngineStop?.value ?? true
             let finallyStopped = await self.engine.leave()
             let engineStopped = initiallyStopped && finallyStopped
-            let clean = engineStopped && shareStopped && presenterStopped && previewsStopped && (self.joinCameraPrime?.cleanupSucceeded ?? true)
+            let clean = engineStopped && shareStopped && presenterStopped && previewsStopped && self.captureCoordinator.joinCameraPrimeCleanupSucceeded
             if let token = self.externalMediaSuspension {
                 self.sharedMedia.resume(token, clean: clean)
                 self.externalMediaSuspension = nil
             }
             if let claim = self.mediaClaim { self.sharedMedia.resume(claim, clean: clean); self.mediaClaim = nil }
-            if let lease = self.cameraLease {
-                if engineStopped { NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
-                else { NativeDesktopCameraLease.shared.reportFailedStop(lease) }
-            }
+            self.captureCoordinator.finishLeaveLease(engineStopped: engineStopped)
             await self.catchUp.finishMeeting().value
             await self.finalizeWorkspaceCapture(leftAt: leftAt)
             if clean { self.snapshot = .init(phase: .left, playoutOn: false) }

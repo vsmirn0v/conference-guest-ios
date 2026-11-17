@@ -126,7 +126,7 @@ private final class SharedAudioFixture: NativeDesktopSharedAudioOwner {
             XCTFail("Policy evaluation must not allocate an audio owner")
             throw GuestSystemAudioError.setupFailedOrTimedOut
         })
-        let engine = NativeDesktopGuestEngine(media: media, microphoneAuthorized: { authorized })
+        let engine = GuestAdapter(media: media, microphoneAuthorized: { authorized })
         XCTAssertFalse(media.foregroundActive)
         for mode in NativeDesktopMediaReadinessMode.allCases {
             for pluggedIn in [false, true] {

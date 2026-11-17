@@ -1,5 +1,7 @@
 # R4: one audio engine for every meeting, Rock included — implementation plan
 
+> Status: superseded and extended by the application-owned universal meeting engine in [native-mac-universal-engine-implementation-plan-2026-11-17.md](native-mac-universal-engine-implementation-plan-2026-11-17.md); P0–P8 implementation and qualification status are recorded in [native-mac-universal-engine-qualification-ledger-2026-11-17.md](native-mac-universal-engine-qualification-ledger-2026-11-17.md). Historical R4 notes and tables below are retained as provenance.
+
 Decided 6 Nov 2026: build R4 in full, with Rock on the same engine (supersedes decision 2 in
 `microphone-bus-design.md`, "Rock stays on its own engine"). The design, review outcome and
 guarantees in that document still apply; this file is the work breakdown.

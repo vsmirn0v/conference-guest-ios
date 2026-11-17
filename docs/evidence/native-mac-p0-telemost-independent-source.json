@@ -1,0 +1,19 @@
+{
+  "status": "pass",
+  "durationSecondsRequested": 100,
+  "eventCounts": {
+    "bootstrap": 1,
+    "finished": 1,
+    "negotiated": 1,
+    "received": 18,
+    "sent": 5,
+    "socket-closed": 1
+  },
+  "probeSHA256": "b2438270d8d6649ddf00b1f45178a4b9de83b10ea3fc78090c3eaa5afdc2d0de",
+  "frameworkSHA256": "9996ae0c23d9c6fa20481bc3c811623803b56fd8d98f944684d6f20afde85977",
+  "limits": [
+    "Separate current-source test-only debug publisher, not the signed app.",
+    "Only allowlisted event names retained; native stdout/stderr discarded.",
+    "Physical storage erasure and system networking logs cannot be independently guaranteed."
+  ]
+}

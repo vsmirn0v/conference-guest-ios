@@ -1,6 +1,26 @@
 import Foundation
+import LiveKitWebRTC
 
 enum GuestNativeCallError: Error, Equatable { case timedOut(String) }
+
+enum GuestMicrophoneTrackObservation: String, Sendable {
+    case enabled, disabled, unavailable
+    case noTrack = "no-track"
+}
+
+/// One read of the underlying track flag, with no track or participant IDs in its result.
+@MainActor struct GuestMicrophoneTrackProbe {
+    typealias Completion = @Sendable (GuestMicrophoneTrackObservation, TimeInterval) -> Void
+    enum Queue { case nativePeer, rockSDK }
+
+    var queue: Queue = .nativePeer
+    let isCurrent: () -> Bool
+    let start: (DispatchTime, @escaping Completion) -> Void
+
+    func checking(_ check: @escaping () -> Bool) -> Self {
+        Self(queue: queue, isCurrent: { check() && isCurrent() }, start: start)
+    }
+}
 
 /// Every call from Swift into one peer's native WebRTC objects runs here, in the
 /// order it was made, and never on the main thread.
@@ -62,6 +82,23 @@ final class GuestNativeCalls: @unchecked Sendable {
     func post(_ name: String, _ body: @escaping () -> Void) {
         begin()
         queue.async { [self] in body(); end() }
+    }
+
+    @MainActor func microphoneTrackProbe(_ track: LKRTCAudioTrack?,
+                                         isCurrent: @escaping () -> Bool) -> GuestMicrophoneTrackProbe {
+        let hadTrack = track != nil
+        return GuestMicrophoneTrackProbe(isCurrent: isCurrent) { [weak track] deadline, finish in
+            guard hadTrack else {
+                finish(.noTrack, ProcessInfo.processInfo.systemUptime)
+                return
+            }
+            self.post("diagnostic-microphone-track") { [weak track] in
+                let state: GuestMicrophoneTrackObservation
+                if DispatchTime.now() < deadline, let track { state = track.isEnabled ? .enabled : .disabled }
+                else { state = .unavailable }
+                finish(state, ProcessInfo.processInfo.systemUptime)
+            }
+        }
     }
 
 #if DEBUG

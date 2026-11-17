@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "stage": "P0",
+  "test": "NativeDesktopTests/SharedEngineRockEngineTests/testRockRunsOnTheSharedOwnerAndSendsOnlyWithTheTalkRole",
+  "environment": {
+    "configuration": "Debug (CODE_SIGNING_ALLOWED=NO, manual rendering)",
+    "framework": ".build/webrtc-m156-desktop-audio/native-framework-audio-route-r1",
+    "sfu": "local livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1",
+    "loadavgAfter": "{ 3.40 4.93 7.12 }"
+  },
+  "passedCount": 4,
+  "measuredRuns": 5,
+  "summary": {
+    "medianTestCaseSeconds": 16.166,
+    "p95TestCaseSeconds": 16.228,
+    "medianWallSeconds": 24.635,
+    "medianUnmuteMs": 21.467,
+    "medianMoveMs": 8.683
+  },
+  "runs": [
+    {
+      "run": "warmup",
+      "isWarmup": true,
+      "exitCode": 0,
+      "passed": true,
+      "wallSeconds": 27.663,
+      "testCaseSeconds": 16.295,
+      "replyRenderSeconds": 2.7943089166656137,
+      "loadavgBefore": "{ 3.93 6.12 7.94 }",
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.011237708386033773,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 874.2452804187545,
+        "talkingAgainBytesPerSecond": 8969.998232545202,
+        "talkingBytesPerSecond": 5106.920961004585,
+        "unmuteSeconds": 0.08309987501706928,
+        "unpublishedAfterMove": true
+      },
+      "log": ".build/universal-p0-compile/p0-rock-warmup.log"
+    },
+    {
+      "run": "run-1",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "wallSeconds": 24.82,
+      "testCaseSeconds": 16.301,
+      "replyRenderSeconds": 2.7967304582707584,
+      "loadavgBefore": "{ 5.03 6.18 7.91 }",
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.008086416637524962,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 78.00421156103967,
+        "talkingAgainBytesPerSecond": 9187.409221526406,
+        "talkingBytesPerSecond": 7926.51662465544,
+        "unmuteSeconds": 0.02597787498962134,
+        "unpublishedAfterMove": true
+      },
+      "log": ".build/universal-p0-compile/p0-rock-run-1.log"
+    },
+    {
+      "run": "run-2",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "wallSeconds": 24.635,
+      "testCaseSeconds": 16.154,
+      "replyRenderSeconds": 2.7966586250113323,
+      "loadavgBefore": "{ 3.92 5.83 7.73 }",
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.008682958432473242,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 874.5516051685398,
+        "talkingAgainBytesPerSecond": 8872.298642036229,
+        "talkingBytesPerSecond": 7093.573882485374,
+        "unmuteSeconds": 0.018969499971717596,
+        "unpublishedAfterMove": true
+      },
+      "log": ".build/universal-p0-compile/p0-rock-run-2.log"
+    },
+    {
+      "run": "run-3",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "wallSeconds": 24.338,
+      "testCaseSeconds": 16.166,
+      "replyRenderSeconds": 2.7937964167213067,
+      "loadavgBefore": "{ 3.18 5.50 7.56 }",
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.011030166642740369,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 115.19093089637842,
+        "talkingAgainBytesPerSecond": 9053.690479890383,
+        "talkingBytesPerSecond": 9094.33781378217,
+        "unmuteSeconds": 0.03554670826997608,
+        "unpublishedAfterMove": true
+      },
+      "log": ".build/universal-p0-compile/p0-rock-run-3.log"
+    },
+    {
+      "run": "run-4",
+      "isWarmup": false,
+      "exitCode": 0,
+      "passed": true,
+      "wallSeconds": 24.1,
+      "testCaseSeconds": 16.049,
+      "replyRenderSeconds": 2.799683166667819,
+      "loadavgBefore": "{ 3.23 5.33 7.43 }",
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.006133041693829,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 910.6250130499042,
+        "talkingAgainBytesPerSecond": 7994.433589749312,
+        "talkingBytesPerSecond": 7183.79573741046,
+        "unmuteSeconds": 0.021466625039465725,
+        "unpublishedAfterMove": true
+      },
+      "log": ".build/universal-p0-compile/p0-rock-run-4.log"
+    },
+    {
+      "run": "run-5",
+      "isWarmup": false,
+      "exitCode": 65,
+      "passed": false,
+      "wallSeconds": 41.44,
+      "testCaseSeconds": 16.228,
+      "replyRenderSeconds": 2.800055874977261,
+      "loadavgBefore": "{ 2.86 5.08 7.28 }",
+      "metrics": {
+        "afterMoveBytesPerSecond": 0,
+        "moveSeconds": 0.01002933329436928,
+        "owner": {
+          "enginesCreated": 3,
+          "engineStarts": 3,
+          "engineStops": 2,
+          "manualRendering": true
+        },
+        "recoveries": 0,
+        "silentBytesPerSecond": 875.0404943232239,
+        "talkingAgainBytesPerSecond": 9016.8916222271,
+        "talkingBytesPerSecond": 7281.289792528865,
+        "unmuteSeconds": 0.019068458350375295,
+        "unpublishedAfterMove": true
+      },
+      "log": ".build/universal-p0-compile/p0-rock-run-5.log"
+    }
+  ]
+}

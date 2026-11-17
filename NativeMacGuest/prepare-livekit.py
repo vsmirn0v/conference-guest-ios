@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an isolated, pinned LiveKit SDK using the native desktop M156 framework."""
+"""Prepare an isolated, pinned LiveKit SDK using the native desktop WebRTC framework."""
 import argparse
 import hashlib
 import json
@@ -14,7 +14,7 @@ from native_dependencies import (SDK_REVISION, ensure_framework, ensure_livekit_
 REPOSITORY = pathlib.Path(__file__).resolve().parents[1]
 # Rock'N'Roll changes to the pinned SDK (shared WebRTC factory for one audio engine).
 PATCHES = REPOSITORY / "Dependencies/native-macos/livekit-patches"
-MANIFEST_DEPENDENCY = '.package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "150.7871.02")'
+MANIFEST_DEPENDENCY = '.package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "150.7871.04")'
 
 
 def git(source, *arguments):

@@ -1,7 +1,7 @@
 # Shared microphone bus — design
 
 Status: proposal, 5 Nov 2026, **revised after review** (see the next section, which
-supersedes the plan below where they differ). Nothing here is implemented. It serves two
+supersedes the plan below where they differ), and later extended by [r4-shared-engine-plan.md](r4-shared-engine-plan.md) and superseded by [native-mac-universal-engine-implementation-plan-2026-11-17.md](native-mac-universal-engine-implementation-plan-2026-11-17.md) (recorded in [native-mac-universal-engine-qualification-ledger-2026-11-17.md](native-mac-universal-engine-qualification-ledger-2026-11-17.md)). Historical design text below is preserved. It serves two
 requests: voice replies in every meeting type, and faster microphone moves between meetings.
 
 ## Review outcome and revised plan

@@ -31,13 +31,13 @@ import XCTest
         }
         XCTFail("Condition did not become true")
     }
-    private func setup() async throws -> (NativeGuestEngine, NativeDesktopGuestEngine) {
+    private func setup() async throws -> (NativeGuestEngine, GuestAdapter) {
         let native = NativeGuestEngine(label: "History fixture")
         _ = try await native.prepareJoinForTesting()
-        let adapter = NativeDesktopGuestEngine(); adapter.bindHistoryForTesting(native)
+        let adapter = GuestAdapter(); adapter.bindHistoryForTesting(native)
         return (native, adapter)
     }
-    private func finish(_ native: NativeGuestEngine, _ adapter: NativeDesktopGuestEngine) async {
+    private func finish(_ native: NativeGuestEngine, _ adapter: GuestAdapter) async {
         adapter.unbindHistoryForTesting(); _ = await native.leave(sendLeave: false)
     }
 

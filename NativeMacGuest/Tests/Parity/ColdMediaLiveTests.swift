@@ -19,7 +19,8 @@ import XCTest
         print("COLD_STAGE disposable"); fflush(stdout)
         let invitation = try await GuestBootstrap.createDisposable(origin: URL(string: "https://salutejazz.ru")!)
         let peer = NativeGuestEngine(label: "Cold startup synthetic peer", verifyReceivedPixels: false)
-        let app = NativeDesktopGuestEngine()
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+        let app = UniversalMeetingEngine.shared.makeSession(destination: try .verified(invitation.invitationURL, engine: .guest), adapter: adapter)
         var maxUIInterval = 0.0
         let ticker = Task { @MainActor in
             var last = ProcessInfo.processInfo.systemUptime
@@ -36,7 +37,7 @@ import XCTest
             try await peer.publishPattern(codec: "h264", audioMuted: false, videoMuted: false)
             print("COLD_STAGE app-join"); fflush(stdout)
             try await app.connect(invitation: invitation.invitationURL, name: "Cold startup app", quiet: false)
-            guard let native = app.currentNativeEngine else { throw CancellationError() }
+            guard let native = adapter.currentNativeEngine else { throw CancellationError() }
             try await wait { native.mediaSnapshot.audio.samples > 0 }
             print("COLD_STAGE cancellation"); fflush(stdout)
             let pendingCamera = PendingPermissionCamera()

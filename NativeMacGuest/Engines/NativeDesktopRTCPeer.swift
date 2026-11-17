@@ -119,6 +119,15 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     }
     /// The microphone track once publishing is enabled (created disabled).
     var microphoneTrack: LKRTCAudioTrack? { audioTrack }
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard !closed else { return nil }
+        let track = audioTrack
+        let hadTrack = track != nil
+        return native.microphoneTrackProbe(track) { [weak self, weak track] in
+            guard let self, !closed else { return false }
+            return hadTrack == (track != nil) && audioTrack === track
+        }
+    }
     /// Called when publishing creates the microphone track after the peer was handed out.
     var onMicrophoneTrack: ((LKRTCAudioTrack) -> Void)?
     nonisolated private static func preferH264(_ transceiver: LKRTCRtpTransceiver, factory: LKRTCPeerConnectionFactory) {

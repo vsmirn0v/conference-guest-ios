@@ -542,7 +542,7 @@ struct NativeDesktopSettingsView: View {
     /// Obsidian one-way export settings and status.
     var obsidian: ObsidianExportCoordinator? = nil
     @State private var editingName = false
-    @AppStorage(NativeDesktopGuestEngine.forceTCPRelayKey) private var forceTCPRelay = false
+    @AppStorage(UniversalMeetingEngine.forceTCPRelayKey) private var forceTCPRelay = false
     @State private var settingsQuery = ""
     @State private var previousQuery = ""
     @State private var revealID: String?

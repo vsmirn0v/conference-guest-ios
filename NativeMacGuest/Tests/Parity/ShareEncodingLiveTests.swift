@@ -15,9 +15,11 @@ import XCTest
         executionTimeAllowance = 300
         let invitation = try await GuestBootstrap.createDisposable(origin: URL(string: "https://salutejazz.ru")!)
         let receiver = NativeGuestEngine(label: "Camera/share independent receiver")
-        let adapter = NativeDesktopGuestEngine()
-        let model = NativeDesktopMeetingModel(destination: try .verified(invitation.invitationURL, engine: .guest),
-            name: "Camera/share sender", title: "Camera/share validation", engine: adapter)
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+        let destination = try JoinDestination.verified(invitation.invitationURL, engine: .guest)
+        let session = UniversalMeetingEngine.shared.makeSession(destination: destination, adapter: adapter)
+        let model = NativeDesktopMeetingModel(destination: destination,
+            name: "Camera/share sender", title: "Camera/share validation", engine: session)
         var probes: [(LKRTCVideoTrack, ShareEncodingFrameCounter)] = []
         do {
             try await receiver.join(invitation); try await model.connect()
@@ -44,10 +46,10 @@ import XCTest
             let screen = try XCTUnwrap(sample)
             for cycle in 0..<3 {
                 var selectedCapture: NativeDesktopShareCapture?
-                try await adapter.startScreenShare(profile: .init(width: 3840, height: 2160, fps: 30, maximumBitrate: 18_000_000)) {
+                try await session.startScreenShare(.init(profile: .init(width: 3840, height: 2160, fps: 30, maximumBitrate: 18_000_000)) {
                     let capture = NativeDesktopShareCapture(source: $0, screenForTesting: screen)
                     selectedCapture = capture; return capture
-                }
+                })
                 let producer = Task.detached(priority: .userInitiated) { [capture = selectedCapture, sourceFormat = format!, initialTiming = timing] in
                     let highlight = CIImage(color: CIColor(red: 0.1, green: 0.45, blue: 0.95, alpha: 0.3))
                         .cropped(to: CGRect(x: 0, y: 0, width: 240, height: 100))
@@ -90,7 +92,7 @@ import XCTest
                 try await Task.sleep(for: .seconds(10))
                 let lateDecoded = cameraCounter.snapshot.frames
                 try await wait("camera continues under sustained content load") { cameraCounter.snapshot.frames > lateDecoded + 15 }
-                try await adapter.stopScreenShare()
+                try await session.stopScreenShare()
                 producer.cancel(); let workload = await producer.value
                 print("CAMERA_SHARE_LIVE cycle=\(cycle) cameraDecoded=\(cameraCounter.snapshot.frames - decoded) share=\(sharedCounter.snapshot.width)x\(sharedCounter.snapshot.height) shareDecoded=\(sharedCounter.snapshot.frames) workload=text-grid-moving-highlight sourceFrames=\(workload.frames) sourceFPS=\(String(format: "%.1f", Double(workload.frames) / max(workload.seconds, 0.001)))")
                 share.track.remove(sharedCounter)
@@ -153,9 +155,11 @@ import XCTest
         }
         let invitation = try await GuestBootstrap.createDisposable(origin: URL(string: "https://salutejazz.ru")!)
         let receiver = NativeGuestEngine(label: "Share codec independent receiver")
-        let adapter = NativeDesktopGuestEngine()
-        let model = NativeDesktopMeetingModel(destination: try .verified(invitation.invitationURL, engine: .guest),
-            name: "Share codec synthetic sender", title: "Share codec validation", engine: adapter)
+        let adapter = GuestAdapter(sharedAudio: UniversalMeetingEngine.shared.sharedAudio)
+        let destination = try JoinDestination.verified(invitation.invitationURL, engine: .guest)
+        let session = UniversalMeetingEngine.shared.makeSession(destination: destination, adapter: adapter)
+        let model = NativeDesktopMeetingModel(destination: destination,
+            name: "Share codec synthetic sender", title: "Share codec validation", engine: session)
         var sinks: [(LKRTCVideoTrack, ShareEncodingFrameCounter)] = []
         do {
             try await receiver.join(invitation)
@@ -165,7 +169,7 @@ import XCTest
             // Synthetic concurrent camera exercises the real separate H264
             // sender without accessing the Mac camera or microphone.
             adapter.currentNativeEngine?.cameraCaptureFactory = { NativeDesktopShareCapture(source: $0, canvasOnly: true) }
-            try await adapter.setCamera(true)
+            try await session.setCamera(true)
             try await wait("actual H264 camera RTP") { await self.cameraFrames(adapter) > 5 }
             for preference in [ShareEncodingPreference.efficient, .textDetail, .efficient] {
                 let workspace = model.presenter
@@ -251,7 +255,7 @@ import XCTest
         return CIImage(cgImage: try XCTUnwrap(canvas.makeImage()))
     }
 
-    private func cameraFrames(_ adapter: NativeDesktopGuestEngine) async -> Int64 {
+    private func cameraFrames(_ adapter: GuestAdapter) async -> Int64 {
         guard let native = adapter.currentNativeEngine, let mid = native.publicationIdentity["mid"],
               let rows = await native.screenShareStatsForTesting(.publisher),
               let outbound = rows.first(where: { $0["target"] as? String == "PUBLISHER" &&

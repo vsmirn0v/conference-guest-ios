@@ -1,0 +1,30 @@
+--- a/Sources/LiveKit/Core/VideoEncoderFactoryAdapter.swift
++++ b/Sources/LiveKit/Core/VideoEncoderFactoryAdapter.swift
+@@ -69,7 +69,8 @@
+     /// on every frame.
+     private final class CallbackBox: @unchecked Sendable {
+         private struct State {
+-            var callback: RTCVideoEncoderCallback?
++            // Rock'N'Roll for Mac patch (Dependencies/native-macos/livekit-patches/video-encoder-callback-prefix.patch): WebRTC headers prefix this typedef.
++            var callback: LKRTCVideoEncoderCallback?
+             var isAttached = false
+         }
+ 
+@@ -77,7 +78,7 @@
+ 
+         /// Stores `callback` and reports whether the encoder still needs to be
+         /// handed the forwarding closure.
+-        func set(_ callback: RTCVideoEncoderCallback?) -> Bool {
++        func set(_ callback: LKRTCVideoEncoderCallback?) -> Bool {
+             state.mutate {
+                 $0.callback = callback
+                 guard callback != nil, !$0.isAttached else { return false }
+@@ -110,7 +111,7 @@
+         super.init()
+     }
+ 
+-    func setCallback(_ callback: RTCVideoEncoderCallback?) {
++    func setCallback(_ callback: LKRTCVideoEncoderCallback?) {
+         guard callback != nil else {
+             callbackBox.clear()
+             encoder.setCallback(nil)

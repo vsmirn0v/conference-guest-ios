@@ -10,7 +10,7 @@ import tempfile
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[1]
-SDK_REVISION = "57a84d71c33e97349963c1cbd442fb4b01428b7c"
+SDK_REVISION = "43c1c0870e51eedbfd95b20b1b5c43a767886786"
 SDK_URL = "https://github.com/livekit/client-sdk-swift.git"
 
 
@@ -66,7 +66,7 @@ AUDIO_ROUTE_RECOVERY_PATCHES = (
 
 
 def audio_route_recovery_lock_paths(repository=REPOSITORY):
-    return [repository / "Experiments/WebRTCM156" / f"{name}.lock.json"
+    return [repository / "Experiments/WebRTCM157" / f"{name}.lock.json"
             for name in AUDIO_ROUTE_RECOVERY_PATCHES]
 
 
@@ -111,7 +111,7 @@ def verify_audio_route_recovery_framework(root, repository=REPOSITORY):
         if not isinstance(actual, dict):
             raise ValueError(
                 "Native framework has no audioRouteRecovery evidence. Build a new framework "
-                "with both checked-in audio route patches; do not reuse native-framework-screen-r5.")
+                "with both checked-in audio route patches; do not reuse a base screen framework.")
         for key, expected in contract.items():
             if actual.get(key) != expected:
                 raise ValueError(f"Native framework audioRouteRecovery.{key} does not match "

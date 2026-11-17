@@ -10,12 +10,12 @@
       }
     },
     {
-      "identity" : "livekit-uniffi-xcframework",
+      "identity" : "livekit-ffi-xcframework",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/livekit/livekit-uniffi-xcframework.git",
+      "location" : "https://github.com/livekit/livekit-ffi-xcframework.git",
       "state" : {
-        "revision" : "7a9bf91b1601d5c408ae0cac7dc2047b5a4f615e",
-        "version" : "0.1.9"
+        "revision" : "685cfd95e23edf734450125eb58bb3bb21b4133b",
+        "version" : "0.13.1"
       }
     },
     {

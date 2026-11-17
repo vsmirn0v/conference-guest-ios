@@ -158,6 +158,15 @@ final class GuestSession {
     private var generation: UInt64 = 0
     private var attemptID: UUID?
     private var connectedAttemptID: UUID?
+    /// Control-plane witness only: attempt IDs are random and do not identify the room.
+    var ownershipDiagnostics: [String: Any] {
+        ["executor": "guest-session", "generation": String(generation),
+         "attempt": attemptID?.uuidString ?? "none",
+         "connectedAttempt": connectedAttemptID?.uuidString ?? "none",
+         "lastObservedRecoveryPolicyRetries": recoveryAttempts, "connectionCount": String(connectionCount),
+         "controlTaskPresent": control != nil, "shutdownTaskPresent": shutdown != nil,
+         "cleanupSucceeded": cleanupSucceeded]
+    }
     private var control: Task<Void, Never>?
     private var shutdown: Task<Bool, Never>?
     private var pendingFailure: Error?
@@ -171,6 +180,14 @@ final class GuestSession {
 
     #if canImport(LiveKitWebRTC)
     var engine: NativeGuestEngine? { current as? NativeGuestEngine }
+    var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard state == .connected, let attempt = connectedAttemptID else { return nil }
+        let generation = generation
+        return engine?.microphoneTrackProbe?.checking { [weak self] in
+            guard let self else { return false }
+            return state == .connected && self.generation == generation && connectedAttemptID == attempt
+        }
+    }
     var onEngineChange: ((NativeGuestEngine?) -> Void)? { didSet { onEngineChange?(engine) } }
     convenience init(makeEngine: @escaping @MainActor () async throws -> NativeGuestEngine,
                      hasPendingRelayTrial: @escaping @MainActor () -> Bool = { false },
