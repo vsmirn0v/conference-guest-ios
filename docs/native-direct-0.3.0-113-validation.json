@@ -1,0 +1,129 @@
+{
+  "version": "0.3.0",
+  "build": "113",
+  "channel": "beta",
+  "sourceCommit": "65d97f05a2e1a22196c349dd6dfd8ddcd6a8a770",
+  "sourceState": "Isolated git-archive snapshot of the pushed reconnect-only commit. Unified conference engine work in progress was excluded.",
+  "sourceVerification": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/snapshot-verification.json",
+  "sourceManifest": {
+    "path": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/source/.build/release-113/build-evidence.json",
+    "sha256": "6b94a02d0511ddfd681df8eb49c577ac92f746e1d13c29ebea21c415665c58e9"
+  },
+  "validation": {
+    "reconnectScenarios": {
+      "passed": 33,
+      "failed": 0,
+      "log": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/reconnect-tests.log"
+    },
+    "modelParity": {
+      "passed": 1,
+      "failed": 0,
+      "test": "testFailedGuestReconnectDoesNotSendMediaCommandsToRetiredOwner",
+      "source": "Prior reconnect worktree; identical six-file diff matched release commit",
+      "log": "/tmp/rock-reconnect-model-test.log",
+      "resultBundle": "/tmp/rock-reconnect-native-build/Xcode/Logs/Test/Test-RockNRollNativeGuest-2026.11.17_14-46-55-+0300.xcresult"
+    },
+    "distributionTooling": {
+      "passed": 27,
+      "failed": 0,
+      "log": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/distribution-tests.log"
+    },
+    "archive": {
+      "path": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/source/.build/release-113/RockNRollNativeGuest-0.3.0-113.xcarchive",
+      "log": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/archive-build-attempt3.log",
+      "appGroupCheckPassed": true,
+      "embeddedVoiceWorkerCheckPassed": true
+    },
+    "exclusionAudit": {
+      "result": "passed",
+      "scope": "Reconnect-only commit and isolated source; unified conference engine work in progress excluded.",
+      "snapshot": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/independent-audit/snapshot-audit.txt",
+      "sourceAndArchiveManifest": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/independent-audit/manifest-audit.txt",
+      "archiveToExport": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/independent-audit/archive-export-audit.txt",
+      "mountedDMG": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/independent-audit/dmg-audit.txt",
+      "counts": {
+        "snapshotFiles": 1787,
+        "manifestSources": 394,
+        "committedSourcesMatched": 390,
+        "generatedSourcesMatched": 4,
+        "archivedArtifactHashesMatched": 61,
+        "machOBinariesMatched": 10,
+        "architectureSlicesMatched": 16,
+        "mountedAppEntriesMatched": 126
+      }
+    },
+    "limitations": [
+      "Live network outage and production meeting recovery were not tested.",
+      "An installed Sparkle upgrade to build 113 was not tested.",
+      "Initial joins remain subject to the existing 45-second deadline.",
+      "The contained app is notarized and stapled; the outer DMG is unsigned and not separately notarized."
+    ]
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/source/.build/release-113/RockNRollNativeGuest-0.3.0-113.xcarchive",
+    "app": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/export-113/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "113",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "113",
+    "file": "RockNRoll-0.3.0-113-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-113-arm64.dmg",
+    "sha256": "838d9048c55751e84bb5f0f1629212ad0186584bbaa1ae80960b1660b0c9f0fd",
+    "length": 37852768,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/package-113/RockNRoll-0.3.0-113-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "evidence": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/publication-113.json",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "evidence": "/Users/v.smirnov/docs/.codex-worktrees/mac-reconnect-beta-113-artifacts/readback-113/verification.json",
+    "checks": {
+      "immutableMatchesPackage": true,
+      "betaMatchesImmutable": true,
+      "stableMatchesPrevious": true,
+      "stableInventoryUnchanged": true,
+      "betaInventoryCorrect": true,
+      "signedAppcastMatchesPrepared": true,
+      "inventoryMatchesPrepared": true,
+      "appcastBetaEntry": true,
+      "publicAppcastSignatureVerified": true,
+      "downloadedEnclosureSignatureVerified": true
+    },
+    "hashes": {
+      "latest.json": "6ce652de167cd3174117bf90dad546d8d21a97ca8b8e1684138372fcf7f1f077",
+      "beta.dmg": "838d9048c55751e84bb5f0f1629212ad0186584bbaa1ae80960b1660b0c9f0fd",
+      "immutable.dmg": "838d9048c55751e84bb5f0f1629212ad0186584bbaa1ae80960b1660b0c9f0fd",
+      "stable.dmg": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+      "appcast.xml": "3c0c2ab60fdbb69d49bdc43330c9e3839b141d398e89b729f7c86060ceef6957"
+    },
+    "inventory": {
+      "schemaVersion": 1,
+      "stable": {
+        "version": "0.3.0",
+        "build": "53",
+        "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-53-arm64.dmg",
+        "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009"
+      },
+      "beta": {
+        "version": "0.3.0",
+        "build": "113",
+        "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-113-arm64.dmg",
+        "sha256": "838d9048c55751e84bb5f0f1629212ad0186584bbaa1ae80960b1660b0c9f0fd"
+      }
+    }
+  },
+  "recordedAt": "2026-11-17T12:29:46.074881+00:00"
+}
