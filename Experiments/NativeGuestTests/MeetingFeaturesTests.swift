@@ -12,9 +12,12 @@ import LiveKitWebRTC
         defer { watchdog.cancel() }
         try rosterAndVersions()
         try chatTranscriptAndScope()
+        try await mixedPermissionsAndRevocation()
+        try restrictedTranscriptAndRejoin()
         try await advertisedFeaturePayload()
         try await engineFeatureRequests()
         try await historyPermissionRace()
+        try await historyBusyIsExplicit()
         try await videoViewportDemand()
         try await screenSenderLifecycle()
         try await revokedScreenStart()
@@ -42,6 +45,81 @@ import LiveKitWebRTC
     }
     static func message(_ id: String, text: String = "Wire text", at: Any = 1_700_000_000_000) -> [String: Any] {
         ["id": id, "participantId": "remote", "participantName": "Remote at send", "text": text, "createdAt": at]
+    }
+
+    static func mixedPermissionsAndRevocation() async throws {
+        var fixture = joined()
+        var payload = fixture["payload"] as! [String: Any]
+        var participant = payload["participant"] as! [String: Any]
+        participant["permissions"] = ["canViewParticipants": true, "canViewTranscription": true,
+            "canStartTranscription": 1, "canShareMicrophone": true, "canShareCamera": "true",
+            "metadata": "opaque", "nested": ["version": 1]] as [String: Any]
+        payload["participant"] = participant; fixture["payload"] = payload
+        // JSONSerialization matches WebSocket deserialization (NSNumber values).
+        let encoded = try JSONSerialization.data(withJSONObject: fixture)
+        fixture = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        var features = GuestMeetingFeatures(); features.receive(fixture)
+        precondition(features.snapshot.permissions.canViewTranscript)
+        precondition(!features.snapshot.permissions.canManageTranscript, "Numeric one must not grant permission")
+        features.receive(event("transcription-message", ["message": message("before-revoke")]))
+        precondition(features.snapshot.transcript.count == 1)
+
+        let engine = NativeGuestEngine(label: "Permission fixture")
+        _ = try await engine.prepareJoinForTesting()
+        try await engine.processEventForTesting(fixture)
+        precondition(engine.meetingSnapshot.permissions.canViewTranscript)
+        precondition(engine.mediaPermissions.canShareMicrophone && !engine.mediaPermissions.canShareCamera)
+        // An explicitly malformed flag revokes rather than preserving a grant;
+        // unrelated real booleans in the same update are still applied.
+        let update: [String: Any] = ["canViewTranscription": 0, "canShareMicrophone": false, "metadata": "x"]
+        let decoded = try JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: update)) as! [String: Any]
+        try await engine.processEventForTesting(event("permissions-updated", decoded))
+        features.receive(event("permissions-updated", decoded))
+        precondition(!features.snapshot.permissions.canViewTranscript && !engine.meetingSnapshot.permissions.canViewTranscript)
+        precondition(!engine.mediaPermissions.canShareMicrophone)
+        features.receive(event("permissions-updated", ["canViewTranscription": true, "metadata": "mixed"]))
+        try await engine.processEventForTesting(event("permissions-updated", ["canViewTranscription": true, "metadata": "mixed"]))
+        precondition(features.snapshot.permissions.canViewTranscript && engine.meetingSnapshot.permissions.canViewTranscript)
+        features.receive(event("transcription-message", ["message": message("after-regrant")]))
+        let epoch = features.epoch
+        let revoke: [String: Any] = ["canViewTranscription": false, "metadata": "still-mixed"]
+        features.receive(event("permissions-updated", revoke))
+        try await engine.processEventForTesting(event("permissions-updated", revoke))
+        precondition(!features.snapshot.permissions.canViewTranscript && !engine.meetingSnapshot.permissions.canViewTranscript)
+        precondition(features.snapshot.transcript.isEmpty)
+        try features.acceptHistory(["messages": [message("stale")]], transcript: true, epoch: epoch)
+        precondition(features.snapshot.transcript.isEmpty, "Revocation must not restore stale transcript")
+        let stopped = await engine.leave(sendLeave: false); precondition(stopped)
+    }
+
+    static func restrictedTranscriptAndRejoin() throws {
+        var features = GuestMeetingFeatures(); features.receive(joined())
+        features.receive(event("transcription-message", ["message": message("unrestricted")]))
+        precondition(features.snapshot.transcript.count == 1)
+        let oldEpoch = features.epoch
+        var restricted = joined(), payload = restricted["payload"] as! [String: Any]
+        var participant = payload["participant"] as! [String: Any]
+        participant["isNetworkRestrictTranscription"] = true
+        payload["participant"] = participant; restricted["payload"] = payload
+        features.receive(restricted)
+        precondition(features.snapshot.transcriptNetworkRestricted && features.snapshot.permissions.canViewTranscript,
+                     "The separate provider feature gate is unknown; don't override the actual permission")
+        features.receive(event("permissions-updated", ["canViewTranscription": false]))
+        precondition(features.snapshot.transcriptNetworkRestricted && !features.snapshot.permissions.canViewTranscript)
+        precondition(features.snapshot.transcript.isEmpty && !features.snapshot.transcriptHistoryLoaded)
+        features.receive(event("transcription-message", ["message": message("restricted")]))
+        try features.acceptHistory(["messages": [message("stale")]], transcript: true, epoch: oldEpoch)
+        precondition(features.snapshot.transcript.isEmpty, "Revoked transcript must not be restored")
+        features.receive(joined())
+        precondition(!features.snapshot.transcriptNetworkRestricted && features.snapshot.permissions.canViewTranscript)
+        features.receive(event("transcription-message", ["message": message("after-unrestricted")]))
+        precondition(features.snapshot.transcript.map(\.id) == ["after-unrestricted"])
+
+        // Unknown and numeric values are not provider assertions of restriction.
+        participant["isNetworkRestrictTranscription"] = 1
+        payload["participant"] = participant; restricted["payload"] = payload
+        features.receive(restricted)
+        precondition(!features.snapshot.transcriptNetworkRestricted && features.snapshot.permissions.canViewTranscript)
     }
 
     static func rosterAndVersions() throws {
@@ -176,8 +254,27 @@ import LiveKitWebRTC
             try await engine.processEventForTesting(event("permissions-updated", ["canViewChat": true]))
             return event("get-chat-messages-response", ["messages": [message("must-not-return")]])
         }
-        try await engine.loadChatHistory()
+        do { try await engine.loadChatHistory(); preconditionFailure("Stale history appeared successful") }
+        catch GuestHistoryError.stale {}
         precondition(engine.meetingSnapshot.messages.isEmpty && !engine.meetingSnapshot.chatHistoryLoaded)
+        let stopped = await engine.leave(sendLeave: false); precondition(stopped)
+    }
+
+    static func historyBusyIsExplicit() async throws {
+        let engine = NativeGuestEngine(label: "Concurrent history fixture")
+        _ = try await engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
+        var release: CheckedContinuation<Void, Never>?
+        engine.featureRequestForTesting = { kind, _, _ in
+            await withCheckedContinuation { release = $0 }
+            return event("\(kind)-response", ["messages": [message("fresh")]])
+        }
+        let first = Task { try await engine.loadTranscriptHistory() }
+        while release == nil { await Task.yield() }
+        do { try await engine.loadTranscriptHistory(); preconditionFailure("Concurrent request reported success") }
+        catch GuestHistoryError.busy {}
+        release?.resume(); release = nil
+        try await first.value
+        precondition(engine.meetingSnapshot.transcriptHistoryLoaded && engine.meetingSnapshot.transcript.map(\.id) == ["fresh"])
         let stopped = await engine.leave(sendLeave: false); precondition(stopped)
     }
 

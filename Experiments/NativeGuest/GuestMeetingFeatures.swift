@@ -1,4 +1,48 @@
 import Foundation
+import CoreFoundation
+
+/// A room can include non-boolean metadata beside permission flags. Extract
+/// each actual JSON boolean independently; numbers and strings grant nothing.
+enum GuestPermissionValues {
+    private static let protectedKeys: Set<String> = [
+        "canViewParticipants", "canViewChat", "canSendChatMessage", "canSendReaction",
+        "canViewTranscription", "canStartTranscription", "canShareScreen", "canShareCamera", "canShareMicrophone"
+    ]
+    static func extract(_ raw: Any?) -> [String: Bool] {
+        guard let values = raw as? [String: Any] else { return [:] }
+        return values.reduce(into: [:]) { result, entry in
+            if let value = entry.value as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() {
+                result[entry.key] = value.boolValue
+            } else if protectedKeys.contains(entry.key) {
+                // An explicitly malformed security flag cannot retain an old grant.
+                result[entry.key] = false
+            }
+        }
+    }
+    static func fieldType(_ value: Any?) -> String {
+        guard let value else { return "missing" }
+        if value is NSNull { return "null" }
+        if let number = value as? NSNumber {
+            return CFGetTypeID(number) == CFBooleanGetTypeID() ? "bool" : "number"
+        }
+        if value is String { return "string" }
+        if value is [String: Any] { return "object" }
+        if value is [Any] { return "array" }
+        return "other"
+    }
+    static func logShape(_ raw: Any?, source: String) {
+        let values = raw as? [String: Any]
+        let booleanCount = values?.values.filter { value in
+            guard let number = value as? NSNumber else { return false }
+            return CFGetTypeID(number) == CFBooleanGetTypeID()
+        }.count ?? 0
+        probeLog("guest-permissions-shape", ["source": source,
+            "container": raw == nil ? "missing" : values == nil ? fieldType(raw) : "object",
+            "entries": values?.count ?? 0, "booleanEntries": booleanCount,
+            "canViewTranscriptionType": fieldType(values?["canViewTranscription"]),
+            "canStartTranscriptionType": fieldType(values?["canStartTranscription"])])
+    }
+}
 
 /// Values and envelopes below follow the preserved official Jazz Web SDK 26.11.23
 /// and its transcription/chat plugins, not the legacy XMPP message format.
@@ -82,6 +126,7 @@ struct GuestMeetingSnapshot: Equatable, Sendable {
     var transcript: [GuestMeetingMessage] = []
     var transcriptHistoryLoaded = false
     var transcriptHasMore = false
+    var transcriptNetworkRestricted = false
     var transcriptionStatus: TranscriptionStatus = .unknown
     var screenSharing = false
 }
@@ -119,12 +164,13 @@ struct GuestMeetingFeatures {
             }
             self.roomID = roomID; self.groupID = groupID
             snapshot.localParticipantID = id
+            snapshot.transcriptNetworkRestricted = GuestPermissionValues.extract(participant)["isNetworkRestrictTranscription"] == true
             snapshot.title = (group["name"] as? String) ?? (payload["settings"] as? [String: Any])?["title"] as? String ?? ""
             members.removeAll()
             for value in group["participants"] as? [[String: Any]] ?? [] { addMember(value) }
             if members[id] == nil { addMember(participant) }
             permissions.removeAll()
-            updatePermissions(participant["permissions"] as? [String: Bool] ?? [:])
+            updatePermissions(GuestPermissionValues.extract(participant["permissions"]))
         } else {
             guard roomID != nil, acceptsScope(envelope) else { return }
             switch event {
@@ -142,7 +188,7 @@ struct GuestMeetingFeatures {
                 if let id = payload["participantId"] as? String {
                     members[id]?.role = payload["role"] as? String; updatePermissions([:])
                 }
-            case "permissions-updated": updatePermissions(payload as? [String: Bool] ?? [:])
+            case "permissions-updated": updatePermissions(GuestPermissionValues.extract(payload))
             case "settings-updated":
                 if let title = payload["title"] as? String { snapshot.title = String(title.prefix(512)) }
             case "chat-message":
@@ -235,8 +281,10 @@ struct GuestMeetingFeatures {
         // The server pages newest first. Upsert sorts by timestamp and identity,
         // so live events received during the request remain present.
         var captured: [GuestMeetingMessage] = []
+        var decodedCount = 0
         for value in values.reversed() {
             if let message = decodeMessage(value) {
+                decodedCount += 1
                 if capture != nil { captured.append(archiveMessage(message, raw: value)) }
                 upsert(message, transcript: transcript)
             }
@@ -246,6 +294,9 @@ struct GuestMeetingFeatures {
         let next: Any? = (page is String || page is NSNumber) ? page : nil
         if transcript { transcriptPage = next; snapshot.transcriptHasMore = next != nil; snapshot.transcriptHistoryLoaded = true }
         else { chatPage = next; snapshot.chatHasMore = next != nil; snapshot.chatHistoryLoaded = true }
+        // Shape and counts only: never record transcript text or identifiers.
+        probeLog("guest-history-page", ["kind": transcript ? "transcript" : "chat",
+            "rows": values.count, "decoded": decodedCount, "hasMore": next != nil])
     }
 
     mutating func stop() {

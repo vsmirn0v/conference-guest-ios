@@ -101,6 +101,10 @@ enum NativeDesktopGuestError: LocalizedError {
     private var transcriptHistoryRequested = false
     private var chatHistoryTask: Task<Void, Never>?
     private var transcriptHistoryTask: Task<Void, Never>?
+    private var chatHistoryAttempt: UUID?
+    private var transcriptHistoryAttempt: UUID?
+    private var chatHistoryDrain: Task<Void, Never>?
+    private var transcriptHistoryDrain: Task<Void, Never>?
 
     init(media: NativeDesktopSharedMedia<GuestSystemAudio> = NativeDesktopMediaService.shared,
          sharedAudio: SharedAudioEngine? = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared : nil,
@@ -522,9 +526,20 @@ enum NativeDesktopGuestError: LocalizedError {
     }
     private func emit() { onState?(snapshot) }
     private func cancelHistory() {
-        chatHistoryTask?.cancel(); chatHistoryTask = nil
-        transcriptHistoryTask?.cancel(); transcriptHistoryTask = nil
-        chatHistoryRequested = false; transcriptHistoryRequested = false
+        retireHistory(transcript: false); retireHistory(transcript: true)
+    }
+    private func retireHistory(transcript: Bool) {
+        let old = transcript ? transcriptHistoryTask : chatHistoryTask
+        let prior = transcript ? transcriptHistoryDrain : chatHistoryDrain
+        if transcript {
+            transcriptHistoryAttempt = nil; transcriptHistoryTask = nil; transcriptHistoryRequested = false
+        } else {
+            chatHistoryAttempt = nil; chatHistoryTask = nil; chatHistoryRequested = false
+        }
+        guard let old else { return }
+        old.cancel()
+        let drain = Task { await prior?.value; await old.value }
+        if transcript { transcriptHistoryDrain = drain } else { chatHistoryDrain = drain }
     }
     func setTranscriptionOutput(_ keep: Bool) async -> Bool {
         transcriptionOutputDemand = keep
@@ -555,11 +570,20 @@ enum NativeDesktopGuestError: LocalizedError {
         engine.onMeetingChange = { [weak self, weak engine] features in
             guard let self, let engine, revision == token, currentNativeEngine === engine else { return }
             let titleChanged = guestSnapshot.title != features.title
+            if guestSnapshot.connected && !features.connected { cancelHistory() }
             if guestSnapshot.permissions.canViewChat && !features.permissions.canViewChat {
-                chatHistoryTask?.cancel(); chatHistoryTask = nil; chatHistoryRequested = false
+                retireHistory(transcript: false)
             }
             if guestSnapshot.permissions.canViewTranscript && !features.permissions.canViewTranscript {
-                transcriptHistoryTask?.cancel(); transcriptHistoryTask = nil; transcriptHistoryRequested = false
+                retireHistory(transcript: true)
+            }
+            if guestSnapshot.connected != features.connected ||
+                guestSnapshot.permissions.canViewTranscript != features.permissions.canViewTranscript ||
+                guestSnapshot.transcriptionStatus != features.transcriptionStatus ||
+                guestSnapshot.transcriptNetworkRestricted != features.transcriptNetworkRestricted {
+                probeLog("guest-transcript-availability", ["connected": features.connected,
+                    "canView": features.permissions.canViewTranscript,
+                    "status": features.transcriptionStatus.rawValue, "networkRestricted": features.transcriptNetworkRestricted])
             }
             guestSnapshot = features; onFeatures?(features)
             if titleChanged, !features.title.isEmpty { onTitle?(features.title) }
@@ -621,23 +645,86 @@ enum NativeDesktopGuestError: LocalizedError {
         guard guestSnapshot.connected, !leaving else { return }
         if guestSnapshot.permissions.canViewChat, !chatHistoryRequested {
             chatHistoryRequested = true
-            chatHistoryTask = Task { [weak self, weak engine] in
-                guard let self, let engine else { return }
-                do { try await engine.loadChatHistory() }
-                catch { featureFailed(error, engine: engine, token: token) }
-            }
+            startHistory(engine, token: token, transcript: false)
         }
         if guestSnapshot.permissions.canViewTranscript, !transcriptHistoryRequested {
             transcriptHistoryRequested = true
-            transcriptHistoryTask = Task { [weak self, weak engine] in
-                guard let self, let engine else { return }
-                do { try await engine.loadTranscriptHistory() }
-                catch { featureFailed(error, engine: engine, token: token) }
+            startHistory(engine, token: token, transcript: true)
+        }
+    }
+
+    /// A manual retry is available after an initial failure and never creates a
+    /// second concurrent history request for the same content.
+    func retryInitialTranscriptHistory() {
+        guard let engine = currentNativeEngine, !leaving, guestSnapshot.connected,
+              guestSnapshot.permissions.canViewTranscript, !guestSnapshot.transcriptHistoryLoaded,
+              transcriptHistoryTask == nil else { return }
+        transcriptHistoryRequested = false
+        loadHistory(engine, token: revision)
+    }
+
+    private func startHistory(_ engine: NativeGuestEngine, token: UUID, transcript: Bool) {
+        let id = UUID()
+        let previous = transcript ? transcriptHistoryDrain : chatHistoryDrain
+        if transcript { transcriptHistoryAttempt = id } else { chatHistoryAttempt = id }
+        let task = Task { @MainActor [weak self, weak engine] in
+            guard let self, let engine else { return }
+            defer {
+                if transcript, transcriptHistoryAttempt == id { transcriptHistoryTask = nil; transcriptHistoryAttempt = nil }
+                if !transcript, chatHistoryAttempt == id { chatHistoryTask = nil; chatHistoryAttempt = nil }
+            }
+            do {
+                // Canceling a transport request is asynchronous. Drain its owner
+                // before attempting a replacement so it cannot appear as a no-op.
+                await previous?.value
+                try Task.checkCancellation()
+                try await GuestHistoryRetry.run(isCurrent: {
+                    self.revision == token && self.currentNativeEngine === engine && !self.leaving &&
+                    self.guestSnapshot.connected && (transcript ? self.transcriptHistoryAttempt == id && self.guestSnapshot.permissions.canViewTranscript
+                                                               : self.chatHistoryAttempt == id && self.guestSnapshot.permissions.canViewChat)
+                }, isTransient: { error in
+                    if error is GuestHistoryError { return true }
+                    if let error = error as? GuestTransportError {
+                        switch error {
+                        case .networkFailure, .closed, .timedOut, .notConnected, .queueOverflow: return true
+                        default: return false
+                        }
+                    }
+                    return GuestRecoveryPolicy.isRecoverable(error)
+                }, record: { attempt, result in
+                    probeLog("guest-history-attempt", ["kind": transcript ? "transcript" : "chat",
+                        "attempt": attempt, "result": result])
+                }, operation: {
+                    if transcript { try await engine.loadTranscriptHistory() }
+                    else { try await engine.loadChatHistory() }
+                })
+            } catch {
+                if !(error is CancellationError) {
+                    let category: String
+                    if let transport = error as? GuestTransportError {
+                        switch transport {
+                        case .server: category = "server"
+                        case .timedOut: category = "timeout"
+                        case .networkFailure, .closed, .notConnected: category = "connection"
+                        case .queueOverflow: category = "capacity"
+                        default: category = "transport"
+                        }
+                    } else if error is GuestEngineError { category = "response" }
+                    else { category = "other" }
+                    probeLog("guest-history-error", ["kind": transcript ? "transcript" : "chat", "category": category])
+                }
+                featureFailed(error, engine: engine, token: token)
             }
         }
+        if transcript { transcriptHistoryTask = task } else { chatHistoryTask = task }
     }
     private func featureFailed(_ error: Error, engine: NativeGuestEngine, token: UUID) {
         guard revision == token, currentNativeEngine === engine, !leaving, !(error is CancellationError) else { return }
         featureError = error.localizedDescription; onFeatureError?(error)
     }
+#if DEBUG
+    func bindHistoryForTesting(_ engine: NativeGuestEngine) { bind(engine, token: revision) }
+    func unbindHistoryForTesting() { cancelHistory(); detachEngine() }
+    var transcriptHistoryIdleForTesting: Bool { transcriptHistoryTask == nil }
+#endif
 }

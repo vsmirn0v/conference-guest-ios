@@ -17,6 +17,10 @@ enum GuestEngineError: LocalizedError {
     }
 }
 
+/// A history request overlapped another request or its permission epoch changed.
+/// Neither is a successful load, and the adapter may retry while still allowed.
+enum GuestHistoryError: Error { case busy, stale }
+
 /// LiveKit's legacy stream ID carries the authoritative participant and track SID.
 private struct GuestRemotePublication: Hashable {
     let participant: String
@@ -327,7 +331,10 @@ final class NativeGuestEngine {
                   let group = payload["participantGroup"] as? [String: Any],
                   let groupID = group["groupId"] as? String,
                   let roomID = payload["roomId"] as? String else { throw GuestEngineError.malformed }
-            permissions = participant["permissions"] as? [String: Bool] ?? [:]
+            GuestPermissionValues.logShape(participant["permissions"], source: "joined")
+            probeLog("guest-transcript-restriction", ["restricted": GuestPermissionValues.extract(participant)["isNetworkRestrictTranscription"] == true,
+                "fieldType": GuestPermissionValues.fieldType(participant["isNetworkRestrictTranscription"])])
+            permissions = GuestPermissionValues.extract(participant["permissions"])
             onPermissionsChange?(mediaPermissions)
             self.sessionID = participant["sessionId"] as? String ?? sessionID
             await transport?.setScope(roomID: roomID, groupID: groupID)
@@ -337,7 +344,8 @@ final class NativeGuestEngine {
             probeLog("room-joined", ["client": probeClient, "participants": (group["participants"] as? [Any])?.count ?? 0])
         case "media-out": try await receiveMedia(payload)
         case "permissions-updated":
-            permissions.merge(payload as? [String: Bool] ?? [:]) { _, new in new }
+            GuestPermissionValues.logShape(payload, source: "updated")
+            permissions.merge(GuestPermissionValues.extract(payload)) { _, new in new }
             meetingFeatures.receive(event); emitMeetingChange()
             onPermissionsChange?(mediaPermissions)
             for (key, video) in [("canShareCamera", true), ("canShareMicrophone", false)] where permissions[key] == false {
@@ -1613,7 +1621,7 @@ extension NativeGuestEngine {
         guard joined, transcript ? meetingSnapshot.permissions.canViewTranscript : meetingSnapshot.permissions.canViewChat else {
             throw GuestEngineError.admissionDenied
         }
-        if transcript ? loadingTranscript : loadingChat { return }
+        if transcript ? loadingTranscript : loadingChat { throw GuestHistoryError.busy }
         if transcript { loadingTranscript = true } else { loadingChat = true }
         defer { if transcript { loadingTranscript = false } else { loadingChat = false } }
         let epoch = meetingFeatures.epoch
@@ -1627,6 +1635,7 @@ extension NativeGuestEngine {
         guard meetingFeatures.acceptsScope(response), let payload = response["payload"] as? [String: Any] else {
             throw GuestEngineError.malformed
         }
+        guard epoch == meetingFeatures.epoch else { throw GuestHistoryError.stale }
         try meetingFeatures.acceptHistory(payload, transcript: transcript, epoch: epoch, capture: onCapturedMessages)
         emitMeetingChange()
     }

@@ -1893,8 +1893,11 @@ import UniformTypeIdentifiers
             self?.floatingReactions = []
         }
     }
-    func loadMoreChat() { perform { if let guest = $0 as? NativeDesktopGuestEngine { try await guest.currentNativeEngine?.loadChatHistory() } } }
-    func loadMoreTranscript() { perform { if let guest = $0 as? NativeDesktopGuestEngine { try await guest.currentNativeEngine?.loadTranscriptHistory() } } }
+    func loadMoreChat() { perform { if let guest = $0 as? NativeDesktopGuestEngine {
+        do { try await guest.currentNativeEngine?.loadChatHistory() } catch GuestHistoryError.busy {} } } }
+    func loadMoreTranscript() { perform { if let guest = $0 as? NativeDesktopGuestEngine {
+        do { try await guest.currentNativeEngine?.loadTranscriptHistory() } catch GuestHistoryError.busy {} } } }
+    func retryInitialTranscript() { (engine as? NativeDesktopGuestEngine)?.retryInitialTranscriptHistory() }
     func setTranscription(_ enabled: Bool) { perform { if let guest = $0 as? NativeDesktopGuestEngine { try await guest.currentNativeEngine?.setTranscriptionEnabled(enabled) } } }
     func focus(participantID: String, source: NativeDesktopVideoSource) {
         pinnedSource = display == .screenShares ? .screen : source; pinnedID = participantID; viewMode = .focused

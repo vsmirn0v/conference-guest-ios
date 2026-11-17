@@ -1125,6 +1125,8 @@
 "Draw directly on the canvas. Undo removes the last stroke." = "Рисуйте прямо на холсте. Кнопка «Отменить» удаляет последний штрих.";
 "Earlier messages" = "Предыдущие сообщения";
 "Earlier transcript" = "Предыдущая расшифровка";
+"Load meeting transcript" = "Загрузить расшифровку встречи";
+"The meeting service may restrict transcript access to its organization’s network." = "Сервис встречи может ограничивать доступ к расшифровке сетью организации.";
 "Edit" = "Правка";
 "Failed" = "Ошибка подключения";
 "Fill" = "Заполнить";

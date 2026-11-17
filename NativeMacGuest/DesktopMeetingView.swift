@@ -911,7 +911,14 @@ struct NativeDesktopConversationView: View {
                                     .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
                             }
                             if model.guestFeatures.transcriptHasMore { Button(L("Earlier transcript")) { model.loadMoreTranscript() } }
-                            if model.transcript.isEmpty {
+                            if model.kind == .guest && model.guestFeatures.transcriptNetworkRestricted && !model.guestFeatures.permissions.canViewTranscript {
+                                Text(L("The meeting service may restrict transcript access to its organization’s network."))
+                                    .foregroundStyle(.secondary)
+                            }
+                            if model.kind == .guest && model.guestFeatures.connected && model.guestFeatures.permissions.canViewTranscript && !model.guestFeatures.transcriptHistoryLoaded {
+                                Button(L("Load meeting transcript")) { model.retryInitialTranscript() }
+                            }
+                            if model.transcript.isEmpty && !(model.guestFeatures.transcriptNetworkRestricted && !model.guestFeatures.permissions.canViewTranscript) {
                                 Text(model.transcribingLocally ? L("Text appears here as people speak.")
                                      : model.kind == .guest && !model.listenStore.enabled
                                         ? L("Transcript appears here when the meeting service provides it. To transcribe on this Mac, turn it on in Settings → Transcription.")
