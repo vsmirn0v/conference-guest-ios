@@ -248,6 +248,7 @@ struct NativeDesktopMeetingView: View {
                     if !model.controlsHidden && !textSelection.isOpen && !embedded && chromeShown { header.padding(.horizontal, 18).padding(.top, 10) }
                     if let workspace, !textSelection.isOpen { NativeDesktopListeningBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen && !embedded { NativeDesktopTranscriptionBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
+                    if !textSelection.isOpen { NativeDesktopLocalFallbackBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { NativeDesktopCatchUpCard(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if model.isSharingLive && !textSelection.isOpen { shareBanner.padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12) }
@@ -891,7 +892,7 @@ struct NativeDesktopConversationView: View {
                                     .id(interval.id)
                             }
                         } else {
-                            if model.guestFeatures.transcriptionStatus == .active {
+                            if model.guestFeatures.transcriptionStatus == .active && model.guestFeatures.permissions.canViewTranscript {
                                 HStack(spacing: 8) {
                                     Circle().fill(Color.orange).frame(width: 7, height: 7)
                                     Text(model.transcriptionSince.map { L("Transcription is on since %@", $0.formatted(date: .omitted, time: .shortened)) } ?? L("Meeting transcription is on"))
@@ -914,6 +915,10 @@ struct NativeDesktopConversationView: View {
                             if model.kind == .guest && model.guestFeatures.transcriptNetworkRestricted && !model.guestFeatures.permissions.canViewTranscript {
                                 Text(L("The meeting service may restrict transcript access to its organization’s network."))
                                     .foregroundStyle(.secondary)
+                            }
+                            NativeDesktopLocalFallbackOffer(model: model)
+                            if model.canRestartLocalTranscriptFallback {
+                                Button(L("Transcribe on this Mac")) { model.reconsiderLocalTranscriptFallback() }
                             }
                             if model.kind == .guest && model.guestFeatures.connected && model.guestFeatures.permissions.canViewTranscript && !model.guestFeatures.transcriptHistoryLoaded {
                                 Button(L("Load meeting transcript")) { model.retryInitialTranscript() }
@@ -1316,6 +1321,10 @@ private struct NativeDesktopTranscriptionDetails: View {
             }
             Label(L("Other participants' speech is turned into text by a model on this Mac. Audio is not recorded, saved or sent anywhere."), systemImage: "waveform")
                 .fixedSize(horizontal: false, vertical: true)
+            if model.serverTranscriptHidden {
+                Text(L("The meeting service is transcribing, but its transcript is not available to you, so this Mac is transcribing."))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Label(L("Participants are not notified by the app. Tell them if your organisation requires it."), systemImage: "person.2")
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
@@ -1340,6 +1349,14 @@ private struct NativeDesktopTranscriptionDetails: View {
             if failed {
                 Text(L("The meeting service reported an error, so new speech is not being turned into text. Text captured so far stays in Live text."))
                     .fixedSize(horizontal: false, vertical: true)
+            } else if model.serverTranscriptHidden {
+                Text(L("The meeting service is transcribing, but its transcript is not available to you."))
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.guestFeatures.transcriptNetworkRestricted {
+                    Text(L("The meeting service may restrict transcript access to its organization’s network."))
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                NativeDesktopLocalFallbackOffer(model: model)
             } else {
                 Label(L("What people say, including you when you unmute, is turned into text by the meeting service."), systemImage: "mic")
                     .fixedSize(horizontal: false, vertical: true)
@@ -1348,14 +1365,61 @@ private struct NativeDesktopTranscriptionDetails: View {
                 if !manages { Text(L("Only the organizer can stop transcription.")).foregroundStyle(.secondary) }
             }
             HStack(spacing: 8) {
-                Button(L("Show live text")) { close(); model.showLiveText() }.buttonStyle(.borderedProminent)
-                if manages {
+                if !model.serverTranscriptHidden || model.transcribingLocally {
+                    Button(L("Show live text")) { close(); model.showLiveText() }.buttonStyle(.borderedProminent)
+                }
+                if manages && !model.serverTranscriptHidden {
                     Button(failed ? L("Restart transcription") : L("Stop transcription"), role: failed ? nil : .destructive) {
                         close(); model.setTranscription(failed)
                     }
                 }
             }.padding(.top, 2)
         }.font(.callout).padding(16).frame(width: 340, alignment: .leading)
+    }
+}
+
+/// Asks before downloading a speech model when the service transcript cannot be read.
+struct NativeDesktopLocalFallbackBanner: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    var body: some View {
+        if model.localTranscriptFallbackPrompt != nil {
+            NativeDesktopLocalFallbackOffer(model: model)
+                .padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
+                .accessibilityIdentifier("transcription.localFallback")
+        }
+    }
+}
+
+struct NativeDesktopLocalFallbackOffer: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    var body: some View {
+        switch model.localTranscriptFallbackPrompt {
+        case .ask(let bytes):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("The meeting transcript is not available to you. Transcribe speech on this Mac instead? The speech model is %@.",
+                       ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)))
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button(L("Download and transcribe")) { model.acceptLocalTranscriptFallback() }.controlSize(.small)
+                    Button(L("Not now")) { model.declineLocalTranscriptFallback() }.controlSize(.small)
+                }
+            }
+        case .downloading(let progress):
+            VStack(alignment: .leading, spacing: 8) {
+                ProgressView(value: progress) { Text(L("Downloading the speech model…")).font(.callout) }
+                Button(L("Not now")) { model.declineLocalTranscriptFallback() }.controlSize(.small)
+            }
+        case .failed:
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("The speech model could not be downloaded.")).font(.callout)
+                HStack(spacing: 8) {
+                    Button(L("Try again")) { model.acceptLocalTranscriptFallback() }.controlSize(.small)
+                    Button(L("Not now")) { model.declineLocalTranscriptFallback() }.controlSize(.small)
+                }
+            }
+        case nil:
+            EmptyView()
+        }
     }
 }
 

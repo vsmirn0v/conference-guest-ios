@@ -148,12 +148,13 @@ import UniformTypeIdentifiers
     private var transcriptionAnnouncementTask: Task<Void, Never>?
     enum TranscriptionIndicator { case on, local, failed }
     /// A failure is shown only to people who can restart transcription. Local
-    /// transcription is shown when the service does not transcribe.
+    /// transcription is shown when this Mac is producing the text the person can read.
     var transcriptionIndicator: TranscriptionIndicator? {
+        if serverTranscriptHidden, localTranscriber != nil { return .local }
         switch guestFeatures.transcriptionStatus {
-        case .active: .on
-        case .failed where guestFeatures.permissions.canManageTranscript: .failed
-        default: localTranscriber != nil ? .local : nil
+        case .active: return .on
+        case .failed where guestFeatures.permissions.canManageTranscript: return .failed
+        default: return localTranscriber != nil ? .local : nil
         }
     }
     /// Speech transcribed on this Mac while the meeting service does not transcribe.
@@ -182,12 +183,68 @@ import UniformTypeIdentifiers
     func observeSpeakingForTesting(_ ids: Set<String>, at time: Date) { speakingTimeline.observe(speaking: ids, at: time) }
 #endif
 
-    /// Runs local transcription for a connected Guest meeting when it is switched
-    /// on and installed, the service does not transcribe, and this meeting is not paused.
-    /// This meeting's service may be transcribed here: Guest whenever local
-    /// transcription is on; Telemost and TrueConf by default; Rock only when chosen.
+    /// The service reports transcription, but this participant cannot read that transcript.
+    var serverTranscriptHidden: Bool {
+        kind == .guest && guestFeatures.transcriptionStatus == .active && !guestFeatures.permissions.canViewTranscript
+    }
+    /// This meeting only. Declining the download must not start local transcription
+    /// if a model arrives later from Settings.
+    private var localFallbackDeclined = false
+    private var localFallbackDownloadAccepted = false
+    private var localModelsReady: Bool { listenStore.recognizerModel() != nil && listenStore.vadURL != nil }
+    /// Installed models transcribe immediately. A missing model waits for an explicit download.
+    enum LocalTranscriptFallbackPrompt: Equatable {
+        case ask(Int64)
+        case downloading(Double)
+        case failed
+    }
+    var localTranscriptFallbackPrompt: LocalTranscriptFallbackPrompt? {
+        guard serverTranscriptHidden, connected, !closed, !localTranscriptionPaused, !localFallbackDeclined,
+              engine.supportsLocalTranscription, localTranscriber == nil, !localModelsReady,
+              listenStore.selected != nil else { return nil }
+        let relevant = [listenStore.selected, listenStore.catalog.vad].compactMap { $0 }
+        if let progress = relevant.compactMap({ model -> Double? in
+            if case .downloading(let value) = listenStore.state(model) { return value }
+            return nil
+        }).min() { return .downloading(progress) }
+        if relevant.contains(where: { if case .failed = listenStore.state($0) { return true }; return false }) { return .failed }
+        var bytes: Int64 = 0
+        if let model = listenStore.selected, !listenStore.state(model).installed { bytes += model.size }
+        if let vad = listenStore.catalog.vad, !listenStore.state(vad).installed { bytes += vad.size }
+        return .ask(bytes)
+    }
+    var canRestartLocalTranscriptFallback: Bool {
+        serverTranscriptHidden && connected && !closed && localFallbackDeclined && localTranscriber == nil && engine.supportsLocalTranscription
+    }
+    func acceptLocalTranscriptFallback() {
+        localFallbackDeclined = false
+        localFallbackDownloadAccepted = true
+        guard let model = listenStore.selected else { return }
+        listenStore.download(model)
+        objectWillChange.send()
+    }
+    func declineLocalTranscriptFallback() {
+        localFallbackDeclined = true
+        if localFallbackDownloadAccepted {
+            if let model = listenStore.selected, case .downloading = listenStore.state(model) { listenStore.cancel(model) }
+            if let vad = listenStore.catalog.vad, case .downloading = listenStore.state(vad) { listenStore.cancel(vad) }
+            localFallbackDownloadAccepted = false
+        }
+        objectWillChange.send()
+    }
+    func reconsiderLocalTranscriptFallback() {
+        localFallbackDeclined = false
+        updateLocalTranscription()
+        objectWillChange.send()
+    }
+    /// Runs local transcription for a connected meeting when the model is installed,
+    /// this meeting is not paused, and the person cannot read a service transcript.
+    /// The Settings switch chooses Guest, Telemost, TrueConf, and Rock when the service
+    /// is not transcribing. A hidden guest transcript still uses an installed model.
     var localTranscriptionAllowed: Bool {
-        guard engine.supportsLocalTranscription, listenStore.ready else { return false }
+        guard engine.supportsLocalTranscription else { return false }
+        if serverTranscriptHidden { return localModelsReady && !localFallbackDeclined }
+        guard listenStore.ready else { return false }
         switch kind {
         case .guest: return true
         case .community: return listenStore.transcribesRock
@@ -196,8 +253,8 @@ import UniformTypeIdentifiers
     }
     func updateLocalTranscription() {
         engine.setTranscriptionRequested(localTranscriptionAllowed)
-        let wanted = !closed && connected && localTranscriptionAllowed && !localTranscriptionPaused &&
-            guestFeatures.transcriptionStatus != .active
+        let serviceTranscriptReadable = guestFeatures.transcriptionStatus == .active && guestFeatures.permissions.canViewTranscript
+        let wanted = !closed && connected && localTranscriptionAllowed && !localTranscriptionPaused && !serviceTranscriptReadable
         if wanted, localTranscriber == nil, let model = listenStore.recognizerModel(), let vad = listenStore.vadURL {
             LocalSpeechRecognizer.shared.acquire(model)   // loads before the first utterance
             let generation = UUID()
@@ -220,7 +277,8 @@ import UniformTypeIdentifiers
             let engine = engine
             Task { _ = await engine.setTranscriptionOutput(true) }
             probeLog("local-transcription-start", ["model": listenStore.selectedID, "soundOn": snapshot.playoutOn,
-                "microphone": listenStore.includesMicrophone, "service": kind.rawValue])
+                "microphone": listenStore.includesMicrophone, "service": kind.rawValue,
+                "reason": serverTranscriptHidden ? "serverTranscriptHidden" : "serviceTranscriptOff"])
             observeParticipation()
             objectWillChange.send()
         } else if !wanted, let transcriber = localTranscriber {
@@ -491,7 +549,7 @@ import UniformTypeIdentifiers
     }
     private func noteTranscription(from previous: GuestMeetingSnapshot.TranscriptionStatus, to status: GuestMeetingSnapshot.TranscriptionStatus) {
         guard previous != status else { return }
-        if status == .active {
+        if status == .active && guestFeatures.permissions.canViewTranscript {
             transcriptionSince = Date(); transcriptionAnnouncement = true
             transcriptionAnnouncementTask?.cancel()
             transcriptionAnnouncementTask = Task { @MainActor [weak self] in
@@ -814,7 +872,10 @@ import UniformTypeIdentifiers
         catchUp.enter(roomKey: invitation.absoluteString)
         catchUp.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         self.listenStore.objectWillChange.sink { [weak self] in
-            DispatchQueue.main.async { self?.updateLocalTranscription() }
+            DispatchQueue.main.async {
+                self?.objectWillChange.send()
+                self?.updateLocalTranscription()
+            }
         }.store(in: &subscriptions)
         chat.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         chat.reactionHistory.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
@@ -1814,6 +1875,11 @@ import UniformTypeIdentifiers
         guard !closed else { return }
         let previousTranscription = guestFeatures.transcriptionStatus
         guestFeatures = features
+        if features.transcriptionStatus != .active || features.permissions.canViewTranscript { localFallbackDeclined = false }
+        if features.transcriptionStatus == .active && !features.permissions.canViewTranscript {
+            transcriptionSince = nil
+            dismissTranscriptionAnnouncement()
+        }
         participation.updateAudience(participationAudience)
         noteTranscription(from: previousTranscription, to: features.transcriptionStatus)
         updateLocalTranscription()

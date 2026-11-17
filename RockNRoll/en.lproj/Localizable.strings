@@ -1460,6 +1460,14 @@
 "Transcription" = "Transcription";
 "Transcribe meetings on this Mac" = "Transcribe meetings on this Mac";
 "When a meeting is not transcribed by its service, other participants' speech is turned into text here, for Live text and Catch up. It keeps working while the meeting's sound is off." = "When a meeting is not transcribed by its service, other participants' speech is turned into text here, for Live text and Catch up. It keeps working while the meeting's sound is off.";
+"If a guest meeting is being transcribed but its transcript is not available to you, this Mac transcribes it when a speech model is already installed. Otherwise it asks before downloading the model." = "If a guest meeting is being transcribed but its transcript is not available to you, this Mac transcribes it when a speech model is already installed. Otherwise it asks before downloading the model.";
+"The meeting transcript is not available to you. Transcribe speech on this Mac instead? The speech model is %@." = "The meeting transcript is not available to you. Transcribe speech on this Mac instead? The speech model is %@.";
+"Download and transcribe" = "Download and transcribe";
+"Downloading the speech model…" = "Downloading the speech model…";
+"The speech model could not be downloaded." = "The speech model could not be downloaded.";
+"The meeting service is transcribing, but its transcript is not available to you, so this Mac is transcribing." = "The meeting service is transcribing, but its transcript is not available to you, so this Mac is transcribing.";
+"The meeting service is transcribing, but its transcript is not available to you." = "The meeting service is transcribing, but its transcript is not available to you.";
+"Transcribe on this Mac" = "Transcribe on this Mac";
 "Downloading the voice detector…" = "Downloading the voice detector…";
 "Download a speech model below to start." = "Download a speech model below to start.";
 "Speech model" = "Speech model";

@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import CryptoKit
+import LiveKitWebRTC
 import XCTest
 @testable import RockNativeDesktop
 
@@ -469,4 +470,103 @@ import XCTest
         XCTAssertEqual(transcriber.currentSummary.droppedSeconds, 0)
         transcriber.stop()
     }
+
+    /// A service that is transcribing, but will not show the transcript, uses this Mac.
+    /// An installed model starts even when the Settings switch is off. A missing model
+    /// waits for an explicit download and does not change that switch.
+    func testHiddenServerTranscriptUsesLocalTranscriptionWithoutTheGlobalSwitch() async throws {
+        let source = temporaryFolder()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        func file(_ name: String, _ text: String) throws -> ListenModelCatalog.File {
+            let url = source.appendingPathComponent(name); try Data(text.utf8).write(to: url)
+            return .init(name: name, size: Int64(text.utf8.count), url: url, sha256: try ListenModelStore.sha256(of: url))
+        }
+        let vad = ListenModelCatalog.Model(id: "vad", role: "vad", title: "VAD", kind: "silero_vad", featureDim: nil, languages: [],
+            licence: "MIT", source: source, files: [try file("vad.onnx", "vad")], config: ["model": "vad.onnx"])
+        let listen = ListenModelCatalog.Model(id: "giga", role: "listen", title: "Giga", kind: "nemo_ctc", featureDim: 64,
+            languages: ["ru"], licence: "MIT", source: source,
+            files: [try file("model.onnx", "weights"), try file("tokens.txt", "a 0")], config: ["model": "model.onnx", "tokens": "tokens.txt"])
+        let defaults = UserDefaults(suiteName: "listen-fallback-\(UUID().uuidString)")!
+        let store = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: [vad, listen]),
+                                     root: temporaryFolder(), defaults: defaults)
+        store.selectedID = listen.id
+        XCTAssertFalse(store.enabled)
+        let engine = LocalFallbackEngine()
+        let model = NativeDesktopMeetingModel(destination: try .verified(URL(string: "https://jazz.example/sber-hidden")!, engine: .guest),
+            name: "Guest", title: "Hidden transcript", engine: engine, listenStore: store)
+        addTeardownBlock { _ = await model.leave() }
+        try await model.connect()
+
+        var hidden = GuestMeetingSnapshot()
+        hidden.transcriptionStatus = .active
+        hidden.transcriptNetworkRestricted = true
+        hidden.connected = true
+        model.receiveFeaturesForTesting(hidden)
+        guard case .ask(let bytes) = model.localTranscriptFallbackPrompt else {
+            return XCTFail("A missing model asks before downloading")
+        }
+        XCTAssertEqual(bytes, listen.size + vad.size)
+        XCTAssertFalse(model.transcribingLocally)
+        XCTAssertNotEqual(model.transcriptionIndicator, .local)
+        model.declineLocalTranscriptFallback()
+        XCTAssertNil(model.localTranscriptFallbackPrompt)
+        XCTAssertTrue(model.canRestartLocalTranscriptFallback)
+        model.reconsiderLocalTranscriptFallback()
+        guard case .ask = model.localTranscriptFallbackPrompt else { return XCTFail("The offer returns") }
+        model.acceptLocalTranscriptFallback()
+        for _ in 0..<200 where !model.transcribingLocally { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(model.transcribingLocally, "Accepting the download starts local transcription")
+        XCTAssertEqual(model.transcriptionIndicator, .local)
+        XCTAssertFalse(store.enabled, "This meeting does not change the Settings switch")
+        XCTAssertNil(model.localTranscriptFallbackPrompt)
+        XCTAssertEqual(model.participationTranscriptSource, .localRoomAudio)
+
+        model.localTranscriptionPaused = true
+        XCTAssertFalse(model.transcribingLocally)
+        model.localTranscriptionPaused = false
+        XCTAssertTrue(model.transcribingLocally, "Pause still belongs to this meeting")
+
+        hidden.permissions.canViewTranscript = true
+        model.receiveFeaturesForTesting(hidden)
+        XCTAssertFalse(model.transcribingLocally, "A readable service transcript replaces local transcription")
+        XCTAssertEqual(model.transcriptionIndicator, .on)
+        XCTAssertEqual(model.participationTranscriptSource, .service)
+
+        hidden.permissions.canViewTranscript = false
+        store.delete(listen); store.delete(vad)
+        model.receiveFeaturesForTesting(hidden)
+        XCTAssertFalse(model.transcribingLocally)
+        guard case .ask = model.localTranscriptFallbackPrompt else { return XCTFail("Deleting the model asks again") }
+        model.declineLocalTranscriptFallback()
+        store.download(listen)
+        for _ in 0..<200 where !(store.recognizerModel() != nil && store.vadURL != nil) { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNotNil(store.recognizerModel())
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(model.transcribingLocally, "Declining keeps a later download from starting this meeting")
+        XCTAssertTrue(model.canRestartLocalTranscriptFallback)
+        model.reconsiderLocalTranscriptFallback()
+        XCTAssertTrue(model.transcribingLocally)
+    }
+}
+
+@MainActor private final class LocalFallbackEngine: NativeDesktopMeetingEngine {
+    var onState: ((NativeDesktopExternalSnapshot) -> Void)?
+    var onVideo: (([NativeDesktopExternalVideo]) -> Void)?
+    var onLocalCamera: ((LKRTCVideoTrack?) -> Void)?
+    var onTitle: ((String) -> Void)?
+    var factory: LKRTCPeerConnectionFactory? { nil }
+    var supportsLocalTranscription: Bool { true }
+    private(set) var snapshot = NativeDesktopExternalSnapshot()
+    var incomingVideo: [NativeDesktopExternalVideo] { [] }
+    func connect(invitation: URL, name: String, quiet: Bool) async throws {
+        snapshot.phase = .connected
+        snapshot.playoutOn = !quiet
+        onState?(snapshot)
+    }
+    func reconnect() async throws {}
+    func setMicrophone(_ enabled: Bool) async throws { snapshot.microphoneOn = enabled; onState?(snapshot) }
+    func setCamera(_ enabled: Bool) async throws {}
+    func setPlayout(_ enabled: Bool) async throws { snapshot.playoutOn = enabled; onState?(snapshot) }
+    func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {}
+    func leave() async -> Bool { snapshot.phase = .left; onState?(snapshot); return true }
 }

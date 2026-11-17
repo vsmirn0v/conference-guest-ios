@@ -17,6 +17,8 @@ struct NativeDesktopTranscriptionSettings: View {
                 )
                 Text(L("When a meeting is not transcribed by its service, other participants' speech is turned into text here, for Live text and Catch up. It keeps working while the meeting's sound is off."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(L("If a guest meeting is being transcribed but its transcript is not available to you, this Mac transcribes it when a speech model is already installed. Otherwise it asks before downloading the model."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if store.enabled, !store.ready {
                     if store.selected.map({ store.state($0).installed }) != true {
                         Label(L("Download a speech model below to start."), systemImage: "arrow.down.circle")

@@ -1496,6 +1496,7 @@ private final class DesktopActivitySpy: NSUserActivity {
     func testTranscriptionIndicatorAnnouncesOnceAndExplainsItself() async throws {
         let model = try model(DesktopTestEngine())
         var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active
+        features.permissions.canViewTranscript = true
         model.receiveFeaturesForTesting(features)
         XCTAssertEqual(model.transcriptionIndicator, .on); XCTAssertNotNil(model.transcriptionSince)
         XCTAssertTrue(model.transcriptionAnnouncement, "Joining a transcribed meeting announces it once")

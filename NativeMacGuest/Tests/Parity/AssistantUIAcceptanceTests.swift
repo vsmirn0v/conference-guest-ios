@@ -1020,6 +1020,7 @@ import XCTest
         // 2. Remote transcription popover remains open across incoming server transcript snapshots and workspace updates.
         var features = GuestMeetingSnapshot()
         features.transcriptionStatus = .active
+        features.permissions.canViewTranscript = true
         model.receiveFeaturesForTesting(features)
         model.dismissTranscriptionAnnouncement()
         await settle()
