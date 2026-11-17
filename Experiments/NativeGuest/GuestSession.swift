@@ -37,8 +37,13 @@ protocol GuestRecoverableError: Error {}
 struct GuestRecoveryPolicy {
     static let stableInterval: TimeInterval = 60
     private(set) var retries = 0
-    private let delays: [UInt64] = [500_000_000, 1_000_000_000, 2_000_000_000]
+    // Leave enough time for a network to return and for a relay route selected
+    // late in the outage to get its own attempt, without retrying forever.
+    private let delays: [UInt64] = [500_000_000, 1_000_000_000, 2_000_000_000,
+                                    4_000_000_000, 8_000_000_000, 15_000_000_000,
+                                    15_000_000_000, 15_000_000_000]
     private var connectedAt: TimeInterval?
+    private var relayBonusRetries = 0
 
     mutating func noteConnected(at now: TimeInterval) { connectedAt = now }
 
@@ -60,10 +65,17 @@ struct GuestRecoveryPolicy {
         return error is GuestRecoverableError
     }
 
-    mutating func nextDelay(after error: Error, at now: TimeInterval? = nil) -> UInt64? {
-        if let connectedAt, let now, now - connectedAt >= Self.stableInterval { retries = 0 }
+    mutating func nextDelay(after error: Error, at now: TimeInterval? = nil, pendingRelayTrial: Bool = false) -> UInt64? {
+        if let connectedAt, let now, now - connectedAt >= Self.stableInterval { retries = 0; relayBonusRetries = 0 }
         connectedAt = nil
-        guard Self.isRecoverable(error), retries < delays.count else { return nil }
+        guard Self.isRecoverable(error) else { return nil }
+        if retries >= delays.count {
+            // A trial selected on the last regular attempt still needs an
+            // attempt of its own. There are at most two peers to trial.
+            guard pendingRelayTrial, relayBonusRetries < 2 else { return nil }
+            relayBonusRetries += 1; retries += 1
+            return 500_000_000
+        }
         let delay = delays[retries]
         retries += 1
         return delay
@@ -154,19 +166,28 @@ final class GuestSession {
     private let makeAttempt: @MainActor () async throws -> any GuestSessionEngine
     private let sleep: @MainActor (UInt64) async throws -> Void
     private let now: @MainActor () -> TimeInterval
+    private let hasPendingRelayTrial: @MainActor () -> Bool
+    private let restoreUnstartedRelayTrial: @MainActor () -> Void
 
     #if canImport(LiveKitWebRTC)
     var engine: NativeGuestEngine? { current as? NativeGuestEngine }
     var onEngineChange: ((NativeGuestEngine?) -> Void)? { didSet { onEngineChange?(engine) } }
-    convenience init(makeEngine: @escaping @MainActor () async throws -> NativeGuestEngine) {
-        self.init(makeAttempt: { try await makeEngine() })
+    convenience init(makeEngine: @escaping @MainActor () async throws -> NativeGuestEngine,
+                     hasPendingRelayTrial: @escaping @MainActor () -> Bool = { false },
+                     restoreUnstartedRelayTrial: @escaping @MainActor () -> Void = {}) {
+        self.init(makeAttempt: { try await makeEngine() }, hasPendingRelayTrial: hasPendingRelayTrial,
+                  restoreUnstartedRelayTrial: restoreUnstartedRelayTrial)
     }
     #endif
 
     init(makeAttempt: @escaping @MainActor () async throws -> any GuestSessionEngine,
          sleep: @escaping @MainActor (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
-         now: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+         now: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         hasPendingRelayTrial: @escaping @MainActor () -> Bool = { false },
+         restoreUnstartedRelayTrial: @escaping @MainActor () -> Void = {}) {
         self.makeAttempt = makeAttempt; self.sleep = sleep; self.now = now
+        self.hasPendingRelayTrial = hasPendingRelayTrial
+        self.restoreUnstartedRelayTrial = restoreUnstartedRelayTrial
     }
 
     func connect(_ invitation: GuestInvitation, publish: Bool, codec: String, camera: Bool,
@@ -277,7 +298,37 @@ final class GuestSession {
         let expected = generation, before = connectionCount
         await current.interruptTransportForTesting()
         guard generation == expected else { throw CancellationError() }
-        try await waitUntilConnected(timeout: 60, after: before)
+        try await waitUntilConnected(timeout: 300, after: before)
+    }
+
+    /// A user-requested retry after an exhausted recoverable outage. Media is
+    /// deliberately muted before constructing a replacement owner.
+    func retryFailedConnection() async throws {
+        guard state == .failed, let failure, GuestRecoveryPolicy.isRecoverable(failure),
+              cleanupSucceeded, current == nil, invitation != nil, var intent = desiredIntent else {
+            throw failure ?? GuestTransportError.notConnected
+        }
+        state = .recovering
+        intent.audioMuted = true; intent.videoMuted = true
+        desiredIntent = intent
+        policy = GuestRecoveryPolicy(); recoveryAttempts = 0
+        // Exhaustion sends a server leave; a user retry must join afresh.
+        sessionID = nil; self.failure = nil; pendingFailure = nil
+        let expected = generation
+        startControl()
+        let job = control
+        try await withTaskCancellationHandler(operation: {
+            await job?.value
+            try Task.checkCancellation()
+            guard generation == expected else { throw CancellationError() }
+            if let failure = self.failure { throw failure }
+            guard state == .connected else { throw GuestTransportError.notConnected }
+        }, onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == expected else { return }
+                _ = await self.leave()
+            }
+        })
     }
 
     @discardableResult
@@ -318,6 +369,7 @@ final class GuestSession {
 
     private func run(_ expected: UInt64) async {
         while generation == expected, !Task.isCancelled {
+            var relayTrialAwaitingJoin = false
             do {
                 if let pendingFailure { throw pendingFailure }
                 if current == nil {
@@ -330,6 +382,7 @@ final class GuestSession {
                     }
                     let attempt = UUID()
                     current = next; attemptID = attempt; appliedIntent = nil
+                    relayTrialAwaitingJoin = true
                     appliedMicrophoneActivation = false; appliedPlayoutEnabled = nil
                     if let intent = desiredIntent {
                         next.setLocalMuteIntent(intent.audioMuted, video: false)
@@ -346,6 +399,7 @@ final class GuestSession {
                     attemptMicrophonePreparation = microphonePreparationRequested
                     try await reconcileDeviceIntent(next, generation: expected, attempt: attempt)
                     try await next.join(invitation, sessionID: sessionID)
+                    relayTrialAwaitingJoin = false
                     try check(expected, attempt: attempt)
                     sessionID = next.sessionID ?? sessionID
                     guard let intent = desiredIntent else { throw CancellationError() }
@@ -397,9 +451,10 @@ final class GuestSession {
                 }
                 let cause = pendingFailure ?? error
                 pendingFailure = nil
+                if relayTrialAwaitingJoin, GuestRecoveryPolicy.isRecoverable(cause) { restoreUnstartedRelayTrial() }
                 probeLog("session-control-failure", ["causeType": String(describing: type(of: cause)),
                     "causeCode": (cause as NSError).code])
-                let delay = policy.nextDelay(after: cause, at: now())
+                let delay = policy.nextDelay(after: cause, at: now(), pendingRelayTrial: hasPendingRelayTrial())
                 let stopped = await retireCurrent(sendLeave: delay == nil)
                 guard generation == expected, !Task.isCancelled else { return }
                 guard stopped else { finish(GuestSessionError.cleanupFailed); return }

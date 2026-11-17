@@ -131,6 +131,14 @@ struct GuestRelayRecovery {
     private var next: Set<GuestPeerTarget> = []
     private(set) var verifying: Set<GuestPeerTarget> = []
     private(set) var confirmed: Set<GuestPeerTarget> = []
+    var hasPendingAttempt: Bool { !next.isEmpty }
+
+    /// Bootstrap can fail before an assigned trial reaches the meeting. Keep
+    /// that trial eligible for another bounded attempt.
+    mutating func restoreUnstartedAttempt() {
+        next.formUnion(verifying)
+        verifying.removeAll()
+    }
 
     mutating func schedule(_ target: GuestPeerTarget) -> Bool {
         guard tried.insert(target).inserted else { return false }

@@ -42,6 +42,7 @@ private final class FakeEngine: GuestSessionEngine {
     func setPlayoutEnabled(_ enabled: Bool) async throws { playoutChanges.append(enabled); await playoutGate?.wait() }
     var assignedSessionID = "server-session"
     var joinError: Error?
+    var onJoin: (() -> Void)?
     var publishError: Error?
     var muteError: Error?
     var failureDuringJoin: Error?
@@ -62,6 +63,7 @@ private final class FakeEngine: GuestSessionEngine {
         startupEvents.append("join")
         joins.append(sessionID)
         self.sessionID = assignedSessionID
+        onJoin?()
         await joinGate?.wait() // Deliberately ignores cancellation, testing stale completion.
         if let failureDuringJoin { onFailure?(failureDuringJoin) }
         if let joinError { throw joinError }
@@ -98,14 +100,22 @@ private final class Harness {
     var delays: [UInt64] = []
     var sleepGate: Gate?
     var clock: TimeInterval = 0
+    var pendingRelayTrial = false
+    var relayTrialsStarted = 0
+    var relayTrialInProgress = false
     lazy var session = GuestSession(makeAttempt: { [self] in
         factoryCalls += 1
         if !factoryErrors.isEmpty { throw factoryErrors.removeFirst() }
         guard made < engines.count else { throw SessionTestError.assertion("Unexpected extra attempt") }
+        relayTrialInProgress = pendingRelayTrial
+        if pendingRelayTrial { relayTrialsStarted += 1; pendingRelayTrial = false }
         let engine = engines[made]; made += 1; return engine
     }, sleep: { [self] delay in
         delays.append(delay); await sleepGate?.wait(); try Task.checkCancellation()
-    }, now: { [self] in clock })
+    }, now: { [self] in clock }, hasPendingRelayTrial: { [self] in pendingRelayTrial },
+       restoreUnstartedRelayTrial: { [self] in
+           if relayTrialInProgress { pendingRelayTrial = true; relayTrialInProgress = false }
+       })
     init(_ engines: [FakeEngine]) { self.engines = engines }
 }
 
@@ -139,7 +149,10 @@ struct SessionTests {
             try expect(policy.nextDelay(after: error) == 500_000_000, "First bounded retry")
             try expect(policy.nextDelay(after: error) == 1_000_000_000, "Second bounded retry")
             try expect(policy.nextDelay(after: error) == 2_000_000_000, "Third bounded retry")
-            try expect(policy.nextDelay(after: error) == nil && policy.retries == 3, "Retry budget exhausted")
+            for delay: UInt64 in [4_000_000_000, 8_000_000_000, 15_000_000_000, 15_000_000_000, 15_000_000_000] {
+                try expect(policy.nextDelay(after: error) == delay, "Longer capped outage backoff")
+            }
+            try expect(policy.nextDelay(after: error) == nil && policy.retries == 8, "Retry budget exhausted")
         }
         let terminal: [Error] = [GuestTransportError.invalidURL, GuestTransportError.notConnected,
             GuestTransportError.alreadyConnecting, GuestTransportError.invalidEnvelope,
@@ -153,6 +166,14 @@ struct SessionTests {
             var policy = GuestRecoveryPolicy()
             try expect(policy.nextDelay(after: error) == nil && policy.retries == 0, "Terminal failures never retry")
         }
+        var bonus = GuestRecoveryPolicy()
+        for _ in 0..<8 { _ = bonus.nextDelay(after: GuestPeerError.iceFailed) }
+        try expect(bonus.nextDelay(after: GuestPeerError.iceFailed, pendingRelayTrial: true) != nil,
+                   "A relay selected on the last regular attempt gets a trial")
+        try expect(bonus.nextDelay(after: GuestPeerError.iceFailed, pendingRelayTrial: true) != nil,
+                   "Both peers can receive a bounded trial")
+        try expect(bonus.nextDelay(after: GuestPeerError.iceFailed, pendingRelayTrial: true) == nil,
+                   "Pending trial cannot cause infinite retries")
     }
 
     @MainActor static func normalAndIdempotentLeave() async throws {
@@ -306,13 +327,13 @@ struct SessionTests {
     }
 
     @MainActor static func exhaustedRetriesAndCleanupFailure() async throws {
-        let engines = (0..<4).map { _ in FakeEngine() }
+        let engines = (0..<9).map { _ in FakeEngine() }
         for engine in engines { engine.joinError = GuestTransportError.networkFailure }
         let h = Harness(engines), session = h.session
         try await expectConnectFailure(session)
-        try expect(h.made == 4 && session.recoveryAttempts == 3 && h.delays == [500_000_000, 1_000_000_000, 2_000_000_000],
-                   "Initial attempt plus exactly three automatic retries")
-        try expect(engines.prefix(3).allSatisfy { $0.leaves == [false] } && engines.last?.leaves == [true],
+        try expect(h.made == 9 && session.recoveryAttempts == 8 && h.delays == [500_000_000, 1_000_000_000, 2_000_000_000, 4_000_000_000, 8_000_000_000, 15_000_000_000, 15_000_000_000, 15_000_000_000],
+                   "Initial attempt plus eight automatic retries")
+        try expect(engines.prefix(8).allSatisfy { $0.leaves == [false] } && engines.last?.leaves == [true],
                    "Only scheduled retries omit server leave; exhausted attempt leaves")
         _ = await session.leave()
 
@@ -323,6 +344,58 @@ struct SessionTests {
                    "Unproven cleanup blocks a second media owner")
         let stoppedCleanly = await stopped.leave()
         try expect(!stoppedCleanly, "Cleanup failure reaches final leave result")
+    }
+
+    @MainActor static func manualRetryAfterOutage() async throws {
+        let first = FakeEngine(), failed = (0..<8).map { _ in FakeEngine() }, final = FakeEngine()
+        for engine in failed { engine.joinError = GuestTransportError.networkFailure }
+        let h = Harness([first] + failed + [final]), session = h.session
+        try await connect(session, audioMuted: false, videoMuted: false)
+        do { try await session.reconnectForTesting(); throw SessionTestError.assertion("Expected exhausted outage") }
+        catch GuestTransportError.networkFailure {}
+        try await session.retryFailedConnection()
+        try expect(session.state == .connected && final.publications.count == 1 &&
+                   final.publications[0].audioMuted && final.publications[0].videoMuted,
+                   "Manual retry starts a new attempt with both media intents muted")
+        try expect(session.recoveryAttempts == 0 && final.joins.count == 1 && final.joins[0] == nil,
+                   "Manual retry starts a fresh budget and joins afresh after server leave")
+        _ = await session.leave()
+
+        let terminal = FakeEngine(); terminal.joinError = SessionTestError.denied
+        let denied = Harness([terminal]); try await expectConnectFailure(denied.session)
+        do { try await denied.session.retryFailedConnection(); throw SessionTestError.assertion("Retried terminal failure") }
+        catch SessionTestError.denied {}
+        try expect(denied.made == 1, "Terminal failure cannot create another owner")
+        _ = await denied.session.leave()
+
+        let initial = FakeEngine(), outages = (0..<8).map { _ in FakeEngine() }, blocked = FakeEngine(), gate = Gate()
+        for engine in outages { engine.joinError = GuestTransportError.networkFailure }
+        blocked.joinGate = gate
+        let cancelling = Harness([initial] + outages + [blocked]), cancelled = cancelling.session
+        try await connect(cancelled)
+        do { try await cancelled.reconnectForTesting(); throw SessionTestError.assertion("Expected exhausted outage") }
+        catch GuestTransportError.networkFailure {}
+        let retry = Task { try await cancelled.retryFailedConnection() }
+        try await spin { !blocked.joins.isEmpty }
+        retry.cancel()
+        try await spin { cancelled.state == .left }
+        gate.release()
+        do { try await retry.value; throw SessionTestError.assertion("Cancelled retry succeeded") }
+        catch is CancellationError {}
+        try expect(blocked.publications.isEmpty && blocked.audioMuted && blocked.videoMuted,
+                   "Cancelled retry cannot publish when a delayed join returns")
+        _ = await cancelled.leave()
+    }
+
+    @MainActor static func finalAttemptCanScheduleRelayTrial() async throws {
+        let engines = (0..<11).map { _ in FakeEngine() }
+        for engine in engines.prefix(10) { engine.joinError = GuestTransportError.networkFailure }
+        let h = Harness(engines)
+        engines[8].onJoin = { h.pendingRelayTrial = true }
+        try await connect(h.session)
+        try expect(h.made == 11 && h.relayTrialsStarted == 2 && h.session.state == .connected,
+                   "A trial scheduled at the limit survives one pre-join failure")
+        _ = await h.session.leave()
     }
 
     @MainActor static func leaveDuringJoin() async throws {
@@ -421,13 +494,13 @@ struct SessionTests {
     }
 
     @MainActor static func successfulRejoinDoesNotRefillBudget() async throws {
-        let engines = (0..<4).map { _ in FakeEngine() }
+        let engines = (0..<9).map { _ in FakeEngine() }
         let harness = Harness(engines), session = harness.session
         try await connect(session)
-        for _ in 0..<3 { try await session.reconnectForTesting() }
+        for _ in 0..<8 { try await session.reconnectForTesting() }
         do { try await session.reconnectForTesting(); throw SessionTestError.assertion("Recovery budget refilled") }
         catch GuestTransportError.networkFailure {}
-        try expect(harness.made == 4 && session.recoveryAttempts == 3 && session.state == .failed,
+        try expect(harness.made == 9 && session.recoveryAttempts == 8 && session.state == .failed,
                    "Signaling readiness does not refill automatic recovery budget")
         _ = await session.leave()
     }
@@ -513,10 +586,10 @@ struct SessionTests {
                    "URLSession bootstrap failure inside join recovers")
         _ = await joining.session.leave()
         let exhausted = Harness([])
-        exhausted.factoryErrors = (0..<4).map { _ in URLError(.networkConnectionLost) }
+        exhausted.factoryErrors = (0..<9).map { _ in URLError(.networkConnectionLost) }
         try await expectConnectFailure(exhausted.session)
-        try expect(exhausted.factoryCalls == 4 && exhausted.made == 0 && exhausted.session.recoveryAttempts == 3,
-                   "Bootstrap URL errors share the finite three-retry budget")
+        try expect(exhausted.factoryCalls == 9 && exhausted.made == 0 && exhausted.session.recoveryAttempts == 8,
+                   "Bootstrap URL errors share the finite retry budget")
         _ = await exhausted.session.leave()
         factory.factoryErrors = [URLError(.secureConnectionFailed)]
         try await expectConnectFailure(factory.session)
@@ -683,7 +756,7 @@ struct SessionTests {
                    harness.delays == [500_000_000] && engines[0].leaves.count == 1 && engines[1].startupReleases == 1,
                    "A startup audio timeout reconnects with a fresh attempt instead of ending the meeting")
         var policy = GuestRecoveryPolicy()
-        for _ in 0..<3 { try expect(policy.nextDelay(after: SessionTestStartupTimeout()) != nil, "Within the outage budget") }
+        for _ in 0..<8 { try expect(policy.nextDelay(after: SessionTestStartupTimeout()) != nil, "Within the outage budget") }
         try expect(policy.nextDelay(after: SessionTestStartupTimeout()) == nil, "Repeated timeouts still exhaust the budget")
         _ = await session.leave()
     }
@@ -787,6 +860,8 @@ struct SessionTests {
             try await staleCallbacksAndForcedMute()
             try await terminalFailuresNeverRetry()
             try await exhaustedRetriesAndCleanupFailure()
+            try await manualRetryAfterOutage()
+            try await finalAttemptCanScheduleRelayTrial()
             try await leaveDuringJoin()
             try await leaveDuringFactoryAndBackoff()
             try await concurrentLeaveAndJoinFailureCallback()
@@ -809,7 +884,7 @@ struct SessionTests {
             try await preparedMediaButtonsKeepAudioAndPublication()
             try await preparationRecoveryPreservesExplicitActivation()
             try await mediaIntentDuringDeviceReconciliation()
-            print("GuestSession: 31 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
+            print("GuestSession: 33 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
         } catch {
             print("GuestSession failed: \(error)")
             exit(1)

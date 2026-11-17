@@ -22,6 +22,7 @@ import XCTest
     var microphoneCommands: [Bool] = []
     var completedMicrophoneCommands = 0
     var cameraCommands: [Bool] = []
+    var reconnects = 0
     var leaves = 0
     var leaveRequests = 0
     private var retired = false
@@ -60,7 +61,7 @@ import XCTest
         guard snapshot.phase == .connecting else { throw CancellationError() }
         snapshot = .init(phase: .connected, playoutOn: !quiet); onState?(snapshot)
     }
-    func reconnect() async throws {}
+    func reconnect() async throws { reconnects += 1 }
     func prepareMutedCaptureForAccessories() async throws {
         mutedPreparationCalls += 1; try await onMutedPreparation?()
     }
@@ -1414,6 +1415,16 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertFalse(engine.snapshot.microphoneOn); XCTAssertFalse(engine.snapshot.cameraOn)
         do { try await engine.setMicrophone(true); XCTFail("Unmuting still needs a meeting") }
         catch NativeDesktopGuestError.notConnected {}
+    }
+    func testFailedGuestReconnectDoesNotSendMediaCommandsToRetiredOwner() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        try await model.connect()
+        engine.snapshot.phase = .failed; engine.onState?(engine.snapshot)
+        model.reconnect(); await model.waitForMediaActionsForTesting()
+        XCTAssertEqual(engine.reconnects, 1)
+        XCTAssertTrue(engine.microphoneCommands.isEmpty)
+        XCTAssertTrue(engine.cameraCommands.isEmpty)
+        _ = await model.leave()
     }
     /// The meeting can connect while a failed pre-join unmute unwinds; that used to
     /// turn a headset or device event into a "Join a guest meeting" alert.

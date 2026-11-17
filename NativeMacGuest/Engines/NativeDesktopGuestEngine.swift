@@ -228,7 +228,8 @@ enum NativeDesktopGuestError: LocalizedError {
                 return GuestCamera(source: source, deviceID: id?.isEmpty == false ? id : nil)
             }
             return engine
-        })
+        }, hasPendingRelayTrial: { [weak self] in self?.relayRecovery.hasPendingAttempt ?? false },
+           restoreUnstartedRelayTrial: { [weak self] in self?.relayRecovery.restoreUnstartedAttempt() })
         self.session = session
         session.onEngineChange = { [weak self, weak session] engine in
             guard let self, self.revision == token, self.session === session else { return }
@@ -274,11 +275,13 @@ enum NativeDesktopGuestError: LocalizedError {
     /// Uses the session's bounded recovery path, preserving only current media
     /// intent and microphone authorization, while rebuilding all transport state.
     func reconnect() async throws {
-        guard let session, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
+        guard let session, [.connected, .failed].contains(snapshot.phase) else { throw NativeDesktopGuestError.notConnected }
         let token = revision
+        let wasFailed = snapshot.phase == .failed
         currentNativeEngine?.setScreenShareIntent(false)
-        snapshot.phase = .reconnecting; snapshot.sharing = false; emit()
-        try await session.reconnectForTesting()
+        if !wasFailed { snapshot.phase = .reconnecting; snapshot.sharing = false; emit() }
+        if wasFailed { try await session.retryFailedConnection() }
+        else { try await session.reconnectForTesting() }
         try check(token, session: session)
         refresh(session.snapshot)
     }

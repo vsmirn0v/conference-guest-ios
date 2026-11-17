@@ -1581,8 +1581,12 @@ import UniformTypeIdentifiers
         authorizedMicrophoneRequest = nil; _ = headset.requestIntent(muted: true)
         perform { engine in
             guard await self.presenterStorage?.close() ?? true, await self.retireShare(waitForStartup: true) else { throw NativeDesktopRTCError.cleanupFailed }
-            try await engine.setMicrophone(false)
-            try await engine.setCamera(false)
+            // Failed guest attempts have already retired their media owner.
+            // Their retry path resets both publication intents before rejoining.
+            if self.kind != .guest || self.snapshot.phase != .failed {
+                try await engine.setMicrophone(false)
+                try await engine.setCamera(false)
+            }
             if let lease = self.cameraLease { NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
             try await engine.reconnect()
         }
