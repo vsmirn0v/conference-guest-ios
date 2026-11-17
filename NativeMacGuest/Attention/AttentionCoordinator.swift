@@ -544,9 +544,14 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                     var fields: [String: Any] = [
                         "error": failure?.rawValue ?? "unknown", "attempt": owner,
                         "providerKind": input.provider.kind.rawValue,
+                        "model": input.provider.model,
+                        "host": input.provider.host,
                         "elapsedMs": Int((ProcessInfo.processInfo.systemUptime - started) * 1000),
                     ]
-                    if case .http(let status, _) = error as? AttentionJudgeError { fields["httpStatus"] = status }
+                    if let judgeError = error as? AttentionJudgeError {
+                        fields["judgeError"] = judgeError.diagnosticCode
+                        if case .http(let status, _) = judgeError { fields["httpStatus"] = status }
+                    }
                     probeLog("assistant-outcome-failed", fields)
                 }
                 let ready = try await store.publishOutcomeMutation {

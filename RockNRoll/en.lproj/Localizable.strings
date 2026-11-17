@@ -2268,6 +2268,7 @@
 "The original meeting input is unavailable for retry." = "The original meeting input is unavailable for retry.";
 "The outcome could not be generated." = "The outcome could not be generated.";
 "The outcome provider could not generate a result." = "The outcome provider could not generate a result.";
+"The outcome provider declined to summarize this meeting." = "The outcome provider declined to summarize this meeting.";
 "The outcome provider did not respond in time." = "The outcome provider did not respond in time.";
 "The outcome provider has no remaining credit or quota." = "The outcome provider has no remaining credit or quota.";
 "The outcome provider is limiting requests. Try again later." = "The outcome provider is limiting requests. Try again later.";

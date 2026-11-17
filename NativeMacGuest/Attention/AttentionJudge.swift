@@ -41,6 +41,20 @@ enum AttentionJudgeError: LocalizedError, Equatable {
         guard let message = message?.trimmed, !message.isEmpty else { return text }
         return text + " " + L("Provider says: %@", String(message.prefix(240)))
     }
+    var diagnosticCode: String {
+        switch self {
+        case .notConfigured: "notConfigured"
+        case .missingKey: "missingKey"
+        case .unauthorized: "unauthorized"
+        case .rateLimited: "rateLimited"
+        case .quota: "quota"
+        case .http: "http"
+        case .transport: "transport"
+        case .emptyAnswer: "emptyAnswer"
+        case .refused: "refused"
+        case .verdict: "verdict"
+        }
+    }
     /// Worth one more attempt after a short wait. Quota and key errors are not.
     var retryable: Bool {
         switch self { case .rateLimited, .transport, .emptyAnswer: true; case .http(let code, _): code >= 500; default: false }
@@ -110,15 +124,21 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
     }
 
     func outcome(_ request: MeetingOutcomeRequest) async throws -> MeetingOutcomeContent {
-        // A timed-out generation may still be running upstream. Let the user decide
-        // whether to resend the meeting input.
+        // Transport failures (including timeouts, which may still be running upstream)
+        // throw MeetingOutcomeFailure immediately so only empty or transient provider
+        // answers retry automatically.
         var writer = self
         writer.timeout = 120
-        writer.retryDelays = []
         writer.diagnoseOutcomeTransport = true
-        let (content, _) = try await writer.complete(requestBody(messages: MeetingOutcomePrompt.messages(request),
-            name: MeetingOutcomePrompt.schemaName, schema: MeetingOutcomePrompt.schema, hint: MeetingOutcomePrompt.hint))
-        return try MeetingOutcomePrompt.parse(content)
+        let (parsed, _) = try await writer.complete(requestBody(messages: MeetingOutcomePrompt.messages(request),
+            name: MeetingOutcomePrompt.schemaName, schema: MeetingOutcomePrompt.schema, hint: MeetingOutcomePrompt.hint)) { content in
+            do { return try MeetingOutcomePrompt.parse(content) }
+            catch {
+                probeLog("assistant-outcome-response", ["reason": "unusableContent", "contentBytes": content.utf8.count])
+                throw error
+            }
+        }
+        return parsed
     }
 
     /// Providers elsewhere get the strict schema. A model on this Mac gets JSON mode with
@@ -156,24 +176,50 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
                                                                    "schema": ReplyPrompt.schema(request.judge.replyChannels)]]]
     }
 
+    private static let outcomeSchemaMarker = "__MEETING_OUTCOME_SCHEMA__"
+
+    static func encodeBody(_ object: [String: Any]) throws -> Data {
+        var copy = object
+        if var format = copy["response_format"] as? [String: Any],
+           format["type"] as? String == "json_schema",
+           var jsonSchema = format["json_schema"] as? [String: Any],
+           jsonSchema["name"] as? String == MeetingOutcomePrompt.schemaName {
+            jsonSchema["schema"] = outcomeSchemaMarker
+            format["json_schema"] = jsonSchema
+            copy["response_format"] = format
+            var data = try JSONSerialization.data(withJSONObject: copy)
+            let token = Data("\"\(outcomeSchemaMarker)\"".utf8)
+            if let range = data.range(of: token) {
+                data.replaceSubrange(range, with: Data(MeetingOutcomePrompt.orderedSchemaJSON.utf8))
+            }
+            return data
+        }
+        return try JSONSerialization.data(withJSONObject: object)
+    }
+
     /// The model's answer text and how long the successful attempt took.
     func complete(_ object: [String: Any]) async throws -> (String, TimeInterval) {
+        try await complete(object) { $0 }
+    }
+
+    func complete<T>(_ object: [String: Any], parse: (String) throws -> T) async throws -> (T, TimeInterval) {
         guard let endpoint = provider.endpoint, !provider.model.trimmed.isEmpty else { throw AttentionJudgeError.notConfigured }
         if provider.needsKey && (key ?? "").isEmpty { throw AttentionJudgeError.missingKey }
-        let body = try JSONSerialization.data(withJSONObject: object)
+        let body = try Self.encodeBody(object)
         var attempt = 0
         while true {
             let started = ProcessInfo.processInfo.systemUptime
             do {
-                let content = try await send(body, to: endpoint)
-                return (content, ProcessInfo.processInfo.systemUptime - started)
+                let content = try await send(body, to: endpoint, attempt: attempt)
+                let value = try parse(content)
+                return (value, ProcessInfo.processInfo.systemUptime - started)
             } catch let error as AttentionJudgeError where error.retryable && attempt < retryDelays.count {
                 try await Task.sleep(for: .seconds(retryDelays[attempt])); attempt += 1
             }
         }
     }
 
-    private func send(_ body: Data, to endpoint: URL) async throws -> String {
+    private func send(_ body: Data, to endpoint: URL, attempt: Int = 0) async throws -> String {
         // A model on this Mac may still be loading on the first call.
         var urlRequest = URLRequest(url: endpoint, timeoutInterval: provider.onThisMac ? max(timeout, 60) : timeout)
         urlRequest.httpMethod = "POST"; urlRequest.httpBody = body
@@ -193,12 +239,50 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw AttentionJudgeError.from(status: status, body: data) }
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choice = (object["choices"] as? [[String: Any]])?.first,
-              let message = choice["message"] as? [String: Any] else { throw AttentionJudgeError.emptyAnswer }
-        if let refusal = message["refusal"] as? String, !refusal.isEmpty { throw AttentionJudgeError.refused }
-        guard let content = message["content"] as? String, !content.trimmed.isEmpty else { throw AttentionJudgeError.emptyAnswer }
-        return content
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let choice = (object?["choices"] as? [[String: Any]])?.first,
+              let message = choice["message"] as? [String: Any] else {
+            if let errObj = object?["error"] {
+                let errCode = (errObj as? [String: Any])?["code"] as? Int ?? 502
+                throw AttentionJudgeError.from(status: errCode, body: data)
+            }
+            if diagnoseOutcomeTransport {
+                probeLog("assistant-outcome-response", ["reason": "missingChoices", "attempt": attempt, "bodyBytes": data.count])
+            }
+            throw AttentionJudgeError.emptyAnswer
+        }
+        let finishReason = choice["finish_reason"] as? String ?? ""
+        if let refusal = message["refusal"] as? String, !refusal.trimmed.isEmpty {
+            if diagnoseOutcomeTransport {
+                probeLog("assistant-outcome-response", ["reason": "refusal", "attempt": attempt, "finishReason": finishReason])
+            }
+            throw AttentionJudgeError.refused
+        }
+        let extracted: String
+        if let text = message["content"] as? String {
+            extracted = text
+        } else if let parts = message["content"] as? [[String: Any]] {
+            extracted = parts.compactMap { part -> String? in
+                let type = part["type"] as? String ?? "text"
+                guard type == "text" || type == "output_text" else { return nil }
+                return part["text"] as? String
+            }.joined()
+        } else {
+            extracted = ""
+        }
+        guard !extracted.trimmed.isEmpty else {
+            if diagnoseOutcomeTransport {
+                let usage = object?["usage"] as? [String: Any]
+                let completionTokens = usage?["completion_tokens"] as? Int ?? 0
+                let reasoningTokens = (usage?["completion_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int ?? 0
+                probeLog("assistant-outcome-response", [
+                    "reason": "emptyContent", "attempt": attempt, "finishReason": finishReason,
+                    "completionTokens": completionTokens, "reasoningTokens": reasoningTokens,
+                ])
+            }
+            throw AttentionJudgeError.emptyAnswer
+        }
+        return extracted
     }
 }
 

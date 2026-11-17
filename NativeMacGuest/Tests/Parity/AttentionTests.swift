@@ -1651,6 +1651,97 @@ import XCTest
         XCTAssertTrue(scheduled)
     }
 
+    func testOutcomeWriterRetriesEmptyResponsesPreservesSchemaOrderAndSeparatesRefusals() async throws {
+        let provider = AttentionProvider(kind: .openAI, baseURL: "https://judge.example.test/v1", model: "gpt-5-mini")
+        let request = MeetingOutcomeRequest(meetingTitle: "Infra", endedAt: Date(), window: sampleWindow(), language: "ru")
+
+        var calls = 0
+        var capturedBody = ""
+        let retrySession = StubProtocol.session { urlRequest in
+            calls += 1
+            if calls == 1 {
+                capturedBody = String(decoding: StubProtocol.body(urlRequest), as: UTF8.self)
+                return (200, Data(#"{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":null}}]}"#.utf8))
+            }
+            if calls == 2 {
+                return (200, StubProtocol.answer(#"{"summary":"","decisions":[],"tasks":[],"open_questions":[]}"#))
+            }
+            return (200, Data(#"{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":[{"type":"text","text":"{\"summary\":\"Infra reviewed.\",\"decisions\":[],\"tasks\":[],\"open_questions\":[]}"}]}}]}"#.utf8))
+        }
+        let writer = OpenAIChatJudge(provider: provider, key: "k", session: retrySession, retryDelays: [0, 0])
+        let retried = try await writer.outcome(request)
+        XCTAssertEqual(calls, 3)
+        XCTAssertEqual(retried.summary, "Infra reviewed.")
+
+        let propsRange = try XCTUnwrap(capturedBody.range(of: #""properties":{"#))
+        let tail = capturedBody[propsRange.upperBound...]
+        let summaryPos = try XCTUnwrap(tail.range(of: #""summary":"#)?.lowerBound)
+        let decisionsPos = try XCTUnwrap(tail.range(of: #""decisions":"#)?.lowerBound)
+        let tasksPos = try XCTUnwrap(tail.range(of: #""tasks":"#)?.lowerBound)
+        let questionsPos = try XCTUnwrap(tail.range(of: #""open_questions":"#)?.lowerBound)
+        XCTAssertTrue(summaryPos < decisionsPos && decisionsPos < tasksPos && tasksPos < questionsPos,
+                      "meeting_outcome schema must serialize summary before the other properties")
+
+        var timeoutCalls = 0
+        let timeoutSession = StubProtocol.session { _ in
+            timeoutCalls += 1
+            throw URLError(.timedOut)
+        }
+        do {
+            _ = try await OpenAIChatJudge(provider: provider, key: "k", session: timeoutSession, retryDelays: [0, 0]).outcome(request)
+            XCTFail("Expected timeout")
+        } catch {
+            XCTAssertEqual(error as? MeetingOutcomeFailure, .timeout)
+        }
+        XCTAssertEqual(timeoutCalls, 1, "Timeouts must not auto-retry")
+
+        var refusalCalls = 0
+        let refusalSession = StubProtocol.session { _ in
+            refusalCalls += 1
+            return (200, Data(#"{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":null,"refusal":"Policy"}}]}"#.utf8))
+        }
+        do {
+            _ = try await OpenAIChatJudge(provider: provider, key: "k", session: refusalSession, retryDelays: [0, 0]).outcome(request)
+            XCTFail("Expected refusal")
+        } catch {
+            XCTAssertEqual(error as? AttentionJudgeError, .refused)
+            XCTAssertEqual(MeetingOutcomeFailure(writerError: error), .refused)
+        }
+        XCTAssertEqual(refusalCalls, 1, "Refusals must not retry")
+        XCTAssertNotEqual(MeetingOutcomeFailure.refused.localizedDescription, MeetingOutcomeFailure.invalidResponse.localizedDescription)
+
+        let englishPath = try XCTUnwrap(Bundle.main.path(forResource: "en", ofType: "lproj")).appending("/Localizable.strings")
+        let russianPath = try XCTUnwrap(Bundle.main.path(forResource: "ru", ofType: "lproj")).appending("/Localizable.strings")
+        let enStrings = try XCTUnwrap(NSDictionary(contentsOfFile: englishPath) as? [String: String])
+        let ruStrings = try XCTUnwrap(NSDictionary(contentsOfFile: russianPath) as? [String: String])
+        let refusalKey = "The outcome provider declined to summarize this meeting."
+        XCTAssertEqual(enStrings[refusalKey], refusalKey)
+        XCTAssertNotNil(ruStrings[refusalKey])
+
+        let envelopeSession = StubProtocol.session { _ in
+            (200, Data(#"{"error":{"code":429,"message":"Rate limit"}}"#.utf8))
+        }
+        do {
+            _ = try await OpenAIChatJudge(provider: provider, key: "k", session: envelopeSession, retryDelays: []).outcome(request)
+            XCTFail("Expected rate limit")
+        } catch {
+            XCTAssertEqual(error as? AttentionJudgeError, .rateLimited("Rate limit"))
+        }
+
+        let thoughtAndFenced = """
+        <think>check {braces}</think>
+        ```json
+        {"summary":"Done."}
+        ```
+        """
+        XCTAssertEqual(try MeetingOutcomePrompt.parse(thoughtAndFenced).summary, "Done.")
+        XCTAssertEqual(try MeetingOutcomePrompt.parse("Sure:\n{\"summary\":\"Done.\"}\nHope this helps!").summary, "Done.")
+        let recovered = try MeetingOutcomePrompt.parse(#"{"decisions":["Move DNS"],"summary":"Cut"#)
+        XCTAssertEqual(recovered.decisions, ["Move DNS"])
+        XCTAssertEqual(recovered.summary, "Move DNS")
+        XCTAssertThrowsError(try MeetingOutcomePrompt.parse(#"{"summary":"","decisions":[],"tasks":[],"open_questions":[]}"#))
+    }
+
     func testAssistantCommandSchemaParsesEveryActionAndRejectsUnknownIDs() throws {
         let meeting = UUID(), moment = UUID(), now = Date()
         let context = AssistantCommandContext(meetings: [.init(id: meeting, title: "Infra", invitation: nil, active: true)],

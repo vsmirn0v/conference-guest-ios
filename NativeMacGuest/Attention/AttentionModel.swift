@@ -704,10 +704,26 @@ extension String {
     /// The JSON inside a reply, without a Markdown code fence some models add in JSON mode.
     var jsonPayload: String {
         var text = trimmed
-        guard text.hasPrefix("```") else { return text }
-        text.removeFirst(3)
-        if let newline = text.firstIndex(of: "\n") { text = String(text[text.index(after: newline)...]) }
-        if text.hasSuffix("```") { text.removeLast(3) }
-        return text.trimmed
+        if let close = text.range(of: "</think>", options: [.caseInsensitive, .backwards]),
+           let open = text.range(of: "<think", options: .caseInsensitive),
+           open.lowerBound < close.lowerBound {
+            text = String(text[close.upperBound...]).trimmed
+        }
+        if text.hasPrefix("```") {
+            text.removeFirst(3)
+            if let newline = text.firstIndex(of: "\n") { text = String(text[text.index(after: newline)...]) }
+            if text.hasSuffix("```") { text.removeLast(3) }
+            else if let close = text.range(of: "```", options: .backwards) { text = String(text[..<close.lowerBound]) }
+            text = text.trimmed
+        } else if !text.hasPrefix("{"), let firstFence = text.range(of: "```") {
+            var inner = String(text[firstFence.upperBound...])
+            if let newline = inner.firstIndex(of: "\n") { inner = String(inner[inner.index(after: newline)...]) }
+            if let close = inner.range(of: "```", options: .backwards) { inner = String(inner[..<close.lowerBound]) }
+            text = inner.trimmed
+        }
+        if !text.hasPrefix("{"), let brace = text.firstIndex(of: "{") {
+            text = String(text[brace...]).trimmed
+        }
+        return text
     }
 }

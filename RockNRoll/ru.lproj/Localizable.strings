@@ -2131,6 +2131,7 @@
 "The outcome provider is limiting requests. Try again later." = "Провайдер ограничивает число запросов. Повторите попытку позже.";
 "The outcome provider has no remaining credit or quota." = "У провайдера исчерпан баланс или лимит запросов.";
 "The outcome provider returned an unusable response." = "Провайдер вернул ответ, из которого не удалось создать итог.";
+"The outcome provider declined to summarize this meeting." = "Провайдер отказался создавать итог для этой встречи.";
 "The outcome provider could not generate a result." = "Провайдер не смог создать итог.";
 "Check the outcome provider and permissions in Assistant settings." = "Проверьте провайдера и разрешения в настройках Ассистента.";
 "The meeting library could not save the outcome." = "Не удалось сохранить итог в библиотеке встреч.";
