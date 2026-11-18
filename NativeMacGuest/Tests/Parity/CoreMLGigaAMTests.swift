@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreML
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Native Core ML GigaAM: tokens to text, the mel front-end against torchaudio, the

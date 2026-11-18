@@ -573,7 +573,7 @@ import LiveKitWebRTC
         if let meetingSession {
             switch meetingSession.snapshot.phase {
             case .connected: return .active
-            case .connecting, .reconnecting: return .connecting
+            case .connecting, .lobby, .reconnecting: return .connecting
             case .leaving: return .leaving
             case .failed: return .failed
             case .left: return .left
@@ -583,7 +583,7 @@ import LiveKitWebRTC
         if let injectedSession {
             switch injectedSession.state {
             case .connected: return .active
-            case .recovering, .connecting: return .connecting
+            case .recovering, .connecting, .lobby: return .connecting
             case .failed: return .failed
             case .left: return .left
             case .idle: return .launching

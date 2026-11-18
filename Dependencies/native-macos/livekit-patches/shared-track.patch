@@ -1,7 +1,114 @@
+diff --git a/Sources/LiveKit/Participant/LocalParticipant.swift b/Sources/LiveKit/Participant/LocalParticipant.swift
+index c19b43d..ecf2d18 100644
+--- a/Sources/LiveKit/Participant/LocalParticipant.swift
++++ b/Sources/LiveKit/Participant/LocalParticipant.swift
+@@ -924,7 +924,7 @@ extension LocalParticipant {
+             }()
+ 
+             // At this point at least 1 audio frame should be generated to continue
+-            if let track = track as? LocalAudioTrack {
++            if let track = track as? LocalAudioTrack, !track.isSyntheticExternalSource {
+                 // Only wait for frames if audio engine is allowed to start; reading the device
+                 // module's availability waits on WebRTC's worker thread.
+                 if await RTC.run({ AudioManager.shared.engineAvailability.isInputAvailable }) {
+diff --git a/Sources/LiveKit/Track/Local/LocalAudioTrack.swift b/Sources/LiveKit/Track/Local/LocalAudioTrack.swift
+index d92e42f..e9664c4 100644
+--- a/Sources/LiveKit/Track/Local/LocalAudioTrack.swift
++++ b/Sources/LiveKit/Track/Local/LocalAudioTrack.swift
+@@ -22,9 +22,24 @@ internal import LiveKitWebRTC
+ 
+ @objcMembers
+ public class LocalAudioTrack: Track, LocalTrackProtocol, AudioTrackProtocol, @unchecked Sendable {
++    final class SyntheticSourceBox: @unchecked Sendable {
++        let raw: LKRTCAudioSource
++
++        init(_ raw: LKRTCAudioSource) {
++            self.raw = raw
++        }
++
++        deinit {
++            RTC.park(raw)
++        }
++    }
++
+     /// ``AudioCaptureOptions`` used to create this track.
+     public let captureOptions: AudioCaptureOptions
+ 
++    let isSyntheticExternalSource: Bool
++    private let syntheticSourceBox: SyntheticSourceBox?
++
+     // MARK: - Internal
+ 
+     struct FrameWatcherState {
+@@ -33,13 +48,30 @@ public class LocalAudioTrack: Track, LocalTrackProtocol, AudioTrackProtocol, @un
+ 
+     let _frameWatcherState = StateSync(FrameWatcherState())
+ 
++    convenience init(name: String,
++                     source: Track.Source,
++                     track: RTCMediaTrack,
++                     reportStatistics: Bool,
++                     captureOptions: AudioCaptureOptions)
++    {
++        self.init(name: name,
++                  source: source,
++                  track: track,
++                  reportStatistics: reportStatistics,
++                  captureOptions: captureOptions,
++                  syntheticSource: nil)
++    }
++
+     init(name: String,
+          source: Track.Source,
+          track: RTCMediaTrack,
+          reportStatistics: Bool,
+-         captureOptions: AudioCaptureOptions)
++         captureOptions: AudioCaptureOptions,
++         syntheticSource: LKRTCAudioSource?)
+     {
+         self.captureOptions = captureOptions
++        self.isSyntheticExternalSource = syntheticSource != nil
++        self.syntheticSourceBox = syntheticSource.map(SyntheticSourceBox.init)
+ 
+         super.init(name: name,
+                    kind: .audio,
+@@ -48,6 +80,17 @@ public class LocalAudioTrack: Track, LocalTrackProtocol, AudioTrackProtocol, @un
+                    reportStatistics: reportStatistics)
+     }
+ 
++    public func deliverSyntheticPCMInt16(_ samples: UnsafePointer<Int16>,
++                                         frameCount: Int,
++                                         sampleRate: Int32,
++                                         channels: Int)
++    {
++        syntheticSourceBox?.raw.deliverPCMInt16(samples,
++                                                 frameCount: frameCount,
++                                                 sampleRate: sampleRate,
++                                                 channels: channels)
++    }
++
+     deinit {
+         if let watcher = _frameWatcherState.frameWatcher {
+             remove(audioRenderer: watcher)
+@@ -142,6 +185,9 @@ public class LocalAudioTrack: Track, LocalTrackProtocol, AudioTrackProtocol, @un
+     // MARK: - Internal
+ 
+     override func startCapture() async throws {
++        if isSyntheticExternalSource {
++            return
++        }
+         // The WebRTC audio device no longer prompts for mic permission (see webrtc-sdk#265),
+         // so request it here while foregrounded before starting recording. Manual rendering mode
+         // publishes app audio without ever opening the microphone, and disabled input availability
+diff --git a/Sources/LiveKit/Track/Track+SharedEngine.swift b/Sources/LiveKit/Track/Track+SharedEngine.swift
+new file mode 100644
+index 0000000..2a5a40e
 --- /dev/null
 +++ b/Sources/LiveKit/Track/Track+SharedEngine.swift
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,34 @@
 +import Foundation
++
++internal import LiveKitWebRTC
 +
 +public extension Track {
 +    /// Whether the underlying WebRTC track sends. An app running several meetings on one
@@ -13,3 +120,23 @@
 +    }
 +}
 +
++public extension LocalAudioTrack {
++    /// Creates an enabled track backed by an external synthetic PCM source (`deliverSyntheticPCMInt16`),
++    /// bypassing hardware ADM recording and microphone permission checks.
++    static func createSyntheticVoiceTrack(name: String = "voice-reply") async -> LocalAudioTrack {
++        await RTC.run {
++            let source = RTC.peerConnectionFactory.syntheticAudioSource()
++            let rtcTrack = RTC.peerConnectionFactory.audioTrack(with: source, trackId: UUID().uuidString)
++            rtcTrack.isEnabled = true
++            let mediaTrack = RTCMediaTrack(rtcTrack)
++            return LocalAudioTrack(
++                name: name,
++                source: .microphone,
++                track: mediaTrack,
++                reportStatistics: false,
++                captureOptions: .noProcessing,
++                syntheticSource: source
++            )
++        }
++    }
++}

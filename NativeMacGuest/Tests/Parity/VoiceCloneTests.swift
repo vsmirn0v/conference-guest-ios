@@ -3,6 +3,7 @@ import CoreAI
 #endif
 import AVFoundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// The cloned-voice app layer: catalog pinning, storage, audio preparation and error paths.

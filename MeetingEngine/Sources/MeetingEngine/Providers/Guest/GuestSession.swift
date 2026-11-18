@@ -1,0 +1,601 @@
+import Foundation
+
+/// Desired publication survives attempts; peer IDs, subscriptions and transport do not.
+public struct GuestMediaIntent: Equatable {
+    public var publish: Bool
+    public var codec: String
+    public var camera: Bool
+    public var audioMuted: Bool
+    public var videoMuted: Bool
+    public init(publish: Bool, codec: String, camera: Bool, audioMuted: Bool, videoMuted: Bool) {
+        self.publish = publish; self.codec = codec; self.camera = camera
+        self.audioMuted = audioMuted; self.videoMuted = videoMuted
+    }
+}
+
+public struct GuestMediaPermissions: Equatable {
+    public var canShareMicrophone = false
+    public var canShareCamera = false
+    public init(canShareMicrophone: Bool = false, canShareCamera: Bool = false) {
+        self.canShareMicrophone = canShareMicrophone; self.canShareCamera = canShareCamera
+    }
+}
+
+public struct GuestLobbyState: Equatable {
+    public var inLobby = false
+    public var title: String? = nil
+    public var moderatorPresent: Bool? = nil
+    public init(inLobby: Bool = false, title: String? = nil, moderatorPresent: Bool? = nil) {
+        self.inLobby = inLobby; self.title = title; self.moderatorPresent = moderatorPresent
+    }
+}
+
+public struct GuestSessionSnapshot {
+    public let state: GuestSession.State
+    public let desiredIntent: GuestMediaIntent?
+    public let appliedIntent: GuestMediaIntent?
+    public let permissions: GuestMediaPermissions
+    public let recoveryAttempts: Int
+    public let failure: Error?
+    public let microphoneActivated: Bool
+    public let desiredPlayoutEnabled: Bool?
+    public let appliedPlayoutEnabled: Bool?
+    public var lobbyTitle: String? = nil
+    public var lobbyModeratorPresent: Bool? = nil
+}
+
+/// A per-attempt media failure that a fresh attempt can clear (for example a
+/// startup audio graph that did not settle in time). It uses the outage budget.
+protocol GuestRecoverableError: Error {}
+
+/// Each outage has a finite automatic recovery budget. Explicit connect resets it,
+/// and so does a recovered connection that stays up for `stableInterval`: isolated
+/// network blips across a long meeting must not accumulate into a fatal failure,
+/// while a connection that keeps failing right after reconnecting still exhausts it.
+struct GuestRecoveryPolicy {
+    static let stableInterval: TimeInterval = 60
+    private(set) var retries = 0
+    // Leave enough time for a network to return and for a relay route selected
+    // late in the outage to get its own attempt, without retrying forever.
+    private let delays: [UInt64] = [500_000_000, 1_000_000_000, 2_000_000_000,
+                                    4_000_000_000, 8_000_000_000, 15_000_000_000,
+                                    15_000_000_000, 15_000_000_000]
+    private var connectedAt: TimeInterval?
+    private var relayBonusRetries = 0
+
+    mutating func noteConnected(at now: TimeInterval) { connectedAt = now }
+
+    static func isRecoverable(_ error: Error) -> Bool {
+        if let error = error as? GuestTransportError {
+            switch error {
+            case .networkFailure, .closed, .timedOut: return true
+            default: return false
+            }
+        }
+        if let error = error as? URLError {
+            switch error.code {
+            case .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+                 .networkConnectionLost, .notConnectedToInternet: return true
+            default: return false
+            }
+        }
+        if case GuestPeerError.iceFailed = error { return true }
+        return error is GuestRecoverableError
+    }
+
+    mutating func nextDelay(after error: Error, at now: TimeInterval? = nil, pendingRelayTrial: Bool = false) -> UInt64? {
+        if let connectedAt, let now, now - connectedAt >= Self.stableInterval { retries = 0; relayBonusRetries = 0 }
+        connectedAt = nil
+        guard Self.isRecoverable(error) else { return nil }
+        if retries >= delays.count {
+            // A trial selected on the last regular attempt still needs an
+            // attempt of its own. There are at most two peers to trial.
+            guard pendingRelayTrial, relayBonusRetries < 2 else { return nil }
+            relayBonusRetries += 1; retries += 1
+            return 500_000_000
+        }
+        let delay = delays[retries]
+        retries += 1
+        return delay
+    }
+}
+
+@MainActor
+protocol GuestSessionEngine: AnyObject {
+    var sessionID: String? { get }
+    var onFailure: ((Error) -> Void)? { get set }
+    var onForcedMute: ((Bool) -> Void)? { get set }
+    var mediaPermissions: GuestMediaPermissions { get }
+    var onPermissionsChange: ((GuestMediaPermissions) -> Void)? { get set }
+    var lobbyState: GuestLobbyState { get }
+    var onLobbyChange: ((GuestLobbyState) -> Void)? { get set }
+    func activateMicrophone() async throws
+    func setPlayoutEnabled(_ enabled: Bool) async throws
+    func waitForStartupAudio() async throws
+    func waitForTransportRecovery() async throws
+    func releaseStartupAudio() -> Bool
+    func join(_ invitation: GuestInvitation, sessionID: String?) async throws
+    func publishPattern(codec: String, camera: Bool, audioMuted: Bool, videoMuted: Bool) async throws
+    func mute(_ muted: Bool, video: Bool) async throws
+    func setLocalMuteIntent(_ muted: Bool, video: Bool)
+    func suppressOutgoingMedia()
+    func leave(sendLeave: Bool) async -> Bool
+    func interruptTransportForTesting() async
+}
+
+extension GuestSessionEngine {
+    var mediaPermissions: GuestMediaPermissions { .init() }
+    var onPermissionsChange: ((GuestMediaPermissions) -> Void)? { get { nil } set {} }
+    var lobbyState: GuestLobbyState { .init() }
+    var onLobbyChange: ((GuestLobbyState) -> Void)? { get { nil } set {} }
+    func activateMicrophone() async throws {}
+    func setPlayoutEnabled(_ enabled: Bool) async throws {}
+    func waitForStartupAudio() async throws {}
+    func waitForTransportRecovery() async throws {}
+    func releaseStartupAudio() -> Bool { true }
+}
+
+enum GuestSessionError: LocalizedError {
+    case cleanupFailed
+    var errorDescription: String? {
+        "The previous meeting media could not stop safely. Leave the meeting and reopen the app before reconnecting."
+    }
+}
+
+/// One serial control job owns startup, mute reconciliation and recovery. Leave
+/// invalidates its generation before cancellation, then joins its cleanup.
+@MainActor
+public final class GuestSession {
+    public enum State: Equatable { case idle, connecting, lobby, connected, recovering, failed, left }
+    public private(set) var state: State = .idle { didSet { notifyStateChange() } }
+    public private(set) var failure: Error? { didSet { notifyStateChange() } }
+    public private(set) var sessionID: String?
+    public private(set) var recoveryAttempts = 0 { didSet { notifyStateChange() } }
+    public private(set) var connectionCount: UInt64 = 0
+    public private(set) var desiredIntent: GuestMediaIntent? { didSet { notifyStateChange() } }
+    private var current: (any GuestSessionEngine)? {
+        didSet {
+#if canImport(LiveKitWebRTC)
+            onEngineChange?(engine)
+#endif
+            notifyStateChange()
+        }
+    }
+    private var invitation: GuestInvitation?
+    private(set) var appliedIntent: GuestMediaIntent? { didSet { notifyStateChange() } }
+    private var microphoneActivationRequested = false
+    private var microphonePreparationRequested = false
+    private var attemptMicrophonePreparation = false
+    private var appliedMicrophoneActivation = false
+    private var desiredPlayoutEnabled: Bool? { didSet { notifyStateChange() } }
+    private var appliedPlayoutEnabled: Bool? { didSet { notifyStateChange() } }
+    private var lobbyTitle: String?
+    private var lobbyModeratorPresent: Bool?
+    public var onStateChange: ((GuestSessionSnapshot) -> Void)? { didSet { notifyStateChange() } }
+    public var snapshot: GuestSessionSnapshot {
+        .init(state: state, desiredIntent: desiredIntent, appliedIntent: appliedIntent,
+              permissions: current?.mediaPermissions ?? .init(), recoveryAttempts: recoveryAttempts,
+              failure: failure, microphoneActivated: appliedMicrophoneActivation,
+              desiredPlayoutEnabled: desiredPlayoutEnabled, appliedPlayoutEnabled: appliedPlayoutEnabled,
+              lobbyTitle: lobbyTitle, lobbyModeratorPresent: lobbyModeratorPresent)
+    }
+    private func notifyStateChange() { onStateChange?(snapshot) }
+    private var generation: UInt64 = 0
+    private var attemptID: UUID?
+    private var connectedAttemptID: UUID?
+    /// Control-plane witness only: attempt IDs are random and do not identify the room.
+    public var ownershipDiagnostics: [String: Any] {
+        ["executor": "guest-session", "generation": String(generation),
+         "attempt": attemptID?.uuidString ?? "none",
+         "connectedAttempt": connectedAttemptID?.uuidString ?? "none",
+         "lastObservedRecoveryPolicyRetries": recoveryAttempts, "connectionCount": String(connectionCount),
+         "controlTaskPresent": control != nil, "shutdownTaskPresent": shutdown != nil,
+         "cleanupSucceeded": cleanupSucceeded]
+    }
+    private var control: Task<Void, Never>?
+    private var shutdown: Task<Bool, Never>?
+    private var pendingFailure: Error?
+    private var cleanupSucceeded = true
+    private var policy = GuestRecoveryPolicy()
+    private let makeAttempt: @MainActor () async throws -> any GuestSessionEngine
+    private let sleep: @MainActor (UInt64) async throws -> Void
+    private let now: @MainActor () -> TimeInterval
+    private let hasPendingRelayTrial: @MainActor () -> Bool
+    private let restoreUnstartedRelayTrial: @MainActor () -> Void
+
+    #if canImport(LiveKitWebRTC)
+    public var engine: NativeGuestEngine? { current as? NativeGuestEngine }
+    public var microphoneTrackProbe: GuestMicrophoneTrackProbe? {
+        guard state == .connected, let attempt = connectedAttemptID else { return nil }
+        let generation = generation
+        return engine?.microphoneTrackProbe?.checking { [weak self] in
+            guard let self else { return false }
+            return state == .connected && self.generation == generation && connectedAttemptID == attempt
+        }
+    }
+    public var onEngineChange: ((NativeGuestEngine?) -> Void)? { didSet { onEngineChange?(engine) } }
+    public convenience init(makeEngine: @escaping @MainActor () async throws -> NativeGuestEngine,
+                            hasPendingRelayTrial: @escaping @MainActor () -> Bool = { false },
+                            restoreUnstartedRelayTrial: @escaping @MainActor () -> Void = {}) {
+        self.init(makeAttempt: { try await makeEngine() }, hasPendingRelayTrial: hasPendingRelayTrial,
+                  restoreUnstartedRelayTrial: restoreUnstartedRelayTrial)
+    }
+    #endif
+
+    init(makeAttempt: @escaping @MainActor () async throws -> any GuestSessionEngine,
+         sleep: @escaping @MainActor (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
+         now: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         hasPendingRelayTrial: @escaping @MainActor () -> Bool = { false },
+         restoreUnstartedRelayTrial: @escaping @MainActor () -> Void = {}) {
+        self.makeAttempt = makeAttempt; self.sleep = sleep; self.now = now
+        self.hasPendingRelayTrial = hasPendingRelayTrial
+        self.restoreUnstartedRelayTrial = restoreUnstartedRelayTrial
+    }
+
+    public func connect(_ invitation: GuestInvitation, publish: Bool, codec: String, camera: Bool,
+                        initialAudioMuted: Bool = false, initialVideoMuted: Bool = false,
+                        initialMicrophonePreparation: Bool = false) async throws {
+        guard state == .idle || state == .left || state == .failed else { throw GuestTransportError.alreadyConnecting }
+        let priorShutdown = shutdown
+        generation &+= 1
+        let expected = generation
+        state = .connecting
+        let drained = await priorShutdown?.value ?? cleanupSucceeded
+        guard generation == expected else { throw CancellationError() }
+        if Task.isCancelled { _ = await leave(); throw CancellationError() }
+        guard drained else { state = .failed; failure = GuestSessionError.cleanupFailed; throw GuestSessionError.cleanupFailed }
+        shutdown = nil; failure = nil; pendingFailure = nil; sessionID = nil
+        cleanupSucceeded = true; policy = GuestRecoveryPolicy(); recoveryAttempts = 0
+        microphoneActivationRequested = false; microphonePreparationRequested = initialMicrophonePreparation
+        attemptMicrophonePreparation = false; appliedMicrophoneActivation = false
+        desiredPlayoutEnabled = nil; appliedPlayoutEnabled = nil
+        lobbyTitle = nil; lobbyModeratorPresent = nil
+        self.invitation = invitation
+        desiredIntent = GuestMediaIntent(publish: publish, codec: codec, camera: camera,
+            audioMuted: initialAudioMuted, videoMuted: initialVideoMuted)
+        startControl()
+        let job = control
+        try await withTaskCancellationHandler(operation: {
+            await job?.value
+            try Task.checkCancellation()
+            guard generation == expected else { throw CancellationError() }
+            if let failure { throw failure }
+            guard state == .connected else { throw GuestTransportError.notConnected }
+        }, onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == expected else { return }
+                _ = await self.leave()
+            }
+        })
+    }
+
+    /// Immediate owner intent, including while a TCC/device operation is awaiting.
+    /// Muting suppresses the current sender/capture before any asynchronous work.
+    public func setLocalMuteIntent(_ muted: Bool, video: Bool = false) {
+        guard var intent = desiredIntent, intent.publish, state != .left, state != .failed else { return }
+        if video { intent.videoMuted = muted } else { intent.audioMuted = muted }
+        desiredIntent = intent
+        current?.setLocalMuteIntent(muted, video: video)
+        startControl()
+    }
+
+    /// During recovery this changes intent immediately and waits for reconciliation.
+    public func mute(_ muted: Bool, video: Bool = false) async throws {
+        guard let intent = desiredIntent, intent.publish, state != .left, state != .failed else {
+            throw failure ?? GuestTransportError.notConnected
+        }
+        setLocalMuteIntent(muted, video: video)
+        try await reconcileControl()
+    }
+
+    /// Explicit user activation after the UI has obtained microphone authorization.
+    /// It does not unmute and survives automatic engine replacement.
+    public func activateMicrophone() async throws {
+        guard desiredIntent != nil, state != .left, state != .failed else {
+            throw failure ?? GuestTransportError.notConnected
+        }
+        microphoneActivationRequested = true
+        try await reconcileControl()
+    }
+
+    /// Preparation is separate from explicit user activation. Withdrawing it
+    /// changes only replacement intent; the current audio graph stays intact.
+    public func setMicrophonePreparationRequested(_ requested: Bool) {
+        microphonePreparationRequested = requested
+    }
+
+    func prepareMicrophone() async throws {
+        guard desiredIntent != nil, state != .left, state != .failed else {
+            throw failure ?? GuestTransportError.notConnected
+        }
+        microphonePreparationRequested = true
+        attemptMicrophonePreparation = true
+        try await reconcileControl()
+    }
+
+    public func setPlayoutEnabled(_ enabled: Bool) async throws {
+        guard desiredIntent != nil, state != .left, state != .failed else {
+            throw failure ?? GuestTransportError.notConnected
+        }
+        desiredPlayoutEnabled = enabled
+        try await reconcileControl()
+    }
+
+    private func reconcileControl() async throws {
+        let expected = generation
+        startControl()
+        await control?.value
+        try Task.checkCancellation()
+        guard generation == expected else { throw CancellationError() }
+        if let failure { throw failure }
+        guard state == .connected else { throw GuestTransportError.notConnected }
+    }
+
+    func waitUntilConnected(timeout: TimeInterval = 30) async throws {
+        try await waitUntilConnected(timeout: timeout, after: nil)
+    }
+
+    /// Faults only this session's socket; recovery follows the normal failure callback.
+    public func reconnectForTesting() async throws {
+        guard state == .connected, let current else { throw failure ?? GuestTransportError.notConnected }
+        let expected = generation, before = connectionCount
+        await current.interruptTransportForTesting()
+        guard generation == expected else { throw CancellationError() }
+        try await waitUntilConnected(timeout: 300, after: before)
+    }
+
+    /// A user-requested retry after an exhausted recoverable outage. Media is
+    /// deliberately muted before constructing a replacement owner.
+    func retryFailedConnection() async throws {
+        guard state == .failed, let failure, GuestRecoveryPolicy.isRecoverable(failure),
+              cleanupSucceeded, current == nil, invitation != nil, var intent = desiredIntent else {
+            throw failure ?? GuestTransportError.notConnected
+        }
+        state = .recovering
+        intent.audioMuted = true; intent.videoMuted = true
+        desiredIntent = intent
+        policy = GuestRecoveryPolicy(); recoveryAttempts = 0
+        // Exhaustion sends a server leave; a user retry must join afresh.
+        sessionID = nil; self.failure = nil; pendingFailure = nil
+        let expected = generation
+        startControl()
+        let job = control
+        try await withTaskCancellationHandler(operation: {
+            await job?.value
+            try Task.checkCancellation()
+            guard generation == expected else { throw CancellationError() }
+            if let failure = self.failure { throw failure }
+            guard state == .connected else { throw GuestTransportError.notConnected }
+        }, onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == expected else { return }
+                _ = await self.leave()
+            }
+        })
+    }
+
+    @discardableResult
+    public func leave() async -> Bool {
+        if state == .left, let shutdown { return await shutdown.value }
+        generation &+= 1
+        state = .left
+#if canImport(LiveKitWebRTC)
+        onEngineChange?(nil)
+#endif
+        current?.suppressOutgoingMedia()
+        invitation = nil; desiredIntent = nil; pendingFailure = nil
+        lobbyTitle = nil; lobbyModeratorPresent = nil
+        current?.onFailure = nil; current?.onForcedMute = nil; current?.onPermissionsChange = nil; current?.onLobbyChange = nil
+        let job = control, previous = shutdown
+        control = nil
+        job?.cancel()
+        let task = Task { @MainActor [self] in
+            let priorResult = await previous?.value ?? true
+            await job?.value
+            let result = await retireCurrent(sendLeave: true)
+            return priorResult && cleanupSucceeded && result
+        }
+        shutdown = task
+        return await task.value
+    }
+
+    private func startControl() {
+        guard control == nil, invitation != nil, desiredIntent != nil,
+              state != .left, state != .failed else { return }
+        let expected = generation
+        control = Task { @MainActor [weak self] in await self?.run(expected) }
+    }
+
+    private func check(_ expected: UInt64, attempt: UUID) throws {
+        guard generation == expected, attemptID == attempt, !Task.isCancelled else { throw CancellationError() }
+        if let pendingFailure { throw pendingFailure }
+    }
+
+    private func run(_ expected: UInt64) async {
+        while generation == expected, !Task.isCancelled {
+            var relayTrialAwaitingJoin = false
+            do {
+                if let pendingFailure { throw pendingFailure }
+                if current == nil {
+                    guard let invitation else { throw CancellationError() }
+                    let next = try await makeAttempt()
+                    guard generation == expected, !Task.isCancelled else {
+                        next.suppressOutgoingMedia()
+                        cleanupSucceeded = await next.leave(sendLeave: false) && cleanupSucceeded
+                        return
+                    }
+                    let attempt = UUID()
+                    current = next; attemptID = attempt; appliedIntent = nil
+                    relayTrialAwaitingJoin = true
+                    appliedMicrophoneActivation = false; appliedPlayoutEnabled = nil
+                    if let intent = desiredIntent {
+                        next.setLocalMuteIntent(intent.audioMuted, video: false)
+                        next.setLocalMuteIntent(intent.videoMuted, video: true)
+                    }
+                    next.onFailure = { [weak self] error in self?.failed(error, generation: expected, attempt: attempt) }
+                    next.onForcedMute = { [weak self] video in self?.forcedMute(video, generation: expected, attempt: attempt) }
+                    next.onPermissionsChange = { [weak self] _ in
+                        guard let self, self.generation == expected, self.attemptID == attempt else { return }
+                        self.notifyStateChange()
+                    }
+                    next.onLobbyChange = { [weak self] lobby in
+                        self?.lobbyChanged(lobby, generation: expected, attempt: attempt)
+                    }
+                    // Speculative activation has one prejoin decision per attempt.
+                    // A later policy opt-in cannot activate input after playout starts.
+                    attemptMicrophonePreparation = microphonePreparationRequested
+                    try await reconcileDeviceIntent(next, generation: expected, attempt: attempt)
+                    try await next.join(invitation, sessionID: sessionID)
+                    relayTrialAwaitingJoin = false
+                    try check(expected, attempt: attempt)
+                    sessionID = next.sessionID ?? sessionID
+                    guard let intent = desiredIntent else { throw CancellationError() }
+                    if intent.publish {
+                        try await next.publishPattern(codec: intent.codec, camera: intent.camera,
+                            audioMuted: intent.audioMuted, videoMuted: intent.videoMuted)
+                        try check(expected, attempt: attempt)
+                    }
+                    appliedIntent = intent
+                }
+                guard let current, let attempt = attemptID else { throw CancellationError() }
+                while let intent = desiredIntent, intent.publish, appliedIntent != intent {
+                    if appliedIntent?.audioMuted != intent.audioMuted {
+                        try await current.mute(intent.audioMuted, video: false)
+                        try check(expected, attempt: attempt)
+                        appliedIntent?.audioMuted = intent.audioMuted
+                    }
+                    // Re-read desired intent after the audio operation's suspension.
+                    guard let latest = desiredIntent else { throw CancellationError() }
+                    if appliedIntent?.videoMuted != latest.videoMuted {
+                        try await current.mute(latest.videoMuted, video: true)
+                        try check(expected, attempt: attempt)
+                        appliedIntent?.videoMuted = latest.videoMuted
+                    }
+                }
+                try await reconcileDeviceIntent(current, generation: expected, attempt: attempt)
+                try check(expected, attempt: attempt)
+                // A device operation may suspend after the media loop. Revisit
+                // any newer intent before completing the shared control job.
+                if desiredIntent?.publish == true, desiredIntent != appliedIntent { continue }
+                if connectedAttemptID != attempt {
+                    try await current.waitForTransportRecovery()
+                    try check(expected, attempt: attempt)
+                    try await current.waitForStartupAudio()
+                    try check(expected, attempt: attempt)
+                    if desiredIntent?.publish == true, desiredIntent != appliedIntent { continue }
+                    if let desiredPlayoutEnabled, desiredPlayoutEnabled != appliedPlayoutEnabled { continue }
+                    guard current.releaseStartupAudio() else { continue }
+                    connectionCount &+= 1; connectedAttemptID = attempt
+                    policy.noteConnected(at: now())
+                }
+                state = .connected
+                control = nil
+                return
+            } catch {
+                guard generation == expected, !Task.isCancelled else {
+                    _ = await retireCurrent(sendLeave: true)
+                    return
+                }
+                let cause = pendingFailure ?? error
+                pendingFailure = nil
+                if relayTrialAwaitingJoin, GuestRecoveryPolicy.isRecoverable(cause) { restoreUnstartedRelayTrial() }
+                probeLog("session-control-failure", ["causeType": String(describing: type(of: cause)),
+                    "causeCode": (cause as NSError).code])
+                let failedAt = now()
+                let delay = policy.nextDelay(after: cause, at: failedAt, pendingRelayTrial: hasPendingRelayTrial())
+                let stopped = await retireCurrent(sendLeave: delay == nil)
+                guard generation == expected, !Task.isCancelled else { return }
+                guard stopped else { finish(GuestSessionError.cleanupFailed); return }
+                guard let delay else { finish(cause); return }
+                recoveryAttempts = policy.retries; state = .recovering
+                let rawElapsed = now() - failedAt
+                let elapsed = rawElapsed.isFinite && rawElapsed > 0 ? rawElapsed : 0
+                let delaySeconds = Double(delay) / 1_000_000_000
+                let remainingDelay = elapsed >= delaySeconds ? 0 : delay - UInt64(elapsed * 1_000_000_000)
+                probeLog("session-recovery", ["attempt": recoveryAttempts, "causeType": String(describing: type(of: cause))])
+                if remainingDelay > 0 {
+                    do { try await sleep(remainingDelay) }
+                    catch {
+                        guard generation == expected, !Task.isCancelled else { return }
+                        finish(error); return
+                    }
+                }
+                guard generation == expected, !Task.isCancelled else { return }
+            }
+        }
+    }
+
+    private func reconcileDeviceIntent(_ engine: any GuestSessionEngine, generation expected: UInt64, attempt: UUID) async throws {
+        if (microphoneActivationRequested || attemptMicrophonePreparation) && !appliedMicrophoneActivation {
+            try await engine.activateMicrophone()
+            try check(expected, attempt: attempt)
+            appliedMicrophoneActivation = true; notifyStateChange()
+        }
+        while let enabled = desiredPlayoutEnabled, enabled != appliedPlayoutEnabled {
+            try await engine.setPlayoutEnabled(enabled)
+            try check(expected, attempt: attempt)
+            appliedPlayoutEnabled = enabled
+        }
+    }
+
+    private func lobbyChanged(_ lobby: GuestLobbyState, generation expected: UInt64, attempt: UUID) {
+        guard generation == expected, attemptID == attempt, state != .left, state != .failed else { return }
+        lobbyTitle = lobby.title
+        lobbyModeratorPresent = lobby.moderatorPresent
+        if lobby.inLobby {
+            if state != .lobby { state = .lobby }
+            else { notifyStateChange() }
+        } else if state == .lobby {
+            state = .connecting
+        }
+    }
+
+    private func failed(_ error: Error, generation expected: UInt64, attempt: UUID) {
+        guard generation == expected, attemptID == attempt, state != .left, pendingFailure == nil else { return }
+        pendingFailure = error
+        if GuestRecoveryPolicy.isRecoverable(error) { state = .recovering }
+        startControl()
+    }
+
+    private func forcedMute(_ video: Bool, generation expected: UInt64, attempt: UUID) {
+        guard generation == expected, attemptID == attempt, var intent = desiredIntent else { return }
+        if video { intent.videoMuted = true } else { intent.audioMuted = true }
+        desiredIntent = intent
+        current?.setLocalMuteIntent(true, video: video)
+        startControl()
+    }
+
+    private func retireCurrent(sendLeave: Bool) async -> Bool {
+        guard let retired = current else { return cleanupSucceeded }
+        retired.suppressOutgoingMedia()
+        sessionID = retired.sessionID ?? sessionID
+        current = nil; attemptID = nil; connectedAttemptID = nil; appliedIntent = nil
+        attemptMicrophonePreparation = false; appliedMicrophoneActivation = false; appliedPlayoutEnabled = nil
+        lobbyTitle = nil; lobbyModeratorPresent = nil
+        retired.onFailure = nil; retired.onForcedMute = nil; retired.onPermissionsChange = nil; retired.onLobbyChange = nil
+        let stopped = await retired.leave(sendLeave: sendLeave)
+        cleanupSucceeded = stopped && cleanupSucceeded
+        return stopped
+    }
+
+    private func finish(_ error: Error) {
+        failure = error; state = .failed; control = nil
+    }
+
+    private func waitUntilConnected(timeout: TimeInterval, after count: UInt64?) async throws {
+        guard timeout.isFinite, timeout > 0, timeout <= 300 else { throw GuestTransportError.timedOut }
+        let expected = generation, deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while true {
+            try Task.checkCancellation()
+            guard generation == expected, state != .left else { throw CancellationError() }
+            if let failure { throw failure }
+            if state == .connected, count.map({ connectionCount > $0 }) ?? true { return }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw GuestTransportError.timedOut }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+}
+
+#if canImport(LiveKitWebRTC)
+extension NativeGuestEngine: GuestSessionEngine {}
+#endif

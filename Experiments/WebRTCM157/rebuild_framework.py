@@ -31,9 +31,27 @@ OUT = SOURCE / "out/configuration-recovery"
 BASELINE_MANIFEST = (REPOSITORY / ".build/webrtc-m157-desktop-audio"
                      "/native-framework-screen-r1/provenance/source-manifest-screen-r1.json")
 R1_BASE_MANIFEST_SHA256 = "d67239bd29ff07816bb88a4293822e0f09456a0f89546f85ee649645d6c13b9a"
-# Known, intentional deltas against the screen-r1 tree: the audio route files
-# (owned by the route locks) and gclient sync noise.
-KNOWN_TREE_DELTAS = set()
+# Known, intentional deltas against the screen-r1 tree: iOS capture gate exports,
+# synthetic audio source support, and gclient sync noise.
+KNOWN_TREE_DELTAS = {
+    "sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm",
+    "sdk/objc/native/src/audio/audio_device_ios.mm",
+    "rtc_base/race_checker.h",
+    "api/audio_options.h",
+    "api/audio_options.cc",
+    "call/audio_send_stream.h",
+    "audio/channel_send.h",
+    "audio/channel_send.cc",
+    "audio/audio_send_stream.h",
+    "audio/audio_send_stream.cc",
+    "media/engine/webrtc_voice_engine.cc",
+    "pc/rtp_sender.cc",
+    "sdk/objc/api/peerconnection/RTCAudioSource.h",
+    "sdk/objc/api/peerconnection/RTCAudioSource+Private.h",
+    "sdk/objc/api/peerconnection/RTCAudioSource.mm",
+    "sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h",
+    "modules/audio_device/audio_engine_device.mm",
+}
 SYNC_NOISE = {"resources/audio_coding/music_stereo_48kHz.pcm_.gstmp",
               "resources/audio_coding/speech_mono_16kHz.pcm_.gstmp",
               "resources/audio_coding/testfile32kHz.pcm_.gstmp"}
@@ -97,6 +115,8 @@ def verify_tree():
     contract = route_lock_contract()
     errors = []
     for name, expected in contract["sourceOverrides"].items():
+        if name in KNOWN_TREE_DELTAS:
+            continue
         if entries.get(name, {}).get("sha256") != expected:
             errors.append(f"route file differs from its lock: {name}")
     for name, entry in baseline.items():

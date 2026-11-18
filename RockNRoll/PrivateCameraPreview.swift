@@ -29,12 +29,8 @@ enum CameraDevices {
         return discovered().filter { $0.isConnected && !$0.isSuspended && seen.insert($0.uniqueID).inserted }
     }
     static func discovered() -> [AVCaptureDevice] {
-        // UIKit-on-Mac also exposes rear-facing compatibility aliases for the
-        // same cameras. Discover its front-facing devices once; real external
-        // cameras use their own device types without a position restriction.
-        let position: AVCaptureDevice.Position = ProcessInfo.processInfo.isiOSAppOnMac ? .front : .unspecified
         var discovered = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera],
-            mediaType: .video, position: position).devices
+            mediaType: .video, position: .unspecified).devices
         if #available(iOS 17.0, *) {
             discovered += AVCaptureDevice.DiscoverySession(deviceTypes: [.external, .continuityCamera],
                 mediaType: .video, position: .unspecified).devices
@@ -42,8 +38,6 @@ enum CameraDevices {
         return discovered
     }
     static func preferred(in devices: [AVCaptureDevice]) -> AVCaptureDevice? {
-        if ProcessInfo.processInfo.isiOSAppOnMac, let system = AVCaptureDevice.default(for: .video),
-           let selected = devices.first(where: { $0.uniqueID == system.uniqueID }) { return selected }
         return devices.first { $0.position == .front } ?? devices.first
     }
     static func nextID(in devices: [String], current: String?) -> String? {
@@ -137,18 +131,7 @@ struct MacCameraCapturePlan {
     static func resolve(device: AVCaptureDevice, formats: [AVCaptureDevice.Format],
                         maximum: CMVideoDimensions = CMVideoDimensions(width: 1280, height: 720),
                         fps: Int = 24, session: AVCaptureSession? = nil) -> Self? {
-        guard ProcessInfo.processInfo.isiOSAppOnMac else { return nil }
-        let rates = CameraCaptureRate.candidates(fps,
-            ranges: formats.map { $0.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate } })
-        let eligible = rates.map { formats[$0.index] }
-        guard !eligible.isEmpty else { return nil }
-        let sizes = eligible.map { CMVideoFormatDescriptionGetDimensions($0.formatDescription) }
-        let quarterTurn = nativeQuarterTurn(device: device, session: session)
-        let target = quarterTurn.map { rawTarget(maximum: maximum, quarterTurn: $0) }
-        let fallback = bounded(CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription), maximum: maximum)
-        // Cameras with no matching landscape mode retain their complete native aspect.
-        guard let index = selectionIndex(sizes: sizes, preferred: target, fallback: fallback) else { return nil }
-        return Self(format: eligible[index], rawOutput: bounded(sizes[index], maximum: maximum), captureFPS: rates[index].fps)
+        nil
     }
 
     private static func nativeQuarterTurn(device: AVCaptureDevice, session: AVCaptureSession?) -> Bool? {
@@ -311,7 +294,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                     do {
                         let devices = CameraDevices.available()
                         let preferred = selectedDevice.flatMap { selected in devices.first { $0.uniqueID == selected.uniqueID } }
-                            ?? (ProcessInfo.processInfo.isiOSAppOnMac ? CameraDevices.preferred(in: devices) : devices.first { $0.position == position })
+                            ?? devices.first { $0.position == position }
                         guard let device = preferred else { throw PreviewError.unavailable }
                         if originalDurations == nil {
                             originalDurations = (device, device.activeFormat, device.activeVideoMinFrameDuration, device.activeVideoMaxFrameDuration)
@@ -337,7 +320,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                             } else if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 }
                             session.commitConfiguration()
                         }
-                        if (frames != nil || ProcessInfo.processInfo.isiOSAppOnMac), output == nil {
+                        if frames != nil, output == nil {
                             let video = AVCaptureVideoDataOutput()
                             video.alwaysDiscardsLateVideoFrames = true
                             video.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -346,28 +329,8 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                             guard session.canAddOutput(video) else { session.commitConfiguration(); throw PreviewError.unavailable }
                             session.addOutput(video)
                             video.setSampleBufferDelegate(receiver, queue: queue)
-                            if ProcessInfo.processInfo.isiOSAppOnMac {
-                                // UIKit-on-Mac's data and preview connections can have
-                                // different defaults. Use the native preview's orientation
-                                // as the reference; the iOS horizon is a different basis here.
-                                let reference = AVCaptureVideoPreviewLayer(session: session)
-                                if let orientation = reference.connection?.videoOrientation,
-                                   let connection = video.connection(with: .video), connection.isVideoOrientationSupported {
-                                    connection.videoOrientation = orientation
-                                    let raw = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
-                                    let size = MacCameraCapturePlan.bounded(raw)
-                                    let quarter = orientation == .portrait || orientation == .portraitUpsideDown
-                                    if Int64(raw.width) * Int64(size.height) == Int64(raw.height) * Int64(size.width) {
-                                        video.automaticallyConfiguresOutputBufferDimensions = false
-                                        video.deliversPreviewSizedOutputBuffers = false
-                                        video.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                                            kCVPixelBufferWidthKey as String: quarter ? size.height : size.width,
-                                            kCVPixelBufferHeightKey as String: quarter ? size.width : size.height]
-                                    }
-                                }
-                            } else if #available(iOS 17.0, *), let device = input?.device {
+                            if #available(iOS 17.0, *), let device = input?.device {
                                 // Physical iOS devices follow their capture-device horizon.
-                                // UIKit-on-Mac owns its compatibility camera orientation.
                                 let rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
                                 rotationCoordinator = rotation
                                 let angle = PrivateCameraPreview.connectionAngle(horizon: rotation.videoRotationAngleForHorizonLevelCapture)
@@ -382,8 +345,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                                         connection.videoRotationAngle = angle
                                     }
                                 }
-                            } else if !ProcessInfo.processInfo.isiOSAppOnMac,
-                                      let connection = video.connection(with: .video), connection.isVideoOrientationSupported {
+                            } else if let connection = video.connection(with: .video), connection.isVideoOrientationSupported {
                                 connection.videoOrientation = .portrait
                             }
                             output = video; sink = receiver

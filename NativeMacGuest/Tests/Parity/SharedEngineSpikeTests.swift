@@ -1,6 +1,7 @@
 import AVFoundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// R4 spike S0a (docs/r4-shared-engine-plan.md): several calls on ONE WebRTC factory and

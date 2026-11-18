@@ -23,14 +23,6 @@ final class MeetingContainerViewController: UIViewController {
     }
 
     override var keyCommands: [UIKeyCommand]? {
-        var commands = super.keyCommands ?? []
-        if ProcessInfo.processInfo.isiOSAppOnMac, canHideMeeting?() == true {
-            let close = UIKeyCommand(title: L("Hide meeting"), action: #selector(closeMeetingWindow),
-                input: "w", modifierFlags: .command)
-            close.wantsPriorityOverSystemBehavior = true
-            commands.append(close)
-        }
-        return commands
+        super.keyCommands
     }
-    @objc private func closeMeetingWindow() { hideMeeting?() }
 }

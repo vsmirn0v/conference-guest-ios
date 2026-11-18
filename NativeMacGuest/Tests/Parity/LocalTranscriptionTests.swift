@@ -3,6 +3,7 @@ import Combine
 import CryptoKit
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Local transcription: catalog pins, model downloads, the audio-path rule that

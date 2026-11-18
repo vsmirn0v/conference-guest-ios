@@ -50,7 +50,7 @@ class DistributionConfigurationTests(unittest.TestCase):
         source = (ROOT / 'NativeMacGuest/project.yml').read_text()
         resolved = support.resolve_source_paths(ROOT, source)
         self.assertEqual(resolved.count(f'CODE_SIGN_ENTITLEMENTS: {ROOT / "NativeMacGuest/VoiceWorker/Worker.entitlements"}'), 3)
-        anchor = f'      - path: {ROOT / "Experiments/NativeGuest"}\n'
+        anchor = f'      - path: {ROOT / "NativeMacGuest/ThirdPartyNotices"}\n'
         license_resource = (f'      - path: {ROOT / "NativeMacGuest/distribution/Sparkle-LICENSE.txt"}\n'
                             '        buildPhase: resources\n')
         with tempfile.TemporaryDirectory() as temp:
@@ -82,7 +82,7 @@ class DistributionConfigurationTests(unittest.TestCase):
                 packages = {output / 'Dependencies' / name for name in ('client-sdk-swift', 'webrtc-xcframework')}
                 for package in packages:
                     package.mkdir(parents=True)
-                    source = source.replace('../.build/native-desktop-dependencies/' + package.name, str(package))
+                    source = source.replace('../.build/unified-sdk-dependencies/' + package.name, str(package))
                 source = support.resolve_source_paths(ROOT, source)
                 spec, _, _ = support.configure_distribution(ROOT, spec_dir, source, distribution)
                 spec_path = spec_dir / 'project.yml'
@@ -104,10 +104,9 @@ class DistributionConfigurationTests(unittest.TestCase):
                 group_paths = {(project_dir / value['path']).resolve() for value in objects.values()
                                if value.get('isa') == 'PBXGroup' and value.get('path')}
                 self.assertIn(ROOT / 'NativeMacGuest', group_paths)
-                self.assertIn(ROOT / 'Experiments/NativeGuest', group_paths)
                 package_paths = {(project_dir / value['relativePath']).resolve() for value in objects.values()
                                  if value.get('isa') == 'XCLocalSwiftPackageReference'}
-                self.assertEqual(package_paths, packages | {ROOT / 'ConferenceCore', ROOT / 'Dependencies/SherpaOnnxKit', ROOT / 'Dependencies/MLXAudioVoice'})
+                self.assertEqual(package_paths, packages | {ROOT / 'ConferenceCore', ROOT / 'MeetingEngine', ROOT / 'Dependencies/SherpaOnnxKit', ROOT / 'Dependencies/MLXAudioVoice'})
                 self.assertNotIn('$(SRCROOT)/../../../', project.read_text())
 
 

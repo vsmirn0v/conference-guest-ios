@@ -26,6 +26,18 @@ import UserNotifications
     var mcpService: NativeDesktopMCPService?
     /// Obsidian one-way export coordinator, created with the meeting library.
     lazy var obsidian = ObsidianExportCoordinator(library: attention.store.meetingLibrary)
+    /// CloudKit workspace, transcript, task, context-settings and calendar schedule sync coordinator.
+    lazy var workspaceSync = MacWorkspaceSyncCoordinator(
+        storageRoot: attention.store.root,
+        meetingLibrary: attention.store.meetingLibrary,
+        notes: attention.store.notes,
+        assistant: attention.store.assistant,
+        attentionStore: attention.store,
+        journalProvider: { [weak self] _ in self?.attention.store.meetingLibrary.workspaceJournal },
+        obsidianExportNow: { [weak self] in await self?.obsidian.exportPendingNow() },
+        calendar: library.calendar,
+        syncPreferences: library.sync
+    )
     /// A library section is shown unless a meeting is selected in the sidebar.
     @Published var selection: Section = .home { didSet { if selectedMeetingID != nil { selectedMeetingID = nil } } }
     /// The meeting shown in the main window's detail column.
@@ -184,7 +196,19 @@ import UserNotifications
                 model.noteUserRenamedSession(title)
             }
         }
+        library.sync.onSyncNow = { [weak self] in
+            self?.workspaceSync.scheduleSync(delayMilliseconds: 150)
+        }
+        library.sync.onSyncPreferencesChanged = { [weak self] in
+            self?.workspaceSync.scheduleSync(delayMilliseconds: 100)
+        }
+        let existingDeleteSyncedData = library.sync.beforeDeleteSyncedData
+        library.sync.beforeDeleteSyncedData = { [weak self] in
+            try await existingDeleteSyncedData?()
+            try await self?.workspaceSync.clearCloudData()
+        }
         self.attention.start()
+        self.workspaceSync.start()
     }
 
     /// The meeting is in front of you: shown in a visible main window, its own
@@ -846,6 +870,10 @@ import UserNotifications
                 chapters: chapters))
         }
 
+        for spec in specs {
+            await workspaceSync.pullAndMergeTranscripts(for: spec.sessionID)
+            workspaceSync.noteLocalSessionLeft(sessionID: spec.sessionID, leftAt: spec.endedAt)
+        }
         let awaiting = attention.captureOutcomes(for: model, segments: specs)
         for (group, spec) in zip(groups, specs) {
             model.workspaceJournal?.end(sessionID: group.sessionID, at: spec.endedAt)
@@ -854,6 +882,7 @@ import UserNotifications
                 endedAt: spec.endedAt,
                 awaitingOutcome: awaiting.contains(group.sessionID))
         }
+        workspaceSync.scheduleSync(delayMilliseconds: 150)
         return awaiting
     }
 
@@ -1032,7 +1061,11 @@ import UserNotifications
     }
     func activate() { library.foregrounded(); if meeting != nil { showMeeting() } else { show() } }
     func backgrounded() { library.backgrounded() }
-    func cloudNotification() async { await library.sync.synchronizeForNotification(); await library.continuation.refresh() }
+    func cloudNotification() async {
+        await library.sync.synchronizeForNotification()
+        await workspaceSync.synchronizeNow()
+        await library.continuation.refresh()
+    }
     func handleURL(_ url: URL) { show(); invitation = url.absoluteString; joinInput() }
 
     /// Handoff and active-jam reporting describe the talk meeting (else the latest).
@@ -1042,7 +1075,8 @@ import UserNotifications
         return ActiveJam(deviceID: library.sync.deviceID, sessionID: session, invitation: meeting.invitation,
             title: meeting.title, name: meeting.displayName, deviceLabel: Host.current().localizedName ?? "Mac",
             isSharingScreen: meeting.snapshot.sharing, supportsCompanion: true,
-            audioPaused: !meeting.snapshot.playoutOn, engine: meeting.kind)
+            audioPaused: !meeting.snapshot.playoutOn, engine: meeting.kind,
+            workspaceSessionID: meeting.workspaceSessionID)
     }
     private func meetingDidChange(_ meeting: NativeDesktopMeetingModel) {
         guard meetings.contains(where: { $0 === meeting }) else { return }
@@ -1053,6 +1087,17 @@ import UserNotifications
             String(describing: meeting.localCamera.map(ObjectIdentifier.init))].joined(separator: "|")
         guard state != renderedMeetingStates[meeting.sessionID] else { return }
         renderedMeetingStates[meeting.sessionID] = state; objectWillChange.send(); refreshMenu(); updateContinuation()
+        if meeting.snapshot.phase == .connected {
+            workspaceSync.noteLocalSessionJoined(
+                sessionID: meeting.workspaceSessionID,
+                joinedAt: Date(),
+                hasOutcomeWriter: attention.store.generateOutcomes
+            )
+            workspaceSync.noteMicStateChanged(
+                sessionID: meeting.workspaceSessionID,
+                active: meeting.snapshot.microphoneOn && meeting.ownsMicrophone
+            )
+        }
     }
     private func updateContinuation() {
         let snapshot = continuationSnapshot()

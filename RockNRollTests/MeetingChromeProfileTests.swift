@@ -14,7 +14,7 @@ final class MeetingChromeProfileTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first { $0.isKeyWindow }
         let window = UIWindow(windowScene: scene)
-        let fixture = GuestCallLayoutFixture()
+        let fixture = RockCallViewController(title: "Chrome profile", catchUp: CatchUpStore(), chat: ChatStore())
         window.rootViewController = fixture; window.makeKeyAndVisible()
         defer { window.isHidden = true; previous?.makeKey() }
         try await Task.sleep(nanoseconds: 3_000_000_000)

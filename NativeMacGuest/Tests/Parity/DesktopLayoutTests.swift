@@ -3,6 +3,7 @@ import ConferenceCore
 import CoreText
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Opt in with NATIVE_DESKTOP_LAYOUT_FIXTURE=1. The optional hold interval is

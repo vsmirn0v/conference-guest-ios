@@ -2,6 +2,7 @@ import CloudKit
 import ConferenceCore
 import CryptoKit
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Opt-in signed-app checks use only generated private zones and invitations.

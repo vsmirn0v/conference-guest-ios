@@ -14,6 +14,13 @@ enum AppDiagnostics {
     private static let historyCapacity = 400
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "RockNRoll", category: "diagnostics")
     nonisolated(unsafe) private static var observers: [NSObjectProtocol] = []
+    private static let observerQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "rocknroll.diagnostics.events"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .utility
+        return queue
+    }()
     private static let pathMonitor = NWPathMonitor()
     nonisolated(unsafe) private static var networkSummary: [String: Any] = [:]
     nonisolated(unsafe) private static var started = false
@@ -37,24 +44,23 @@ enum AppDiagnostics {
         NativeDiagnosticsLog.shared.start()
         NativeDiagnosticReports.shared.onSaved = { log("diagnostic-reports-saved", ["count": $0]) }
         NativeDiagnosticReports.shared.start()
-        log("app-launch", ["version": appVersion, "system": UIDevice.current.systemVersion, "device": deviceModel,
-                           "mac": ProcessInfo.processInfo.isiOSAppOnMac])
+        log("app-launch", ["version": appVersion, "system": UIDevice.current.systemVersion, "device": deviceModel])
         let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { note in
+        observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: observerQueue) { note in
             var fields: [String: Any] = ["type": note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 99]
             if let options = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt { fields["options"] = options }
             if let reason = note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt { fields["reason"] = reason }
             log("audio-interruption", fields)
         })
-        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { note in
+        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: observerQueue) { note in
             var fields = audioRoute()
             fields["reason"] = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 99
             log("audio-route-change", fields)
         })
-        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereLostNotification, object: nil, queue: nil) { _ in
+        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereLostNotification, object: nil, queue: observerQueue) { _ in
             log("audio-media-services-lost")
         })
-        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil) { _ in
+        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: observerQueue) { _ in
             log("audio-media-services-reset")
         })
         for (name, event) in [(UIApplication.didEnterBackgroundNotification, "app-background"),
@@ -142,7 +148,7 @@ enum AppDiagnostics {
         var lines = ["Rock'N'Roll diagnostics",
             "Created: \(ISO8601DateFormatter().string(from: now)) (uptime \(Int(info.systemUptime)))",
             "App: \(appVersion)",
-            "System: \(UIDevice.current.systemName) \(UIDevice.current.systemVersion) on \(deviceModel)\(info.isiOSAppOnMac ? " (Mac)" : "")",
+            "System: \(UIDevice.current.systemName) \(UIDevice.current.systemVersion) on \(deviceModel)",
             "Language: \(Locale.preferredLanguages.first ?? "?")",
             "Microphone: \(access(.audio)); camera: \(access(.video))",
             "Audio route: \(json(audioRoute()))",

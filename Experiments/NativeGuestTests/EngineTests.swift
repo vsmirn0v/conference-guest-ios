@@ -36,7 +36,8 @@ import CoreMedia
         frozenFrameCadence()
         duplexHardwareEvidence()
         try liveProbeAcceptance()
-        print("PASS: engine versions, permissions, admin ordering, startup mute, leave; empty viewport retires camera/screen video while retaining audio; actual unmute gate control/mute/revoke/leave; receiver identity lifecycle and authoritative publication reassociation; active-demand-qualified subscriber ICE watchdog and bounded numeric ICE diagnostics")
+        try await lobbyProtocolAndEviction()
+        print("PASS: engine versions, permissions, admin ordering, startup mute, leave, lobby waiting room; empty viewport retires camera/screen video while retaining audio; actual unmute gate control/mute/revoke/leave; receiver identity lifecycle and authoritative publication reassociation; active-demand-qualified subscriber ICE watchdog and bounded numeric ICE diagnostics")
     }
 
     private static func iceCheckingRecovery() async throws {
@@ -163,7 +164,8 @@ import CoreMedia
         }
 
         for (target, state, expectedDelay) in [(GuestPeerTarget.publisher, LKRTCIceConnectionState.checking, UInt64(10_000_000_000)),
-                                               (.subscriber, .disconnected, 10_000_000_000), (.subscriber, .failed, 0)] {
+                                               (.subscriber, .disconnected, 10_000_000_000), (.subscriber, .failed, 10_000_000_000),
+                                               (.subscriber, .closed, 0)] {
             let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
             let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
             let peer = try await GuestPeer(target: target, factory: factory); defer { peer.close() }
@@ -182,7 +184,7 @@ import CoreMedia
             peer.peerConnection(peer.connection, didChange: state)
             await failed.wait()
             precondition(failures == 1 && delays == (expectedDelay == 0 ? [] : [expectedDelay]),
-                         "Publisher checking and established disconnection expire on schedule, and real ICE failure is immediate")
+                         "Publisher checking and established disconnection/checklist-failed expire on schedule, and ICE closed is immediate")
         }
     }
 
@@ -228,7 +230,13 @@ import CoreMedia
             peer.iceEventFinishedForTesting = { done(.success(())) }
             peer.peerConnection(peer.connection, didChange: LKRTCIceConnectionState.failed)
         }
-        precondition(failures == 0 && observed.count == 33, "An unused initial subscriber failure remains diagnostic and provisional")
+        precondition(failures == 0 && observed.count == 32, "An unused initial subscriber failure remains provisional without demand")
+        let failed = Signal()
+        peer.iceWaitForTesting = { _ in }
+        peer.onFailure = { _ in failures += 1; failed.fire() }
+        peer.setActiveIncomingMediaDemand(true)
+        await failed.wait()
+        precondition(failures == 1 && observed.count == 33, "Demanded subscriber failure logs bounded ICE diagnostics at deadline")
         let (event, fields) = observed.last!
         precondition(event == "ice-failure-diagnostics" && Set(fields.keys) == [
             "peerID", "target", "reason", "state", "generatedCandidates", "gatheringErrors", "gatheringErrorsLogged",
@@ -237,14 +245,14 @@ import CoreMedia
             "policy", "relayOnly", "remoteDescriptionCandidates"])
         precondition(fields["generatedCandidates"] as? Int == 3 && fields["gatheringErrors"] as? Int == 40 &&
                      fields["gatheringErrorsLogged"] as? Int == 32)
-        precondition(fields["reason"] as? String == "native-failed" && fields["state"] as? Int == LKRTCIceConnectionState.failed.rawValue)
+        precondition(fields["reason"] as? String == "deadline" && fields["state"] as? Int == LKRTCIceConnectionState.failed.rawValue)
         precondition(fields["queuedLocalCandidates"] as? Int == 3 && fields["pendingLocalCandidates"] as? Int == 3 &&
                      fields["sentLocalCandidates"] as? Int == 0 && fields["receivedRemoteCandidates"] as? Int == 1 &&
                      fields["bufferedRemoteCandidates"] as? Int == 1 && fields["pendingRemoteCandidates"] as? Int == 1 &&
                      fields["addedRemoteCandidates"] as? Int == 0)
         peer.close()
         try await gatheringError(); try await generated()
-        precondition(observed.count == 33 && failures == 0, "Late callbacks on retired peer add no diagnostics or failures")
+        precondition(observed.count == 33 && failures == 1, "Late callbacks on retired peer add no diagnostics or failures")
     }
 
     private static func failedChecklistPrivacy() {
@@ -993,5 +1001,54 @@ import CoreMedia
     }
     private static func adminMute(sid: String, muted: Bool) -> [String: Any] {
         media("rtc:track:muted", ["mute": ["sid": sid, "muted": muted]])
+    }
+
+    private static func lobbyProtocolAndEviction() async throws {
+        try await exercise("lobby-kick") { engine in
+            var observed: [GuestLobbyState] = []
+            engine.onLobbyChange = { observed.append($0) }
+            try await engine.processEventForTesting([
+                "event": "lobby-joined",
+                "payload": [
+                    "settings": ["title": "Waiting Room", "moderatorPresent": false],
+                    "participant": ["sessionId": "lobby-sess-1"],
+                ],
+            ])
+            precondition(engine.lobbyState == GuestLobbyState(inLobby: true, title: "Waiting Room", moderatorPresent: false))
+            precondition(engine.sessionID == "lobby-sess-1")
+            precondition(engine.meetingSnapshot.title == "Waiting Room")
+            precondition(observed.last == engine.lobbyState)
+            try await engine.processEventForTesting([
+                "event": "lobby-settings-updated",
+                "payload": ["settings": ["title": "Room Ready", "moderatorPresent": true]],
+            ])
+            precondition(engine.lobbyState == GuestLobbyState(inLobby: true, title: "Room Ready", moderatorPresent: true))
+            precondition(engine.meetingSnapshot.title == "Room Ready")
+            do {
+                try await engine.processEventForTesting(["event": "evicted", "payload": ["reason": "KICKED_FROM_LOBBY"]])
+                preconditionFailure("Expected admissionDenied when evicted from lobby")
+            } catch GuestEngineError.admissionDenied {}
+        }
+        try await exercise("lobby-admit") { engine in
+            try await engine.processEventForTesting([
+                "event": "lobby-joined",
+                "payload": ["settings": ["title": "Admit Room", "moderatorPresent": true]],
+            ])
+            precondition(engine.lobbyState.inLobby)
+            try await engine.processEventForTesting([
+                "event": "joined",
+                "payload": [
+                    "roomId": "room-1",
+                    "participant": ["participantId": "p-1", "sessionId": "sess-1", "permissions": [:]],
+                    "participantGroup": ["groupId": "grp-1", "name": "Standup", "participants": []],
+                ],
+            ])
+            precondition(!engine.lobbyState.inLobby)
+            precondition(engine.meetingSnapshot.title == "Standup")
+            do {
+                try await engine.processEventForTesting(["event": "evicted", "payload": [:]])
+                preconditionFailure("Expected evicted after room admission")
+            } catch GuestEngineError.evicted {}
+        }
     }
 }

@@ -1,5 +1,6 @@
 import ConferenceCore
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor final class AttentionMomentsTests: XCTestCase {

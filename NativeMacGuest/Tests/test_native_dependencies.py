@@ -24,7 +24,7 @@ class NativeDependenciesTests(unittest.TestCase):
         self.vendor = self.repository / "Dependencies/native-macos"
         self.vendor.mkdir(parents=True)
         for path in (ROOT / "Dependencies/native-macos").iterdir():
-            if path.name == "sdk.lock.json" or path.name.endswith(".tar.gz"):
+            if path.name in ("sdk.lock.json", "sdk.unified.lock.json") or path.name.endswith(".tar.gz"):
                 shutil.copy2(path, self.vendor / path.name)
 
     def install(self):
@@ -35,10 +35,18 @@ class NativeDependenciesTests(unittest.TestCase):
             root = self.install()
         lock = dependencies.sdk_lock(self.repository)
         dependencies.verify_framework(root, lock)
-        framework = root / "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework"
-        self.assertTrue((framework / "Headers/RTCAudioDeviceModule.h").is_file())
-        self.assertTrue((framework / "Modules/module.modulemap").is_file())
-        self.assertEqual(dependencies.sha256(framework / "LiveKitWebRTC"), lock["frameworkBinarySHA256"])
+        mac_framework = root / "LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework"
+        ios_device_framework = root / "LiveKitWebRTC.xcframework/ios-arm64/LiveKitWebRTC.framework"
+        ios_sim_framework = root / "LiveKitWebRTC.xcframework/ios-arm64-simulator/LiveKitWebRTC.framework"
+        self.assertTrue((mac_framework / "Headers/RTCAudioDeviceModule.h").is_file())
+        self.assertTrue((mac_framework / "Modules/module.modulemap").is_file())
+        self.assertTrue((ios_device_framework / "Headers/RTCAudioSession.h").is_file())
+        self.assertTrue((ios_device_framework / "Modules/module.modulemap").is_file())
+        self.assertTrue((ios_sim_framework / "Headers/RTCAudioSession.h").is_file())
+        self.assertTrue((ios_sim_framework / "Modules/module.modulemap").is_file())
+        self.assertEqual(dependencies.sha256(mac_framework / "LiveKitWebRTC"), lock["frameworkBinarySHA256"])
+        self.assertEqual(dependencies.sha256(ios_device_framework / "LiveKitWebRTC"), lock["iosDeviceBinarySHA256"])
+        self.assertEqual(dependencies.sha256(ios_sim_framework / "LiveKitWebRTC"), lock["iosSimulatorBinarySHA256"])
         self.assertTrue((root / "licenses/THIRD_PARTY_NOTICES.md").is_file())
         inode = root.stat().st_ino
         self.assertEqual(self.install().stat().st_ino, inode)

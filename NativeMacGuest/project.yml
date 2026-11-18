@@ -7,10 +7,12 @@ options:
 packages:
   ConferenceCore:
     path: ../ConferenceCore
+  MeetingEngine:
+    path: ../MeetingEngine
   LiveKit:
-    path: ../.build/native-desktop-dependencies/client-sdk-swift
+    path: ../.build/unified-sdk-dependencies/client-sdk-swift
   NativeWebRTC:
-    path: ../.build/native-desktop-dependencies/webrtc-xcframework
+    path: ../.build/unified-sdk-dependencies/webrtc-xcframework
   SherpaOnnxKit:
     path: ../Dependencies/SherpaOnnxKit
   MLXAudioVoice:
@@ -34,14 +36,8 @@ targets:
         buildPhase: resources
       - path: ../Dependencies/MLXAudioVoice/LICENSE
         buildPhase: resources
-      - path: ../Experiments/NativeGuest
-        excludes: [Main.swift, GuestCompanionPeer.swift, '*.py', '*.md', '*.sh', '*.patch', __pycache__]
       - path: ../Shared/NativeGuestCompanionProtocol.swift
       - path: ../Shared/SharedTextSnapshot.swift
-      - path: ../RockNRoll/NativeVideoPixelBuffer.swift
-      - path: ../Shared/GuestAudioOwnerLease.swift
-      - path: ../Shared/GuestAudioProfile.swift
-      - path: ../Shared/Localization.swift
       - path: ../Shared/DiagnosticsStore.swift
       - path: ../RockNRoll/RoomHistoryStore.swift
       - path: ../RockNRoll/RoomSyncCoordinator.swift
@@ -57,32 +53,7 @@ targets:
       - path: ../RockNRoll/MeetingContinuationCloud.swift
       - path: ../RockNRoll/MeetingContinuationCoordinator.swift
       - path: ../RockNRoll/MeetingSetupCoordinator.swift
-      - path: ../RockNRoll/VendorIntegration/VendorEndpointResolver.swift
-      - path: ../RockNRoll/VendorIntegration/AdditionalRootTrust.swift
-      - path: ../RockNRoll/VendorIntegration/GuestSiteLinkAdapter.swift
-      - path: ../RockNRoll/CameraReactionObserver.swift
-      - path: ../RockNRoll/ChatStore.swift
-      - path: ../RockNRoll/ReactionHistoryStore.swift
-      - path: ../RockNRoll/MeetingReactionsModel.swift
-      - path: ../RockNRoll/CatchUpStore.swift
       - path: ../RockNRoll/HomeMeetingCard.swift
-      - path: ../RockNRoll/MacAudioDevices.swift
-      - path: ../RockNRoll/PresenterCanvasEdit.swift
-      - path: ../RockNRoll/PresenterCompositor.swift
-      - path: ../RockNRoll/H264InputColorSignalling.swift
-      - path: ../RockNRoll/VendorIntegration/H264ColorSignalling.swift
-      - path: ../RockNRoll/VideoSubscriptionCoordinator.swift
-      - path: ../RockNRoll/ConferenceDisplayMode.swift
-      - path: ../RockNRoll/JamService.swift
-      - path: ../RockNRoll/MacScreenCaptureBridge.m
-      - path: ../RockNRoll/MacScreenCaptureBridge.h
-      - path: ../RockNRoll/Telemost/TelemostBootstrap.swift
-      - path: ../RockNRoll/Telemost/TelemostTransport.swift
-      - path: ../RockNRoll/Telemost/TelemostChat.swift
-      - path: ../RockNRoll/Telemost/TelemostChatWire.swift
-      - path: ../RockNRoll/TrueConf/TrueConfBootstrap.swift
-      - path: ../RockNRoll/TrueConf/TrueConfTransport.swift
-      - path: ../RockNRoll/TrueConf/TrueConfRoster.swift
       - path: ../RockNRoll/en.lproj
         type: folder
         buildPhase: resources
@@ -91,6 +62,7 @@ targets:
         buildPhase: resources
     dependencies:
       - package: ConferenceCore
+      - package: MeetingEngine
       - package: LiveKit
       - package: NativeWebRTC
         product: LiveKitWebRTC
@@ -158,7 +130,8 @@ targets:
       - path: Attention/ClonedVoiceWire.swift
       - path: Attention/VoiceStorage.swift
       - path: Attention/ProcessMemoryProbe.swift
-      - path: ../Experiments/NativeGuest/ProbeLog.swift
+    dependencies:
+      - package: ConferenceCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.nativeguest.voice-worker
@@ -190,8 +163,8 @@ targets:
       - path: Attention/ClonedVoiceWire.swift
       - path: Attention/VoiceStorage.swift
       - path: Attention/ProcessMemoryProbe.swift
-      - path: ../Experiments/NativeGuest/ProbeLog.swift
     dependencies:
+      - package: ConferenceCore
       - package: MLXAudioVoice
         product: MLXAudioTTS
       - package: MLXAudioVoice
@@ -217,6 +190,8 @@ targets:
     dependencies:
       - target: RockNRollNativeGuest
       - package: ConferenceCore
+      - package: MeetingEngine
+      - package: LiveKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.nativeguest.tests

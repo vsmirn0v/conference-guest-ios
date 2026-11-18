@@ -153,8 +153,8 @@ final class StudioWorkflowTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         let importer = PresenterImageImport(model: model)
         importer.chooseImage()
-        XCTAssertEqual(importer.showFile, ProcessInfo.processInfo.isiOSAppOnMac)
-        XCTAssertEqual(importer.showPhoto, !ProcessInfo.processInfo.isiOSAppOnMac)
+        XCTAssertFalse(importer.showFile)
+        XCTAssertTrue(importer.showPhoto)
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         let image = UIGraphicsImageRenderer(size: CGSize(width: 50, height: 100), format: format).image { context in
             UIColor.orange.setFill(); context.fill(CGRect(x: 0, y: 0, width: 50, height: 100))

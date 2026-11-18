@@ -1,6 +1,7 @@
 import ConferenceCore
 import SQLite3
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 final class PersonalTasksTests: XCTestCase {

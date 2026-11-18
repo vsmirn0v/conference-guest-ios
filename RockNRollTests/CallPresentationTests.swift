@@ -9,44 +9,6 @@ import XCTest
 
 @MainActor
 final class CallPresentationTests: XCTestCase {
-    func testLiveGuestPortraitControlsBeforeFirstRotation() async throws {
-        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CONTROLS_INVITE"] else {
-            throw XCTSkip("Opt-in SDK hierarchy check")
-        }
-        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-            .first?.windows.first { $0.isKeyWindow })
-        let original = window.rootViewController, host = UIViewController()
-        window.rootViewController = host; window.makeKeyAndVisible()
-        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
-        var active = false, ended = false
-        engine.onEvent = { event in
-            if event == .active { active = true }
-            if [.left, .failed, .canceled, .evicted].contains(event) { ended = true }
-        }
-        defer { engine.leave(); window.rootViewController = original }
-        let target = try JoinTarget.parse(invitation)
-        try engine.configure(container: host, networkURL: await VendorEndpointResolver.make().resolve(for: target),
-                             displayName: "Portrait controls QA")
-        try engine.join(target: target, displayName: "Portrait controls QA")
-        let deadline = Date().addingTimeInterval(45)
-        while !active && !ended && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
-        XCTAssertTrue(active); XCTAssertFalse(ended)
-        guard active, !ended else { return }
-        try await Task.sleep(for: .seconds(2))
-        let buttons = visibleMeetingButtons(in: window)
-        XCTAssertEqual(buttons.count, 2)
-        for button in buttons {
-            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
-            let hit = window.hitTest(point, with: nil)
-            var parent: UIView? = button
-            while let view = parent {
-                print("CONTROL_ANCESTOR \(button.accessibilityLabel ?? "") type=\(type(of: view)) frame=\(view.frame) bounds=\(view.bounds) interactive=\(view.isUserInteractionEnabled) hidden=\(view.isHidden) pointInside=\(view.point(inside: view.convert(point, from: window), with: nil))")
-                parent = view.superview
-            }
-            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
-                "Initial portrait control must receive touches: \(button.accessibilityLabel ?? "") hit=\(String(describing: hit))")
-        }
-    }
     func testImmersiveStageUsesEveryPixelWhilePrivacyHeaderStaysSafe() {
         let portrait = CGRect(x: 0, y: 0, width: 440, height: 956)
         let landscape = CGRect(x: 0, y: 0, width: 956, height: 440)
@@ -198,7 +160,7 @@ final class CallPresentationTests: XCTestCase {
         let call = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
         window.rootViewController = call; window.makeKeyAndVisible()
         defer { window.isHidden = true }
-        let factory = try NativeRTCPeer.makeFactory()
+        let factory = LKRTCPeerConnectionFactory()
         let first = factory.videoTrack(with: factory.videoSource(), trackId: "first")
         let replacement = factory.videoTrack(with: factory.videoSource(), trackId: "replacement")
         func render(_ track: LKRTCVideoTrack?) {
@@ -243,7 +205,7 @@ final class CallPresentationTests: XCTestCase {
     }
 
     func testNativeScreenOnlyDiscardsCameraSelectionAndShowsAvailableShare() throws {
-        let factory = try NativeRTCPeer.makeFactory()
+        let factory = LKRTCPeerConnectionFactory()
         let source = factory.videoSource()
         let camera = factory.videoTrack(with: source, trackId: "camera")
         let share = factory.videoTrack(with: source, trackId: "share")
@@ -268,117 +230,6 @@ final class CallPresentationTests: XCTestCase {
         strip.onSelect?("presenter.screen")
         call.setDisplayMode(.screenShares)
         XCTAssertTrue(descendants(call.view).contains { $0.accessibilityIdentifier == "share-stream" })
-    }
-
-    func testGuestBrowsingEnablesFollowSpeakerAndRestoresAutomaticSelection() async throws {
-        let (window, controls, streams, layout) = try guestLayout()
-        defer { window.isHidden = true; streams.reset() }
-        controls.updateParticipantRoster(guestRoster, speaking: nil)
-        streams.updateParticipants(guestRoster)
-        await settleUI()
-        layout.layout.selectedSegmentIndex = 1; layout.layout.sendActions(for: .valueChanged)
-        streams.browse(1)
-        await settleUI()
-        XCTAssertTrue(layout.automatic.isEnabled)
-        XCTAssertEqual(layout.automatic.configuration?.title, L("Follow speaker"))
-        XCTAssertEqual(focusedName(window), "Boris")
-        layout.automatic.sendActions(for: .touchUpInside)
-        await settleUI()
-        XCTAssertFalse(layout.automatic.isEnabled)
-        XCTAssertEqual(focusedName(window), "Anna")
-    }
-
-    func testGuestViewShareEntersFocusFromExplicitGalleryAndLatePinCannotUndoGallery() async throws {
-        let (window, controls, streams, layout) = try guestLayout()
-        defer { window.isHidden = true; streams.reset() }
-        let roster = guestRoster.map {
-            GuestStreamViews.Participant(id: $0.id, name: $0.name, isLocal: $0.isLocal,
-                microphoneOn: $0.microphoneOn, cameraOn: $0.cameraOn, sharing: $0.id == "b")
-        }
-        controls.updateParticipantRoster(roster, speaking: nil)
-        streams.updateParticipants(roster)
-        await settleUI()
-        let strip = try XCTUnwrap(descendants(window).compactMap { $0 as? MeetingParticipantStrip }.first)
-        strip.onSelect?("a.camera")
-        await settleUI()
-        layout.layout.selectedSegmentIndex = 0; layout.layout.sendActions(for: .valueChanged)
-        controls.setShareOffer(name: "Boris")
-        controls.onViewShare = { streams.setPin(.init(participant: "b", isShare: true)) }
-        let viewShare = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
-            $0.accessibilityLabel == L("View %@ screen share", "Boris")
-        })
-        var ancestor: UIView? = viewShare
-        while let view = ancestor { XCTAssertFalse(view.isHidden, "The share shortcut must be reachable in Gallery"); ancestor = view.superview }
-        window.layoutIfNeeded()
-        let point = viewShare.convert(CGPoint(x: viewShare.bounds.midX, y: viewShare.bounds.midY), to: window)
-        var hit = window.hitTest(point, with: nil)
-        while hit != nil && hit !== viewShare { hit = hit?.superview }
-        XCTAssertTrue(hit === viewShare, "Gallery cards must not cover the share shortcut")
-        viewShare.sendActions(for: .touchUpInside)
-        XCTAssertEqual(layout.layout.selectedSegmentIndex, 1, "View share must enter Focus before async publication")
-        await settleUI()
-        XCTAssertEqual(streams.pinnedTarget, .init(participant: "b", isShare: true))
-        XCTAssertEqual(layout.layout.selectedSegmentIndex, 1)
-
-        strip.onSelect?("a.camera")
-        layout.layout.selectedSegmentIndex = 0; layout.layout.sendActions(for: .valueChanged)
-        await settleUI()
-        XCTAssertEqual(layout.layout.selectedSegmentIndex, 0, "A late pin result must preserve the newer Gallery choice")
-    }
-
-    func testGuestGalleryKeepsLayoutAndPaginationWhileShareRemainsSelected() async throws {
-        let (window, controls, streams, layout) = try guestLayout()
-        defer { window.isHidden = true; streams.reset() }
-        let roster = (0..<20).map {
-            GuestStreamViews.Participant(id: "person-\($0)", name: "Participant \($0)", isLocal: false,
-                microphoneOn: false, cameraOn: false, sharing: $0 == 0)
-        }
-        controls.updateParticipantRoster(roster, speaking: nil)
-        streams.updateParticipants(roster)
-        await settleUI()
-        window.layoutIfNeeded()
-        let share = GuestStreamViews.PinTarget(participant: "person-0", isShare: true)
-        let gallery = try XCTUnwrap(descendants(window).compactMap { $0 as? GuestGalleryView }.first)
-        let picker = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
-            $0.accessibilityIdentifier == "call.view"
-        })
-        let source = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
-            $0.accessibilityIdentifier == "Shared stream selector"
-        })
-        XCTAssertEqual(streams.selectedTarget, share)
-        XCTAssertTrue(layout.isHidden)
-        XCTAssertTrue(source.isHidden, "One share does not need a duplicate source selector")
-
-        layout.layout.selectedSegmentIndex = 0; layout.layout.sendActions(for: .valueChanged)
-        window.layoutIfNeeded(); gallery.layoutIfNeeded(); layout.layoutIfNeeded()
-        XCTAssertFalse(gallery.isHidden)
-        let header = try XCTUnwrap(descendants(window).compactMap { $0 as? CompactCallHeader }.first)
-        XCTAssertEqual(header.focus.accessibilityLabel, L("Hide controls"), "Gallery must never scale its hidden stage")
-        XCTAssertFalse(layout.isHidden, "An available share must not hide explicit Gallery controls")
-        XCTAssertFalse(picker.isHidden)
-        XCTAssertFalse(layout.nextPage.isHidden)
-        XCTAssertTrue(layout.nextPage.isEnabled)
-        XCTAssertTrue(source.isHidden, "Gallery must show the layout picker instead of the share source selector")
-        let more = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "call.more" })
-        XCTAssertEqual(layout.convert(layout.bounds, to: window).midY, picker.convert(picker.bounds, to: window).midY, accuracy: 0.5)
-        XCTAssertLessThanOrEqual(layout.convert(layout.bounds, to: window).maxX + 8,
-            picker.convert(picker.bounds, to: window).minX)
-        for button in [picker, more, layout.previous, layout.nextPage] where button.isEnabled {
-            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
-            var hit = window.hitTest(point, with: nil)
-            while hit != nil && hit !== button { hit = hit?.superview }
-            XCTAssertTrue(hit === button, "Gallery picker and pagination must be reachable")
-        }
-        let page = gallery.page
-        layout.nextPage.sendActions(for: .touchUpInside)
-        XCTAssertEqual(gallery.page, page + 1)
-
-        layout.layout.selectedSegmentIndex = 1; layout.layout.sendActions(for: .valueChanged)
-        window.layoutIfNeeded()
-        XCTAssertTrue(gallery.isHidden)
-        XCTAssertTrue(layout.isHidden, "Share Focus uses one source selector")
-        XCTAssertTrue(source.isHidden, "One share does not need a duplicate source selector")
-        XCTAssertEqual(streams.selectedTarget, share)
     }
 
     func testNativeGalleryContextRowKeepsPagingAndToolsHittableAcrossResizeAndRosterChanges() throws {
@@ -424,124 +275,10 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertEqual(access.frame, anchor)
     }
 
-    private var guestRoster: [GuestStreamViews.Participant] {
-        ["Anna", "Boris", "Clara"].enumerated().map {
-            .init(id: String(UnicodeScalar(97 + $0.offset)!), name: $0.element, isLocal: false,
-                  microphoneOn: false, cameraOn: false, sharing: false)
-        }
-    }
-
-    func testGuestControlsStayHittableAfterSDKHostFinishesPortraitLayout() async throws {
-        let (window, controls, streams, _) = try guestLayout()
-        defer { window.isHidden = true; streams.reset() }
-        let root = try XCTUnwrap(window.rootViewController?.view)
-        let sdkHost = UIView(frame: root.bounds)
-        root.addSubview(sdkHost)
-        controls.removeFromSuperview()
-        controls.frame = .zero
-        sdkHost.addSubview(controls)
-        window.layoutIfNeeded()
-        // SDK overlay hosts can first fill the window, then settle inside its
-        // safe area without changing the zero-sized custom controls view.
-        sdkHost.frame = root.bounds.inset(by: UIEdgeInsets(top: 62, left: 0, bottom: 34, right: 0))
-        sdkHost.clipsToBounds = true
-        window.layoutIfNeeded()
-        await settleUI()
-        let buttons = visibleMeetingButtons(in: window)
-        XCTAssertEqual(buttons.count, 2)
-        for button in buttons {
-            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
-            let hit = window.hitTest(point, with: nil)
-            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
-                "\(button.accessibilityLabel ?? "control") must receive touches before the first rotation; hit=\(String(describing: hit))")
-        }
-    }
-
-    func testOwnedGuestSurfaceEscapesSwiftUIHitTestingAndUnmountsWithOverlay() async throws {
-        let (window, controls, streams, _) = try guestLayout(ownedSurface: true)
-        defer { window.isHidden = true; streams.reset() }
-        let root = try XCTUnwrap(window.rootViewController)
-        controls.removeFromSuperview()
-        let sdk = UIHostingController(rootView: GuestOverlayForTesting(controls: controls))
-        root.addChild(sdk); sdk.view.frame = root.view.bounds
-        root.view.addSubview(sdk.view); sdk.didMove(toParent: root)
-        window.layoutIfNeeded(); await settleUI()
-        let surface = try XCTUnwrap(descendants(window).compactMap { $0 as? CallChromeSurface }.first)
-        XCTAssertTrue(surface.superview === root.view, "The SDK hosting view must not own our interactive surface")
-        let buttons = visibleMeetingButtons(in: window)
-        XCTAssertEqual(buttons.count, 2)
-        for button in buttons {
-            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
-            let hit = window.hitTest(point, with: nil)
-            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true)
-        }
-        sdk.willMove(toParent: nil); sdk.view.removeFromSuperview(); sdk.removeFromParent()
-        XCTAssertNil(surface.superview, "A detached SDK overlay must not leave controls blocking the home page")
-    }
-
-    private struct GuestOverlayForTesting: UIViewRepresentable {
-        let controls: CallControls
-        func makeUIView(context: Context) -> CallControls { controls }
-        func updateUIView(_ uiView: CallControls, context: Context) {}
-    }
-
-    func testGuestMultipleShareSelectorDoesNotCoverDirectViewOrMore() async throws {
-        let (window, controls, streams, _) = try guestLayout()
-        defer { window.isHidden = true; streams.reset() }
-        let roster = (0..<2).map { GuestStreamViews.Participant(id: "share-\($0)", name: "Presenter \($0)",
-            isLocal: false, microphoneOn: false, cameraOn: false, sharing: true) }
-        controls.updateParticipantRoster(roster, speaking: nil); streams.updateParticipants(roster)
-        await settleUI(); window.layoutIfNeeded()
-        let selector = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
-            $0.accessibilityIdentifier == "Shared stream selector"
-        })
-        let capsule = try XCTUnwrap(descendants(window).compactMap { $0 as? MeetingAccessControls }.first)
-        XCTAssertFalse(selector.isHidden)
-        let sourceRect = selector.convert(selector.bounds, to: window)
-        XCTAssertFalse(sourceRect.intersects(capsule.convert(capsule.bounds, to: window)))
-        for button in [selector, capsule.viewButton, capsule.moreButton] {
-            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
-            let hit = window.hitTest(point, with: nil)
-            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
-                "Multiple-share controls must not cover \(button.accessibilityIdentifier ?? "button")")
-        }
-    }
-
-    private func guestLayout(ownedSurface: Bool = false) throws -> (UIWindow, CallControls, GuestStreamViews, MeetingLayoutControls) {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-        let window = UIWindow(windowScene: scene), host = UIViewController()
-        window.rootViewController = host; window.isHidden = false
-        let controls = CallControls(localPreview: LocalSharePreview(), state: nil, coordinator: nil,
-            router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: .all,
-            invitationURL: nil, roomIdentifier: "fixture", onDisplayMode: { _ in }, onFloat: {},
-            onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
-            onMicrophoneState: { _ in }, onCameraState: { _ in }, surfaceContainer: ownedSurface ? host.view : nil)
-        controls.frame = host.view.bounds; host.view.addSubview(controls)
-        let streams = GuestStreamViews()
-        controls.onPinParticipant = { streams.setPin($0) }
-        controls.onAutomaticView = { streams.useAutomaticView() }
-        streams.onStagePresentation = { [weak controls, weak streams] presentation in
-            controls?.setStagePresentation(presentation, pinnedParticipant: streams?.pinnedTarget)
-        }
-        controls.bindStreams(streams)
-        let layout = try XCTUnwrap(descendants(window).compactMap { $0 as? MeetingLayoutControls }.first)
-        return (window, controls, streams, layout)
-    }
     private func settleUI() async {
         await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
     }
     private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-    private func visibleMeetingButtons(in view: UIView) -> [UIButton] {
-        descendants(view).compactMap { $0 as? UIButton }.filter { button in
-            guard button.accessibilityLabel?.hasPrefix(L("Musicians")) == true || button.accessibilityLabel == L("Leave") else { return false }
-            var ancestor: UIView? = button
-            while let current = ancestor {
-                if current.isHidden || current.alpha < 0.01 { return false }
-                ancestor = current.superview
-            }
-            return true
-        }
-    }
     private func focusedName(_ view: UIView) -> String? {
         descendants(view).compactMap { $0 as? UILabel }.first { $0.accessibilityIdentifier == "Participant name" }?.text
     }
@@ -633,12 +370,7 @@ final class CallPresentationTests: XCTestCase {
             button.setNeedsLayout(); button.layoutIfNeeded()
             let caption = try XCTUnwrap(button.subviews.compactMap { $0 as? UILabel }.first { !$0.isHidden && $0.text == title })
             XCTAssertEqual(caption.numberOfLines, 1)
-            if ProcessInfo.processInfo.isiOSAppOnMac {
-                // Designed for iPad on Mac can keep UIFontMetrics at its base size.
-                XCTAssertGreaterThanOrEqual(caption.font.pointSize, 12)
-            } else {
-                XCTAssertGreaterThan(caption.font.pointSize, 12)
-            }
+            XCTAssertGreaterThan(caption.font.pointSize, 12)
             XCTAssertLessThanOrEqual(caption.font.pointSize, 18)
             XCTAssertLessThanOrEqual(caption.bounds.height, 24)
             XCTAssertTrue(button.bounds.contains(caption.frame))
@@ -668,35 +400,25 @@ final class CallPresentationTests: XCTestCase {
     }
     func testLargestTextSourceSymbolsAndHeaderStayInsideCompactRows() throws {
         guard #available(iOS 17.0, *) else { throw XCTSkip("Per-view text trait overrides require iOS 17") }
-        let (window, controls, _, _) = try guestLayout()
-        defer { window.isHidden = true }
-        window.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
-        controls.setStagePresentation(.init(target: .init(participant: "presenter", isShare: true),
-            name: "Shared source with full identity", microphoneOn: true, watermark: nil,
-            active: true, automatic: true, count: 2, browsing: false))
-        window.layoutIfNeeded(); controls.layoutIfNeeded()
-        let guest = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "Shared stream selector" })
-        let scene = try XCTUnwrap(window.windowScene)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let nativeWindow = UIWindow(windowScene: scene)
         nativeWindow.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
         let call = RockCallViewController(title: "Full meeting identity", catchUp: CatchUpStore(), chat: ChatStore())
         nativeWindow.rootViewController = call; nativeWindow.isHidden = false
         defer { nativeWindow.isHidden = true }
-        let factory = try NativeRTCPeer.makeFactory()
+        let factory = LKRTCPeerConnectionFactory()
         let track = factory.videoTrack(with: factory.videoSource(), trackId: "share")
         call.render(snapshot: .init(participants: [.init(id: "presenter", name: "Shared source with full identity", isLocal: false,
             microphoneOn: true, cameraOn: false, screenShareOn: true, isSpeaking: false,
             videoTracks: [.init(id: "share", source: .screenShareVideo, track: .native(track))])]))
         nativeWindow.layoutIfNeeded(); call.view.layoutIfNeeded()
         let native = try XCTUnwrap(descendants(call.view).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "Meeting source selector" })
-        for selector in [guest, native] {
-            selector.layoutIfNeeded()
-            let image = try XCTUnwrap(selector.imageView)
-            XCTAssertEqual(selector.bounds.height, 44)
-            XCTAssertLessThanOrEqual(image.bounds.width, 32)
-            XCTAssertLessThanOrEqual(image.bounds.height, 32)
-            XCTAssertTrue(selector.bounds.contains(image.frame))
-        }
+        native.layoutIfNeeded()
+        let image = try XCTUnwrap(native.imageView)
+        XCTAssertEqual(native.bounds.height, 44)
+        XCTAssertLessThanOrEqual(image.bounds.width, 32)
+        XCTAssertLessThanOrEqual(image.bounds.height, 32)
+        XCTAssertTrue(native.bounds.contains(image.frame))
         let header = CompactCallHeader(frame: CGRect(x: 0, y: 0, width: 359, height: 44))
         header.update(name: "Complete source identity", navigation: false, browsing: false, pinned: false,
             pinLabel: nil, participantsLabel: "Musicians", chatValue: nil, status: "Full connection status",
@@ -915,32 +637,6 @@ final class CallPresentationTests: XCTestCase {
             formatDescription: try XCTUnwrap(format), sampleTiming: &timing, sampleBufferOut: &sample), noErr)
         return try XCTUnwrap(sample)
     }
-    func testGuestShareFitAndZoomSurviveMetadataAndChromeWithoutDuplicateSingleSource() throws {
-        let (window, controls, _, _) = try guestLayout(ownedSurface: true)
-        defer { window.isHidden = true }
-        func update(_ name: String, microphone: Bool) {
-            controls.setStagePresentation(.init(target: .init(participant: "presenter", isShare: true), name: name,
-                microphoneOn: microphone, watermark: nil, active: true, automatic: true, count: 2, browsing: false))
-            window.layoutIfNeeded(); controls.layoutIfNeeded()
-        }
-        update("First source", microphone: false)
-        let viewport = try XCTUnwrap(descendants(window).compactMap { $0 as? StreamViewport }.first)
-        viewport.layoutIfNeeded()
-        XCTAssertEqual(viewport.fittedContentRect, viewport.bounds)
-        let renderer = viewport.rendererView
-        let scroll = try XCTUnwrap(viewport.subviews.compactMap { $0 as? UIScrollView }.first)
-        scroll.setZoomScale(2.5, animated: false); scroll.contentOffset = CGPoint(x: 100, y: 120)
-        let center = scroll.contentOffset
-        let source = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "Shared stream selector" })
-        XCTAssertTrue(source.isHidden)
-        for n in 0..<10 {
-            update("Source \(n)", microphone: n.isMultiple(of: 2))
-            viewport.controlsHidden.toggle(); viewport.layoutIfNeeded()
-            XCTAssertTrue(viewport.rendererView === renderer)
-            XCTAssertEqual(viewport.zoomScale, 2.5)
-            XCTAssertEqual(scroll.contentOffset, center)
-        }
-    }
     func testPrivacySlotAndCountBadgesKeepOpticalPaddingAcrossSpeakerStates() throws {
         let header = CompactCallHeader(frame: CGRect(x: 0, y: 0, width: 600, height: 44))
         var iconFrame: CGRect?
@@ -962,25 +658,13 @@ final class CallPresentationTests: XCTestCase {
         }
     }
 
-    func testMultipleSharesRetainSourceSelector() async throws {
-        let (window, controls, streams, _) = try guestLayout()
-        defer { window.isHidden = true; streams.reset() }
-        let roster = guestRoster.map { GuestStreamViews.Participant(id: $0.id, name: $0.name, isLocal: false,
-            microphoneOn: false, cameraOn: false, sharing: $0.id != "c") }
-        controls.updateParticipantRoster(roster, speaking: nil); streams.updateParticipants(roster)
-        await settleUI(); window.layoutIfNeeded(); controls.layoutIfNeeded()
-        let selector = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "Shared stream selector" })
-        XCTAssertFalse(selector.isHidden)
-        XCTAssertGreaterThanOrEqual(selector.menu?.children.count ?? 0, 2)
-    }
-
     func testNativeGalleryAccessibilityZoomTargetsTheSelectedShare() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
         let call = RockCallViewController(title: "Two shares", catchUp: CatchUpStore(), chat: ChatStore())
         window.rootViewController = call; window.isHidden = false
         defer { window.isHidden = true }
-        let factory = try NativeRTCPeer.makeFactory()
+        let factory = LKRTCPeerConnectionFactory()
         let participants = (0..<2).map { n in CallParticipant(id: "person-\(n)", name: "Person \(n)", isLocal: false,
             microphoneOn: false, cameraOn: false, screenShareOn: true, isSpeaking: false,
             videoTracks: [.init(id: "share-\(n)", source: .screenShareVideo,

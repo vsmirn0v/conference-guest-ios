@@ -3,6 +3,7 @@ import ConferenceCore
 import Foundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Minimal stand-in engine for session-scoped MCP tests (mirrors AttentionTests' fixture).

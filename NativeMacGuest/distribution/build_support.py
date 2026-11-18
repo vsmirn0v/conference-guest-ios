@@ -146,8 +146,8 @@ def configure_distribution(root, spec_dir, spec, distribution):
         raise ValueError('Expected one application LiveKitWebRTC dependency')
     spec = spec.replace(anchor, anchor + f'      - framework: {bundle}\n'
                         '        embed: true\n        codeSign: true\n')
-    resource_anchors = ['      - path: ../Experiments/NativeGuest\n',
-                        f'      - path: {root / "Experiments/NativeGuest"}\n']
+    resource_anchors = ['      - path: ThirdPartyNotices\n',
+                        f'      - path: {root / "NativeMacGuest/ThirdPartyNotices"}\n']
     if sum(spec.count(anchor) for anchor in resource_anchors) != 1:
         raise ValueError('Expected one NativeGuest source resource anchor')
     resource_anchor = next(anchor for anchor in resource_anchors if anchor in spec)

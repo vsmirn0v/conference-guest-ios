@@ -25,7 +25,7 @@ final class NativeFocusCompanionTests: XCTestCase {
     func testShareSurvivesTrackGapSpeakerChangesSecondShareAndPublicationReplacement() throws {
         let (window, call) = try host()
         defer { window.isHidden = true }
-        let factory = try NativeRTCPeer.makeFactory(), source = factory.videoSource()
+        let factory = LKRTCPeerConnectionFactory(), source = factory.videoSource()
         let share = factory.videoTrack(with: source, trackId: "share-one")
         let camera = factory.videoTrack(with: source, trackId: "camera-one")
         let second = factory.videoTrack(with: source, trackId: "share-two")
@@ -54,7 +54,7 @@ final class NativeFocusCompanionTests: XCTestCase {
     func testSignaledShareWithoutRendererNeverFallsBackToCamera() throws {
         let (window, call) = try host()
         defer { window.isHidden = true }
-        let factory = try NativeRTCPeer.makeFactory()
+        let factory = LKRTCPeerConnectionFactory()
         let camera = factory.videoTrack(with: factory.videoSource(), trackId: "camera")
         call.render(snapshot: .init(participants: [participant("presenter", share: nil, camera: camera)]))
         call.view.layoutIfNeeded()
@@ -72,7 +72,7 @@ final class NativeFocusCompanionTests: XCTestCase {
     func testExplicitSecondShareKeepsPresenterAndPiPAffinityDuringCameraFocus() throws {
         let (window, call) = try host()
         defer { window.isHidden = true }
-        let factory = try NativeRTCPeer.makeFactory(), source = factory.videoSource()
+        let factory = LKRTCPeerConnectionFactory(), source = factory.videoSource()
         let aShare = factory.videoTrack(with: source, trackId: "a-share")
         let bShare = factory.videoTrack(with: source, trackId: "b-share")
         let bCamera = factory.videoTrack(with: source, trackId: "b-camera")
@@ -102,7 +102,7 @@ final class NativeFocusCompanionTests: XCTestCase {
     func testCompanionUsesSharerCameraAndExplicitFocusKeepsPiPShareAndZoom() throws {
         let (window, call) = try host()
         defer { window.isHidden = true }
-        let factory = try NativeRTCPeer.makeFactory(), source = factory.videoSource()
+        let factory = LKRTCPeerConnectionFactory(), source = factory.videoSource()
         let share = factory.videoTrack(with: source, trackId: "share")
         let camera = factory.videoTrack(with: source, trackId: "presenter-camera")
         let speakerCamera = factory.videoTrack(with: source, trackId: "speaker-camera")
@@ -157,7 +157,7 @@ final class NativeFocusCompanionTests: XCTestCase {
     func testFocusedCameraStopsInlineRenderingWhenWindowOrApplicationHidesWhilePiPShareRemains() throws {
         let (window, call) = try host()
         defer { window.isHidden = true }
-        let factory = try NativeRTCPeer.makeFactory(), source = factory.videoSource()
+        let factory = LKRTCPeerConnectionFactory(), source = factory.videoSource()
         let share = factory.videoTrack(with: source, trackId: "share")
         let camera = factory.videoTrack(with: source, trackId: "presenter-camera")
         call.render(snapshot: .init(participants: [participant("presenter", share: share, camera: camera)]))

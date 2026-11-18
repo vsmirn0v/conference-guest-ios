@@ -251,6 +251,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
             try opened.transaction {
                 for statement in MeetingLibrarySchema.ddl { try opened.execute(statement) }
                 try opened.execute("CREATE TABLE IF NOT EXISTS meeting_library_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                try opened.execute("CREATE TABLE IF NOT EXISTS note_sync_bases (session_id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, markdown TEXT NOT NULL)")
                 let version = try opened.one("SELECT MAX(version) FROM schema_migrations")?.integer(0) ?? 0
                 if version < 3 {
                     try Self.migrateTasks(db: opened)
@@ -297,7 +298,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
     /// FULLMUTEX handles the close is safe from the deallocating thread.
     deinit { connectionBox.take()?.close() }
 
-    private func db() throws -> MeetingSQLiteConnection {
+    func db() throws -> MeetingSQLiteConnection {
         guard let connection = connectionBox.current() else {
             throw MeetingLibraryError.unavailable("database is closed")
         }
@@ -968,9 +969,9 @@ actor MeetingLibraryStore: @unchecked Sendable {
     // MARK: Binding helpers
 
     /// Called from the same transaction as every exportable change.
-    private static func queueOutbox(db: MeetingSQLiteConnection, sessionID: UUID, desiredRevision: Int,
-                                    outcomeReady: Bool = false, finalEnd: Bool = false,
-                                    awaitingOutcome: Bool = false) throws -> Int {
+    static func queueOutbox(db: MeetingSQLiteConnection, sessionID: UUID, desiredRevision: Int,
+                            outcomeReady: Bool = false, finalEnd: Bool = false,
+                            awaitingOutcome: Bool = false) throws -> Int {
         guard let destination = try activeDestination(db) else { return 0 }
         let linked = try isObsidianLinked(db: db, destination: destination, sessionID: sessionID)
         let stage = try db.one("SELECT stage FROM export_initial_state WHERE destination_id=? AND session_id=?",
@@ -1034,7 +1035,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
         }
     }
 
-    private static func exportSnapshot(_ db: MeetingSQLiteConnection, sessionID: UUID) throws -> ObsidianExportSnapshot? {
+    static func exportSnapshot(_ db: MeetingSQLiteConnection, sessionID: UUID) throws -> ObsidianExportSnapshot? {
         guard let row = try db.one("SELECT * FROM meeting_sessions WHERE session_id=?",
             bind: { try bindText($0, sessionID.uuidString, at: 1) }) else { return nil }
         let noteRow = try db.one("SELECT * FROM meeting_notes WHERE session_id=?",
@@ -1053,8 +1054,8 @@ actor MeetingLibraryStore: @unchecked Sendable {
         }
     }
 
-    private static func putExport(db: MeetingSQLiteConnection, destination: ObsidianDestinationRecord,
-                                  snapshot: ObsidianExportSnapshot, intent: ObsidianExportIntent, held: Bool) throws {
+    static func putExport(db: MeetingSQLiteConnection, destination: ObsidianDestinationRecord,
+                          snapshot: ObsidianExportSnapshot, intent: ObsidianExportIntent, held: Bool) throws {
         let sessionID = snapshot.session.id
         let existing = try db.one("SELECT intent,policy_held FROM export_outbox WHERE destination_id=? AND session_id=?",
             bind: { try bindExportKey($0, destination: destination.id, session: sessionID) })
@@ -1168,7 +1169,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
         }
     }
 
-    private static func session(from row: MeetingSQLiteRow) -> MeetingSessionRecord {
+    static func session(from row: MeetingSQLiteRow) -> MeetingSessionRecord {
         MeetingSessionRecord(
             id: UUID(uuidString: row.text(0) ?? UUID().uuidString) ?? UUID(),
             title: row.text(1) ?? "",
@@ -1188,7 +1189,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
         )
     }
 
-    private static func note(from row: MeetingSQLiteRow) throws -> MeetingNoteRecord {
+    static func note(from row: MeetingSQLiteRow) throws -> MeetingNoteRecord {
         guard let id = UUID(uuidString: row.text(0) ?? ""), let sessionID = UUID(uuidString: row.text(1) ?? "") else {
             throw MeetingLibraryError.persistenceFailed("invalid note identity")
         }
@@ -1212,20 +1213,20 @@ actor MeetingLibraryStore: @unchecked Sendable {
         )
     }
 
-    private static func bindText(_ statement: OpaquePointer, _ value: String?, at index: Int32) throws {
+    static func bindText(_ statement: OpaquePointer, _ value: String?, at index: Int32) throws {
         try MeetingSQLiteConnection.bindText(statement, value, at: index)
     }
-    private static func bindInt(_ statement: OpaquePointer, _ value: Int64, at index: Int32) throws {
+    static func bindInt(_ statement: OpaquePointer, _ value: Int64, at index: Int32) throws {
         try MeetingSQLiteConnection.bindInt(statement, value, at: index)
     }
-    private static func bindOptionalInt(_ statement: OpaquePointer, _ value: Int64?, at index: Int32) throws {
+    static func bindOptionalInt(_ statement: OpaquePointer, _ value: Int64?, at index: Int32) throws {
         if let value { try MeetingSQLiteConnection.bindInt(statement, value, at: index) }
         else { try MeetingSQLiteConnection.bindNull(statement, at: index) }
     }
-    private static func bindBlob(_ statement: OpaquePointer, _ value: Data?, at index: Int32) throws {
+    static func bindBlob(_ statement: OpaquePointer, _ value: Data?, at index: Int32) throws {
         try MeetingSQLiteConnection.bindBlob(statement, value, at: index)
     }
-    private static func date(_ value: Int64?) -> Date? {
+    static func date(_ value: Int64?) -> Date? {
         value.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) }
     }
 }
@@ -1244,8 +1245,8 @@ extension MeetingLibraryStore {
             """, bind: { try bindText($0, outcomeID.uuidString, at: 1) })?.text(0).flatMap(UUID.init(uuidString:))
     }
 
-    private static func recordOutcomeVersion(db: MeetingSQLiteConnection, outcome: MeetingOutcome, sessionID: UUID,
-                                             revision: Int, savedAt: Date?, canonicalOutcomeID: UUID) throws {
+    static func recordOutcomeVersion(db: MeetingSQLiteConnection, outcome: MeetingOutcome, sessionID: UUID,
+                                     revision: Int, savedAt: Date?, canonicalOutcomeID: UUID) throws {
         let payload = try JSONEncoder.attention.encode(outcome)
         try db.run("""
             INSERT OR IGNORE INTO meeting_outcome_versions(outcome_id,revision,session_id,payload_json,saved_at)
@@ -1280,7 +1281,7 @@ extension MeetingLibraryStore {
         }
     }
 
-    private static func storedOutcome(db: MeetingSQLiteConnection, id: UUID) throws -> MeetingOutcome? {
+    static func storedOutcome(db: MeetingSQLiteConnection, id: UUID) throws -> MeetingOutcome? {
         guard let row = try db.one("""
             SELECT o.payload_json, s.session_id, s.title
             FROM meeting_outcomes o JOIN meeting_sessions s ON s.session_id=o.session_id WHERE o.outcome_id=?
@@ -1317,7 +1318,7 @@ extension MeetingLibraryStore {
         }
     }
 
-    private static func replaceTasks(db: MeetingSQLiteConnection, outcome: MeetingOutcome) throws {
+    static func replaceTasks(db: MeetingSQLiteConnection, outcome: MeetingOutcome) throws {
         let desired = Set(outcome.tasks.map { $0.id.uuidString })
         guard desired.count == outcome.tasks.count else {
             throw MeetingLibraryError.persistenceFailed("duplicate task identifier")
@@ -1461,7 +1462,7 @@ extension MeetingLibraryStore {
         }
     }
 
-    private static func cancelTaskReminder(db: MeetingSQLiteConnection, taskID: UUID) throws {
+    static func cancelTaskReminder(db: MeetingSQLiteConnection, taskID: UUID) throws {
         try db.run("INSERT OR IGNORE INTO task_reminder_cancellations(task_id) VALUES(?)") {
             try bindText($0, taskID.uuidString, at: 1)
         }
@@ -1638,7 +1639,7 @@ extension MeetingLibraryStore {
         let layout: ObsidianExportLayout?
     }
 
-    private static func activeDestination(_ db: MeetingSQLiteConnection) throws -> ObsidianDestinationRecord? {
+    static func activeDestination(_ db: MeetingSQLiteConnection) throws -> ObsidianDestinationRecord? {
         guard let row = try db.one("SELECT * FROM export_destinations ORDER BY updated_at DESC, rowid DESC LIMIT 1"),
               let id = UUID(uuidString: row.text(0) ?? "") else { return nil }
         var config: ExportConfiguration?

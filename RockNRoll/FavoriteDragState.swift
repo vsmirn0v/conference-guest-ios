@@ -23,7 +23,7 @@ final class FavoriteDragState: ObservableObject {
     func move(relativeTo target: String, before: Bool) {
         guard var draft = session, draft.move(relativeTo: target, before: before) else { return }
         withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.16)) { session = draft }
-        if !ProcessInfo.processInfo.isiOSAppOnMac { UISelectionFeedbackGenerator().selectionChanged() }
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 
     func drop(token: UUID, history: RoomHistoryStore) {

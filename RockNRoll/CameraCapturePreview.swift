@@ -28,8 +28,7 @@ final class CameraCapturePreview {
     }
     func setFloatingDemand(_ wanted: Bool) { floatingDemand = wanted; refreshDemand() }
     func makeView() -> CameraCapturePreviewView {
-        let view = CameraCapturePreviewView(source: self, native: !ProcessInfo.processInfo.isiOSAppOnMac &&
-            !views.allObjects.contains { $0.ownsNativePreview })
+        let view = CameraCapturePreviewView(source: self, native: !views.allObjects.contains { $0.ownsNativePreview })
         views.add(view)
         // A native attachment can pump the run loop. Reserve its ownership
         // before attaching so nested view creation cannot claim it again.
@@ -115,7 +114,7 @@ final class CameraCapturePreviewView: UIView {
         guard native else { setNeedsLayout(); return }
         if native, let source, preview.session !== source.session { preview.session = source.session }
         rotationObservation = nil; rotationCoordinator = nil
-        if #available(iOS 17.0, *), !ProcessInfo.processInfo.isiOSAppOnMac, let device = source?.device {
+        if #available(iOS 17.0, *), let device = source?.device {
             let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: preview)
             rotationCoordinator = coordinator
             rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]) {
@@ -140,11 +139,11 @@ final class CameraCapturePreviewView: UIView {
         sampleView?.frame = bounds
         guard native else { refreshDemand(); return }
         guard let connection = preview.connection else { refreshDemand(); return }
-        if #available(iOS 17.0, *), !ProcessInfo.processInfo.isiOSAppOnMac,
+        if #available(iOS 17.0, *),
            let coordinator = rotationCoordinator as? AVCaptureDevice.RotationCoordinator {
             let angle = PrivateCameraPreview.connectionAngle(horizon: coordinator.videoRotationAngleForHorizonLevelPreview)
             if connection.isVideoRotationAngleSupported(angle) { connection.videoRotationAngle = angle }
-        } else if !ProcessInfo.processInfo.isiOSAppOnMac, connection.isVideoOrientationSupported {
+        } else if connection.isVideoOrientationSupported {
             switch window?.windowScene?.interfaceOrientation {
             case .landscapeLeft: connection.videoOrientation = .landscapeLeft
             case .landscapeRight: connection.videoOrientation = .landscapeRight
@@ -159,8 +158,7 @@ final class CameraCapturePreviewView: UIView {
         if let device = source?.device {
             let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
             let sideways: Bool
-            if ProcessInfo.processInfo.isiOSAppOnMac { sideways = false }
-            else if #available(iOS 17.0, *) {
+            if #available(iOS 17.0, *) {
                 sideways = Int(connection.videoRotationAngle.rounded()) % 180 != 0
             } else { sideways = connection.videoOrientation == .portrait || connection.videoOrientation == .portraitUpsideDown }
             let size = sideways ? CGSize(width: Int(dimensions.height), height: Int(dimensions.width)) :

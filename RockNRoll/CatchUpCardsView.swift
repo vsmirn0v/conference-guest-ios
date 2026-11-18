@@ -17,6 +17,27 @@ struct CatchUpCardsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                if (store.canManageTranscript && store.onSetTranscriptionEnabled != nil) ||
+                    (store.canViewTranscript == true && store.onLoadTranscriptHistory != nil) {
+                    HStack(spacing: 10) {
+                        if store.canManageTranscript && store.onSetTranscriptionEnabled != nil {
+                            Button(store.transcriptionEnabled ? L("Stop transcription") : L("Start transcription")) {
+                                store.onSetTranscriptionEnabled?(!store.transcriptionEnabled)
+                            }
+                            .accessibilityIdentifier("catchup.transcript-toggle")
+                        }
+                        if store.canViewTranscript == true && store.onLoadTranscriptHistory != nil {
+                            Button(L("Load meeting transcript")) {
+                                store.onLoadTranscriptHistory?()
+                            }
+                            .disabled(store.isLoadingTranscriptHistory)
+                            .accessibilityIdentifier("catchup.load-transcript")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
                 if store.timeline.intervals.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "checkmark.circle")

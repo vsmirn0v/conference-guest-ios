@@ -7,6 +7,43 @@ protocol PrivateMicrophoneCapturing: AnyObject {
     func stop()
 }
 
+/// Prefers the active `MeetingSession`'s built-in private audio check when connected,
+/// falling back to standalone `AVAudioEngine` tap capture offline or if the session declines.
+@MainActor
+final class SessionPrivateMicrophoneCapture: PrivateMicrophoneCapturing {
+    private let startSessionCheck: (@escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws -> Bool
+    private let stopSessionCheck: () async -> Void
+    private let fallback: PrivateMicrophoneCapturing
+    private var usedSessionCheck = false
+
+    init(startSessionCheck: @escaping (@escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws -> Bool,
+         stopSessionCheck: @escaping () async -> Void,
+         fallback: PrivateMicrophoneCapturing? = nil) {
+        self.startSessionCheck = startSessionCheck
+        self.stopSessionCheck = stopSessionCheck
+        self.fallback = fallback ?? PrivateMicrophoneCapture()
+    }
+
+    func start(standalone: Bool, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
+        stop()
+        if !standalone, try await startSessionCheck(onBuffer) {
+            usedSessionCheck = true
+            return
+        }
+        usedSessionCheck = false
+        try await fallback.start(standalone: standalone, onBuffer: onBuffer)
+    }
+
+    func stop() {
+        if usedSessionCheck {
+            usedSessionCheck = false
+            Task { await stopSessionCheck() }
+        } else {
+            fallback.stop()
+        }
+    }
+}
+
 /// Local metering only. No tracks, encoder, recording buffers or network references.
 @MainActor
 final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
@@ -43,9 +80,7 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0, format.commonFormat == .pcmFormatFloat32 else { stop(); throw SoundCheckError.input }
-        let usesMacMute = ProcessInfo.processInfo.isiOSAppOnMac
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            if usesMacMute && RockMacInputMuteIsMuted() { return }
             onBuffer(buffer)
         }
         tapped = true

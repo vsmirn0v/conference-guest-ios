@@ -4,6 +4,7 @@ import ConferenceCore
 import CoreImage
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }

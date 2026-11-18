@@ -1,6 +1,7 @@
 import ConferenceCore
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor final class UniversalEngineArchitectureGateTests: XCTestCase {
@@ -71,5 +72,16 @@ import XCTest
         }
         XCTAssertEqual(engine.activeSessionCount, 0)
         XCTAssertFalse(engine.busy)
+    }
+
+    func testRockAdapterHasZeroRenderFactoryInstances() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let rockAdapter = repoRoot.appendingPathComponent("MeetingEngine/Sources/MeetingEngine/Providers/Rock/RockAdapter.swift")
+        let contents = try String(contentsOf: rockAdapter, encoding: .utf8)
+        XCTAssertFalse(contents.contains("renderFactory"), "RockAdapter must share SharedPeerConnectionFactory instead of owning renderFactory")
     }
 }

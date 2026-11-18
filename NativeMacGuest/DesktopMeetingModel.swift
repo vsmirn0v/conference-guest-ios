@@ -75,7 +75,7 @@ import UniformTypeIdentifiers
         guard (engine as? MeetingSession)?.capabilities.supportsApprovedChatCorrelation == true else { return nil }
         return "chat:" + kind.rawValue + ":" + id
     }
-    var canSpeakApprovedWorkspaceReply: Bool { ownsMicrophone }
+    var canSpeakApprovedWorkspaceReply: Bool { supportsVoiceReply }
     var workspaceApprovedVoiceInProgress: Bool { workspaceApprovedVoice != nil }
     @Published var viewMode: ViewMode = .automatic { didSet { updateDemand() } }
     @Published var display: ConferenceDisplayMode = .all {
@@ -711,8 +711,22 @@ import UniformTypeIdentifiers
         guard supportsVoiceReply, !voiceReplyActive, !assistantCaptureActive, !closed, !transferHeld,
               participationMeetingSoundOn else { throw VoiceReplyError.unavailable }
         if !ownsMicrophone {
-            guard workspaceApprovedVoice == nil else { throw VoiceReplyError.notTalkMeeting }
-            guard let arbiter = microphoneArbiter, await arbiter(self), ownsMicrophone else { throw VoiceReplyError.notTalkMeeting }
+            try Task.checkCancellation()
+            guard participationMeetingSoundOn, !closed else { throw VoiceReplyError.unavailable }
+            voiceReplyActive = true; voiceReplyUserChoice = nil; updateLocalMicrophoneCapture()
+            defer { voiceReplyActive = false; voiceReplyUserChoice = nil; updateLocalMicrophoneCapture() }
+            probeLog("voice-reply-start", [
+                "service": kind.rawValue,
+                "seconds": Double(buffer.frameLength) / buffer.format.sampleRate,
+                "wasLive": false,
+                "nonTalk": true,
+            ])
+            participation.beginVoiceEchoWindow()
+            let played = await engine.playVoiceReply(buffer)
+            participation.endVoiceEchoWindow()
+            probeLog("voice-reply-end", ["service": kind.rawValue, "played": played, "nonTalk": true])
+            guard played else { throw Task.isCancelled ? VoiceReplyError.interrupted : VoiceReplyError.playback }
+            return
         }
         try Task.checkCancellation()
         guard participationMeetingSoundOn, ownsMicrophone, !closed else { throw VoiceReplyError.unavailable }
@@ -1707,6 +1721,7 @@ import UniformTypeIdentifiers
         (error as? NativeDesktopGuestError) == .notConnected
             || (error as? NativeDesktopRockError) == .notConnected
             || (error as? MeetingSessionError) == .notConnected
+            || (error as? NativeDesktopRTCError) == .closed
     }
     @discardableResult private func perform(priorityOff: Bool = false, _ action: @escaping (any NativeDesktopMeetingEngine) async throws -> Void) -> Task<Void, Never>? {
         guard !closed, !transferHeld else { return nil }

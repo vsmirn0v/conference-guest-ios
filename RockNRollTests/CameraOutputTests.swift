@@ -105,8 +105,5 @@ final class CameraOutputTests: XCTestCase {
         XCTAssertEqual(supported, session.isMultitaskingCameraAccessSupported)
         XCTAssertEqual(session.isMultitaskingCameraAccessEnabled, supported)
         XCTAssertFalse(session.isRunning)
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            XCTAssertNotEqual(MacExternalPower.current, .unknown, "Qualify the public power-source bridge on this Mac")
-        } else { XCTAssertEqual(MacExternalPower.current, .unknown) }
     }
 }

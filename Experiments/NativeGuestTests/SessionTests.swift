@@ -23,6 +23,8 @@ private final class FakeEngine: GuestSessionEngine {
     var onForcedMute: ((Bool) -> Void)?
     var onPermissionsChange: ((GuestMediaPermissions) -> Void)?
     var mediaPermissions = GuestMediaPermissions(canShareMicrophone: true, canShareCamera: true)
+    var lobbyState = GuestLobbyState()
+    var onLobbyChange: ((GuestLobbyState) -> Void)?
     var microphoneActivations = 0
     var startupEvents: [String] = []
     var playoutChanges: [Bool] = []
@@ -892,7 +894,78 @@ struct SessionTests {
         } catch GuestTransportError.closed {}
     }
 
+    @MainActor static func lobbyAdmissionRejectionAndLeave() async throws {
+        // 1. Enter lobby, receive moderator/title updates, and transition to connected upon admission.
+        let gate1 = Gate(), engine1 = FakeEngine()
+        engine1.joinGate = gate1
+        let session1 = GuestSession(makeAttempt: { engine1 })
+        var states1: [GuestSession.State] = []
+        session1.onStateChange = { states1.append($0.state) }
+        let join1 = Task { try await connect(session1, audioMuted: true, videoMuted: true) }
+        try await spin { engine1.joins.count == 1 }
+        engine1.lobbyState = GuestLobbyState(inLobby: true, title: "Standup Lobby", moderatorPresent: false)
+        engine1.onLobbyChange?(engine1.lobbyState)
+        try expect(session1.state == .lobby && session1.snapshot.lobbyTitle == "Standup Lobby" &&
+                   session1.snapshot.lobbyModeratorPresent == false,
+                   "Waiting in lobby exposes lobby state and metadata")
+        engine1.lobbyState = GuestLobbyState(inLobby: true, title: "Updated Lobby", moderatorPresent: true)
+        engine1.onLobbyChange?(engine1.lobbyState)
+        try expect(session1.state == .lobby && session1.snapshot.lobbyTitle == "Updated Lobby" &&
+                   session1.snapshot.lobbyModeratorPresent == true,
+                   "Lobby settings update updates snapshot while staying in lobby")
+        engine1.lobbyState = GuestLobbyState()
+        engine1.onLobbyChange?(engine1.lobbyState)
+        gate1.release()
+        try await join1.value
+        try expect(session1.state == .connected && session1.snapshot.lobbyTitle == nil &&
+                   !states1.contains(.recovering),
+                   "Admission transitions cleanly from lobby to connected")
+        _ = await session1.leave()
+
+        // 2. Eviction / rejection while in lobby fails closed with 0 retries and no .recovering blink.
+        let gate2 = Gate(), engine2 = FakeEngine()
+        engine2.joinGate = gate2
+        let harness2 = Harness([engine2]), session2 = harness2.session
+        var states2: [GuestSession.State] = []
+        session2.onStateChange = { states2.append($0.state) }
+        let join2 = Task { try await connect(session2, audioMuted: true, videoMuted: true) }
+        try await spin { engine2.joins.count == 1 }
+        engine2.lobbyState = GuestLobbyState(inLobby: true, title: "Restricted Room", moderatorPresent: true)
+        engine2.onLobbyChange?(engine2.lobbyState)
+        try expect(session2.state == .lobby, "Enters lobby before denial")
+        engine2.onFailure?(SessionTestError.denied)
+        engine2.joinError = SessionTestError.denied
+        gate2.release()
+        do { try await join2.value; throw SessionTestError.assertion("Lobby denial succeeded unexpectedly") }
+        catch SessionTestError.denied {}
+        try expect(session2.state == .failed && session2.recoveryAttempts == 0 &&
+                   harness2.made == 1 && !states2.contains(.recovering),
+                   "Lobby denial fails without retries or spurious recovering transition")
+
+        // 3. User leave while waiting in lobby transitions immediately to .left.
+        let gate3 = Gate(), engine3 = FakeEngine()
+        engine3.joinGate = gate3
+        let session3 = GuestSession(makeAttempt: { engine3 })
+        let join3 = Task { try await connect(session3, audioMuted: true, videoMuted: true) }
+        try await spin { engine3.joins.count == 1 }
+        engine3.lobbyState = GuestLobbyState(inLobby: true, title: "Cancel Lobby", moderatorPresent: false)
+        engine3.onLobbyChange?(engine3.lobbyState)
+        try expect(session3.state == .lobby, "Enters lobby before user leave")
+        let leaving3 = Task { await session3.leave() }
+        try await spin { session3.state == .left }
+        gate3.release()
+        let leftClean = await leaving3.value
+        try expect(leftClean && session3.state == .left && engine3.leaves == [true] &&
+                   session3.snapshot.lobbyTitle == nil,
+                   "User leave while in lobby retires immediately without waiting for admission")
+        do { try await join3.value; throw SessionTestError.assertion("Cancelled lobby join succeeded unexpectedly") }
+        catch is CancellationError {}
+    }
+
     @MainActor static func main() async {
+        let watchdog = DispatchWorkItem { fatalError("GuestSession tests exceeded 15 seconds") }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: watchdog)
+        defer { watchdog.cancel() }
         do {
             try policy()
             try await normalAndIdempotentLeave()
@@ -929,7 +1002,8 @@ struct SessionTests {
             try await mediaIntentDuringDeviceReconciliation()
             try await teardownElapsedReducesOrSkipsBackoff()
             try await nonLeaveTransportCloseBoundsGraceTimeout()
-            print("GuestSession: 35 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
+            try await lobbyAdmissionRejectionAndLeave()
+            print("GuestSession: 36 deterministic policy/lifecycle scenarios passed (including waiting-room lobby, startup gating and 8 preparation recovery combinations)")
         } catch {
             print("GuestSession failed: \(error)")
             exit(1)

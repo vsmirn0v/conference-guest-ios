@@ -1,7 +1,8 @@
 #if DEBUG
+import ConferenceCore
+import LiveKit
 import SwiftUI
 import UIKit
-import ConferenceCore
 
 extension SceneDelegate {
     func configureFixtures(model: ConferenceModel, controller: UIViewController, window: UIWindow) -> Bool {
@@ -26,15 +27,6 @@ extension SceneDelegate {
                 window.rootViewController = ParticipantBadgeFixture()
                 return true
             }
-            if fixture == "mac-audio" {
-                if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MAC_AUDIO_VERIFY_DEFAULTS"] == "1" {
-                    MacAudioLiveProbe.verifyCurrentDefaults()
-                }
-                let devices = ProcessInfo.processInfo.isiOSAppOnMac ? MacAudioDevices.shared
-                    : MacAudioDevices(isMac: true, hardware: MacAudioFixtureHardware())
-                window.rootViewController = UINavigationController(rootViewController: MacAudioDevicePicker(devices: devices))
-                return true
-            }
             if fixture == "pip-microphone" {
                 window.rootViewController = PiPMicrophoneFixtureViewController()
                 return true
@@ -48,15 +40,7 @@ extension SceneDelegate {
                 return true
             }
             if fixture == "guest-call" {
-                window.rootViewController = GuestCallLayoutFixture()
-                return true
-            }
-            if fixture == "guest-color" {
-                window.rootViewController = GuestColorFixtureViewController()
-                return true
-            }
-            if fixture == "guest-zoom" {
-                window.rootViewController = GuestStreamViewportFixtureViewController()
+                window.rootViewController = GuestCallFixtureViewController(model: model)
                 return true
             }
             let invitation = URL(string: "https://rock.glowsoft.ru/jams/test")!
@@ -196,20 +180,7 @@ extension SceneDelegate {
             let call = RockCallViewController(title: "Open rehearsal",
                 catchUp: model.catchUpStore, chat: model.chat)
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_NATIVE_PICKERS"] == "1" {
-                if #available(iOS 27.0, *), GuestScreenCaptureFactory.route == .native {
-                    // Match the shipping iOS 27 chooser; ReplayKit's legacy
-                    // extension picker is used only on older iOS versions.
-                    let capture = GuestScreenCaptureFactory.make(preview: LocalSharePreview(),
-                        onError: { [weak call] in call?.showMediaStatus($0) })
-                    call.usesNativeShareControl = true
-                    call.onShare = { enabled in
-                        if enabled { capture.start() }
-                        else { Task { await capture.stop() } }
-                    }
-                    call.onLeave = { Task { await capture.stop() } }
-                } else {
-                    call.usesBroadcastPickerForTesting = true
-                }
+                call.usesBroadcastPickerForTesting = true
             }
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_SPEAKER"] == "1" {
                 call.fixtureActions = SpeakerFixtureActions.make(call.activeSpeaker)
@@ -380,100 +351,229 @@ private final class PlainZoomControl: UIViewController, UIScrollViewDelegate {
     func scrollViewDidZoom(_ scrollView: UIScrollView) { scroll.accessibilityValue = String(format: "%.0f%%", scroll.zoomScale * 100) }
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) { scrollViewDidZoom(scrollView) }
 }
-#endif
 
-#if DEBUG
-import AVFoundation
+@MainActor
+private final class GuestCallFixtureViewController: UIViewController {
+    private let model: ConferenceModel
+    private let reactions = MeetingReactionsModel()
+    private let reactionSubmission = ReactionSubmission(valid: { true })
+    private var call: RockCallViewController!
+    private var studio: StudioModel?
+    private var shareTrack: LocalVideoTrack?
+    private var frameTimer: Timer?
+    private var setupTask: Task<Void, Never>?
 
-/// Standalone qualification process: real capture, engine and lifecycle with an
-/// independently decoded receiver. Opt-in; never changes stored profile/history.
-@MainActor final class MacPresenterQualification {
-    let window: UIWindow
-    private let container = UIViewController()
-    private let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
-    private let link: String
-    private var timer: Timer?
-    private var frames = 0
-    private var ages = [Double]()
-    private var elapsed: TimeInterval = 0
-    private var sharingStarted = false
-    private var publishedAt: TimeInterval?
-    private var starting = false
-    private let evidenceURL: URL?
-    static func make(windowScene: UIWindowScene) -> MacPresenterQualification? {
-        guard ProcessInfo.processInfo.isiOSAppOnMac,
-              let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_INVITE"],
-              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAPTURE_WINDOW"] != nil else { return nil }
-        return MacPresenterQualification(scene: windowScene, link: link)
+    init(model: ConferenceModel) {
+        self.model = model
+        super.init(nibName: nil, bundle: nil)
     }
-    private init(scene: UIWindowScene, link: String) {
-        self.link = link; window = UIWindow(windowScene: scene)
-        evidenceURL = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_EVIDENCE"].map { URL(fileURLWithPath: $0) }
-        window.rootViewController = container; window.makeKeyAndVisible()
-    }
-    func start() {
-        Task {
-            do {
-                let target = try JoinTarget.parse(link)
-                let endpoint = try await VendorEndpointResolver.make().resolve(for: target)
-                try engine.configure(container: container, networkURL: endpoint, displayName: "Presenter capture QA")
-                try engine.join(target: target, displayName: "Presenter capture QA")
-                for _ in 0..<600 {
-                    if engine.readyForPresenterForTesting { break }
-                    try await Task.sleep(for: .milliseconds(100))
-                }
-                guard engine.readyForPresenterForTesting else { throw CocoaError(.featureUnsupported) }
-                let model = engine.studioForTesting.presenter
-                let create = model.makeScreenSource!
-                model.makeScreenSource = { [weak self] frame, effect, selection, end in
-                    create({ sample in
-                        if let self {
-                            self.frames += 1
-                            let age = (ProcessInfo.processInfo.systemUptime - sample.presentationTimeStamp.seconds) * 1000
-                            if age.isFinite && age >= 0 && age < 1000 { self.ages.append(age) }
-                        }
-                        frame(sample)
-                    }, effect, selection, end)
-                }
-                engine.studioForTesting.open(.presenter)
-                let panel = UIHostingController(rootView: StudioPanel(model: engine.studioForTesting))
-                container.present(panel, animated: false)
-                model.includeCamera = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CAMERA"] != "0"
-                if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CANVAS"] == "1" {
-                    model.selectCanvas(); model.scene.backdrop = .warm
-                } else { model.selectScreen() }
-                let began = ProcessInfo.processInfo.systemUptime
-                timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.tick(began: began) }
-                }
-            } catch { print("PRESENTER_QUALIFICATION_ERROR \(error)") }
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        let scenario = ProcessInfo.processInfo.environment["CONFERENCE_TEST_GUEST_SCENARIO"]
+        model.catchUpStore.enter(roomKey: "guest-layout-\(UUID().uuidString)")
+        model.catchUpStore.begin(.anotherCall)
+        model.catchUpStore.end(.anotherCall)
+        if scenario == "notices" {
+            model.catchUpStore.observe(messages: [], canView: true, enabled: true)
         }
-    }
-    private func tick(began: TimeInterval) {
-        elapsed = ProcessInfo.processInfo.systemUptime - began
-        let model = engine.studioForTesting.presenter
-        if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CANVAS"] == "1" {
-            model.scene.backdrop = Int(elapsed / 2) % 2 == 0 ? .warm : .stage
+        model.chat.canSend = true
+        model.chat.onSend = { [weak chat = model.chat] message in
+            chat?.append(ChatEntry(id: UUID().uuidString, sender: "You", text: message,
+                                   sentAt: Date(), isOwn: true))
         }
-        if !sharingStarted && !starting && model.canStartSharing {
-            starting = true
-            Task {
-                await model.start(); sharingStarted = model.running; starting = false
-                if sharingStarted { publishedAt = ProcessInfo.processInfo.systemUptime }
+        let call = RockCallViewController(
+            title: "Open rehearsal",
+            catchUp: model.catchUpStore,
+            chat: model.chat,
+            invitationURL: URL(string: "https://rock.glowsoft.ru/jams/test"),
+            roomIdentifier: "fixture"
+        )
+        self.call = call
+        if scenario == "studio" { call.usesNativeShareControl = true }
+
+        var configuredStudio: StudioModel?
+        if ["studio", "reactions"].contains(scenario) {
+            let studio = StudioModel(
+                audioControl: .noiseSuppression,
+                privateCamera: StudioCameraFixture(),
+                privateMicrophone: StudioMicrophoneFixture()
+            )
+            studio.soundCheck.verifyMuted = { [weak call] in call?.setMicrophone(false) }
+            studio.observeNoiseSuppression(true)
+            studio.applyProfile = { [weak studio] profile in
+                studio?.observeNoiseSuppression(profile == .conversation)
+            }
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_DELAY"] == "1" {
+                studio.presenter.startSharing = { _, _ in
+                    try await Task.sleep(nanoseconds: 6_000_000_000)
+                }
+            } else {
+                studio.presenter.startSharing = { _, _ in }
+            }
+            studio.presenter.sendSample = { _ in }
+            studio.presenter.stopSharing = {}
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_WARM"] == "1" {
+                studio.presenter.scene.backdrop = .warm
+            }
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_CAMERA_LAYER"] == "1" {
+                studio.presenter.makePrivateCamera = { _ in StudioCameraFixture() }
+                studio.presenter.scene.placement = PresenterPlacement()
+                studio.presenter.scene.layout = .card
+                studio.presenter.includeCamera = true
+            }
+            call.studio = studio
+            self.studio = studio
+            configuredStudio = studio
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MIC_ACTIVITY"] == "1" {
+                call.fixtureActions = MicrophoneActivityFixture(activity: studio.microphoneActivity).actions
             }
         }
-        var report = model.cameraEvidenceForTesting
-        report["elapsed"] = elapsed; report["captureFrames"] = frames
-        report["running"] = model.running; report["error"] = model.error ?? ""
-        report["compositions"] = model.compositionCount; report["heartbeats"] = model.heartbeatCount
-        let sorted = ages.sorted()
-        report["captureAgeMedianMs"] = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
-        report["captureAgeP95Ms"] = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, sorted.count * 95 / 100)]
-        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
-            if let evidenceURL { try? data.write(to: evidenceURL, options: .atomic) }
-            print("PRESENTER_QUALIFICATION \(String(decoding: data, as: UTF8.self))")
+
+        call.onCamera = { [weak call] in call?.setCamera($0) }
+        call.onMicrophone = { [weak call, weak configuredStudio] enabled in
+            call?.setMicrophone(enabled)
+            configuredStudio?.microphoneActivity.setStatus(enabled ? .on : .muted)
         }
-        if let publishedAt, ProcessInfo.processInfo.systemUptime - publishedAt > 600 { timer?.invalidate(); timer = nil; engine.leave() }
+        call.onShare = { [weak call] in call?.setSharing($0) }
+
+        if scenario == "reactions" {
+            reactions.available = true
+            reactions.ready = true
+            configuredStudio?.reactions = reactions
+            call.reactions = reactions
+            call.exposeReactionOverlayForTesting = true
+            model.chat.reactionHistoryAvailable = true
+            model.chat.reactionHistory.beginMeeting(id: UUID())
+            model.chat.reactionHistory.receive(
+                kind: .heart,
+                participantID: "ani",
+                displayName: "Ani",
+                isOwn: false
+            )
+            reactionSubmission.onAccepted = { [weak self, weak chat = model.chat] kind, id in
+                self?.reactions.trackSubmission(kind, id: id)
+                chat?.reactionHistory.recordLocalSubmission(
+                    kind: kind,
+                    participantID: "self",
+                    displayName: "You",
+                    submissionID: id
+                )
+            }
+            reactionSubmission.onTransmitted = { [weak self] kind, id in
+                self?.reactions.finishSubmission(id: id, succeeded: true)
+                self?.call.showReaction(kind, from: "You")
+            }
+            reactions.sender = { [weak self] kind in
+                self?.reactionSubmission.send(kind) { done in
+                    done(true)
+                    return true
+                } ?? false
+            }
+            call.fixtureActions = [
+                UIAction(title: "Fixture incoming Heart") { [weak call] _ in
+                    call?.showReaction(.heart, from: "Ani")
+                }
+            ]
+        }
+
+        let solo = scenario == "solo"
+        call.fixtureParticipants = solo
+            ? [ParticipantStatus(id: "local", name: "Your contact", isLocal: true,
+                                 microphoneOn: false, cameraOn: false, screenShareOn: false,
+                                 isSpeaking: false, videoKey: nil, shareKey: nil)]
+            : [ParticipantStatus(id: "local", name: "Rock QA", isLocal: true,
+                                 microphoneOn: false, cameraOn: false, screenShareOn: false,
+                                 isSpeaking: false, videoKey: nil, shareKey: nil),
+               ParticipantStatus(id: "ani", name: "Ani’s arrangement", isLocal: false,
+                                 microphoneOn: true, cameraOn: false, screenShareOn: true,
+                                 isSpeaking: false, videoKey: nil, shareKey: "share"),
+               ParticipantStatus(id: "aram", name: "Aram", isLocal: false,
+                                 microphoneOn: true, cameraOn: false, screenShareOn: false,
+                                 isSpeaking: true, videoKey: nil, shareKey: nil)]
+
+        addChild(call)
+        call.view.frame = view.bounds
+        call.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(call.view)
+        call.didMove(toParent: self)
+
+        guard !solo else {
+            call.render(snapshot: CallMediaSnapshot(participants: [
+                CallParticipant(id: "local", name: "Your contact", isLocal: true,
+                                microphoneOn: false, cameraOn: false, screenShareOn: false,
+                                isSpeaking: false, videoTracks: [])
+            ]))
+            return
+        }
+
+        setupTask = Task { @MainActor [weak self] in
+            let track = await LocalVideoTrack.createBufferTrack()
+            guard let self, !Task.isCancelled else { return }
+            self.shareTrack = track
+            try? await track.start()
+            guard !Task.isCancelled else {
+                try? await track.stop()
+                return
+            }
+            self.drawCheckerboardFrame(into: track)
+            self.call.render(snapshot: CallMediaSnapshot(participants: [
+                CallParticipant(id: "local", name: "Rock QA", isLocal: true,
+                                microphoneOn: false, cameraOn: false, screenShareOn: false,
+                                isSpeaking: false, videoTracks: []),
+                CallParticipant(id: "ani", name: "Ani’s arrangement", isLocal: false,
+                                microphoneOn: true, cameraOn: false, screenShareOn: true,
+                                isSpeaking: false,
+                                videoTracks: [CallVideoStream(id: "share", source: .screenShareVideo, track: .room(track))]),
+                CallParticipant(id: "aram", name: "Aram", isLocal: false,
+                                microphoneOn: true, cameraOn: false, screenShareOn: false,
+                                isSpeaking: true, videoTracks: [])
+            ]))
+            self.frameTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let track = self.shareTrack else { return }
+                    self.drawCheckerboardFrame(into: track)
+                }
+            }
+        }
+    }
+
+    private func drawCheckerboardFrame(into track: LocalVideoTrack) {
+        guard let capturer = track.capturer as? BufferCapturer else { return }
+        let width = 320, height = 180
+        var buffer: CVPixelBuffer?
+        guard CVPixelBufferCreate(
+            nil, width, height, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer
+        ) == kCVReturnSuccess, let buffer else { return }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        if let base = CVPixelBufferGetBaseAddress(buffer) {
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+            let pixels = base.assumingMemoryBound(to: UInt8.self)
+            for row in 0..<height {
+                let rowOffset = row * bytesPerRow
+                for column in 0..<width {
+                    let value: UInt8 = (column / 32 + row / 18).isMultiple(of: 2) ? 60 : 170
+                    let offset = rowOffset + column * 4
+                    pixels[offset] = value
+                    pixels[offset + 1] = value
+                    pixels[offset + 2] = value
+                    pixels[offset + 3] = 255
+                }
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        capturer.capture(buffer)
+    }
+
+    deinit {
+        setupTask?.cancel()
+        frameTimer?.invalidate()
+        if let track = shareTrack {
+            Task { try? await track.stop() }
+        }
     }
 }
 #endif

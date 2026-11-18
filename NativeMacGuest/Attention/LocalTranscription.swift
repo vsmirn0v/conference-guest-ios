@@ -3,10 +3,6 @@ import Combine
 import Foundation
 import SherpaOnnxKit
 
-extension GuestRemoteAudio {
-    var source: MeetingAudioSource { .webRTC(track, identity: participantIdentity) }
-}
-
 /// Who the meeting service says is speaking, over time. A mixed audio stream
 /// has no speaker; an utterance is given to the participant whose speaking
 /// intervals cover most of it, when that covers at least `minimumShare`.

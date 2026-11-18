@@ -1,6 +1,8 @@
+import AVFoundation
 import Foundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// No fixture opens a socket or physical capture/playout device. A blocked
@@ -179,4 +181,298 @@ import XCTest
         XCTAssertNil(engine.supervisor.recoveryTask); XCTAssertNil(engine.audio)
         XCTAssertNil(engine.publisher); XCTAssertNil(engine.subscriber)
     }
+
+    func testSubscriberAcceptsIncrementingPcSeqAndRejectsStaleSeq() async throws {
+        _ = LKRTCInitializeSSL()
+        let audio = GuestSyntheticAudio()
+        defer { XCTAssertTrue(audio.terminateDevice()) }
+        let factory = LKRTCPeerConnectionFactory(
+            encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory(),
+            audioDevice: audio
+        )
+        let peer = try await NativeDesktopRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [])
+        let offerSDP = [
+            "v=0",
+            "o=- 1 2 IN IP4 127.0.0.1",
+            "s=-",
+            "t=0 0",
+            "a=group:BUNDLE 0",
+            "a=msid-semantic: WMS",
+            "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+            "c=IN IP4 0.0.0.0",
+            "a=rtcp:9 IN IP4 0.0.0.0",
+            "a=ice-ufrag:ufrag0001",
+            "a=ice-pwd:passwordpasswordpassword01",
+            "a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00",
+            "a=setup:actpass",
+            "a=mid:0",
+            "a=sendonly",
+            "a=rtcp-mux",
+            "a=rtpmap:111 opus/48000/2",
+            ""
+        ].joined(separator: "\r\n")
+
+        let first = try await peer.answer(["sdp": offerSDP, "pcSeq": 1])
+        XCTAssertEqual(first["pcSeq"] as? Int, 1)
+        let second = try await peer.answer(["sdp": offerSDP, "pcSeq": 2])
+        XCTAssertEqual(second["pcSeq"] as? Int, 2, "Renegotiated subscriber offers with incrementing pcSeq must succeed")
+        do {
+            _ = try await peer.answer(["sdp": offerSDP, "pcSeq": 1])
+            XCTFail("Stale pcSeq behind newer negotiated offer must be rejected")
+        } catch {
+            XCTAssertEqual(error as? NativeDesktopRTCError, .invalidResponse)
+        }
+        let closed = await peer.close()
+        XCTAssertTrue(closed)
+    }
+
+    func testTrueConfSDPOfferGlareRollsBackLocalOfferAndReoffersWithoutFailing() async throws {
+        _ = LKRTCInitializeSSL()
+        let audio = GuestSyntheticAudio()
+        defer { XCTAssertTrue(audio.terminateDevice()) }
+        let serverFactory = LKRTCPeerConnectionFactory(
+            encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory(),
+            audioDevice: audio
+        )
+        let serverConfig = LKRTCConfiguration()
+        serverConfig.sdpSemantics = .unifiedPlan
+        let serverPeer = try XCTUnwrap(serverFactory.peerConnection(
+            with: serverConfig,
+            constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil),
+            delegate: nil
+        ))
+        defer { serverPeer.close() }
+        let sendOnly = LKRTCRtpTransceiverInit(); sendOnly.direction = .sendOnly
+        _ = serverPeer.addTransceiver(of: .audio, init: sendOnly)
+        _ = serverPeer.addTransceiver(of: .video, init: sendOnly)
+        let initialOffer = try await createSDP(on: serverPeer, offer: true)
+        try await setSDP(on: serverPeer, description: initialOffer, local: true)
+
+        let transport = MockTrueConfTransport()
+        let stubAudio = StubGuestAudio(factory: serverFactory)
+        let adapter = TrueConfAdapter(
+            makeTransport: { _, _ in transport },
+            loadBootstrap: { _, _, _ in
+                TrueConfBootstrap(login: "guest", credential: "cred",
+                                  socketURL: URL(string: "wss://tc.example.test/websocket/")!)
+            }
+        )
+        let attempt = adapter.supervisor.resetForNewConnect()
+        adapter.audio = stubAudio
+        adapter.transport = transport
+        adapter.snapshot = .init(phase: .connecting, playoutOn: false)
+        adapter.name = "Tester"
+        adapter.publisher = try await NativeDesktopRTCPeer(target: "COMPOSITE", factory: serverFactory, ice: [], topology: .composite)
+
+        try await adapter.receiveTrueConf(["method": "conferenceStateChange", "conference": ["message": "joinResponse", "streamConferenceId": "stream-1"]], attempt: attempt)
+        try await adapter.receiveTrueConf(["method": "connectMedia", "result": true], attempt: attempt)
+        try await adapter.receiveTrueConf(["method": "webrtc", "type": "offer", "sdp": initialOffer.sdp], attempt: attempt)
+
+        let clientAnswerIndex = try await transport.waitForIndex { ($0["method"] as? String) == "webrtc" && ($0["type"] as? String) == "answer" }
+        let clientAnswerSDP = try XCTUnwrap(transport.sent[clientAnswerIndex]["sdp"] as? String)
+        try await setSDP(on: serverPeer, description: LKRTCSessionDescription(type: .answer, sdp: clientAnswerSDP), local: false)
+
+        let offer1Index = try await transport.waitForIndex { ($0["method"] as? String) == "webrtc" && ($0["type"] as? String) == "offer" }
+        let glareOffer = try await createSDP(on: serverPeer, offer: true)
+        try await setSDP(on: serverPeer, description: glareOffer, local: true)
+
+        // Inject server offer while client local offer is awaiting answer (SDP glare).
+        try await adapter.receiveTrueConf(["method": "webrtc", "type": "offer", "sdp": glareOffer.sdp], attempt: adapter.supervisor.generation)
+
+        let answer2Index = try await transport.waitForIndex(after: offer1Index) {
+            ($0["method"] as? String) == "webrtc" && ($0["type"] as? String) == "answer"
+        }
+        let glareAnswerSDP = try XCTUnwrap(transport.sent[answer2Index]["sdp"] as? String)
+        try await setSDP(on: serverPeer, description: LKRTCSessionDescription(type: .answer, sdp: glareAnswerSDP), local: false)
+
+        let offer2Index = try await transport.waitForIndex(after: answer2Index) {
+            ($0["method"] as? String) == "webrtc" && ($0["type"] as? String) == "offer"
+        }
+        let offer2SDP = try XCTUnwrap(transport.sent[offer2Index]["sdp"] as? String)
+        try await setSDP(on: serverPeer, description: LKRTCSessionDescription(type: .offer, sdp: offer2SDP), local: false)
+        let serverAnswer2 = try await createSDP(on: serverPeer, offer: false)
+        try await setSDP(on: serverPeer, description: serverAnswer2, local: true)
+
+        try await adapter.receiveTrueConf(["method": "webrtc", "type": "answer", "sdp": serverAnswer2.sdp], attempt: adapter.supervisor.generation)
+        _ = try await transport.waitForIndex(after: offer2Index) { ($0["method"] as? String) == "DeviceStatus" }
+        XCTAssertNotEqual(adapter.snapshot.phase, .failed)
+        XCTAssertNotEqual(adapter.snapshot.phase, .reconnecting)
+
+        let clean = await adapter.leave()
+        XCTAssertTrue(clean)
+    }
+
+    func testFailedTrueConfCameraNegotiationThrowsAndReleasesCameraLease() async throws {
+        _ = LKRTCInitializeSSL()
+        let audio = GuestSyntheticAudio()
+        defer { XCTAssertTrue(audio.terminateDevice()) }
+        let serverFactory = LKRTCPeerConnectionFactory(
+            encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory(),
+            audioDevice: audio
+        )
+        let serverConfig = LKRTCConfiguration()
+        serverConfig.sdpSemantics = .unifiedPlan
+        let serverPeer = try XCTUnwrap(serverFactory.peerConnection(
+            with: serverConfig,
+            constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil),
+            delegate: nil
+        ))
+        defer { serverPeer.close() }
+        let sendOnly = LKRTCRtpTransceiverInit(); sendOnly.direction = .sendOnly
+        _ = serverPeer.addTransceiver(of: .audio, init: sendOnly)
+        _ = serverPeer.addTransceiver(of: .video, init: sendOnly)
+        let initialOffer = try await createSDP(on: serverPeer, offer: true)
+        try await setSDP(on: serverPeer, description: initialOffer, local: true)
+
+        let transport = MockTrueConfTransport()
+        let stubAudio = StubGuestAudio(factory: serverFactory)
+        let adapter = TrueConfAdapter(
+            makeTransport: { _, _ in transport },
+            loadBootstrap: { _, _, _ in
+                TrueConfBootstrap(login: "guest", credential: "cred",
+                                  socketURL: URL(string: "wss://tc.example.test/websocket/")!)
+            }
+        )
+        let attempt = adapter.supervisor.resetForNewConnect()
+        adapter.audio = stubAudio
+        adapter.transport = transport
+        adapter.snapshot = .init(phase: .connecting, playoutOn: false)
+        adapter.name = "Tester"
+        adapter.publisher = try await NativeDesktopRTCPeer(target: "COMPOSITE", factory: serverFactory, ice: [], topology: .composite)
+        try await adapter.receiveTrueConf(["method": "conferenceStateChange", "conference": ["message": "joinResponse", "streamConferenceId": "stream-1"]], attempt: attempt)
+        try await adapter.receiveTrueConf(["method": "connectMedia", "result": true], attempt: attempt)
+        try await adapter.receiveTrueConf(["method": "webrtc", "type": "offer", "sdp": initialOffer.sdp], attempt: attempt)
+
+        let clientAnswerIdx = try await transport.waitForIndex { ($0["method"] as? String) == "webrtc" && ($0["type"] as? String) == "answer" }
+        try await setSDP(on: serverPeer, description: LKRTCSessionDescription(type: .answer, sdp: try XCTUnwrap(transport.sent[clientAnswerIdx]["sdp"] as? String)), local: false)
+        let offerIdx = try await transport.waitForIndex { ($0["method"] as? String) == "webrtc" && ($0["type"] as? String) == "offer" }
+        try await setSDP(on: serverPeer, description: LKRTCSessionDescription(type: .offer, sdp: try XCTUnwrap(transport.sent[offerIdx]["sdp"] as? String)), local: false)
+        let answer1 = try await createSDP(on: serverPeer, offer: false)
+        try await setSDP(on: serverPeer, description: answer1, local: true)
+        try await adapter.receiveTrueConf(["method": "webrtc", "type": "answer", "sdp": answer1.sdp], attempt: adapter.supervisor.generation)
+        _ = try await transport.waitForIndex(after: offerIdx) { ($0["method"] as? String) == "DeviceStatus" }
+
+        GuestCamera.defaultFactory = { _ in FailingGuestCameraStub() }
+        defer { GuestCamera.defaultFactory = nil }
+        let coordinator = MeetingCaptureCoordinator()
+        do {
+            try await coordinator.applyCameraEnabled(true, sessionID: UUID(), isValid: { true }) { enabled in
+                try await adapter.setCamera(enabled)
+            }
+            XCTFail("Camera failure must throw so coordinator releases its camera lease")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.contains("NativeDesktopRTCError"))
+        }
+        XCTAssertFalse(coordinator.hasActiveCameraLease, "Camera lease must be released when camera enable fails")
+        XCTAssertEqual(NativeDesktopCameraLease.shared.ownershipDiagnostics["cleanupFailed"] as? Bool, false)
+        XCTAssertEqual(NativeDesktopCameraLease.shared.ownershipDiagnostics["reservation"] as? String, "none")
+        XCTAssertFalse(adapter.snapshot.cameraOn)
+
+        let clean = await adapter.leave()
+        XCTAssertTrue(clean)
+    }
+
+    private func createSDP(on peer: LKRTCPeerConnection, offer: Bool) async throws -> LKRTCSessionDescription {
+        let constraints = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        return try await withCheckedThrowingContinuation { continuation in
+            let handler: @Sendable (LKRTCSessionDescription?, Error?) -> Void = { sdp, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let sdp { continuation.resume(returning: sdp) }
+                else { continuation.resume(throwing: NativeDesktopRTCError.invalidResponse) }
+            }
+            if offer { peer.offer(for: constraints, completionHandler: handler) }
+            else { peer.answer(for: constraints, completionHandler: handler) }
+        }
+    }
+
+    private func setSDP(on peer: LKRTCPeerConnection, description: LKRTCSessionDescription, local: Bool) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let handler: @Sendable (Error?) -> Void = { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+            if local { peer.setLocalDescription(description, completionHandler: handler) }
+            else { peer.setRemoteDescription(description, completionHandler: handler) }
+        }
+    }
+}
+
+@MainActor private final class MockTrueConfTransport: TrueConfSignalingTransport {
+    var cid = ""
+    var onMessage: (([String: Any]) async throws -> Void)?
+    var onFailure: ((Error) -> Void)?
+    private(set) var sent: [[String: Any]] = []
+
+    func start() {}
+    func send(_ fields: [String: Any]) async throws { sent.append(fields) }
+    func close(room: String?) async { onMessage = nil; onFailure = nil }
+
+    func waitForIndex(after startAfter: Int = -1, matching predicate: ([String: Any]) -> Bool) async throws -> Int {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if let index = sent.indices.first(where: { $0 > startAfter && predicate(sent[$0]) }) {
+                return index
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NativeDesktopRTCError.invalidResponse
+    }
+}
+
+private final class FailingGuestCameraStub: GuestCameraCapture {
+    func start() async throws -> GuestCameraInfo { throw GuestCameraError.unavailable }
+    func cancel() {}
+    func stop() async throws {}
+    func snapshot() -> GuestCameraSnapshot {
+        GuestCameraSnapshot(frames: 0, advancingPTS: 0, dropped: 0, width: 0, height: 0,
+                            pixelFormat: nil, systemBackgroundSelected: nil,
+                            systemBackgroundActive: nil, observedReaction: false)
+    }
+    func performReaction() async -> Bool { false }
+}
+
+@MainActor private final class StubGuestAudio: GuestMeetingAudio {
+    let factory: LKRTCPeerConnectionFactory
+    let profile: GuestAudioProfile = .speech
+    var snapshot: [String: Any] = ["microphoneMuted": true]
+    var playoutEpoch: UUID?
+    var startupAudioObservation = GuestStartupAudioObservation(snapshot: [:], inputCallbacks: 0, outputCallbacks: 0)
+    var canUnmuteMicrophone = true
+    var privateInputLevel: Float?
+    var privateInputMeterEvidence: [String: Any] = [:]
+    var playoutMeterEvidence: [String: Any] = [:]
+    var meetingLevel: Double = 1
+    #if DEBUG
+    var sharedPlayoutGateForTesting = GuestSharedPlayoutGate(enabled: false)
+    var startupCallbackEvidence: [String: Any] = [:]
+    #endif
+
+    init(factory: LKRTCPeerConnectionFactory) { self.factory = factory }
+    func registerMicrophoneTrack(_ track: LKRTCAudioTrack) {}
+    func activateMicrophone(timeout: TimeInterval?) async -> Bool { true }
+    func setMicrophoneMuted(_ muted: Bool, timeout: TimeInterval) async -> Bool {
+        snapshot["microphoneMuted"] = muted
+        return true
+    }
+    func suppressMicrophone() { snapshot["microphoneMuted"] = true }
+    func setInputPermitted(_ permitted: Bool, keepWarm: Bool, timeout: TimeInterval) async -> Bool { true }
+    func prewarmInput(timeout: TimeInterval) async -> Bool { true }
+    func setPlayoutEnabled(_ enabled: Bool, timeout: TimeInterval, expectedEpoch: UUID?) async -> Bool { true }
+    func setTranscriptionOutput(_ keep: Bool, timeout: TimeInterval) async -> Bool { true }
+    func openSharedPlayout(expected: UUID?) -> Bool { true }
+    func setSharedSoundIntent(_ sound: Bool, expected: UUID?) -> Bool { true }
+    func closeSharedPlayout(expected: UUID?) -> Bool { true }
+    func sharedPlayoutIsOpen(expected: UUID?) -> Bool { false }
+    func setMeetingVolume(_ volume: Double) -> Bool { true }
+    func refreshSnapshot(timeout: TimeInterval) async -> Bool { true }
+    func beginPrivateInputCheck(timeout: TimeInterval?) async -> Bool { true }
+    func endPrivateInputCheck(timeout: TimeInterval) async -> Bool { true }
+    func setInputTranscriptionSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {}
+    func setPrivateInputMeterEnabled(_ enabled: Bool) {}
+    func setMicrophoneGate(open: Bool) -> Bool { true }
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { true }
+    func shutdown(timeout: TimeInterval) async -> Bool { true }
 }

@@ -1,42 +1,9 @@
 import XCTest
 import AVFoundation
-import WebRTC
 import Darwin
 @testable import RockNRoll
 
 @MainActor final class ApplicationMicrophoneMuteTests: XCTestCase {
-    func testMacPlatformCallbackGatesInputBeforeNotification() async throws {
-        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MAC_INPUT_MUTE"] == "1",
-              ProcessInfo.processInfo.isiOSAppOnMac, #available(iOS 17.0, *) else { throw XCTSkip("Opt-in Mac microphone check") }
-        guard let bridge = ApplicationMicrophoneMute.macGuest else { throw XCTSkip("Requires rebuilt Mac capture gate") }
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw XCTSkip("Mac microphone permission") }
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers])
-        try session.setActive(true)
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { _, _ in }
-        try engine.start()
-        defer { input.removeTap(onBus: 0); engine.stop(); try? session.setActive(false) }
-        let owner = UUID(), notified = expectation(description: "Mac mute notification")
-        let app = AVAudioApplication.shared
-        bridge.begin(owner: owner, muted: true) { muted in
-            if !muted { notified.fulfill() }
-            return true
-        }
-        defer { bridge.end(owner: owner) }
-        print("MAC_MUTE before platform=\(app.isInputMuted) gate=\(RockMacInputMuteIsMuted())")
-        XCTAssertTrue(RockMacInputMuteIsMuted())
-        try app.setInputMuted(false) // Same system callback used by the accessory.
-        print("MAC_MUTE after platform=\(app.isInputMuted) gate=\(RockMacInputMuteIsMuted())")
-        // Unmute is admitted by the current owner through its notification;
-        // a stale platform callback must never open microphone capture.
-        await fulfillment(of: [notified], timeout: 3)
-        XCTAssertFalse(RockMacInputMuteIsMuted())
-        bridge.setMuted(true, owner: owner)
-        XCTAssertTrue(RockMacInputMuteIsMuted())
-    }
-
     func testStalePlatformUnmuteCannotOpenCapture() {
         var systemMuted = true, captureMuted = true, changes = 0
         let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
@@ -147,10 +114,10 @@ import Darwin
     }
 
     func testNativeIntentBridgeIsEmbeddedInTheGuestFramework() throws {
-        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetApplicationInputMuteIntent"))
-        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCApplicationInputMuteReconfiguring"))
-        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetApplicationCaptureMuted"))
-        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCApplicationCaptureMuted"))
+        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "LKRTCSetApplicationInputMuteIntent"))
+        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "LKRTCApplicationInputMuteReconfiguring"))
+        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "LKRTCSetApplicationCaptureMuted"))
+        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "LKRTCApplicationCaptureMuted"))
     }
 
     func testGestureCallbackCannotOverwriteReplacementOwnersIntent() {
@@ -268,231 +235,121 @@ import Darwin
             calls.end()
         }
     }
-}
 
+    private final class PlatformMuteProbeBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var muted = false
+        private var now: TimeInterval = 100
+        private var writes: [(value: Bool, onMain: Bool)] = []
 
-final class GuestConferencePlayoutReservationTests: XCTestCase {
-    func testInterruptionRetainsResumeRegistrationWithoutStartingAnUnavailableDevice() {
-        var writes: [Bool] = []
-        let lease = GuestConferencePlayoutReservation(write: { writes.append($0) })
-        lease.update(joined: true, audioAvailable: false)
-        XCTAssertTrue(writes.isEmpty, "An initial join cannot start output before iOS permits it")
-        lease.update(joined: true, audioAvailable: true)
-        lease.update(joined: true, audioAvailable: false, refresh: true)
-        XCTAssertEqual(writes, [true], "During a competing call the native ADM pauses; disposing it would lose resume notification")
-        lease.update(joined: true, audioAvailable: true, refresh: true)
-        lease.update(joined: false, audioAvailable: false)
-        XCTAssertEqual(writes, [true, true, false])
-    }
-    func testAudioActivationCanRetryAStartWithoutLettingRetiredOwnerDisableIt() {
-        var writes: [Bool] = []
-        let lease = GuestConferencePlayoutReservation(write: { writes.append($0) })
-        lease.setReserved(true); lease.setReserved(true)
-        lease.setReserved(true, refresh: true)
-        XCTAssertEqual(writes, [true, true])
-        lease.setReserved(false)
-        XCTAssertEqual(writes, [true, true, false])
-    }
-    func testRetiredOwnerCannotStopReplacementOutputAndLeaveReleasesIt() {
-        var writes: [Bool] = []
-        let old = GuestConferencePlayoutReservation(write: { writes.append($0) })
-        let next = GuestConferencePlayoutReservation(write: { writes.append($0) })
-        old.setReserved(true); old.setReserved(true)
-        next.setReserved(true); old.setReserved(false)
-        XCTAssertEqual(writes, [true, true])
-        next.setReserved(false); next.setReserved(false)
-        XCTAssertEqual(writes, [true, true, false])
-    }
-    func testInterruptionReleasesAndResumeReacquiresWithoutCapturingInput() {
-        var writes: [Bool] = []
-        var lease: GuestConferencePlayoutReservation? = .init(write: { writes.append($0) })
-        lease?.setReserved(false); lease?.setReserved(true)
-        lease?.setReserved(false); lease?.setReserved(true); lease = nil
-        XCTAssertEqual(writes, [true, false, true, false])
-    }
-}
+        var isMuted: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return muted
+        }
 
-@MainActor final class GuestConferenceOutputDeviceTests: XCTestCase {
-    private var previousConfiguration: RTCAudioSessionConfiguration?
-    private var previousCategory: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
-    override func setUp() async throws {
-        try await super.setUp()
-        try requirePhysicalOutputDevice()
-        let session = AVAudioSession.sharedInstance()
-        previousCategory = (session.category, session.mode, session.categoryOptions)
-        // Match the product's preparation before a factory snapshots WebRTC
-        // configuration. SoloAmbient combined with Bluetooth HFP is invalid.
-        try await AudioCoordinator().prepareForJoin()
-        previousConfiguration = RTCAudioSessionConfiguration.webRTC()
-        let configuration = RTCAudioSessionConfiguration()
-        configuration.category = AVAudioSession.Category.playAndRecord.rawValue
-        configuration.mode = AVAudioSession.Mode.videoChat.rawValue
-        configuration.categoryOptions = [.mixWithOthers, .allowBluetoothHFP]
-        RTCAudioSessionConfiguration.setWebRTC(configuration)
-    }
-    override func tearDown() async throws {
-        if let previousConfiguration { RTCAudioSessionConfiguration.setWebRTC(previousConfiguration) }
-        if let previousCategory {
-            try AVAudioSession.sharedInstance().setCategory(previousCategory.0, mode: previousCategory.1, options: previousCategory.2)
+        var currentTime: TimeInterval {
+            lock.lock(); defer { lock.unlock() }
+            return now
         }
-        try await super.tearDown()
-    }
-    func testUnavailableAudioReservationReleaseBalancesNativeSession() async throws {
-        try requirePhysicalOutputDevice()
-        guard GuestConferencePlayoutReservation.isSupported else {
-            throw XCTSkip("Requires the opt-in rebuilt native audio device")
-        }
-        let session = RTCAudioSession.sharedInstance()
-        let oldManual = session.useManualAudio, oldEnabled = session.isAudioEnabled
-        let baseline = conferenceSessionCount(session)
-        session.useManualAudio = true; session.isAudioEnabled = false
-        let factory = RTCPeerConnectionFactory()
-        let configuration = RTCConfiguration(); configuration.sdpSemantics = .unifiedPlan
-        let peer = try XCTUnwrap(factory.peerConnection(with: configuration,
-            constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: nil))
-        let lease = GuestConferencePlayoutReservation(write: { RTCSetConferenceOutputForTest($0) })
-        defer {
-            lease.setReserved(false); peer.close()
-            session.isAudioEnabled = oldEnabled; session.useManualAudio = oldManual
-            withExtendedLifetime(factory) {}
-        }
-        lease.setReserved(true)
-        try await wait { conferenceSessionCount(session) == baseline + 1 }
-        lease.setReserved(false)
-        try await wait { conferenceSessionCount(session) == baseline }
-        session.isAudioEnabled = true
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(conferenceSessionCount(session), baseline, "Late availability cannot resurrect an ended reservation")
-        lease.setReserved(true)
-        try await wait { session.isActive && conferenceSessionCount(session) == baseline + 1 }
-        lease.setReserved(false)
-        try await wait { conferenceSessionCount(session) == baseline }
-    }
-    func testFactoryReplacementRetiresOldOutputEvenIfSDKRetainsOldPeer() async throws {
-        try requirePhysicalOutputDevice()
-        guard GuestConferencePlayoutReservation.isSupported else {
-            throw XCTSkip("Requires the opt-in rebuilt native audio device")
-        }
-        let session = RTCAudioSession.sharedInstance()
-        let oldManual = session.useManualAudio, oldEnabled = session.isAudioEnabled
-        session.useManualAudio = true; session.isAudioEnabled = true
-        let started = expectation(description: "First output started"), stopped = expectation(description: "Old output retired")
-        let observer = ConferenceOutputObserver(started: started, stopped: stopped)
-        session.add(observer)
-        let first = RTCPeerConnectionFactory(), replacement = RTCPeerConnectionFactory()
-        let configuration = RTCConfiguration(); configuration.sdpSemantics = .unifiedPlan
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-        let oldPeer = try XCTUnwrap(first.peerConnection(with: configuration, constraints: constraints, delegate: nil))
-        let lease = GuestConferencePlayoutReservation(write: { RTCSetConferenceOutputForTest($0) })
-        var newPeer: RTCPeerConnection?
-        defer {
-            lease.setReserved(false); oldPeer.close(); newPeer?.close(); session.remove(observer)
-            session.isAudioEnabled = oldEnabled; session.useManualAudio = oldManual
-            withExtendedLifetime((first, replacement)) {}
-        }
-        lease.setReserved(true)
-        try await wait("First output session begins") { observer.startCount == 1 }
-        newPeer = try XCTUnwrap(replacement.peerConnection(with: configuration, constraints: constraints, delegate: nil))
-        try await wait("Replacement output begins and old output retires") { observer.startCount == 2 && observer.stopCount == 1 }
-        await fulfillment(of: [started, stopped], timeout: 1)
-        // Retained obsolete SDK factories cannot reclaim output by creating
-        // another peer after the replacement has begun.
-        let stalePeer = try XCTUnwrap(first.peerConnection(with: configuration, constraints: constraints, delegate: nil))
-        stalePeer.close()
-        try await Task.sleep(for: .milliseconds(250))
-        XCTAssertEqual(observer.startCount, 2)
-        XCTAssertEqual(observer.stopCount, 1)
-        // The obsolete factory remains strongly retained, as during SDK reconnect.
-        lease.setReserved(true, refresh: true)
-        oldPeer.close()
-        try await Task.sleep(for: .seconds(1))
-        XCTAssertEqual(observer.startCount, 2, "A retired worker must not restart its old output")
-        XCTAssertEqual(observer.stopCount, 1)
-        lease.setReserved(false)
-        try await wait { observer.stopCount == 2 }
-        XCTAssertFalse(session.isActive)
-        // A temporary release must not permanently retire the current factory.
-        lease.setReserved(true)
-        try await wait { observer.startCount == 3 }
-        lease.setReserved(false)
-        try await wait { observer.stopCount == 3 }
-        XCTAssertLessThanOrEqual(observer.maxSessionCount, 1, "Replacement cannot overlap native session ownership")
-    }
-    private func requirePhysicalOutputDevice() throws {
-        #if targetEnvironment(simulator)
-        throw XCTSkip("Native RemoteIO lifecycle requires physical iOS hardware; the Simulator uses host CoreAudio")
-        #else
-        guard !ProcessInfo.processInfo.isiOSAppOnMac else {
-            throw XCTSkip("Trackless output reservation is disabled in the production Mac runtime; qualify it on iOS")
-        }
-        #endif
-    }
-    private func wait(_ phase: String = "Native output lifecycle", file: StaticString = #filePath, line: UInt = #line,
-                      _ predicate: () -> Bool) async throws {
-        let end = Date().addingTimeInterval(10)
-        while !predicate(), Date() < end { try await Task.sleep(for: .milliseconds(50)) }
-        XCTAssertTrue(predicate(), "\(phase): active=\(RTCAudioSession.sharedInstance().isActive) audioEnabled=\(RTCAudioSession.sharedInstance().isAudioEnabled)", file: file, line: line)
-        if !predicate() { throw NSError(domain: "ConferenceOutputReplacement", code: 1, userInfo: [NSLocalizedDescriptionKey: phase]) }
-    }
-    func testRebuiltOutputKeepsTracklessSessionRunningAndReleasesOnLeave() async throws {
-        try requirePhysicalOutputDevice()
-        guard GuestConferencePlayoutReservation.isSupported else {
-            throw XCTSkip("Requires the opt-in rebuilt native audio device")
-        }
-        let session = RTCAudioSession.sharedInstance()
-        let oldManual = session.useManualAudio, oldEnabled = session.isAudioEnabled
-        let started = expectation(description: "Actual native output unit started")
-        let stopped = expectation(description: "Actual native output unit stopped")
-        let observer = ConferenceOutputObserver(started: started, stopped: stopped)
-        session.add(observer)
-        session.useManualAudio = true; session.isAudioEnabled = true
-        let lease = GuestConferencePlayoutReservation(write: { RTCSetConferenceOutputForTest($0) })
-        let factory = RTCPeerConnectionFactory()
-        let configuration = RTCConfiguration(); configuration.sdpSemantics = .unifiedPlan
-        let peer = try XCTUnwrap(factory.peerConnection(with: configuration,
-            constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: nil))
-        defer {
-            lease.setReserved(false); peer.close(); session.remove(observer)
-            session.isAudioEnabled = oldEnabled; session.useManualAudio = oldManual
-            withExtendedLifetime(factory) {}
-        }
-        lease.setReserved(true)
-        await fulfillment(of: [started], timeout: 10)
-        peer.close()
-        try await Task.sleep(for: .seconds(2))
-        XCTAssertTrue(session.isActive)
-        XCTAssertEqual(observer.stopCount, 0, "No incoming tracks must not shut the conference output down")
-        lease.setReserved(false)
-        await fulfillment(of: [stopped], timeout: 10)
-        XCTAssertFalse(session.isActive, "Leaving must release the session rather than retaining background audio")
-    }
-}
 
-private func conferenceSessionCount(_ session: RTCAudioSession) -> Int {
-    (session.value(forKey: "webRTCSessionCount") as? NSNumber)?.intValue ?? -1
-}
+        var recordedWrites: [(value: Bool, onMain: Bool)] {
+            lock.lock(); defer { lock.unlock() }
+            return writes
+        }
 
-private func RTCSetConferenceOutputForTest(_ value: Bool) {
-    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetConferencePlayoutReserved") else { return }
-    unsafeBitCast(symbol, to: (@convention(c) (Int32) -> Void).self)(value ? 1 : 0)
-}
+        func setMuted(_ value: Bool, delay: TimeInterval = 0, record: Bool = false) {
+            if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+            lock.lock()
+            muted = value
+            if record { writes.append((value, Thread.isMainThread)) }
+            lock.unlock()
+        }
 
-private final class ConferenceOutputObserver: NSObject, RTCAudioSessionDelegate {
-    private let lock = NSLock()
-    private let started: XCTestExpectation, stopped: XCTestExpectation
-    private var starts = 0, stops = 0
-    private var maxSessions = 0
-    var startCount: Int { lock.lock(); defer { lock.unlock() }; return starts }
-    var stopCount: Int { lock.lock(); defer { lock.unlock() }; return stops }
-    var maxSessionCount: Int { lock.lock(); defer { lock.unlock() }; return maxSessions }
-    init(started: XCTestExpectation, stopped: XCTestExpectation) { self.started = started; self.stopped = stopped }
-    func audioSessionDidStartPlayOrRecord(_ session: RTCAudioSession) {
-        let sessions = conferenceSessionCount(session)
-        lock.lock(); starts += 1; maxSessions = max(maxSessions, sessions); let first = starts == 1; lock.unlock()
-        if first { started.fulfill() }
+        func advanceTime(by delta: TimeInterval, resetPlatformMuted: Bool? = nil) {
+            lock.lock()
+            now += delta
+            if let resetPlatformMuted { muted = resetPlatformMuted }
+            lock.unlock()
+        }
     }
-    func audioSessionDidStopPlayOrRecord(_ session: RTCAudioSession) {
-        lock.lock(); stops += 1; let first = stops == 1; lock.unlock()
-        if first { stopped.fulfill() }
+
+    func testLivePlatformInputMuteBoxCoalescesRapidWritesOffMainThread() async throws {
+        let queue = DispatchQueue(label: "test.live-mute-coalesce")
+        let worker = AudioSessionWorker(queue: queue)
+        let probe = PlatformMuteProbeBox()
+        let notifications = NotificationCenter()
+
+        let box = LivePlatformInputMuteBox(
+            worker: worker,
+            readPlatform: { probe.isMuted },
+            writePlatform: { probe.setMuted($0, delay: 0.01, record: true) },
+            notifications: notifications
+        )
+
+        queue.suspend()
+        let start = ContinuousClock.now
+        for i in 0..<20 {
+            box.write(i % 2 == 0)
+        }
+        let mainElapsed = start.duration(to: .now)
+        XCTAssertLessThan(mainElapsed, .milliseconds(100), "Rapid writes must never block the main thread")
+        XCTAssertFalse(box.read())
+        queue.resume()
+
+        try await worker.perform(lease: AudioSessionLease(), operation: {})
+        let recorded = probe.recordedWrites
+
+        XCTAssertFalse(probe.isMuted)
+        XCTAssertLessThanOrEqual(recorded.count, 2, "Coalesced worker must collapse rapid intermediate toggles")
+        XCTAssertTrue(recorded.allSatisfy { !$0.onMain }, "Platform writes must never execute on main thread")
+    }
+
+    func testLivePlatformInputMuteBoxSuppressesSpuriousNotificationDuringRouteResetAndRestoresIntent() async throws {
+        let queue = DispatchQueue(label: "test.live-mute-reset")
+        let worker = AudioSessionWorker(queue: queue)
+        let probe = PlatformMuteProbeBox()
+        let notifications = NotificationCenter()
+
+        let box = LivePlatformInputMuteBox(
+            worker: worker,
+            readPlatform: { probe.isMuted },
+            writePlatform: { probe.setMuted($0) },
+            uptime: { probe.currentTime },
+            notifications: notifications
+        )
+
+        var changes: [Bool] = []
+        let bridge = ApplicationMicrophoneMute(
+            read: { box.read() },
+            write: { box.write($0) },
+            isReconfiguring: { box.isReconfiguring(nativeReconfiguring: false) }
+        )
+        bridge.begin(owner: UUID(), muted: true) { changes.append($0); return true }
+        try await worker.perform(lease: AudioSessionLease(), operation: {})
+
+        // Advance past write grace window and simulate a route change where VPIO resets platform muted = false.
+        probe.advanceTime(by: 1.0, resetPlatformMuted: false)
+
+        notifications.post(name: AVAudioSession.routeChangeNotification, object: nil)
+        for _ in 0..<50 where !box.isReconfiguring(nativeReconfiguring: false) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(box.isReconfiguring(nativeReconfiguring: false))
+
+        box.handleNotification(false, nativeReconfiguring: false) { muted in
+            bridge.received(muted)
+        }
+        XCTAssertTrue(changes.isEmpty, "Route reconfiguration reset must not trigger an unmute gesture")
+        XCTAssertTrue(box.read())
+
+        try await worker.perform(lease: AudioSessionLease(), operation: {})
+        XCTAssertTrue(probe.isMuted, "Worker must restore desired mute state after VPIO reset")
+
+        // Outside the reconfiguration window, genuine accessory unmute must still work.
+        probe.advanceTime(by: 1.0, resetPlatformMuted: false)
+        box.handleNotification(false, nativeReconfiguring: false) { muted in
+            bridge.received(muted)
+        }
+        XCTAssertEqual(changes, [false])
     }
 }

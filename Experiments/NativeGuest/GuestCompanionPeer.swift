@@ -1,3 +1,4 @@
+import ConferenceCore
 import Foundation
 
 /// One synthetic publisher/receiver. Its only remote sender is the installed

@@ -22,39 +22,21 @@ final class AudioPipelineDeviceExperimentTests: XCTestCase {
         let category = session.category, mode = session.mode, options = session.categoryOptions
         let manual = manager.isManualRenderingMode
         let room = Room()
-        var feed: Task<Void, Never>?
         defer {
-            feed?.cancel()
             try? manager.stopLocalRecording()
             try? manager.setManualRenderingMode(manual)
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
             try? session.setCategory(category, mode: mode, options: options)
         }
         do {
-            // Mac uses synthetic silence. The explicitly selected phone test
-            // uses its real capture path and restores the audio session afterward.
-            let synthetic = ProcessInfo.processInfo.isiOSAppOnMac
-            if synthetic { try manager.setManualRenderingMode(true) }
-            else {
-                guard session.recordPermission == .granted else { throw XCTSkip("Microphone permission not granted") }
-                try await AudioCoordinator().prepareForJoin()
-                try session.setActive(true)
-            }
+            guard session.recordPermission == .granted else { throw XCTSkip("Microphone permission not granted") }
+            try await AudioCoordinator().prepareForJoin()
+            try session.setActive(true)
             let credentials = try await JamService().join(try JamTarget.parse(invitation), name: "Sound settings QA")
             try await room.connect(url: credentials.serverURL.absoluteString, token: credentials.participantToken,
                                    connectOptions: ConnectOptions(autoSubscribe: false))
             let track = await LocalAudioTrack.createTrack(options: AudioCaptureOptions(), reportStatistics: true)
             _ = try await room.localParticipant.publish(audioTrack: track, options: AudioPublishOptions(dtx: false))
-            if synthetic { feed = Task { @MainActor in
-                let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
-                while !Task.isCancelled {
-                    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480)!
-                    buffer.frameLength = 480
-                    if let data = buffer.floatChannelData { memset(data[0], 0, 480 * MemoryLayout<Float>.size) }
-                    manager.mixer.capture(appAudio: buffer)
-                    try? await Task.sleep(for: .milliseconds(10))
-                }
-            } }
             var previousPackets = 0.0
             for profile in [StudioAudioProfile.conversation, .music, .conversation] {
                 _ = try await Task.detached { try track.setAudioProcessingOptions(StudioAudioPolicy.processingOptions(for: profile)) }.value
@@ -74,10 +56,8 @@ final class AudioPipelineDeviceExperimentTests: XCTestCase {
                 print("STUDIO_AUDIO,profile=\(profile.rawValue),aec=\(state.echoCancellation.effective.rawValue),noise=\(state.noiseSuppression.effective.rawValue),gain=\(state.autoGainControl.effective.rawValue)")
                 print("STUDIO_AUDIO_CAPTURE,rate=\(session.sampleRate),io_ms=\(session.ioBufferDuration * 1000),packets=\(packets),input=\(session.currentRoute.inputs.map(\.portType.rawValue).joined(separator: ":"))")
             }
-            feed?.cancel()
             await room.disconnect()
         } catch {
-            feed?.cancel()
             await room.disconnect()
             throw error
         }

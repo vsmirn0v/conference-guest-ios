@@ -1,3 +1,4 @@
+import MeetingEngine
 import XCTest
 @testable import RockNRoll
 

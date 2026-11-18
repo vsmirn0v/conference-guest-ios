@@ -9,7 +9,7 @@ import UIKit
 final class StudioPanelLayout: ObservableObject {
     @Published var bottomSelector: Bool?
     static func usesBottomSelector(size: CGSize, idiom: UIUserInterfaceIdiom,
-                                   isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac) -> Bool {
+                                   isMac: Bool = false) -> Bool {
         !isMac && idiom == .phone && size.height >= size.width
     }
 }
@@ -37,8 +37,7 @@ struct StudioPanel: View {
     }
 
     private var bottomSelector: Bool {
-        layout.bottomSelector ?? (!ProcessInfo.processInfo.isiOSAppOnMac &&
-            UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass != .compact)
+        layout.bottomSelector ?? (UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass != .compact)
     }
 
     private var panes: some View {

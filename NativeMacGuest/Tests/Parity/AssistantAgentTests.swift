@@ -1,6 +1,7 @@
 import ConferenceCore
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Scripted model: deterministic steps, records every request it receives.

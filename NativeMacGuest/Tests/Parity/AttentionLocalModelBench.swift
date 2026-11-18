@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import Translation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Opt-in comparison of on-device judges on the Russian scenarios in

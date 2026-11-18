@@ -8,18 +8,12 @@ final class AudioDeviceSelection: ObservableObject {
     @Published private(set) var inputName = ""
     @Published private(set) var outputName = ""
     @Published private(set) var inputs: [AVAudioSessionPortDescription] = []
-    @Published private(set) var mac = MacAudioSnapshot()
     @Published private(set) var error: String?
     private let worker: AudioSessionWorker
     private var selectionLease: AudioSessionLease?
-    private var subscriptions = Set<AnyCancellable>()
     private var observations: [NSObjectProtocol] = []
-    let isMac = ProcessInfo.processInfo.isiOSAppOnMac
     init(worker: AudioSessionWorker = .shared) {
         self.worker = worker
-        if isMac {
-            MacAudioDevices.shared.$snapshot.sink { [weak self] _ in self?.refresh() }.store(in: &subscriptions)
-        }
         for name in [AVAudioSession.routeChangeNotification, AVAudioSession.mediaServicesWereResetNotification] {
             observations.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
                 [weak self] _ in MainActor.assumeIsolated { self?.refresh() }
@@ -31,14 +25,8 @@ final class AudioDeviceSelection: ObservableObject {
     func refresh() {
         let session = AVAudioSession.sharedInstance()
         inputs = session.availableInputs ?? []
-        if isMac {
-            mac = MacAudioDevices.shared.snapshot
-            inputName = mac.devices.first { $0.id == mac.inputID }?.name ?? L("No microphones available")
-            outputName = mac.outputName ?? L("No output devices available")
-        } else {
-            inputName = session.currentRoute.inputs.first?.portName ?? L("Automatic")
-            outputName = session.currentRoute.outputs.first?.portName ?? L("Automatic")
-        }
+        inputName = session.currentRoute.inputs.first?.portName ?? L("Automatic")
+        outputName = session.currentRoute.outputs.first?.portName ?? L("Automatic")
     }
     func cancelSelection() { selectionLease?.invalidate(); selectionLease = nil }
     func selectInput(_ uid: String?) {
@@ -61,10 +49,6 @@ final class AudioDeviceSelection: ObservableObject {
             }
         }
     }
-    func selectMac(_ id: UInt32, _ direction: MacAudioDirection) {
-        do { try MacAudioDevices.shared.select(id, for: direction); error = nil; refresh() }
-        catch { self.error = L("Could not change audio device. Please try again.") }
-    }
 }
 
 struct AudioDevicesControls: View {
@@ -74,18 +58,10 @@ struct AudioDevicesControls: View {
     var body: some View {
         Section(L("Output")) {
             Text(devices.outputName).accessibilityIdentifier("studio.output-device")
-            if devices.isMac {
-                Menu(L("Change output")) {
-                    ForEach(devices.mac.devices(for: .output), id: \.id) { device in
-                        Button(device.name) { devices.selectMac(device.id, .output) }
-                    }
-                }
-            } else {
-                HStack {
-                    Text(L("Change output"))
-                    Spacer()
-                    AudioOutputPicker().frame(width: 44, height: 44)
-                }
+            HStack {
+                Text(L("Change output"))
+                Spacer()
+                AudioOutputPicker().frame(width: 44, height: 44)
             }
             Button { studio.releasePrivateMicrophone(); speaker.play(standalone: studio.enableMicrophone == nil) } label: {
                 Label(speaker.playing ? L("Playing test sound…") : L("Test speaker"), systemImage: "speaker.wave.2")
@@ -94,31 +70,19 @@ struct AudioDevicesControls: View {
         }
         Section(L("Microphone")) {
             Text(devices.inputName).accessibilityIdentifier("studio.input-device")
-            if devices.isMac {
-                Menu(L("Change microphone")) {
-                    ForEach(devices.mac.devices(for: .input), id: \.id) { device in
-                        Button(device.name) { devices.selectMac(device.id, .input) }
-                    }
+            Menu(L("Change microphone")) {
+                Button(L("Automatic")) { devices.selectInput(nil) }
+                ForEach(devices.inputs, id: \.uid) { port in
+                    Button(port.portName) { devices.selectInput(port.uid) }
                 }
-            } else {
-                Menu(L("Change microphone")) {
-                    Button(L("Automatic")) { devices.selectInput(nil) }
-                    ForEach(devices.inputs, id: \.uid) { port in
-                        Button(port.portName) { devices.selectInput(port.uid) }
-                    }
-                }.disabled(devices.inputs.isEmpty)
-                Text(L("Bluetooth call headsets can link microphone and output selection. iOS chooses the supported combination."))
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
+            }.disabled(devices.inputs.isEmpty)
+            Text(L("Bluetooth call headsets can link microphone and output selection. iOS chooses the supported combination."))
+                .font(.footnote).foregroundStyle(.secondary)
             if studio.microphoneOn { MicrophoneLevelStrip(activity: studio.microphoneActivity) }
             Button(L("Microphone levels and effects")) { studio.audioSection = .sound }
         }
         Section {
-            if devices.isMac {
-                Text(L("Selections change your Mac’s system audio devices for other apps too."))
-            } else {
-                Text(L("For compatible headphone Audio Sharing, use the system output controls in Control Center. Availability depends on the active call route."))
-            }
+            Text(L("For compatible headphone Audio Sharing, use the system output controls in Control Center. Availability depends on the active call route."))
             if let error = devices.error { Text(error).foregroundStyle(.red) }
         }.font(.footnote).foregroundStyle(.secondary)
         .disabled(studio.held || !studio.active)

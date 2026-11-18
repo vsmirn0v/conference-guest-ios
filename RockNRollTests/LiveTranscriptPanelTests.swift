@@ -1,4 +1,5 @@
 import ConferenceCore
+@testable import MeetingEngine
 import UIKit
 import XCTest
 @testable import RockNRoll
@@ -21,6 +22,7 @@ final class LiveTranscriptPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: catchUp, chat: chat, initialMode: .liveText)
         window.rootViewController = panel
         window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(100))
         await drainUpdates()
 
         let text = try transcriptText(in: panel)
@@ -46,6 +48,7 @@ final class LiveTranscriptPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: catchUp, chat: chat, initialMode: .liveText)
         window.rootViewController = panel
         window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(100))
         await drainUpdates()
 
         let text = try transcriptText(in: panel)
@@ -70,6 +73,7 @@ final class LiveTranscriptPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: catchUp, chat: chat, initialMode: .liveText)
         window.rootViewController = panel
         window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(100))
         await drainUpdates()
 
         let text = try transcriptText(in: panel)
@@ -94,6 +98,7 @@ final class LiveTranscriptPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: catchUp, chat: chat, initialMode: .liveText)
         window.rootViewController = panel
         window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(100))
         await drainUpdates()
 
         NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
@@ -118,6 +123,7 @@ final class LiveTranscriptPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: catchUp, chat: chat, initialMode: .liveText)
         window.rootViewController = panel
         window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(100))
         await drainUpdates()
 
         XCTAssertTrue(try transcriptText(in: panel).contains(L("Transcripts aren’t available in this room.")))
@@ -127,6 +133,39 @@ final class LiveTranscriptPanelTests: XCTestCase {
         XCTAssertTrue(text.contains("Transcript permission was revoked."))
         XCTAssertFalse(text.contains(L("Transcripts aren’t available in this room.")))
         XCTAssertTrue(text.contains("❤️  Ani"))
+    }
+
+    func testLiveTextTranscriptControlsInvokeToggleAndHistoryCallbacks() async throws {
+        let (window, previous) = try makeWindow()
+        defer { window.isHidden = true; previous?.makeKey() }
+        let catchUp = CatchUpStore()
+        catchUp.observe(messages: [], canView: true, enabled: false)
+        catchUp.canManageTranscript = true
+        var toggleValues: [Bool] = []
+        var historyLoads = 0
+        catchUp.onSetTranscriptionEnabled = { toggleValues.append($0) }
+        catchUp.onLoadTranscriptHistory = { historyLoads += 1 }
+        let chat = ChatStore()
+        let panel = ConversationPanelViewController(catchUp: catchUp, chat: chat, initialMode: .liveText)
+        window.rootViewController = panel
+        window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(100))
+        await drainUpdates()
+
+        let toggle = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "transcript.toggle" })
+        let history = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "transcript.load-history" })
+        XCTAssertFalse(toggle.isHidden)
+        XCTAssertFalse(history.isHidden)
+        XCTAssertEqual(toggle.configuration?.title, L("Start transcription"))
+
+        toggle.sendActions(for: .touchUpInside)
+        history.sendActions(for: .touchUpInside)
+        XCTAssertEqual(toggleValues, [true])
+        XCTAssertEqual(historyLoads, 1)
+
+        catchUp.observe(messages: [], canView: true, enabled: true)
+        await drainUpdates()
+        XCTAssertEqual(toggle.configuration?.title, L("Stop transcription"))
     }
 
     private func makeWindow() throws -> (UIWindow, UIWindow?) {

@@ -9,6 +9,7 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
     static let attentionCategory = "ATTENTION_MOMENT"
     static let join = "REMINDER_JOIN", snooze = "REMINDER_SNOOZE", skip = "REMINDER_SKIP"
     @MainActor var onAttention: (UUID) -> Void = { _ in }
+    @MainActor var isTaskReminderAllowed: (@MainActor (UUID) async -> Bool)?
     @MainActor private var coordinator: CalendarReminderCoordinator?
     @MainActor private var queued: [(String, Bool)] = []
     @MainActor var sharedCoordinator: CalendarReminderCoordinator {
@@ -75,10 +76,7 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
         let id = notification.request.identifier
         if id.hasPrefix(taskPrefix), let taskID = UUID(uuidString: String(id.dropFirst(taskPrefix.count))) {
             Task { @MainActor in
-                let store = AttentionStore.shared
-                await store.waitForMeetingLibrary()
-                let eligible = (try? await store.meetingLibrary.store.taskReminderAllowed(
-                    taskID, profile: store.assistant.taskProfile)) == true
+                let eligible = await self.isTaskReminderAllowed?(taskID) ?? false
                 completionHandler(eligible ? [.banner, .list, .sound] : [])
             }
             return

@@ -3,3 +3,6 @@
 "NSMicrophoneUsageDescription" = "Use your microphone to speak in jams and test your sound privately before unmuting.";
 "NSCalendarsUsageDescription" = "Find meeting links and times in calendars you choose. Your calendar is never edited. Event details stay on this device; room names saved to Favorites follow your iCloud Sync choice.";
 "NSCalendarsFullAccessUsageDescription" = "Find meeting links and times in calendars you choose. Your calendar is never edited. Event details stay on this device; room names saved to Favorites follow your iCloud Sync choice.";
+
+"NSSpeechRecognitionUsageDescription" = "Rock'n'Roll uses on-device Speech Recognition to transcribe meetings locally on this iPhone.";
+"NSPersonalVoiceUsageDescription" = "Rock'n'Roll can use your Personal Voice to speak voice replies you send into meetings.";

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Debounced note commits: hydration, flush, generation fencing and error surfaces.

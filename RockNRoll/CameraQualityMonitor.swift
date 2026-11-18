@@ -13,13 +13,10 @@ final class CameraEnvironment: ObservableObject {
     private let path = NWPathMonitor()
     private var observers: [NSObjectProtocol] = []
     private init() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
         refreshPower()
-        if !ProcessInfo.processInfo.isiOSAppOnMac {
-            UIDevice.current.isBatteryMonitoringEnabled = true
-            refreshPower()
-            observers.append(NotificationCenter.default.addObserver(forName: UIDevice.batteryStateDidChangeNotification,
-                object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.refreshPower() } })
-        }
+        observers.append(NotificationCenter.default.addObserver(forName: UIDevice.batteryStateDidChangeNotification,
+            object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.refreshPower() } })
         path.pathUpdateHandler = { [weak self] path in
             let route = path.availableInterfaces.filter { path.usesInterfaceType($0.type) }.map(\.index).sorted().description +
                 String(describing: path.status) + String(describing: path.gateways)
@@ -31,11 +28,6 @@ final class CameraEnvironment: ObservableObject {
         path.start(queue: DispatchQueue(label: "dev.vsmirn0v.camera-path"))
     }
     func refreshPower() {
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            let value = MacExternalPower.current
-            if value != power { power = value }
-            return
-        }
         let value: CameraQualityPolicy.Power
         switch UIDevice.current.batteryState {
         case .charging, .full: value = .connected

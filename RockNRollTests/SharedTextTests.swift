@@ -311,57 +311,6 @@ import VisionKit
         }
     }
 
-    func testGuestCapturedCanvasKeepsPrimaryDockAndContextToolsReachableAcrossResize() async throws {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-        let previous = scene.windows.first(where: \.isKeyWindow)
-        let window = UIWindow(windowScene: scene), host = UIViewController()
-        window.rootViewController = host; window.makeKeyAndVisible()
-        var microphoneChanges = 0
-        let controls = CallControls(localPreview: LocalSharePreview(), state: nil, coordinator: nil,
-            router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: .all,
-            invitationURL: nil, roomIdentifier: "ocr-fixture", onDisplayMode: { _ in }, onFloat: {},
-            onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
-            onMicrophoneState: { _ in microphoneChanges += 1 }, onCameraState: { _ in }, surfaceContainer: host.view)
-        host.view.addSubview(controls); controls.frame = host.view.bounds
-        controls.setStagePresentation(.init(target: .init(participant: "presenter", isShare: true),
-            name: "White share", microphoneOn: false, watermark: nil,
-            active: true, automatic: true, count: 2, browsing: false))
-        defer { window.isHidden = true; previous?.makeKey() }
-        window.layoutIfNeeded(); controls.layoutIfNeeded()
-        let entry = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "Select shared text" })
-        let access = try XCTUnwrap(descendants(window).compactMap { $0 as? MeetingAccessControls }.first)
-        XCTAssertFalse(entry.isHidden)
-        XCTAssertEqual(entry.convert(entry.bounds, to: window).midY, access.convert(access.bounds, to: window).midY, accuracy: 0.5)
-        entry.sendActions(for: .touchUpInside)
-        try await wait { descendants(window).contains { $0 is SharedTextOverlay } }
-        let overlay = try XCTUnwrap(descendants(window).compactMap { $0 as? SharedTextOverlay }.first)
-        defer { overlay.finish() }
-        try await wait { !overlay.busy }
-        for size in [CGSize(width: 390, height: 844), CGSize(width: 844, height: 390), CGSize(width: 1024, height: 768), CGSize(width: 390, height: 844)] {
-            window.frame.size = size; host.view.frame = window.bounds; controls.frame = host.view.bounds
-            window.setNeedsLayout(); host.view.setNeedsLayout(); controls.setNeedsLayout()
-            window.layoutIfNeeded(); host.view.layoutIfNeeded(); controls.layoutIfNeeded(); overlay.layoutIfNeeded()
-            let surface = try XCTUnwrap(overlay.superview)
-            XCTAssertEqual(overlay.frame, surface.bounds, "Selection must replace the full live canvas")
-            let buttons = descendants(window).compactMap { $0 as? UIButton }.filter {
-                ["Return to live share", "Capture current shared frame", "Fit captured image", "Captured share more"].contains($0.accessibilityIdentifier ?? "") ||
-                    [L("Mute microphone"), L("Unmute microphone")].contains($0.accessibilityLabel ?? "")
-            }
-            XCTAssertEqual(buttons.count, 5)
-            for button in buttons where button.isEnabled {
-                let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
-                let hit = window.hitTest(point, with: nil)
-                XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
-                    "Captured canvas must not intercept \(button.accessibilityIdentifier ?? "tool") after resize; hit=\(String(describing: hit))")
-            }
-        }
-        let escape = try XCTUnwrap(controls.keyCommands?.first { $0.input == UIKeyCommand.inputEscape })
-        let action = try XCTUnwrap(escape.action)
-        XCTAssertTrue(UIApplication.shared.sendAction(action, to: controls, from: escape, for: nil))
-        XCTAssertNil(overlay.superview, "The meeting's real Escape shortcut must return from captured text to Live")
-        XCTAssertEqual(microphoneChanges, 0, "Leaving text selection via Escape must not toggle the meeting microphone")
-    }
-
     private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
     private func normalizedCenter(_ scroll: UIScrollView) -> CGPoint {
         CGPoint(x: (scroll.contentOffset.x + scroll.bounds.width / 2) / max(1, scroll.contentSize.width),

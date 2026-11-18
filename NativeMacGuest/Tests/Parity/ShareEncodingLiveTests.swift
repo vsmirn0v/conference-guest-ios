@@ -4,6 +4,7 @@ import CoreImage
 import CoreText
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Disposable synthetic content; physical camera capture requires its own opt-in.

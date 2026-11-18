@@ -36,6 +36,7 @@ final class CalendarReminderCoordinator: ObservableObject {
     var onNeedsSnapshot: () -> Void = {}
     var onEditing: () -> Void = {}
     var onSkip: (String) -> Void = { _ in }
+    var onOccurrenceStateChanged: (String) -> Void = { _ in }
     var activeRoom: () -> MeetingRoomIdentity? = { nil }
     var activeConnections: () -> [ActiveRoomConnection] = { [] }
     var isEventVisible: (String) -> Bool = { _ in false }
@@ -207,10 +208,14 @@ final class CalendarReminderCoordinator: ObservableObject {
     }
     func setOverride(_ value: ReminderOverride, for occurrence: ReminderOccurrence) {
         repository.setOverride(value, id: occurrence.id); changed()
+        onOccurrenceStateChanged(occurrence.eventID)
     }
     func joined(room: MeetingRoomIdentity, endpoint: String? = nil, eventID: String? = nil, since: Date? = nil) {
         guard !repository.occurrences.isEmpty else { return }
-        repository.joined(room: room, endpoint: endpoint, eventID: eventID, since: since, at: clock())
+        if repository.joined(room: room, endpoint: endpoint, eventID: eventID, since: since, at: clock()),
+           let eventID {
+            onOccurrenceStateChanged(eventID)
+        }
         changed()
     }
     func observe(_ jams: [ActiveJam], account: String?) {
@@ -373,7 +378,13 @@ final class CalendarReminderCoordinator: ObservableObject {
             if scope == .system { expectedSnooze = plan.first { $0.reference == reference && $0.phase == .snooze } }
         } else {
             repository.skip(reference: reference)
-            if let occurrence = repository.occurrences.first(where: { $0.reference == reference }) { onSkip(occurrence.eventID) }
+            if let occurrence = repository.occurrences.first(where: { $0.reference == reference }) {
+                onSkip(occurrence.eventID)
+                onOccurrenceStateChanged(occurrence.eventID)
+            }
+        }
+        if snooze, let occurrence = repository.occurrences.first(where: { $0.reference == reference }) {
+            onOccurrenceStateChanged(occurrence.eventID)
         }
         foregroundOffers = foregroundOffers.filter { $0.value.plan.reference != reference }
         changed() // Persist intent before any asynchronous notification operation.
@@ -571,6 +582,52 @@ final class CalendarReminderCoordinator: ObservableObject {
             } catch { /* Preferences remain usable locally; the next existing sync pass retries. */ }
         }
     }
+    func syncedStatesByOccurrenceKey(
+        for meetings: [CalendarMeeting]
+    ) -> [String: (override: ReminderOverride?, skipped: Bool, snooze: Date?, snoozeScope: ReminderDeliveryScope?, attended: Bool)] {
+        var result: [String: (override: ReminderOverride?, skipped: Bool, snooze: Date?, snoozeScope: ReminderDeliveryScope?, attended: Bool)] = [:]
+        for meeting in meetings {
+            guard let occ = existingOccurrence(for: meeting),
+                  let state = repository.states[occ.id] else { continue }
+            result[meeting.occurrenceSyncKey] = (state.override, state.skipped, state.snooze, state.snoozeScope, state.attended)
+        }
+        return result
+    }
+
+    func applyRemoteOccurrenceStates(
+        _ remoteOccurrences: [SyncedCalendarOccurrence],
+        to meetings: [CalendarMeeting],
+        localDeviceID: String
+    ) {
+        guard loaded else { return }
+        let byKey = Dictionary(uniqueKeysWithValues: remoteOccurrences.map { ($0.occurrenceKey, $0) })
+        var didChange = false
+        for meeting in meetings {
+            guard let remote = byKey[meeting.occurrenceSyncKey],
+                  let localOcc = occurrence(for: meeting) else { continue }
+            var state = repository.states[localOcc.id] ?? .init()
+            let original = state
+            if let overrideValue = remote.reminderOverride?.value {
+                state.override = overrideValue
+            }
+            if let skippedValue = remote.skipped?.value {
+                state.skipped = skippedValue
+            }
+            if let snooze = remote.snoozeUntil?.value {
+                state.snooze = snooze
+                state.snoozeScope = remote.snoozeScope?.value ?? state.snoozeScope
+            }
+            if !remote.attendedDevices.isEmpty {
+                state.attended = true
+            }
+            if state != original {
+                repository.states[localOcc.id] = state
+                didChange = true
+            }
+        }
+        if didChange { changed() }
+    }
+
     func deleteCloudProfile() async throws {
         cloudTask?.cancel(); try await (cloud ?? ReminderProfileCloud()).delete()
         repository.cloudAcknowledged = nil; repository.cloudGeneration = nil; _ = save()

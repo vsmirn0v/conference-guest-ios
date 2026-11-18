@@ -28,12 +28,6 @@ enum CameraBackgroundTrace {
             })
         }
         event("trace-start")
-        Task { @MainActor in
-            for _ in 0..<300 {
-                try? await Task.sleep(for: .seconds(2))
-                event("capture-sample", ["captures": GuestCaptureDeviceObserver.backgroundTrace()])
-            }
-        }
     }
     static func event(_ event: String, _ fields: [String: Any] = [:]) {
         guard enabled, let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }

@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Assistant read path for notes: registry metadata, full-note tool, coverage flag,

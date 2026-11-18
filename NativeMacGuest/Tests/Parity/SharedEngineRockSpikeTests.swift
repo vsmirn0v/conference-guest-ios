@@ -3,6 +3,7 @@ import CryptoKit
 import LiveKit
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// R4 spike S0b (docs/r4-shared-engine-plan.md): LiveKit rooms (Rock) on the app's shared

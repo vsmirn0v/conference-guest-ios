@@ -2,6 +2,7 @@ import ConferenceCore
 import Foundation
 import Network
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor final class TelemostVerticalSliceTests: XCTestCase {

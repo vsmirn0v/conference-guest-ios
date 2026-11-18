@@ -66,7 +66,6 @@ import XCTest
 @MainActor
 final class PhysicalCalendarReadTests: XCTestCase {
     func testBackgroundJoinPrerequisitesWithoutChangingCalendarOrSettings() async throws {
-        guard !ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Physical iPhone prerequisites") }
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         let pending = await UNUserNotificationCenter.current().pendingNotificationRequests()
         let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
@@ -87,7 +86,6 @@ final class PhysicalCalendarReadTests: XCTestCase {
         print("BACKGROUND_JOIN_PREREQUISITES \(String(decoding: data, as: UTF8.self))")
     }
     func testDeviceEventKitReadRespectsSelectedCalendarsWithoutWritingEvents() async throws {
-        guard !ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Physical iPhone EventKit check") }
         let reader = AppleCalendarReader()
         guard await reader.access() == .allowed else { throw XCTSkip("Device Calendar permission is not granted") }
         let empty = await reader.read(selected: [], now: Date(), knownOrigins: [], aliases: [:])

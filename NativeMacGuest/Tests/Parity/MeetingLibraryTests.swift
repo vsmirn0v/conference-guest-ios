@@ -1,6 +1,7 @@
 import Foundation
 import SQLite3
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Durable meeting library: schema creation, note commits, revision counters,

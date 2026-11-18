@@ -23,7 +23,7 @@ def sha256(path):
 
 
 def sdk_lock(repository=REPOSITORY):
-    return json.loads((repository / "Dependencies/native-macos/sdk.lock.json").read_text())
+    return json.loads((repository / "Dependencies/native-macos/sdk.unified.lock.json").read_text())
 
 
 def default_framework_root(repository=REPOSITORY):
@@ -31,7 +31,7 @@ def default_framework_root(repository=REPOSITORY):
 
 
 def verify_framework(root, lock):
-    """Verify public headers, module maps, binary and matching build evidence."""
+    """Verify public headers, module maps, binaries and matching build evidence across all slices."""
     framework = root / "LiveKitWebRTC.xcframework"
     actual = set()
     for directory, folders, files in os.walk(framework, followlinks=False):
@@ -52,11 +52,25 @@ def verify_framework(root, lock):
             raise ValueError(f"Native SDK differs from its lock: {path}; preserve it and use a new destination")
     info = plistlib.loads((root / "LiveKitWebRTC.xcframework/Info.plist").read_bytes())
     libraries = info.get("AvailableLibraries", [])
-    if len(libraries) != 1 or libraries[0].get("SupportedPlatform") != "macos" or libraries[0].get("SupportedArchitectures") != ["arm64"]:
-        raise ValueError("The pinned native SDK must contain exactly the macOS arm64 slice")
+    actual_slices = {
+        (
+            entry.get("SupportedPlatform"),
+            entry.get("SupportedPlatformVariant"),
+            tuple(entry.get("SupportedArchitectures", [])),
+        )
+        for entry in libraries
+    }
+    expected_slices = {
+        ("macos", None, ("arm64",)),
+        ("ios", None, ("arm64",)),
+        ("ios", "simulator", ("arm64",)),
+    }
+    if len(libraries) != len(expected_slices) or actual_slices != expected_slices:
+        raise ValueError("The pinned native SDK must contain exactly the macOS, iOS device, and iOS simulator arm64 slices")
     evidence = json.loads((root / "build-evidence.json").read_text())
-    if evidence["frameworkBinarySHA256"] != lock["frameworkBinarySHA256"]:
-        raise ValueError("Native SDK build evidence does not match its locked binary")
+    for key in ("frameworkBinarySHA256", "iosDeviceBinarySHA256", "iosSimulatorBinarySHA256"):
+        if evidence.get(key) != lock.get(key):
+            raise ValueError(f"Native SDK build evidence {key} does not match its lock")
 
 
 AUDIO_ROUTE_RECOVERY_PATCHES = (

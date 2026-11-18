@@ -4,8 +4,7 @@ import UIKit
 
 extension ConferenceModel {
     func makeContinuationCoordinator(preferences: UserDefaults = .standard) -> MeetingContinuationCoordinator {
-        let device = ProcessInfo.processInfo.isiOSAppOnMac ? "Mac" :
-            (UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone")
+        let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
         let coordinator = MeetingContinuationCoordinator(deviceID: sync.deviceID, deviceLabel: device, preferences: preferences)
         coordinator.onPrepareSource = { [weak self] id in
             guard let self else { throw ContinuationError.expired }

@@ -2,6 +2,7 @@ import ConferenceCore
 import Foundation
 import FoundationModels
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// The "Apple on this Mac" judge: provider wiring, the request it builds, and, where

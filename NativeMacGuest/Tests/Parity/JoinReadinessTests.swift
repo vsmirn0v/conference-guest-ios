@@ -1,6 +1,7 @@
 import AVFoundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor func joinTestPower(pluggedIn: Bool = true, lowPowerMode: Bool = false) -> NativeDesktopPowerMonitor {

@@ -19,6 +19,8 @@ final class CallWorkspaceControls: ObservableObject {
     var toggleSpeaker: (() -> Void)?
     var leave: (() -> Void)?
     var openReactions: ((UIView, @escaping (Bool) -> Void) -> Void)?
+    var openVoiceReply: (() -> Void)?
+    var openTranscriptionSettings: (() -> Void)?
 
     func copyInvitation() {
         guard let invitationURL else { return }

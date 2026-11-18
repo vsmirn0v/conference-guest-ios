@@ -1,6 +1,7 @@
 import AVFoundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// R4 S1: guarantees 1, 2, 4 and 5 of docs/r4-shared-engine-plan.md on the shared
@@ -536,6 +537,45 @@ import XCTest
         let sender: MeetingAudioSender = track
         sender.isEnabled = false
         XCTAssertFalse(track.isEnabled)
+    }
+
+    func testSpontaneousStopRebuildingClearsOnDetachAndUnmute() async throws {
+        let (engine, module) = make()
+        let first = try await engine.attach(meetingID: UUID())
+        first.addSender(FakeSender())
+        module.onSpontaneousEngineChange?(.stopped)
+        try await spin { engine.rebuilding }
+        ok(await first.detach())
+        await engine.waitForWork()
+        XCTAssertFalse(engine.rebuilding, "Unforegrounded retireIdle must clear stuck rebuilding flag")
+
+        let secondEngine = SharedAudioEngine(authorized: { true }, reportFailedStop: {}) { module }
+        secondEngine.setForeground(true, microphone: true)
+        let second = try await secondEngine.attach(meetingID: UUID())
+        second.addSender(FakeSender())
+        module.onSpontaneousEngineChange?(.stopped)
+        try await spin { secondEngine.rebuilding }
+        ok(await second.detach())
+        await secondEngine.waitForWork()
+        XCTAssertFalse(secondEngine.rebuilding, "Foreground idle preparation after detach must clear rebuilding flag")
+
+        let third = try await secondEngine.attach(meetingID: UUID())
+        let thirdSender = FakeSender()
+        third.addSender(thirdSender)
+        ok(await third.assumeTalk())
+        module.onSpontaneousEngineChange?(.stopped)
+        try await spin { secondEngine.rebuilding }
+        ok(await third.setMuted(false))
+        XCTAssertFalse(secondEngine.rebuilding, "Explicit unmute recovery clears rebuilding flag even before .started")
+        let graphAudio = try OfflineVoiceGraph(gateOpen: false)
+        defer { graphAudio.engine.stop() }
+        module.participationGraph = graphAudio.graph
+        ok(await third.setMuted(true))
+        let permit = GuestAutonomousVoicePlayback(deadline: .distantFuture)
+        defer { permit.cancel() }
+        ok(await third.setParticipationSenderMuted(false, permit: permit))
+        ok(await third.setParticipationSenderMuted(true, permit: permit))
+        _ = await third.detach()
     }
 
     private func ok(_ value: Bool, _ message: String = "", file: StaticString = #filePath, line: UInt = #line) {

@@ -1,3 +1,8 @@
+#if canImport(ConferenceCore)
+import ConferenceCore
+#else
+private func probeLog(_ event: String, _ fields: [String: Any] = [:]) {}
+#endif
 import Foundation
 
 /// Reports one failing asset. A cached model that fails to load or run may

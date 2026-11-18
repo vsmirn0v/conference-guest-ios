@@ -119,6 +119,15 @@ import Foundation
         drafts[sessionID] = Draft(text: text, savedText: text, revision: revision)
     }
 
+    func reloadIfClean(sessionID: UUID) async {
+        guard drafts[sessionID]?.isDirty != true else { return }
+        guard let record = try? await library.store.note(sessionID) else { return }
+        guard drafts[sessionID]?.isDirty != true else { return }
+        if drafts[sessionID]?.text != record.markdown || drafts[sessionID]?.revision != record.revision {
+            drafts[sessionID] = Draft(text: record.markdown, savedText: record.markdown, revision: record.revision)
+        }
+    }
+
     /// Applies an AppKit UTF-16 edit only to the generation the editor displayed.
     func replace(sessionID: UUID, editorID: UUID, generation: Int, range: NSRange,
                  with replacement: String, selectionBefore: NSRange? = nil, selectionAfter: NSRange? = nil) -> Int? {

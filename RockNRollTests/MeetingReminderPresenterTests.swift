@@ -73,26 +73,23 @@ import XCTest
         XCTAssertFalse(descendants(window).contains { $0.accessibilityIdentifier == "reminders.overlay" })
     }
 
-    func testProductionNativeAndGuestHostsMountOnActualControlSurface() async throws {
-        for guest in [false, true] {
-            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-            let previous = scene.windows.first(where: \.isKeyWindow)
-            let window = UIWindow(windowScene: scene)
-            let controller: UIViewController = guest ? GuestCallLayoutFixture() : RockCallViewController(title: "Current", catchUp: CatchUpStore(), chat: ChatStore())
-            window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded(); controller.view.layoutIfNeeded()
-            let host = guest ? (controller as? GuestCallLayoutFixture)?.reminderHostForTesting : (controller as? RockCallViewController)?.reminderHost
-            let endpoint = try XCTUnwrap(host)
-            XCTAssertNotNil(endpoint.surface?.window); XCTAssertNotNil(endpoint.access?.window)
-            let owner = await coordinator(), presenter = MeetingReminderPresenter(), plans = events(owner)
-            XCTAssertEqual(presenter.render(plans, host: endpoint, coordinator: owner).count, 2)
-            XCTAssertTrue(descendants(window).contains { $0.accessibilityIdentifier == "reminders.overlay" })
-            presenter.backgrounded(); _ = presenter.render([], host: endpoint, coordinator: owner)
-            _ = presenter.render(plans, host: endpoint, coordinator: owner)
-            let open = descendants(window).first { $0.accessibilityIdentifier == "reminders.view" }
-            XCTAssertTrue(open?.superview?.superview?.isHidden == true, "A return restores compact access rather than expanding again")
-            XCTAssertEqual(descendants(window).first { $0.accessibilityIdentifier == "reminders.overlay" }?.overrideUserInterfaceStyle, .dark)
-            window.isHidden = true; previous?.makeKey()
-        }
+    func testProductionHostMountsOnActualControlSurface() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let controller = RockCallViewController(title: "Current", catchUp: CatchUpStore(), chat: ChatStore())
+        window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded(); controller.view.layoutIfNeeded()
+        let endpoint = try XCTUnwrap(controller.reminderHost)
+        XCTAssertNotNil(endpoint.surface?.window); XCTAssertNotNil(endpoint.access?.window)
+        let owner = await coordinator(), presenter = MeetingReminderPresenter(), plans = events(owner)
+        XCTAssertEqual(presenter.render(plans, host: endpoint, coordinator: owner).count, 2)
+        XCTAssertTrue(descendants(window).contains { $0.accessibilityIdentifier == "reminders.overlay" })
+        presenter.backgrounded(); _ = presenter.render([], host: endpoint, coordinator: owner)
+        _ = presenter.render(plans, host: endpoint, coordinator: owner)
+        let open = descendants(window).first { $0.accessibilityIdentifier == "reminders.view" }
+        XCTAssertTrue(open?.superview?.superview?.isHidden == true, "A return restores compact access rather than expanding again")
+        XCTAssertEqual(descendants(window).first { $0.accessibilityIdentifier == "reminders.overlay" }?.overrideUserInterfaceStyle, .dark)
+        window.isHidden = true; previous?.makeKey()
     }
 
     func testCardAreasNeverIntersectRetainedControlsAtAccessibilitySizes() {

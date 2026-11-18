@@ -4,6 +4,7 @@ import AVFoundation
 import ImageIO
 import VideoToolbox
 import XCTest
+@testable import MeetingEngine
 @testable import RockNRoll
 
 final class PresenterCompositorTests: XCTestCase {
@@ -707,55 +708,6 @@ final class PresenterModelTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(sends, stopped)
     }
-    private final class CountingMacCamera: PrivateCameraPreviewing {
-        let capture = PrivateCameraPreview(framesPerSecond: 15)
-        var frameCount = 0
-        var view: UIView { capture.view }
-        func start() async throws { try await capture.start() }
-        func startFrames(_ frames: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws {
-            try await capture.startFrames { [weak self] buffer, rotation in
-                self?.frameCount += 1
-                frames(buffer, rotation)
-            }
-        }
-        func stop() async { await capture.stop() }
-    }
-    func testMacNativePresenterCameraKeepsProducingPublishedFramesWhileHidden() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac native camera lifecycle") }
-        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MAC_PRESENTER_CAMERA"] == "1" else {
-            throw XCTSkip("Opt-in real Mac camera qualification")
-        }
-        let model = PresenterModel(), camera = CountingMacCamera()
-        defer {
-            NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
-            model.end()
-        }
-        var sends = 0
-        model.makePrivateCamera = { _ in camera }
-        model.startSharing = { _, _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
-        model.setForeground(true); model.open(); model.acceptScreen(try screenSample())
-        model.includeCamera = true
-        for _ in 0..<2_000 {
-            if model.hasCameraFrames && model.canStartSharing || model.error != nil { break }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        print("MAC_PRESENTER_CAMERA_READY auth=\(AVCaptureDevice.authorizationStatus(for: .video).rawValue) frames=\(camera.frameCount) error=\(model.error ?? "none") state=\(model.cameraEvidenceForTesting)")
-        XCTAssertTrue(model.hasCameraFrames, "Native camera must work before testing background composition")
-        guard model.hasCameraFrames else { return }
-        await model.start()
-        XCTAssertTrue(model.running)
-        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        model.close()
-        let framesBefore = camera.frameCount, sendsBefore = sends
-        try await Task.sleep(for: .seconds(2))
-        XCTAssertTrue(camera.capture.captureSessionForTesting.isRunning)
-        XCTAssertGreaterThan(camera.frameCount - framesBefore, 15, "Real AVCapture callbacks must keep arriving off-desktop")
-        XCTAssertGreaterThan(sends - sendsBefore, 8, "Publishing must compose moving camera frames, not stale heartbeats")
-        XCTAssertTrue(model.hasCameraFrames); XCTAssertFalse(model.cameraHiddenInBackground)
-        print("MAC_PRESENTER_HIDDEN cameraFrames=\(camera.frameCount - framesBefore) publishedFrames=\(sends - sendsBefore) elapsed=2s lifecycle=injected")
-        model.end(); await model.releaseCamera()
-        XCTAssertFalse(camera.capture.captureSessionForTesting.isRunning)
-    }
     func testMacDesktopBackgroundPreservesPendingPrivatePresenterSelection() async throws {
         let studio = StudioModel(audioControl: .noiseSuppression), capture = Screen()
         defer { studio.end() }
@@ -796,28 +748,6 @@ final class PresenterModelTests: XCTestCase {
         XCTAssertFalse(studio.presented); XCTAssertTrue(capture.stopped)
         selected?(.selected); receive?(try screenSample())
         XCTAssertFalse(model.screenSelected); XCTAssertFalse(model.running)
-    }
-    func testMacBackgroundNotificationDoesNotDismissThePresenterInspector() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac desktop lifecycle") }
-        let studio = StudioModel(audioControl: .noiseSuppression), capture = Screen()
-        defer {
-            NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
-            studio.end()
-        }
-        var selected: ((PresenterScreenSelection) -> Void)?, receive: ((CMSampleBuffer) -> Void)?
-        studio.presenter.makeScreenSource = { frame, _, selection, _ in
-            receive = frame; selected = selection; return capture
-        }
-        studio.presenter.setForeground(true)
-        studio.open(.presenter); studio.presenter.selectScreen()
-        await waitUntil { capture.starts == 1 }
-        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        XCTAssertTrue(studio.presented, "Switching macOS Spaces must not dismiss the requesting inspector")
-        selected?(.selected); receive?(try screenSample())
-        XCTAssertFalse(studio.presenter.hasPreview)
-        NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
-        await waitUntil { studio.presenter.hasPreview }
-        XCTAssertTrue(studio.presenter.screenSelected); XCTAssertFalse(capture.stopped)
     }
     func testPrivateScreenPreparationWaitsForReturnFromAnotherDesktop() async throws {
         let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.04), capture = Screen()
@@ -985,10 +915,7 @@ final class PresenterModelTests: XCTestCase {
             model.acceptScreen(try screenSample(width: 640, height: 480))
             await waitUntil { model.hasPreview }
             await model.start(); XCTAssertTrue(model.running)
-            var resizeSizes = [CGSize(width: 360, height: 640), CGSize(width: 1200, height: 450), CGSize(width: 550, height: 350)]
-            if ProcessInfo.processInfo.isiOSAppOnMac {
-                resizeSizes += [CGSize(width: 2560, height: 1600), CGSize(width: 3840, height: 2160)]
-            }
+            let resizeSizes = [CGSize(width: 360, height: 640), CGSize(width: 1200, height: 450), CGSize(width: 550, height: 350)]
             for size in resizeSizes {
                 model.acceptScreen(try screenSample(width: Int(size.width), height: Int(size.height)))
                 XCTAssertTrue(model.hasPreview, "Keep the visible preview until a resized frame is ready")
@@ -1084,30 +1011,6 @@ final class PresenterModelTests: XCTestCase {
         capture.waiting?.resume(); await release.value
         XCTAssertTrue(released); XCTAssertTrue(capture.stopped); XCTAssertFalse(capture.started)
         model.end()
-    }
-}
-
-/// Opt-in live transport qualification with a manually selected safe Mac window.
-@MainActor
-final class PresenterLiveTests: XCTestCase {
-    func testMacScreenSourceStaysActive() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac,
-              let invite = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_INVITE"] else {
-            throw XCTSkip("Opt-in live Mac Presenter qualification")
-        }
-        let root = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController }.first)
-        let target = try JoinTarget.parse(invite)
-        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
-        try engine.configure(container: root, networkURL: target.originURL, displayName: "Presenter QA")
-        try engine.join(target: target, displayName: "Presenter QA")
-        defer { engine.leave() }
-        for _ in 0..<600 {
-            if engine.isSharingScreen { break }
-            try await Task.sleep(nanoseconds: 500_000_000)
-        }
-        XCTAssertTrue(engine.isSharingScreen, "Choose a safe test window and start Presenter sharing")
-        try await Task.sleep(nanoseconds: 180_000_000_000)
-        XCTAssertTrue(engine.isSharingScreen, "The stream must survive camera/source/layout changes")
     }
 }
 

@@ -1,6 +1,8 @@
+diff --git a/Sources/LiveKit/Audio/Manager/AudioManager.swift b/Sources/LiveKit/Audio/Manager/AudioManager.swift
+index dd126a8..d2383f9 100644
 --- a/Sources/LiveKit/Audio/Manager/AudioManager.swift
 +++ b/Sources/LiveKit/Audio/Manager/AudioManager.swift
-@@ -564,7 +564,11 @@
+@@ -564,7 +564,11 @@ public class AudioManager: Loggable {
          #endif
          _state = StateSync(State(engineObservers: engineObservers))
          _admDelegateAdapter.audioManager = self
@@ -13,20 +15,21 @@
      }
  }
  
-@@ -648,4 +652,10 @@
-             throw LiveKitError(.audioEngine, message: "Audio engine returned error code: \(code)")
+@@ -649,3 +653,9 @@ extension AudioManager {
          }
      }
-+}
+ }
 +
 +public extension AudioManager {
 +    /// The SDK's own module observer, for an app that installed a shared factory and forwards
 +    /// module events to the SDK (an `LKRTCAudioDeviceModuleDelegate`).
 +    var sdkAudioDeviceModuleObserver: AnyObject { _admDelegateAdapter }
- }
++}
+diff --git a/Sources/LiveKit/Core/RTC.swift b/Sources/LiveKit/Core/RTC.swift
+index e2b4fed..a7f1888 100644
 --- a/Sources/LiveKit/Core/RTC.swift
 +++ b/Sources/LiveKit/Core/RTC.swift
-@@ -133,6 +133,11 @@
+@@ -158,6 +158,11 @@ extension RTC {
  
      static let pcFactoryState = StateSync(PeerConnectionFactoryState())
  
@@ -37,8 +40,8 @@
 +
      // global properties are already lazy
  
-     static let encoderFactory: LKRTCVideoEncoderFactory & Sendable = {
-@@ -150,6 +155,12 @@
+     // Must not be forced from inside a `pcFactoryState` read or mutate block, since
+@@ -191,6 +196,12 @@ extension RTC {
      static let audioSenderCapabilities = peerConnectionFactory.rtpSenderCapabilities(forKind: kLKRTCMediaStreamTrackKindAudio)
  
      static let peerConnectionFactory: LKRTCPeerConnectionFactory = {
@@ -51,9 +54,12 @@
          // Update pc init lock
          let (admType, bypassVoiceProcessing) = pcFactoryState.mutate {
              $0.isInitialized = true
---- a/Sources/LiveKit/Core/SharedPeerConnectionFactory.swift
+diff --git a/Sources/LiveKit/Core/SharedPeerConnectionFactory.swift b/Sources/LiveKit/Core/SharedPeerConnectionFactory.swift
+new file mode 100644
+index 0000000..042651e
+--- /dev/null
 +++ b/Sources/LiveKit/Core/SharedPeerConnectionFactory.swift
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,44 @@
 +/*
 + * Rock'N'Roll for Mac patch (Dependencies/native-macos/livekit-patches/shared-factory.patch).
 + * Licensed under the Apache License, Version 2.0, like the rest of this SDK.
@@ -81,6 +87,12 @@
 +
 +    /// The SDK runs on a factory the app supplied.
 +    public static var isInstalled: Bool { RTC.injectedPeerConnectionFactory != nil }
++
++    /// The app's installed factory when present, without forcing SDK factory creation.
++    public static var activeFactory: AnyObject? { RTC.injectedPeerConnectionFactory }
++
++    /// Resolves the shared or SDK-owned `LKRTCPeerConnectionFactory`.
++    public static var resolveFactory: AnyObject { RTC.peerConnectionFactory }
 +
 +    /// The SDK's audio processing module (an `LKRTCDefaultAudioProcessingModule`). Create the
 +    /// shared factory with it, so LiveKit's capture and render hooks (the local frame watcher

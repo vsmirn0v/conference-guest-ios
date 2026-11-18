@@ -2,6 +2,7 @@ import AVFoundation
 import ConferenceCore
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor final class MeetingSessionContractTests: XCTestCase {

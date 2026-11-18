@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 private final class OutputGainFixture: NSObject {

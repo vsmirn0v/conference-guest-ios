@@ -370,4 +370,115 @@ struct MeetingWorkspaceSession: Codable, Equatable, Identifiable {
             }
         }
     }
+
+    func exportSyncedEvents(sessionID: UUID, deviceID: String) -> [SyncedTranscriptEvent] {
+        let events = session(id: sessionID)?.events ?? []
+        return events.compactMap { event -> SyncedTranscriptEvent? in
+            let kind: String
+            let tier: Int
+            switch event.kind {
+            case .transcript:
+                kind = "transcript"
+                tier = event.source == "server" ? 3 : 2
+            case .chat:
+                kind = "chat"
+                tier = 3
+            case .captureGap:
+                kind = "captureGap"
+                tier = 1
+            case .action:
+                kind = "action"
+                tier = 2
+            case .assistantReply, .privateGuidance:
+                return nil
+            }
+            let text = event.text ?? ""
+            return SyncedTranscriptEvent(
+                id: event.id,
+                providerMessageID: event.source == "server" || event.kind == .chat ? event.id : nil,
+                kind: kind,
+                sourceTier: tier,
+                occurredAt: event.occurredAt,
+                endedAt: event.endedAt,
+                speaker: event.author,
+                isOwn: event.source == "own" || event.author?.isEmpty == false && event.isPrivate == false && event.source == "localOwn",
+                text: text,
+                revisions: event.revisions.map {
+                    SyncedTranscriptRevision(text: $0.text, author: $0.author, observedAt: $0.observedAt)
+                },
+                isBookmarked: event.isBookmarked,
+                deviceID: deviceID
+            )
+        }
+    }
+
+    func mergeRemoteEvents(
+        sessionID: UUID,
+        title: String,
+        startedAt: Date,
+        endedAt: Date?,
+        calendarSeriesID: String?,
+        roomIdentity: String?,
+        events remoteEvents: [SyncedTranscriptEvent]
+    ) {
+        if connection == nil { prepare(at: Date()) }
+        if session(id: sessionID) == nil {
+            let newSession = MeetingWorkspaceSession(
+                id: sessionID,
+                title: title,
+                startedAt: startedAt,
+                calendarSeriesID: calendarSeriesID,
+                roomIdentity: roomIdentity,
+                endedAt: endedAt
+            )
+            commit(session: newSession, events: [])
+        }
+        guard !remoteEvents.isEmpty else { return }
+        let existing = eventsBySession[sessionID] ?? [:]
+        var toStore: [MeetingWorkspaceEvent] = []
+        for item in remoteEvents {
+            let kind: MeetingWorkspaceEvent.Kind
+            switch item.kind {
+            case "transcript": kind = .transcript
+            case "chat": kind = .chat
+            case "captureGap": kind = .captureGap
+            case "action": kind = .action
+            default: continue
+            }
+            if let current = existing[item.id] {
+                if current.text != item.text || current.isBookmarked != item.isBookmarked {
+                    var updated = current
+                    updated.text = item.text
+                    updated.author = item.speaker ?? current.author
+                    updated.isBookmarked = current.isBookmarked || item.isBookmarked
+                    if !item.revisions.isEmpty {
+                        updated.revisions = item.revisions.map {
+                            .init(text: $0.text, author: $0.author, observedAt: $0.observedAt)
+                        }
+                    }
+                    toStore.append(updated)
+                }
+            } else {
+                var created = MeetingWorkspaceEvent(
+                    id: item.id,
+                    kind: kind,
+                    occurredAt: item.occurredAt,
+                    source: item.providerMessageID != nil ? "server" : "remoteSynced",
+                    author: item.speaker,
+                    text: item.text
+                )
+                created.endedAt = item.endedAt
+                created.isBookmarked = item.isBookmarked
+                if !item.revisions.isEmpty {
+                    created.revisions = item.revisions.map {
+                        .init(text: $0.text, author: $0.author, observedAt: $0.observedAt)
+                    }
+                }
+                toStore.append(created)
+            }
+        }
+        if !toStore.isEmpty {
+            _ = store(sessionID: sessionID, events: toStore)
+        }
+    }
 }

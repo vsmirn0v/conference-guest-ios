@@ -5,6 +5,7 @@ import SwiftUI
 import Vision
 import VisionKit
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor final class DesktopSharedTextTests: XCTestCase {

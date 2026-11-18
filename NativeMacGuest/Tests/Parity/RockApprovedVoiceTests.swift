@@ -1,6 +1,7 @@
 import AVFoundation
 @testable import LiveKit
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor final class RockApprovedVoiceTests: XCTestCase {

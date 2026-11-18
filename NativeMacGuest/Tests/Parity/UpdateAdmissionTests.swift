@@ -4,6 +4,7 @@ import ConferenceCore
 import LiveKitWebRTC
 import SwiftUI
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 private final class UpdateAdmissionStorage: RoomHistoryStorage, ReminderStorage, @unchecked Sendable {

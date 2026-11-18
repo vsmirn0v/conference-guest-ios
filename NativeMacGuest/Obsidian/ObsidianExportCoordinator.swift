@@ -106,6 +106,11 @@ import Foundation
         }
     }
 
+    func exportPendingNow() async {
+        await worker.runOnce()
+        await refreshStatus()
+    }
+
     func heldMeetings() async throws -> (ObsidianDestinationRecord, [(id: UUID, title: String, date: MeetingEffectiveDate?, snapshots: [ObsidianExportSnapshot])]) {
         await settingsWrite?.value
         guard let destination = try await library.store.destination() else {

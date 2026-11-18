@@ -189,7 +189,7 @@ final class PresenterModel: ObservableObject {
     }
 
     init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard, screenPreparationTimeout: TimeInterval = 15,
-         backgroundCompositionSupported: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
+         backgroundCompositionSupported: Bool = false,
          energyBudget: MediaEnergyBudget = .shared,
          cameraDevices: @escaping () -> [AVCaptureDevice] = CameraDevices.discovered) {
         self.screenPreparationTimeout = screenPreparationTimeout
@@ -651,12 +651,8 @@ final class PresenterModel: ObservableObject {
         guard width > 0, height > 0 else { return }
         if aspectRatio != width / height { aspectRatio = width / height }
         let scale = min(1, 1920 / max(width, height))
-        // Drawing or adding a camera inset must not silently halve the detail
-        // of the same Mac screen that passes through unscaled without overlays.
-        let size = ProcessInfo.processInfo.isiOSAppOnMac
-            ? MacScreenCaptureBridge.outputSize(for: CGSize(width: width, height: height))
-            : CGSize(width: max(2, (width * scale / 2).rounded(.down) * 2),
-                     height: max(2, (height * scale / 2).rounded(.down) * 2))
+        let size = CGSize(width: max(2, (width * scale / 2).rounded(.down) * 2),
+                          height: max(2, (height * scale / 2).rounded(.down) * 2))
         if firstFrame || canvasSize != size {
             canvasSize = size
             // A queued render with the old geometry must not replace the resized

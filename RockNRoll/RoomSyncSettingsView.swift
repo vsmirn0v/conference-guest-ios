@@ -1,22 +1,58 @@
+import ConferenceCore
 import SwiftUI
+import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 struct RoomSyncSettingsView: View {
     @ObservedObject var sync: RoomSyncCoordinator
     @ObservedObject var continuation: MeetingContinuationCoordinator
     @State private var confirmDelete = false
     @State private var confirmFresh = false
+    @State private var pickingArchiveFolder = false
+
     var body: some View {
         Section {
-            syncSwitch(L("Sync with iCloud"), isOn: Binding(get: { sync.enabled }, set: { sync.setEnabled($0) }),
-                       id: "settings.sync", fallbackFor: sync.enabled ? [] : ["settings.handoff", "settings.sync-recent", "settings.sync-now"])
-                .disabled(sync.busy)
+            syncSwitch(
+                L("Sync with iCloud"),
+                isOn: Binding(get: { sync.enabled }, set: { sync.setEnabled($0) }),
+                id: "settings.sync",
+                fallbackFor: sync.enabled ? [] : [
+                    "settings.handoff",
+                    "settings.sync-recent",
+                    "settings.sync-workspace",
+                    "settings.sync-calendar",
+                    "settings.sync-transcripts",
+                    "settings.sync-now"
+                ]
+            )
+            .disabled(sync.busy)
             if sync.enabled {
-                syncSwitch(L("Show active jams on my devices"), isOn: Binding(
-                    get: { continuation.enabled }, set: { continuation.setEnabled($0) }), id: "settings.handoff")
-                syncSwitch(L("Include recent jams"), isOn: Binding(
-                    get: { sync.includeRecent }, set: { sync.setIncludeRecent($0) }), id: "settings.sync-recent")
+                syncSwitch(
+                    L("Show active jams on my devices"),
+                    isOn: Binding(get: { continuation.enabled }, set: { continuation.setEnabled($0) }),
+                    id: "settings.handoff"
+                )
+                syncSwitch(
+                    L("Include recent jams"),
+                    isOn: Binding(get: { sync.includeRecent }, set: { sync.setIncludeRecent($0) }),
+                    id: "settings.sync-recent"
+                )
+                syncSwitch(
+                    L("Sync meeting history, summaries, notes & tasks"),
+                    isOn: Binding(get: { sync.syncWorkspace }, set: { sync.setSyncWorkspace($0) }),
+                    id: "settings.sync-workspace"
+                )
+                syncSwitch(
+                    L("Share calendar schedule"),
+                    isOn: Binding(get: { sync.shareCalendar }, set: { sync.setShareCalendar($0) }),
+                    id: "settings.sync-calendar"
+                )
+                transcriptRetentionControl
                 syncNowButton.disabled(sync.busy)
             }
+            archiveFolderControls
             HStack {
                 if sync.busy { ProgressView() }
                 Text(sync.status).font(.footnote).foregroundStyle(.secondary)
@@ -39,19 +75,88 @@ struct RoomSyncSettingsView: View {
         } header: {
             Text(L("Across your devices"))
         } footer: {
-            Text(L("Sync uses the same iCloud Apple Account on your devices. Names and saved invitations, including invitation passwords, stay in your private iCloud storage. Optional active-jam sharing lets another device continue your current jam and includes its name, invitation and device type. Audio, video, chat and transcripts are not synced. Turning sync off keeps this device’s data."))
+            Text(L("Sync uses the same iCloud Apple Account on your devices. Saved invitations, meeting history, summaries, notes, tasks, optional calendar schedule and recent raw transcripts stay in your private iCloud storage. Older transcripts stay on this device or in your backup folder."))
         }
         .confirmationDialog(L("Delete your name and saved jams from iCloud?"), isPresented: $confirmDelete, titleVisibility: .visible) {
             Button(L("Delete from iCloud"), role: .destructive) { Task { await sync.deleteSyncedData() } }
         } message: {
-            Text(L("Other devices will pause sync when they next connect. This device’s local name and rooms remain."))
+            Text(L("Other devices will pause sync when they next connect. This device’s local name, rooms and meeting library remain."))
         }
         .confirmationDialog(L("Start fresh with the current Apple Account?"), isPresented: $confirmFresh, titleVisibility: .visible) {
             Button(L("Start fresh"), role: .destructive) { sync.startFreshForCurrentAccount() }
         } message: {
             Text(L("The local name and room list will be cleared before syncing. Data in your previous Apple Account stays there."))
         }
+        #if !os(macOS)
+        .fileImporter(isPresented: $pickingArchiveFolder, allowedContentTypes: [.folder]) { result in
+            if case .success(let url) = result {
+                sync.updateTranscriptArchiveFolder(url: url)
+            }
+        }
+        #endif
     }
+
+    @ViewBuilder private var transcriptRetentionControl: some View {
+        let binding = Binding(
+            get: { sync.transcriptRetention },
+            set: { sync.setTranscriptRetention($0) }
+        )
+        #if os(macOS)
+        NativeSettingsPopup(
+            title: L("Raw transcript sync"),
+            selection: binding,
+            choices: TranscriptSyncRetention.allCases,
+            titleForChoice: \.title,
+            id: "settings.sync-transcripts"
+        )
+        #else
+        Picker(L("Raw transcript sync"), selection: binding) {
+            ForEach(TranscriptSyncRetention.allCases, id: \.self) { choice in
+                Text(choice.title).tag(choice)
+            }
+        }
+        .accessibilityIdentifier("settings.sync-transcripts")
+        #endif
+    }
+
+    @ViewBuilder private var archiveFolderControls: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("Transcript backup folder"))
+                Text(sync.archiveFolderName ?? L("On this device"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            #if os(macOS)
+            NativeSettingsButton(title: L("Choose…"), id: "settings.transcript-archive") {
+                chooseMacArchiveFolder()
+            }
+            #else
+            Button(L("Choose…")) { pickingArchiveFolder = true }
+                .accessibilityIdentifier("settings.transcript-archive")
+            #endif
+        }
+        if sync.archiveFolderName != nil {
+            Button(L("Use device storage only"), role: .destructive) {
+                sync.updateTranscriptArchiveFolder(url: nil)
+            }
+        }
+    }
+
+    #if os(macOS)
+    private func chooseMacArchiveFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = L("Choose Backup Folder")
+        if panel.runModal() == .OK, let url = panel.url {
+            sync.updateTranscriptArchiveFolder(url: url)
+        }
+    }
+    #endif
 
     @ViewBuilder private func syncSwitch(_ title: String, isOn: Binding<Bool>, id: String, fallbackFor: Set<String> = []) -> some View {
         #if os(macOS)

@@ -4,6 +4,7 @@ import ConferenceCore
 import Foundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Runs inside the signed app test host and its TCC identity. Physical camera

@@ -5,7 +5,7 @@ import UIKit
 enum MeetingActivitySupport {
     static var supported: Bool {
         if #available(iOS 16.2, *) {
-            return !ProcessInfo.processInfo.isiOSAppOnMac && UIDevice.current.userInterfaceIdiom == .phone
+            return UIDevice.current.userInterfaceIdiom == .phone
         }
         return false
     }

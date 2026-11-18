@@ -17,7 +17,7 @@ run=ROOT/'.build/native-guest'/('incoming-'+a.engine+'-'+a.transport+'-'+a.pixel
 probe=ROOT/'.build/native-guest/NativeGuestProbe';study=ROOT/'.build/native-guest/IncomingVideoStudy';dd=ROOT/'.build/udp-sdk-comparison/DerivedData'
 invite=run/'invitation.txt';ipc=run/'source-control';ipc.mkdir(mode=0o700)
 paths=[probe,study] if a.engine=='native' else [probe,dd/'Build/Products/Debug-iphoneos/RockNRoll.app/RockNRoll',dd/'Build/Products/Debug-iphoneos/RockNRoll.app/PlugIns/RockNRollTests.xctest/RockNRollTests']
-paths += sorted((ROOT/'Experiments/NativeGuest').glob('*.swift'))
+paths += sorted((ROOT/'MeetingEngine/Sources/MeetingEngine/Providers/Guest').glob('*.swift')) + [ROOT/'Experiments/NativeGuest/Main.swift', ROOT/'Experiments/NativeGuest/GuestCompanionPeer.swift']
 paths += [ROOT/'Experiments/NativeGuestTests/incoming_study_analysis.py',ROOT/'Experiments/NativeGuestTests/IncomingVideoStudy.swift', pathlib.Path(__file__), ROOT/'RockNRollTests/VendorIntegration/GuestMediaResponsivenessLiveTests.swift', ROOT/'NativeMacGuest/VideoTile.swift', ROOT/'.build/native-guest/duplex-framework-r1/LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/LiveKitWebRTC']
 identity={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in paths};(run/'artifact-identity.json').write_text(json.dumps(identity,indent=2))
 with (run/'bootstrap.log').open('w') as log:subprocess.run([str(probe),'--create-room','https://salutejazz.ru','--output',str(invite)],stdout=log,stderr=subprocess.STDOUT,check=True,timeout=35)

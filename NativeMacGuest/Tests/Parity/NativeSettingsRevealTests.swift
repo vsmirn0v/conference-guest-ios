@@ -2,6 +2,7 @@ import AppKit
 import ConferenceCore
 import SwiftUI
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor private final class RevealFixture: ObservableObject {

@@ -5,6 +5,7 @@ import ConferenceCore
 import LiveKitWebRTC
 import SwiftUI
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Real SwiftUI presentation and AppKit accessibility actions over isolated data.

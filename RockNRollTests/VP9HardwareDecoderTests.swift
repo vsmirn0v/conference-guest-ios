@@ -2,6 +2,7 @@ import ConferenceCore
 import Foundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNRoll
 
 @MainActor final class VP9HardwareDecoderTests: XCTestCase {
@@ -134,70 +135,5 @@ import XCTest
         XCTAssertEqual(failures, 1)
         XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
         XCTAssertEqual(failures, 1); XCTAssertEqual(decoder.release(), 0)
-    }
-    func testPhysicalTelemostHardwareThenAutomaticSoftwareRecovery() async throws {
-        guard VP9HardwareDecoder.available,
-              let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] else { throw XCTSkip("Hardware and authorized room with a VP9 publisher required") }
-        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
-        let previous = window.rootViewController, container = UIViewController(); window.rootViewController = container
-        defer { window.rootViewController = previous }
-        let engine = TelemostCallEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), chat: ChatStore())
-        var readyCount = 0, ended = false
-        engine.onEvent = { event in switch event { case .active: readyCount += 1; case .left, .failed: ended = true; default: break } }
-        defer { engine.leave() }
-        try engine.join(target: TelemostTarget.parse(invitation), name: "Hardware VP9 QA", container: container, quiet: false)
-        let deadline = Date().addingTimeInterval(45)
-        while NativeVideoDecoderFactory.evidenceForTesting.allSatisfy({ ($0["hardwareFrames"] as? Int ?? 0) < 10 }), !ended, Date() < deadline {
-            try await Task.sleep(for: .milliseconds(200))
-        }
-        let hardware = NativeVideoDecoderFactory.evidenceForTesting
-        print("VP9_DEVICE_HARDWARE \(hardware)")
-        XCTAssertFalse(ended); XCTAssertGreaterThan(readyCount, 0)
-        XCTAssertTrue(hardware.contains { ($0["hardwareFrames"] as? Int ?? 0) >= 10 && $0["verifiedHardwareSession"] as? Bool == true })
-        func waitForHardware(after previousReady: Int) async throws {
-            while !ended && Date() < deadline {
-                if readyCount > previousReady && NativeVideoDecoderFactory.evidenceForTesting.contains(where: {
-                    ($0["hardwareFrames"] as? Int ?? 0) >= 10 && $0["verifiedHardwareSession"] as? Bool == true
-                }) { return }
-                try await Task.sleep(for: .milliseconds(200))
-            }
-            XCTFail("Hardware video did not recover within the bounded test")
-        }
-        let beforeNetwork = readyCount
-        engine.interruptForTesting(); try await waitForHardware(after: beforeNetwork)
-        print("VP9_DEVICE_NETWORK_RECOVERY \(NativeVideoDecoderFactory.evidenceForTesting)")
-        let beforeHold = readyCount
-        try await engine.setTransferHeld(true, restoreSending: true)
-        try await Task.sleep(for: .seconds(1))
-        try await engine.setTransferHeld(false, restoreSending: true)
-        try await waitForHardware(after: beforeHold)
-        print("VP9_DEVICE_HOLD_RECOVERY \(NativeVideoDecoderFactory.evidenceForTesting)")
-        let beforeFallback = readyCount
-        let streamFallback = NativeVP9Hybrid.available
-        func streamKey(_ row: [String: Any]) -> String {
-            "\(row["target"] as? String ?? ""):\(row["mid"] as? String ?? "")"
-        }
-        let previousFrames = Dictionary((await engine.codecEvidenceForTesting()).map {
-            (streamKey($0), ($0["framesDecoded"] as? NSNumber)?.intValue ?? 0)
-        }, uniquingKeysWith: max)
-        NativeVideoDecoderFactory.failForTesting()
-        var recovered = false
-        while !ended && !recovered && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(200))
-            let streams = await engine.codecEvidenceForTesting()
-            recovered = (streamFallback || readyCount > beforeFallback) && streams.contains {
-                $0["mimeType"] as? String == "video/VP9" &&
-                ($0["decoderImplementation"] as? String)?.hasPrefix("libvpx") == true &&
-                (($0["framesDecoded"] as? NSNumber)?.intValue ?? 0) >=
-                    (streamFallback ? previousFrames[streamKey($0), default: 0] : 0) + 10
-            }
-            if recovered { print("VP9_DEVICE_SOFTWARE_RECOVERY \(streams)") }
-        }
-        XCTAssertTrue(recovered); XCTAssertFalse(ended)
-        if streamFallback {
-            XCTAssertEqual(readyCount, beforeFallback, "Native fallback must preserve the meeting connection")
-            XCTAssertTrue(NativeVideoDecoderPolicy.shared.snapshot.enabled)
-        } else { XCTAssertFalse(NativeVideoDecoderPolicy.shared.snapshot.enabled) }
-        XCTAssertFalse(engine.microphoneSendingForTesting)
     }
 }

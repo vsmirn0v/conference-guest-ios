@@ -1,5 +1,6 @@
 import AudioToolbox
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 private final class SharedAudioFixture: NativeDesktopSharedAudioOwner {

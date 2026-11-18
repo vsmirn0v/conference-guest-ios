@@ -1,0 +1,1499 @@
+diff --git a/api/audio_options.cc b/api/audio_options.cc
+index faab98d..c031ced 100644
+--- a/api/audio_options.cc
++++ b/api/audio_options.cc
+@@ -27,6 +27,25 @@ void ToStringIfSet(StringBuilder* result,
+   }
+ }
+ 
++const char *AudioProcessingModeToString(AudioProcessingMode mode) {
++  switch (mode) {
++    case AudioProcessingMode::kAutomatic:
++      return "auto";
++    case AudioProcessingMode::kPlatform:
++      return "platform";
++    case AudioProcessingMode::kSoftware:
++      return "software";
++  }
++  return "auto";
++}
++
++void AudioProcessingModeToStringIfSet(StringBuilder *result, const char *key,
++                                      const std::optional<AudioProcessingMode> &val) {
++  if (val) {
++    (*result) << key << ": " << AudioProcessingModeToString(*val) << ", ";
++  }
++}
++
+ template <typename T>
+ void SetFrom(std::optional<T>* s, const std::optional<T>& o) {
+   if (o) {
+@@ -41,6 +60,7 @@ AudioOptions::~AudioOptions() = default;
+ 
+ void AudioOptions::SetAll(const AudioOptions& change) {
+   SetFrom(&echo_cancellation, change.echo_cancellation);
++  SetFrom(&echo_cancellation_mode, change.echo_cancellation_mode);
+ #if defined(WEBRTC_IOS)
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+@@ -48,8 +68,11 @@ void AudioOptions::SetAll(const AudioOptions& change) {
+ #pragma clang diagnostic pop
+ #endif
+   SetFrom(&auto_gain_control, change.auto_gain_control);
++  SetFrom(&auto_gain_control_mode, change.auto_gain_control_mode);
+   SetFrom(&noise_suppression, change.noise_suppression);
++  SetFrom(&noise_suppression_mode, change.noise_suppression_mode);
+   SetFrom(&highpass_filter, change.highpass_filter);
++  SetFrom(&highpass_filter_mode, change.highpass_filter_mode);
+   SetFrom(&stereo_swapping, change.stereo_swapping);
+   SetFrom(&audio_jitter_buffer_max_packets,
+           change.audio_jitter_buffer_max_packets);
+@@ -60,34 +83,34 @@ void AudioOptions::SetAll(const AudioOptions& change) {
+   SetFrom(&audio_network_adaptor, change.audio_network_adaptor);
+   SetFrom(&audio_network_adaptor_config, change.audio_network_adaptor_config);
+   SetFrom(&init_recording_on_send, change.init_recording_on_send);
++  SetFrom(&synthetic_external_source, change.synthetic_external_source);
+ }
+ 
+ bool AudioOptions::operator==(const AudioOptions& o) const {
+-  return echo_cancellation == o.echo_cancellation &&
++  return echo_cancellation == o.echo_cancellation && echo_cancellation_mode == o.echo_cancellation_mode &&
+ #if defined(WEBRTC_IOS)
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+          ios_force_software_aec_HACK == o.ios_force_software_aec_HACK &&
+ #pragma clang diagnostic pop
+ #endif
+-         auto_gain_control == o.auto_gain_control &&
+-         noise_suppression == o.noise_suppression &&
+-         highpass_filter == o.highpass_filter &&
+-         stereo_swapping == o.stereo_swapping &&
+-         audio_jitter_buffer_max_packets == o.audio_jitter_buffer_max_packets &&
+-         audio_jitter_buffer_fast_accelerate ==
+-             o.audio_jitter_buffer_fast_accelerate &&
+-         audio_jitter_buffer_min_delay_ms ==
+-             o.audio_jitter_buffer_min_delay_ms &&
++         auto_gain_control == o.auto_gain_control && auto_gain_control_mode == o.auto_gain_control_mode &&
++         noise_suppression == o.noise_suppression && noise_suppression_mode == o.noise_suppression_mode &&
++         highpass_filter == o.highpass_filter && highpass_filter_mode == o.highpass_filter_mode &&
++         stereo_swapping == o.stereo_swapping && audio_jitter_buffer_max_packets == o.audio_jitter_buffer_max_packets &&
++         audio_jitter_buffer_fast_accelerate == o.audio_jitter_buffer_fast_accelerate &&
++         audio_jitter_buffer_min_delay_ms == o.audio_jitter_buffer_min_delay_ms &&
+          audio_network_adaptor == o.audio_network_adaptor &&
+          audio_network_adaptor_config == o.audio_network_adaptor_config &&
+-         init_recording_on_send == o.init_recording_on_send;
++         init_recording_on_send == o.init_recording_on_send &&
++         synthetic_external_source == o.synthetic_external_source;
+ }
+ 
+ std::string AudioOptions::ToString() const {
+   StringBuilder result;
+   result << "AudioOptions {";
+   ToStringIfSet(&result, "aec", echo_cancellation);
++  AudioProcessingModeToStringIfSet(&result, "aec_mode", echo_cancellation_mode);
+ #if defined(WEBRTC_IOS)
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+@@ -96,8 +119,11 @@ std::string AudioOptions::ToString() const {
+ #pragma clang diagnostic pop
+ #endif
+   ToStringIfSet(&result, "agc", auto_gain_control);
++  AudioProcessingModeToStringIfSet(&result, "agc_mode", auto_gain_control_mode);
+   ToStringIfSet(&result, "ns", noise_suppression);
++  AudioProcessingModeToStringIfSet(&result, "ns_mode", noise_suppression_mode);
+   ToStringIfSet(&result, "hf", highpass_filter);
++  AudioProcessingModeToStringIfSet(&result, "hf_mode", highpass_filter_mode);
+   ToStringIfSet(&result, "swap", stereo_swapping);
+   ToStringIfSet(&result, "audio_jitter_buffer_max_packets",
+                 audio_jitter_buffer_max_packets);
+@@ -107,6 +133,7 @@ std::string AudioOptions::ToString() const {
+                 audio_jitter_buffer_min_delay_ms);
+   ToStringIfSet(&result, "audio_network_adaptor", audio_network_adaptor);
+   ToStringIfSet(&result, "init_recording_on_send", init_recording_on_send);
++  ToStringIfSet(&result, "synthetic_external_source", synthetic_external_source);
+   result << "}";
+   return result.Release();
+ }
+diff --git a/api/audio_options.h b/api/audio_options.h
+index 4a80a92..d9ed16c 100644
+--- a/api/audio_options.h
++++ b/api/audio_options.h
+@@ -18,6 +18,23 @@
+ 
+ namespace webrtc {
+ 
++// Selects the implementation for one enabled audio processing component.
++// Disabled components do not use platform or software processing regardless of
++// mode. Automatic uses platform processing when available and otherwise falls
++// back to WebRTC software processing. Platform uses only platform processing, so
++// unavailable or physically impossible platform requests can be rejected.
++// Software disables the matching platform effect and uses WebRTC software
++// processing. Some ADMs expose coupled platform effects, such as Apple Voice
++// Processing I/O for AEC and NS. High-pass filter has no platform
++// implementation today.
++// Keep numeric values in sync with the Java and ObjC API enums because bridges
++// pass these values across language boundaries.
++enum class AudioProcessingMode {
++  kAutomatic = 0,
++  kPlatform = 1,
++  kSoftware = 2,
++};
++
+ // Options that can be applied to a VoiceMediaChannel or a VoiceMediaEngine.
+ // Used to be flags, but that makes it hard to selectively apply options.
+ // We are moving all of the setting of options to structs like this,
+@@ -35,6 +52,7 @@ struct RTC_EXPORT AudioOptions {
+   // Audio processing that attempts to filter away the output signal from
+   // later inbound pickup.
+   std::optional<bool> echo_cancellation;
++  std::optional<AudioProcessingMode> echo_cancellation_mode;
+ #if defined(WEBRTC_IOS)
+   // Forces software echo cancellation on iOS. This is a temporary workaround
+   // (until Apple fixes the bug) for a device with non-functioning AEC. May
+@@ -44,10 +62,13 @@ struct RTC_EXPORT AudioOptions {
+ #endif
+   // Audio processing to adjust the sensitivity of the local mic dynamically.
+   std::optional<bool> auto_gain_control;
++  std::optional<AudioProcessingMode> auto_gain_control_mode;
+   // Audio processing to filter out background noise.
+   std::optional<bool> noise_suppression;
++  std::optional<AudioProcessingMode> noise_suppression_mode;
+   // Audio processing to remove background noise of lower frequencies.
+   std::optional<bool> highpass_filter;
++  std::optional<AudioProcessingMode> highpass_filter_mode;
+   // Audio processing to swap the left and right channels.
+   std::optional<bool> stereo_swapping;
+   // Audio receiver jitter buffer (NetEq) max capacity in number of packets.
+@@ -66,6 +87,9 @@ struct RTC_EXPORT AudioOptions {
+   // true.
+   // TODO(webrtc:13566): Remove this option. See issue for details.
+   std::optional<bool> init_recording_on_send;
++  // Drives this audio send stream exclusively from an application-supplied
++  // synthetic AudioSourceInterface::AddSink feeder instead of AudioState/ADM.
++  std::optional<bool> synthetic_external_source;
+ };
+ 
+ }  //  namespace webrtc
+diff --git a/audio/audio_send_stream.cc b/audio/audio_send_stream.cc
+index 7bf655c..f59b5b9 100644
+--- a/audio/audio_send_stream.cc
++++ b/audio/audio_send_stream.cc
+@@ -370,10 +370,15 @@ void AudioSendStream::Start() {
+   } else {
+     rtp_rtcp_module_->SetAsPartOfAllocation(false);
+   }
++  audio_capture_race_checker_.Reset();
++  channel_send_->ResetAudioThreadRaceChecker();
+   channel_send_->StartSend();
+   sending_ = true;
+-  audio_state()->AddSendingStream(this, encoder_sample_rate_hz_,
+-                                  encoder_num_channels_);
++  if (!uses_external_audio_source_) {
++    audio_state()->AddSendingStream(this, encoder_sample_rate_hz_,
++                                    encoder_num_channels_);
++    registered_in_audio_state_ = true;
++  }
+ }
+ 
+ void AudioSendStream::Stop() {
+@@ -385,7 +390,35 @@ void AudioSendStream::Stop() {
+   RemoveBitrateObserver();
+   channel_send_->StopSend();
+   sending_ = false;
+-  audio_state()->RemoveSendingStream(this);
++  if (registered_in_audio_state_) {
++    audio_state()->RemoveSendingStream(this);
++    registered_in_audio_state_ = false;
++  }
++  audio_capture_race_checker_.Reset();
++  channel_send_->ResetAudioThreadRaceChecker();
++}
++
++void AudioSendStream::SetUsesExternalAudioSource(bool external) {
++  RTC_DCHECK_RUN_ON(&worker_thread_checker_);
++  if (uses_external_audio_source_ == external) {
++    return;
++  }
++  uses_external_audio_source_ = external;
++  audio_capture_race_checker_.Reset();
++  channel_send_->ResetAudioThreadRaceChecker();
++  if (!sending_) {
++    return;
++  }
++  if (external) {
++    if (registered_in_audio_state_) {
++      audio_state()->RemoveSendingStream(this);
++      registered_in_audio_state_ = false;
++    }
++  } else if (!registered_in_audio_state_) {
++    audio_state()->AddSendingStream(this, encoder_sample_rate_hz_,
++                                    encoder_num_channels_);
++    registered_in_audio_state_ = true;
++  }
+ }
+ 
+ void AudioSendStream::SendAudioData(std::unique_ptr<AudioFrame> audio_frame) {
+diff --git a/audio/audio_send_stream.h b/audio/audio_send_stream.h
+index 635d0de..65d03c5 100644
+--- a/audio/audio_send_stream.h
++++ b/audio/audio_send_stream.h
+@@ -93,6 +93,7 @@ class AudioSendStream final : public webrtc::AudioSendStream,
+                    SetParametersCallback callback) override;
+   void Start() override;
+   void Stop() override;
++  void SetUsesExternalAudioSource(bool external) override;
+   void SendAudioData(std::unique_ptr<AudioFrame> audio_frame) override;
+   bool SendTelephoneEvent(int payload_type,
+                           int payload_frequency,
+@@ -179,6 +180,10 @@ class AudioSendStream final : public webrtc::AudioSendStream,
+   int encoder_sample_rate_hz_ RTC_GUARDED_BY(worker_thread_checker_) = 0;
+   size_t encoder_num_channels_ RTC_GUARDED_BY(worker_thread_checker_) = 0;
+   bool sending_ RTC_GUARDED_BY(worker_thread_checker_) = false;
++  bool uses_external_audio_source_ RTC_GUARDED_BY(worker_thread_checker_) =
++      false;
++  bool registered_in_audio_state_ RTC_GUARDED_BY(worker_thread_checker_) =
++      false;
+   mutable Mutex audio_level_lock_;
+   // Keeps track of audio level, total audio energy and total samples duration.
+   // https://w3c.github.io/webrtc-stats/#dom-rtcaudiohandlerstats-totalaudioenergy
+diff --git a/audio/channel_send.cc b/audio/channel_send.cc
+index aebef26..930ef3b 100644
+--- a/audio/channel_send.cc
++++ b/audio/channel_send.cc
+@@ -163,6 +163,7 @@ class ChannelSend : public ChannelSendInterface,
+ 
+   // Muting, Volume and Level.
+   void SetInputMute(bool enable) override;
++  void ResetAudioThreadRaceChecker() override;
+ 
+   // CSRCs.
+   void SetCsrcs(std::span<const uint32_t> csrcs) override;
+@@ -720,6 +721,11 @@ bool ChannelSend::InputMute() const {
+   return input_mute_;
+ }
+ 
++void ChannelSend::ResetAudioThreadRaceChecker() {
++  RTC_DCHECK_RUN_ON(worker_thread_);
++  audio_thread_race_checker_.Reset();
++}
++
+ void ChannelSend::SetCsrcs(std::span<const uint32_t> csrcs) {
+   RTC_DCHECK_RUN_ON(worker_thread_);
+   std::vector<uint32_t> csrcs_copy(
+diff --git a/audio/channel_send.h b/audio/channel_send.h
+index 360e1f7..b31857c 100644
+--- a/audio/channel_send.h
++++ b/audio/channel_send.h
+@@ -102,6 +102,7 @@ class ChannelSendInterface {
+ 
+   virtual void ProcessAndEncodeAudio(
+       std::unique_ptr<AudioFrame> audio_frame) = 0;
++  virtual void ResetAudioThreadRaceChecker() {}
+   virtual RtpRtcpInterface* GetRtpRtcp() const = 0;
+ 
+   virtual void StartSend() = 0;
+diff --git a/call/audio_send_stream.h b/call/audio_send_stream.h
+index 40bfd81..22c8b34 100644
+--- a/call/audio_send_stream.h
++++ b/call/audio_send_stream.h
+@@ -193,6 +193,10 @@ class AudioSendStream : public AudioSender {
+   // When a stream is stopped, it can't receive, process or deliver packets.
+   virtual void Stop() = 0;
+ 
++  // Marks whether audio frames arrive exclusively from an external source
++  // rather than AudioState/ADM hardware capture.
++  virtual void SetUsesExternalAudioSource(bool /*external*/) {}
++
+   // TODO(solenberg): Make payload_type a config property instead.
+   virtual bool SendTelephoneEvent(int payload_type,
+                                   int payload_frequency,
+diff --git a/media/engine/webrtc_voice_engine.cc b/media/engine/webrtc_voice_engine.cc
+index 52140c4..7642e54 100644
+--- a/media/engine/webrtc_voice_engine.cc
++++ b/media/engine/webrtc_voice_engine.cc
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include "media/engine/webrtc_voice_engine.h"
++#include "media/engine/audio_processing_controller.h"
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -558,6 +559,12 @@ void WebRtcVoiceEngine::Init() {
+ 
+   // Set default engine options.
+   AudioOptions options = CreateDefaultAudioOptions();
++  if (adm()->GetPlatformAudioProcessingTopology() ==
++      AudioDeviceModule::PlatformAudioProcessingTopology::kEchoCancellationAndNoiseSuppressionCoupled) {
++    // AudioEngine controls the shared Apple processing path through these
++    // component requests. Preserve its communication default before first IO.
++    options.noise_suppression = true;
++  }
+   ApplyOptions(options);
+ 
+   // Connect the ADM to our audio path. It's important to do this after applying
+@@ -628,6 +635,14 @@ void WebRtcVoiceEngine::ApplyOptions(const AudioOptions& options_in) {
+   RTC_DCHECK_RUN_ON(&worker_thread_checker_);
+   RTC_LOG(LS_INFO) << "WebRtcVoiceEngine::ApplyOptions: "
+                    << options_in.ToString();
++  if (adm()->GetPlatformAudioProcessingTopology() ==
++          AudioDeviceModule::PlatformAudioProcessingTopology::kEchoCancellationAndNoiseSuppressionCoupled ||
++      options_in.echo_cancellation_mode || options_in.noise_suppression_mode ||
++      options_in.auto_gain_control_mode || options_in.highpass_filter_mode) {
++    ApplyExplicitAudioProcessingOptions(options_in);
++    return;
++  }
++  last_requested_audio_processing_options_ = options_in;
+   AudioOptions options = options_in;  // The options are modified below.
+ 
+ #if defined(WEBRTC_IOS)
+@@ -726,6 +741,7 @@ void WebRtcVoiceEngine::ApplyOptions(const AudioOptions& options_in) {
+     audio_state()->SetStereoChannelSwapping(*options.stereo_swapping);
+   }
+ 
++  last_resolved_audio_processing_options_ = options;
+   AudioProcessing* ap = apm();
+   if (!ap) {
+     return;
+@@ -763,6 +779,23 @@ void WebRtcVoiceEngine::ApplyOptions(const AudioOptions& options_in) {
+   ap->ApplyConfig(apm_config);
+ }
+ 
++AudioProcessingOptionsResult WebRtcVoiceEngine::ApplyExplicitAudioProcessingOptions(
++    const AudioOptions& options) {
++  RTC_DCHECK_RUN_ON(&worker_thread_checker_);
++  AudioProcessingOptionsResult validation = ValidateAudioProcessingOptionsForApply(adm(), options);
++  if (!validation.ok()) return validation;
++  AudioProcessingApplyResult applied = ApplyAudioProcessingOptions(apm(), adm(), options);
++  last_requested_audio_processing_options_ = options;
++  last_resolved_audio_processing_options_ = applied.resolved_options;
++  return applied.result;
++}
++
++AudioProcessingState WebRtcVoiceEngine::GetAudioProcessingState() {
++  RTC_DCHECK_RUN_ON(&worker_thread_checker_);
++  return webrtc::GetAudioProcessingState(apm(), adm(), last_requested_audio_processing_options_,
++                                                last_resolved_audio_processing_options_);
++}
++
+ const std::vector<Codec>& WebRtcVoiceEngine::LegacySendCodecs() const {
+   RTC_DCHECK(signal_thread_checker_.IsCurrent());
+   return legacy_send_codecs_;
+@@ -1001,6 +1034,23 @@ class WebRtcVoiceSendChannel::WebRtcAudioSendStream : public AudioSource::Sink {
+     UpdateSendState();
+   }
+ 
++  bool uses_external_source() const {
++    RTC_DCHECK_RUN_ON(&worker_thread_checker_);
++    return uses_external_source_;
++  }
++
++  void SetUsesExternalAudioSource(bool external) {
++    RTC_DCHECK_RUN_ON(&worker_thread_checker_);
++    if (uses_external_source_ == external) {
++      return;
++    }
++    uses_external_source_ = external;
++    audio_capture_race_checker_.Reset();
++    if (stream_) {
++      stream_->SetUsesExternalAudioSource(external);
++    }
++  }
++
+   void SetMuted(bool muted) {
+     RTC_DCHECK_RUN_ON(&worker_thread_checker_);
+     RTC_DCHECK(stream_);
+@@ -1008,6 +1058,11 @@ class WebRtcVoiceSendChannel::WebRtcAudioSendStream : public AudioSource::Sink {
+     muted_ = muted;
+   }
+ 
++  bool HasSource() const {
++    RTC_DCHECK_RUN_ON(&worker_thread_checker_);
++    return source_ != nullptr;
++  }
++
+   bool muted() const {
+     RTC_DCHECK_RUN_ON(&worker_thread_checker_);
+     return muted_;
+@@ -1044,6 +1099,7 @@ class WebRtcVoiceSendChannel::WebRtcAudioSendStream : public AudioSource::Sink {
+       source_->SetSink(nullptr);
+       source_ = nullptr;
+     }
++    audio_capture_race_checker_.Reset();
+     UpdateSendState();
+   }
+ 
+@@ -1083,6 +1139,7 @@ class WebRtcVoiceSendChannel::WebRtcAudioSendStream : public AudioSource::Sink {
+     // Set `source_` to nullptr to make sure no more callback will get into
+     // the source.
+     source_ = nullptr;
++    audio_capture_race_checker_.Reset();
+     UpdateSendState();
+   }
+ 
+@@ -1283,6 +1340,7 @@ class WebRtcVoiceSendChannel::WebRtcAudioSendStream : public AudioSource::Sink {
+   AudioSource* source_ = nullptr;
+   bool send_ = false;
+   bool muted_ = false;
++  bool uses_external_source_ = false;
+   int max_send_bitrate_bps_;
+   RtpParameters rtp_parameters_;
+   std::optional<AudioCodecSpec> audio_codec_spec_;
+@@ -1334,7 +1392,17 @@ bool WebRtcVoiceSendChannel::SetOptions(const AudioOptions& options) {
+   // We retain all of the existing options, and apply the given ones
+   // on top.  This means there is no way to "clear" options such that
+   // they go back to the engine default.
+-  options_.SetAll(options);
++  AudioOptions updated_options = options_;
++  updated_options.SetAll(options);
++  if (updated_options.echo_cancellation_mode || updated_options.noise_suppression_mode ||
++      updated_options.auto_gain_control_mode || updated_options.highpass_filter_mode) {
++    AudioProcessingOptionsResult result = engine()->ApplyExplicitAudioProcessingOptions(updated_options);
++    if (!result.ok()) {
++      RTC_LOG(LS_WARNING) << "Could not apply explicit audio processing options: " << result.message;
++      return false;
++    }
++  }
++  options_ = updated_options;
+ 
+   std::optional<std::string> audio_network_adaptor_config =
+       GetAudioNetworkAdaptorConfig(options_);
+@@ -1606,9 +1674,13 @@ bool WebRtcVoiceSendChannel::SetSend(bool send) {
+ 
+   // Apply channel specific options.
+   if (send) {
++    const bool has_hardware_stream = std::any_of(
++        send_streams_.begin(), send_streams_.end(),
++        [](const auto& kv) { return !kv.second->uses_external_source(); });
+     // Initialize the ADM for recording (this may take time on some platforms,
+     // e.g. Android).
+-    if (options_.init_recording_on_send.value_or(true) &&
++    if ((send_streams_.empty() || has_hardware_stream) &&
++        options_.init_recording_on_send.value_or(true) &&
+         // InitRecording() may return an error if the ADM is already recording.
+         !engine()->adm()->RecordingIsInitialized() &&
+         !engine()->adm()->Recording()) {
+@@ -1632,6 +1704,14 @@ bool WebRtcVoiceSendChannel::SetAudioSend(uint32_t ssrc,
+                                           const AudioOptions* options,
+                                           AudioSource* source) {
+   RTC_DCHECK_RUN_ON(worker_thread_);
++  const bool external =
++      options && options->synthetic_external_source.value_or(false);
++  if (options) {
++    auto it = send_streams_.find(ssrc);
++    if (it != send_streams_.end()) {
++      it->second->SetUsesExternalAudioSource(external);
++    }
++  }
+   // TODO(solenberg): The state change should be fully rolled back if any one of
+   //                  these calls fail.
+   if (!SetLocalSource(ssrc, source)) {
+@@ -1640,7 +1720,7 @@ bool WebRtcVoiceSendChannel::SetAudioSend(uint32_t ssrc,
+   if (!MuteStream(ssrc, !enable)) {
+     return false;
+   }
+-  if (enable && options) {
++  if (enable && options && !external) {
+     return SetOptions(*options);
+   }
+   return true;
+@@ -1821,13 +1901,43 @@ bool WebRtcVoiceSendChannel::MuteStream(uint32_t ssrc, bool muted) {
+   // This implementation is not ideal, instead we should signal the AGC when
+   // the mic channel is muted/unmuted. We can't do it today because there
+   // is no good way to know which stream is mapping to the mic channel.
+-  bool all_muted = muted;
++  bool has_hardware_stream = false;
++  bool all_hardware_muted = true;
+   for (const auto& kv : send_streams_) {
+-    all_muted = all_muted && kv.second->muted();
+-  }
+-  AudioProcessing* ap = engine()->apm();
+-  if (ap) {
+-    ap->set_output_will_be_muted(all_muted);
++    if (!kv.second->uses_external_source()) {
++      has_hardware_stream = true;
++      all_hardware_muted = all_hardware_muted && kv.second->muted();
++    }
++  }
++  if (has_hardware_stream) {
++    AudioProcessing* ap = engine()->apm();
++    if (ap) {
++      ap->set_output_will_be_muted(all_hardware_muted);
++    }
++
++#if defined(WEBRTC_IOS) || defined(WEBRTC_MAC)
++    AudioDeviceModule* adm = engine()->adm();
++    AudioDeviceModule::AudioLayer layer;
++    if (adm && adm->ActiveAudioLayer(&layer) == 0 &&
++        layer == AudioDeviceModule::kAppleAudioEngine) {
++      const bool all_without_source = std::none_of(
++          send_streams_.begin(), send_streams_.end(),
++          [](const auto& stream) {
++            return !stream.second->uses_external_source() && stream.second->HasSource();
++          });
++      if (!all_without_source) {
++        if (adm->IsStopOnMuteModeEnabled()) {
++          if (!all_hardware_muted && !adm->Recording()) {
++            if (adm->InitRecording() == 0) adm->StartRecording();
++          } else if (all_hardware_muted && adm->Recording()) {
++            adm->StopRecording();
++          }
++        } else {
++          adm->SetMicrophoneMute(all_hardware_muted);
++        }
++      }
++    }
++#endif
+   }
+ 
+   return true;
+diff --git a/pc/rtp_sender.cc b/pc/rtp_sender.cc
+index 093e2b2..edb5627 100644
+--- a/pc/rtp_sender.cc
++++ b/pc/rtp_sender.cc
+@@ -1430,22 +1430,36 @@ void AudioRtpSender::OnChanged() {
+   RTC_DCHECK_RUN_ON(signaling_thread_);
+   TRACE_EVENT0("webrtc", "AudioRtpSender::OnChanged");
+   RTC_DCHECK(!stopped_);
+-  if (cached_track_enabled_ != track_->enabled()) {
++  const AudioOptions source_options = SourceOptions();
++  if (cached_track_enabled_ != track_->enabled() ||
++      cached_source_options_ != source_options) {
+     cached_track_enabled_ = track_->enabled();
++    cached_source_options_ = source_options;
+     if (can_send_track()) {
+       SetSend();
+     }
+   }
+ }
+ 
++AudioOptions AudioRtpSender::SourceOptions() const {
++  RTC_DCHECK_RUN_ON(signaling_thread_);
++#if !defined(WEBRTC_CHROMIUM_BUILD) && !defined(WEBRTC_WEBKIT_BUILD)
++  AudioSourceInterface* source = audio_track()->GetSource();
++  if (source && !source->remote()) return source->options();
++#endif
++  return {};
++}
++
+ void AudioRtpSender::DetachTrack() {
+   RTC_DCHECK(track_);
+   audio_track()->RemoveSink(sink_adapter_.get());
++  cached_source_options_ = {};
+ }
+ 
+ void AudioRtpSender::AttachTrack() {
+   RTC_DCHECK(track_);
+   cached_track_enabled_ = track_->enabled();
++  cached_source_options_ = SourceOptions();
+   audio_track()->AddSink(sink_adapter_.get());
+ }
+ 
+@@ -1493,10 +1507,11 @@ void AudioRtpSender::SetSend() {
+   // (e.g., audio_network_adaptor, init_recording_on_send) are ignored by global
+   // engine initialization and must be explicitly applied to the channel here.
+   AudioOptions options;
+-  if (track_enabled && audio_track()->GetSource() &&
+-      !audio_track()->GetSource()->remote()) {
++  if (audio_track()->GetSource() && !audio_track()->GetSource()->remote()) {
+     options = audio_track()->GetSource()->options();
+-    options_ptr = &options;
++    if (track_enabled || options.synthetic_external_source.value_or(false)) {
++      options_ptr = &options;
++    }
+   }
+ #endif
+   InvalidateCache();
+diff --git a/rtc_base/race_checker.h b/rtc_base/race_checker.h
+index 92c8b72..5a1c75e 100644
+--- a/rtc_base/race_checker.h
++++ b/rtc_base/race_checker.h
+@@ -27,6 +27,10 @@ class RTC_LOCKABLE RaceChecker {
+  public:
+   friend class internal::RaceCheckerScope;
+   RaceChecker();
++  void Reset() {
++    access_count_ = 0;
++    accessing_thread_ = PlatformThreadRef();
++  }
+ 
+  private:
+   bool Acquire() const RTC_EXCLUSIVE_LOCK_FUNCTION();
+diff --git a/sdk/objc/api/peerconnection/RTCAudioSource+Private.h b/sdk/objc/api/peerconnection/RTCAudioSource+Private.h
+index fdf72cc..f29ac19 100644
+--- a/sdk/objc/api/peerconnection/RTCAudioSource+Private.h
++++ b/sdk/objc/api/peerconnection/RTCAudioSource+Private.h
+@@ -12,6 +12,44 @@
+ 
+ #import "RTCMediaSource+Private.h"
+ 
++#include <mutex>
++#include <vector>
++
++namespace webrtc {
++
++class SyntheticAudioSource : public AudioSourceInterface {
++ public:
++  SyntheticAudioSource();
++  ~SyntheticAudioSource() override;
++
++  SourceState state() const override { return kLive; }
++  bool remote() const override { return false; }
++  void RegisterObserver(ObserverInterface* /*observer*/) override {}
++  void UnregisterObserver(ObserverInterface* /*observer*/) override {}
++
++  const AudioOptions options() const override { return options_; }
++  void SetOptions(const AudioOptions& options) override {
++    options_ = options;
++    options_.synthetic_external_source = true;
++  }
++
++  void AddSink(AudioTrackSinkInterface* sink) override;
++  void RemoveSink(AudioTrackSinkInterface* sink) override;
++
++  void DeliverPCM16(const int16_t* samples,
++                    size_t frames_per_channel,
++                    int sample_rate_hz,
++                    size_t num_channels);
++
++ private:
++  AudioOptions options_;
++  std::mutex sinks_mutex_;
++  std::mutex deliver_mutex_;
++  std::vector<AudioTrackSinkInterface*> sinks_;
++};
++
++}  // namespace webrtc
++
+ @interface RTC_OBJC_TYPE (RTCAudioSource)
+ ()
+ 
+@@ -30,10 +68,18 @@
+         (webrtc::scoped_refptr<webrtc::AudioSourceInterface>)nativeAudioSource
+     NS_DESIGNATED_INITIALIZER;
+ 
++/** Initialize an RTCAudioSource backed by a SyntheticAudioSource. */
++- (instancetype)
++         initWithFactory:(RTC_OBJC_TYPE(RTCPeerConnectionFactory) *)factory
++       nativeAudioSource:
++           (webrtc::scoped_refptr<webrtc::AudioSourceInterface>)nativeAudioSource
++    syntheticAudioSource:
++        (webrtc::scoped_refptr<webrtc::SyntheticAudioSource>)syntheticAudioSource;
++
+ - (instancetype)
+       initWithFactory:(RTC_OBJC_TYPE(RTCPeerConnectionFactory) *)factory
+     nativeMediaSource:
+         (webrtc::scoped_refptr<webrtc::MediaSourceInterface>)nativeMediaSource
+-                 type:(RTCMediaSourceType)type NS_UNAVAILABLE;
++                 type:(RTC_OBJC_TYPE(RTCMediaSourceType))type NS_UNAVAILABLE;
+ 
+ @end
+diff --git a/sdk/objc/api/peerconnection/RTCAudioSource.h b/sdk/objc/api/peerconnection/RTCAudioSource.h
+index b62e362..32c968b 100644
+--- a/sdk/objc/api/peerconnection/RTCAudioSource.h
++++ b/sdk/objc/api/peerconnection/RTCAudioSource.h
+@@ -9,6 +9,7 @@
+  */
+ 
+ #import <Foundation/Foundation.h>
++#include <stdint.h>
+ 
+ #import "RTCMediaSource.h"
+ #import "sdk/objc/base/RTCMacros.h"
+@@ -27,6 +28,15 @@ RTC_OBJC_EXPORT
+ // is available on the surface exposed by webrtc.
+ @property(nonatomic, assign) double volume;
+ 
++/** YES when created by -[RTCPeerConnectionFactory syntheticAudioSource]. */
++@property(nonatomic, readonly, getter=isSynthetic) BOOL synthetic;
++
++/** Delivers interleaved 16-bit signed PCM frames directly into attached sinks. */
++- (void)deliverPCMInt16:(const int16_t *)samples
++             frameCount:(NSInteger)frameCount
++             sampleRate:(int)sampleRate
++               channels:(NSInteger)channels;
++
+ @end
+ 
+ NS_ASSUME_NONNULL_END
+diff --git a/sdk/objc/api/peerconnection/RTCAudioSource.mm b/sdk/objc/api/peerconnection/RTCAudioSource.mm
+index b1ac2ad..8ee493a 100644
+--- a/sdk/objc/api/peerconnection/RTCAudioSource.mm
++++ b/sdk/objc/api/peerconnection/RTCAudioSource.mm
+@@ -9,13 +9,68 @@
+  */
+ 
+ #import "RTCAudioSource+Private.h"
++#import "RTCPeerConnectionFactory+Private.h"
++
++#include <algorithm>
++#include <optional>
+ 
+ #include "rtc_base/checks.h"
+ 
++namespace webrtc {
++
++SyntheticAudioSource::SyntheticAudioSource() {
++  options_.echo_cancellation = false;
++  options_.auto_gain_control = false;
++  options_.noise_suppression = false;
++  options_.highpass_filter = false;
++  options_.init_recording_on_send = false;
++  options_.synthetic_external_source = true;
++}
++
++SyntheticAudioSource::~SyntheticAudioSource() = default;
++
++void SyntheticAudioSource::AddSink(AudioTrackSinkInterface* sink) {
++  if (!sink) {
++    return;
++  }
++  std::lock_guard<std::mutex> lock(sinks_mutex_);
++  if (std::find(sinks_.begin(), sinks_.end(), sink) == sinks_.end()) {
++    sinks_.push_back(sink);
++  }
++}
++
++void SyntheticAudioSource::RemoveSink(AudioTrackSinkInterface* sink) {
++  std::lock_guard<std::mutex> lock(sinks_mutex_);
++  sinks_.erase(std::remove(sinks_.begin(), sinks_.end(), sink), sinks_.end());
++}
++
++void SyntheticAudioSource::DeliverPCM16(const int16_t* samples,
++                                        size_t frames_per_channel,
++                                        int sample_rate_hz,
++                                        size_t num_channels) {
++  if (!samples || frames_per_channel == 0 || sample_rate_hz <= 0 ||
++      num_channels == 0) {
++    return;
++  }
++  std::lock_guard<std::mutex> deliver_lock(deliver_mutex_);
++  std::vector<AudioTrackSinkInterface*> sinks_snapshot;
++  {
++    std::lock_guard<std::mutex> lock(sinks_mutex_);
++    sinks_snapshot = sinks_;
++  }
++  for (AudioTrackSinkInterface* sink : sinks_snapshot) {
++    sink->OnData(samples, 16, sample_rate_hz, num_channels,
++                 frames_per_channel, std::nullopt);
++  }
++}
++
++}  // namespace webrtc
++
+ @implementation RTC_OBJC_TYPE (RTCAudioSource) {
++  webrtc::Thread *_signalingThread;
++  webrtc::scoped_refptr<webrtc::SyntheticAudioSource> _syntheticAudioSource;
+ }
+ 
+-@synthesize volume = _volume;
+ @synthesize nativeAudioSource = _nativeAudioSource;
+ 
+ - (instancetype)
+@@ -26,10 +81,24 @@ @implementation RTC_OBJC_TYPE (RTCAudioSource) {
+   RTC_DCHECK(nativeAudioSource);
+ 
+   self = [super initWithFactory:factory
+-              nativeMediaSource:nativeAudioSource
+-                           type:RTCMediaSourceTypeAudio];
++                  nativeMediaSource:nativeAudioSource
++                               type:RTC_OBJC_TYPE(RTCMediaSourceTypeAudio)];
+   if (self) {
+     _nativeAudioSource = nativeAudioSource;
++    _signalingThread = factory.signalingThread;
++  }
++  return self;
++}
++
++- (instancetype)
++         initWithFactory:(RTC_OBJC_TYPE(RTCPeerConnectionFactory) *)factory
++       nativeAudioSource:
++           (webrtc::scoped_refptr<webrtc::AudioSourceInterface>)nativeAudioSource
++    syntheticAudioSource:
++        (webrtc::scoped_refptr<webrtc::SyntheticAudioSource>)syntheticAudioSource {
++  self = [self initWithFactory:factory nativeAudioSource:nativeAudioSource];
++  if (self) {
++    _syntheticAudioSource = syntheticAudioSource;
+   }
+   return self;
+ }
+@@ -38,11 +107,27 @@ @implementation RTC_OBJC_TYPE (RTCAudioSource) {
+       initWithFactory:(RTC_OBJC_TYPE(RTCPeerConnectionFactory) *)factory
+     nativeMediaSource:
+         (webrtc::scoped_refptr<webrtc::MediaSourceInterface>)nativeMediaSource
+-                 type:(RTCMediaSourceType)type {
++                 type:(RTC_OBJC_TYPE(RTCMediaSourceType))type {
+   RTC_DCHECK_NOTREACHED();
+   return nil;
+ }
+ 
++- (BOOL)isSynthetic {
++  return _syntheticAudioSource != nullptr;
++}
++
++- (void)deliverPCMInt16:(const int16_t *)samples
++             frameCount:(NSInteger)frameCount
++             sampleRate:(int)sampleRate
++               channels:(NSInteger)channels {
++  if (!_syntheticAudioSource || !samples || frameCount <= 0 || sampleRate <= 0 ||
++      channels <= 0) {
++    return;
++  }
++  _syntheticAudioSource->DeliverPCM16(samples, static_cast<size_t>(frameCount),
++                                      sampleRate, static_cast<size_t>(channels));
++}
++
+ - (NSString *)description {
+   NSString *stateString = [[self class] stringForState:self.state];
+   return [NSString stringWithFormat:@"RTC_OBJC_TYPE(RTCAudioSource)( %p ): %@",
+@@ -50,8 +135,20 @@ - (NSString *)description {
+                                     stateString];
+ }
+ 
++- (double)volume {
++  if (!_signalingThread->IsCurrent()) {
++    return _signalingThread->BlockingCall([self] { return [self volume]; });
++  }
++
++  return _nativeAudioSource->GetVolume();
++}
++
+ - (void)setVolume:(double)volume {
+-  _volume = volume;
++  if (!_signalingThread->IsCurrent()) {
++    _signalingThread->BlockingCall([self, volume] { [self setVolume:volume]; });
++    return;
++  }
++
+   _nativeAudioSource->SetVolume(volume);
+ }
+ 
+diff --git a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+index abfa679..d17c73b 100644
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+@@ -11,9 +11,25 @@
+ #import <Foundation/Foundation.h>
+ 
+ #import "sdk/objc/base/RTCMacros.h"
++#import "RTCAudioDeviceModule.h"
++#import "RTCAudioProcessingState.h"
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
++// Scoped to a user-joined conference; 0 releases, nonzero reserves real output.
++// Requests run asynchronously on each factory's native audio worker.
++// Synchronous PCM gate for macOS application/accessory mute handling.
++RTC_EXTERN void RTC_OBJC_TYPE(RTCSetApplicationCaptureMuted)(int muted);
++RTC_EXTERN int RTC_OBJC_TYPE(RTCApplicationCaptureMuted)(void);
++// Epoch-bound opening cannot overwrite a newer synchronous accessory mute.
++RTC_EXTERN uint64_t RTC_OBJC_TYPE(RTCApplicationCaptureState)(void);
++RTC_EXTERN BOOL RTC_OBJC_TYPE(RTCUnmuteApplicationCaptureIfState)(uint64_t expectedState);
++RTC_EXTERN void RTC_OBJC_TYPE(RTCSetConferencePlayoutReserved)(int reserved);
++// Main-queue app intent: -1 releases authority, 0 unmutes, 1 mutes.
++// Workers restore the latest value after reconfiguration.
++RTC_EXTERN void RTC_OBJC_TYPE(RTCSetApplicationInputMuteIntent)(int muted);
++RTC_EXTERN int RTC_OBJC_TYPE(RTCApplicationInputMuteReconfiguring)(void);
++
+ @class RTC_OBJC_TYPE(RTCRtpCapabilities);
+ @class RTC_OBJC_TYPE(RTCAudioSource);
+ @class RTC_OBJC_TYPE(RTCAudioTrack);
+@@ -34,6 +50,8 @@ NS_ASSUME_NONNULL_BEGIN
+ (RTCSSLCertificateVerifier);
+ @protocol RTC_OBJC_TYPE
+ (RTCAudioDevice);
++@protocol RTC_OBJC_TYPE
++(RTCAudioProcessingModule);
+ 
+ RTC_OBJC_EXPORT
+ @interface RTC_OBJC_TYPE (RTCPeerConnectionFactory) : NSObject
+@@ -59,6 +77,24 @@ RTC_OBJC_EXPORT
+                audioDevice:
+                    (nullable id<RTC_OBJC_TYPE(RTCAudioDevice)>)audioDevice;
+ 
++/* Initialize object with bypass voice processing */
++- (instancetype)
++    initWithAudioDeviceModuleType:(RTC_OBJC_TYPE(RTCAudioDeviceModuleType))audioDeviceModuleType
++            bypassVoiceProcessing:(BOOL)bypassVoiceProcessing
++                   encoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
++                   decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
++            audioProcessingModule:
++                (nullable id<RTC_OBJC_TYPE(RTCAudioProcessingModule)>)audioProcessingModule;
++
++@property(nonatomic, readonly) RTC_OBJC_TYPE(RTCAudioDeviceModule) *audioDeviceModule;
++
++/** Diagnostic snapshot of the shared audio processing module's state: per
++ *  component, what was requested, what the resolver decided per path, and
++ *  what is actually running. The APM is owned by this factory and shared
++ *  across every peer connection it creates, so this reflects the
++ *  factory-scoped processing state. */
++@property(nonatomic, readonly) RTC_OBJC_TYPE(RTCAudioProcessingState) *audioProcessingState;
++
+ /**
+  * Valid kind values are kRTCMediaStreamTrackKindAudio and
+  * kRTCMediaStreamTrackKindVideo.
+@@ -77,6 +113,9 @@ RTC_OBJC_EXPORT
+ - (RTC_OBJC_TYPE(RTCAudioSource) *)audioSourceWithConstraints:
+     (nullable RTC_OBJC_TYPE(RTCMediaConstraints) *)constraints;
+ 
++/** Initialize a synthetic RTCAudioSource fed by deliverPCMInt16 without touching ADM. */
++- (RTC_OBJC_TYPE(RTCAudioSource) *)syntheticAudioSource;
++
+ /** Initialize an RTCAudioTrack with an id. Convenience ctor to use an audio
+  * source with no constraints.
+  */
+@@ -130,6 +169,9 @@ RTC_OBJC_EXPORT
+                            delegate:(nullable id<RTC_OBJC_TYPE(
+                                          RTCPeerConnectionDelegate)>)delegate;
+ 
++/** Set field trials before initializing a factory. */
+++ (void)configureFieldTrials:(nullable NSString *)fieldTrials;
++
+ /** Set the options to be used for subsequently created RTCPeerConnections */
+ - (void)setOptions:
+     (nonnull RTC_OBJC_TYPE(RTCPeerConnectionFactoryOptions) *)options;
+diff --git a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+index 70f1a9a..b534487 100644
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+@@ -8,6 +8,8 @@
+  *  be found in the AUTHORS file in the root of the source tree.
+  */
+ 
++#include <atomic>
++#include <map>
+ #include <memory>
+ #include <optional>
+ 
+@@ -33,6 +35,18 @@
+ 
+ #include "api/audio/audio_device.h"
+ #include "api/audio/audio_processing.h"
++#include "api/audio/create_audio_device_module.h"
++#include "api/field_trials.h"
++#include "api/make_ref_counted.h"
++#include "modules/audio_device/audio_engine_device.h"
++#include "modules/audio_device/audio_device_buffer.h"
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++#include "modules/audio_device/mac/application_input_mute_state.h"
++#endif
++#import "RTCAudioDeviceModule+Private.h"
++#import "RTCAudioProcessingState+Private.h"
++#import "components/audio/RTCAudioProcessingModule.h"
++#import "components/audio/RTCDefaultAudioProcessingModule+Private.h"
+ #include "api/audio/builtin_audio_processing_builder.h"
+ #include "api/audio_codecs/builtin_audio_decoder_factory.h"
+ #include "api/audio_codecs/builtin_audio_encoder_factory.h"
+@@ -53,19 +67,171 @@
+ #include "sdk/objc/native/src/objc_video_decoder_factory.h"
+ #include "sdk/objc/native/src/objc_video_encoder_factory.h"
+ #include "sdk/objc/native/src/objc_video_track_source.h"
++#include "sdk/objc/native/src/audio/conference_audio_ownership.h"
+ 
+ #if defined(WEBRTC_IOS)
+ #import "sdk/objc/native/api/audio_device_module.h"
+ #endif
+ 
++// Native AppKit and iOS ADM capture paths converge at AudioDeviceBuffer.
++void RTC_OBJC_TYPE(RTCSetApplicationCaptureMuted)(int muted) {
++  webrtc::SetApplicationCaptureMuted(muted != 0);
++}
++int RTC_OBJC_TYPE(RTCApplicationCaptureMuted)() {
++  return (webrtc::ApplicationCaptureState() & 1) ? 1 : 0;
++}
++uint64_t RTC_OBJC_TYPE(RTCApplicationCaptureState)() {
++  return webrtc::ApplicationCaptureState();
++}
++BOOL RTC_OBJC_TYPE(RTCUnmuteApplicationCaptureIfState)(uint64_t expected_state) {
++  return webrtc::UnmuteApplicationCaptureIfState(expected_state);
++}
++
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++void RTC_OBJC_TYPE(RTCSetApplicationInputMuteIntent)(int muted) {
++  webrtc::mac_adm::SetApplicationInputMuteIntent(muted);
++}
++int RTC_OBJC_TYPE(RTCApplicationInputMuteReconfiguring)() {
++  return webrtc::mac_adm::ApplicationInputMuteReconfiguring() ? 1 : 0;
++}
++#endif
++
++static NSString *gFieldTrials = nil;
++
++static webrtc::Environment CreateDefaultEnvironment() {
++  if (gFieldTrials.length > 0) {
++    return webrtc::CreateEnvironment(std::make_unique<webrtc::FieldTrials>(gFieldTrials.stdString));
++  }
++  return webrtc::CreateEnvironment();
++}
++
++namespace {
++using ConferenceOwnership = webrtc::ios_adm::ConferenceAudioOwnership;
++using namespace webrtc::ios_adm;
++
++// The coordinator retains only the current/in-flight and latest desired factory.
++// Keeping the old factory alive through worker completion also prevents its
++// destructor from disposing CoreAudio concurrently with replacement startup.
++struct ConferenceAudioOwner {
++  __strong RTC_OBJC_TYPE(RTCPeerConnectionFactory) *factory;
++  webrtc::Thread *worker;
++  webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm;
++  std::shared_ptr<std::atomic<int>> admission;
++};
++struct ConferenceAudioCoordinator {
++  ConferenceOwnership ownership;
++  std::map<ConferenceOwnership::Owner, ConferenceAudioOwner> owners;
++};
++ConferenceAudioCoordinator &ConferenceCoordinator() {
++  static auto *coordinator = new ConferenceAudioCoordinator;
++  return *coordinator;
++}
++dispatch_queue_t ConferenceControlQueue() {
++  static dispatch_queue_t queue;
++  static dispatch_once_t once;
++  dispatch_once(&once, ^{
++    queue = dispatch_queue_create("org.webrtc.conference-audio-ownership", DISPATCH_QUEUE_SERIAL);
++  });
++  return queue;
++}
++#if defined(WEBRTC_IOS)
++std::atomic<uint64_t> gNextConferenceAudioOwner{0};
++#endif
++
++void DriveConferenceAudio();
++
++// Revoke before posting retirement. SDK tasks already queued on an old worker
++// see the atomic gate and cannot start hardware while retirement is pending.
++void UpdateConferenceAdmissions() {
++  auto &coordinator = ConferenceCoordinator();
++  auto &ownership = coordinator.ownership;
++  for (auto &[owner, record] : coordinator.owners) {
++    int state = kConferenceAudioRetired;
++    if (owner == ownership.desired_owner()) {
++      const bool retiring = ownership.in_flight() &&
++          ownership.in_flight()->kind == ConferenceOwnership::Kind::kRetire;
++      state = owner == ownership.active_owner() && !retiring
++          ? (ownership.desired_reserved() ? kConferenceAudioReserved : kConferenceAudioAdmitted)
++          : kConferenceAudioPending;
++    }
++    record.admission->store(state, std::memory_order_release);
++  }
++}
++
++void DriveConferenceAudio() {
++  auto &coordinator = ConferenceCoordinator();
++  auto &ownership = coordinator.ownership;
++  auto action = ownership.Next();
++  UpdateConferenceAdmissions();
++  // Dropping a coalesced pending owner or a fully retired owner is safe here:
++  // this is never one of the factories' worker threads.
++  for (auto it = coordinator.owners.begin(); it != coordinator.owners.end();) {
++    if (it->first != ownership.active_owner() &&
++        it->first != ownership.desired_owner() &&
++        it->first != ownership.in_flight_owner()) {
++      it = coordinator.owners.erase(it);
++    } else {
++      ++it;
++    }
++  }
++  if (!action) return;
++  auto &owner = coordinator.owners.at(action->owner);
++  auto adm = owner.adm;
++  auto admission = owner.admission;
++  const auto operation = *action;
++  // Do not capture the record/factory. Its final release must not happen on its
++  // own worker. Workers never wait for the coordinator or another worker.
++  owner.worker->PostTask([adm, admission, operation] {
++    const int state = admission->load(std::memory_order_acquire);
++    const bool retire = operation.kind == ConferenceOwnership::Kind::kRetire || state < 0;
++    const int result = retire ? adm->RetireConferencePlayout()
++                              : adm->SetConferencePlayoutReserved(state == kConferenceAudioReserved);
++    if (result != 0 || getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++      NSLog(@"Conference audio owner=%llu operation=%llu retire=%d state=%d result=%d",
++            (unsigned long long)operation.owner, (unsigned long long)operation.id,
++            retire, state, result);
++    }
++    dispatch_async(ConferenceControlQueue(), ^{
++      if (ConferenceCoordinator().ownership.Complete(operation.id, result == 0)) {
++        DriveConferenceAudio();
++      }
++    });
++  });
++}
++}
++
++@interface RTC_OBJC_TYPE(RTCPeerConnectionFactory) (ConferencePlayout)
++- (void)prepareConferencePlayout;
++- (void)registerConferencePlayout;
++@end
++
++void RTC_OBJC_TYPE(RTCSetConferencePlayoutReserved)(int reserved) {
++  dispatch_async(ConferenceControlQueue(), ^{
++    ConferenceCoordinator().ownership.SetReserved(reserved != 0);
++    DriveConferenceAudio();
++  });
++}
++
+ @implementation RTC_OBJC_TYPE (RTCPeerConnectionFactory) {
+   std::optional<webrtc::Environment> _env;
+   std::unique_ptr<webrtc::Thread> _networkThread;
++  std::unique_ptr<webrtc::Thread> _workerThread;
+   std::unique_ptr<webrtc::Thread> _signalingThread;
++  webrtc::scoped_refptr<webrtc::AudioDeviceModule> _nativeAudioDeviceModule;
++  std::shared_ptr<std::atomic<int>> _conferencePlayoutState;
++  uint64_t _conferencePlayoutOwner;
++  BOOL _ownsConferenceAudioDevice;
++  RTC_OBJC_TYPE(RTCDefaultAudioProcessingModule) *_defaultAudioProcessingModule;
++  BOOL _createAudioDeviceModule;
++  BOOL _exposeAudioDeviceModule;
++  RTC_OBJC_TYPE(RTCAudioDeviceModuleType) _requestedAudioDeviceModuleType;
++  BOOL _bypassVoiceProcessing;
+   BOOL _hasStartedAecDump;
+ }
+ 
+ @synthesize nativeFactory = _nativeFactory;
++@synthesize audioDeviceModule = _audioDeviceModule;
++@synthesize nativeAudioDeviceModule = _nativeAudioDeviceModule;
+ 
+ - (instancetype)init {
+   webrtc::PeerConnectionFactoryDependencies dependencies;
+@@ -77,9 +243,10 @@ - (instancetype)init {
+       [[RTC_OBJC_TYPE(RTCVideoEncoderFactoryH264) alloc] init]);
+   dependencies.video_decoder_factory = webrtc::ObjCToNativeVideoDecoderFactory(
+       [[RTC_OBJC_TYPE(RTCVideoDecoderFactoryH264) alloc] init]);
+-  dependencies.env = webrtc::CreateEnvironment();
++  dependencies.env = CreateDefaultEnvironment();
+ #ifdef WEBRTC_IOS
+   dependencies.adm = webrtc::CreateAudioDeviceModule(*dependencies.env);
++  _ownsConferenceAudioDevice = YES;
+ #endif
+   return [self initWithMediaAndDependencies:dependencies];
+ }
+@@ -102,7 +269,7 @@ - (instancetype)init {
+                audioDevice:
+                    (nullable id<RTC_OBJC_TYPE(RTCAudioDevice)>)audioDevice {
+   webrtc::PeerConnectionFactoryDependencies dependencies;
+-  dependencies.env = webrtc::CreateEnvironment();
++  dependencies.env = CreateDefaultEnvironment();
+   dependencies.audio_encoder_factory =
+       webrtc::CreateBuiltinAudioEncoderFactory();
+   dependencies.audio_decoder_factory =
+@@ -121,11 +288,50 @@ - (instancetype)init {
+ #ifdef WEBRTC_IOS
+   } else {
+     dependencies.adm = webrtc::CreateAudioDeviceModule(*dependencies.env);
++    _ownsConferenceAudioDevice = YES;
+ #endif
+   }
+   return [self initWithMediaAndDependencies:dependencies];
+ }
+ 
++- (instancetype)
++    initWithAudioDeviceModuleType:(RTC_OBJC_TYPE(RTCAudioDeviceModuleType))audioDeviceModuleType
++            bypassVoiceProcessing:(BOOL)bypassVoiceProcessing
++                   encoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
++                   decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
++            audioProcessingModule:
++                (nullable id<RTC_OBJC_TYPE(RTCAudioProcessingModule)>)audioProcessingModule {
++#ifdef HAVE_NO_MEDIA
++  return [self initWithNoMedia];
++#else
++  std::unique_ptr<webrtc::VideoEncoderFactory> native_encoder_factory;
++  std::unique_ptr<webrtc::VideoDecoderFactory> native_decoder_factory;
++  if (encoderFactory) {
++    native_encoder_factory = webrtc::ObjCToNativeVideoEncoderFactory(encoderFactory);
++  }
++  if (decoderFactory) {
++    native_decoder_factory = webrtc::ObjCToNativeVideoDecoderFactory(decoderFactory);
++  }
++
++  if ([audioProcessingModule isKindOfClass:[RTC_OBJC_TYPE(RTCDefaultAudioProcessingModule) class]]) {
++    _defaultAudioProcessingModule = (RTC_OBJC_TYPE(RTCDefaultAudioProcessingModule) *)audioProcessingModule;
++  } else {
++    _defaultAudioProcessingModule = [[RTC_OBJC_TYPE(RTCDefaultAudioProcessingModule) alloc] init];
++  }
++
++  return [self
++      initWithNativeAudioEncoderFactory:webrtc::CreateBuiltinAudioEncoderFactory()
++              nativeAudioDecoderFactory:webrtc::CreateBuiltinAudioDecoderFactory()
++              nativeVideoEncoderFactory:std::move(native_encoder_factory)
++              nativeVideoDecoderFactory:std::move(native_decoder_factory)
++                      audioDeviceModule:nullptr
++                  audioProcessingModule:_defaultAudioProcessingModule.nativeAudioProcessingModule
++               networkControllerFactory:nullptr
++                  audioDeviceModuleType:audioDeviceModuleType
++                  bypassVoiceProcessing:bypassVoiceProcessing];
++#endif
++}
++
+ - (instancetype)initWithNativeDependencies:
+     (webrtc::PeerConnectionFactoryDependencies &)dependencies {
+   self = [super init];
+@@ -135,6 +341,14 @@ - (instancetype)initWithNativeDependencies:
+     BOOL result = _networkThread->Start();
+     RTC_DCHECK(result) << "Failed to start network thread.";
+ 
++    // M157 ConnectionContext::ResolveWorkerThread still honors a supplied worker
++    // thread. Keep blocking audio-device lifecycle off the network/ICE thread
++    // until the ADM is migrated to the future ConnectionContext contract.
++    _workerThread = webrtc::Thread::Create();
++    _workerThread->SetName("worker_thread", _workerThread.get());
++    result = _workerThread->Start();
++    RTC_DCHECK(result) << "Failed to start worker thread.";
++
+     _signalingThread = webrtc::Thread::Create();
+     _signalingThread->SetName("signaling_thread", _signalingThread.get());
+     result = _signalingThread->Start();
+@@ -143,9 +357,13 @@ - (instancetype)initWithNativeDependencies:
+     // Set fields that are relevant both to 'no media' and 'with media'
+     // scenarios.
+     dependencies.network_thread = _networkThread.get();
++#pragma clang diagnostic push
++#pragma clang diagnostic ignored "-Wdeprecated-declarations"
++    dependencies.worker_thread = _workerThread.get();
++#pragma clang diagnostic pop
+     dependencies.signaling_thread = _signalingThread.get();
+     if (!dependencies.env.has_value()) {
+-      dependencies.env = webrtc::CreateEnvironment();
++      dependencies.env = CreateDefaultEnvironment();
+     }
+     _env = dependencies.env;
+     if (dependencies.network_monitor_factory == nullptr &&
+@@ -154,6 +372,34 @@ - (instancetype)initWithNativeDependencies:
+           webrtc::CreateNetworkMonitorFactory();
+     }
+ 
++    if (_createAudioDeviceModule) {
++      if (_requestedAudioDeviceModuleType == RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeAudioEngine)) {
++        dependencies.adm = _workerThread->BlockingCall([self, &dependencies] {
++          return webrtc::make_ref_counted<webrtc::AudioEngineDevice>(
++              *dependencies.env, _bypassVoiceProcessing == YES);
++        });
++      } else {
++#if defined(WEBRTC_IOS)
++        dependencies.adm = _workerThread->BlockingCall([self, &dependencies] {
++          return webrtc::CreateAudioDeviceModule(*dependencies.env, _bypassVoiceProcessing == YES);
++        });
++        _ownsConferenceAudioDevice = YES;
++#else
++        dependencies.adm = _workerThread->BlockingCall([&dependencies] {
++          return webrtc::CreateAudioDeviceModule(
++              *dependencies.env, webrtc::AudioDeviceModule::kPlatformDefaultAudio);
++        });
++#endif
++      }
++    }
++    _nativeAudioDeviceModule = dependencies.adm;
++    if (_exposeAudioDeviceModule) {
++      _audioDeviceModule = [[RTC_OBJC_TYPE(RTCAudioDeviceModule) alloc]
++          initWithNativeModule:_nativeAudioDeviceModule
++                  workerThread:_workerThread.get()
++         audioDeviceModuleType:_requestedAudioDeviceModuleType];
++    }
++    [self prepareConferencePlayout];
+     _nativeFactory =
+         webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
+     NSAssert(_nativeFactory, @"Failed to initialize PeerConnectionFactory!");
+@@ -246,6 +492,89 @@ - (instancetype)initWithMediaAndDependencies:
+   return [self initWithNativeDependencies:dependencies];
+ }
+ 
++- (instancetype)initWithNativeAudioEncoderFactory:
++                    (webrtc::scoped_refptr<webrtc::AudioEncoderFactory>)audioEncoderFactory
++                        nativeAudioDecoderFactory:
++                            (webrtc::scoped_refptr<webrtc::AudioDecoderFactory>)audioDecoderFactory
++                        nativeVideoEncoderFactory:
++                            (std::unique_ptr<webrtc::VideoEncoderFactory>)videoEncoderFactory
++                        nativeVideoDecoderFactory:
++                            (std::unique_ptr<webrtc::VideoDecoderFactory>)videoDecoderFactory
++                                audioDeviceModule:
++                                    (webrtc::scoped_refptr<webrtc::AudioDeviceModule>)audioDeviceModule
++                            audioProcessingModule:
++                                (webrtc::scoped_refptr<webrtc::AudioProcessing>)audioProcessingModule
++                         networkControllerFactory:
++                             (std::unique_ptr<webrtc::NetworkControllerFactoryInterface>)
++                                 networkControllerFactory
++                            audioDeviceModuleType:(RTC_OBJC_TYPE(RTCAudioDeviceModuleType))audioDeviceModuleType
++                            bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
++  webrtc::PeerConnectionFactoryDependencies dependencies;
++  dependencies.adm = std::move(audioDeviceModule);
++  dependencies.audio_encoder_factory = std::move(audioEncoderFactory);
++  dependencies.audio_decoder_factory = std::move(audioDecoderFactory);
++  dependencies.video_encoder_factory = std::move(videoEncoderFactory);
++  dependencies.video_decoder_factory = std::move(videoDecoderFactory);
++  if (audioProcessingModule) {
++    dependencies.audio_processing_builder =
++        webrtc::CustomAudioProcessing(std::move(audioProcessingModule));
++  }
++  dependencies.network_controller_factory = std::move(networkControllerFactory);
++  _exposeAudioDeviceModule = YES;
++  _createAudioDeviceModule = dependencies.adm == nullptr;
++  _requestedAudioDeviceModuleType = audioDeviceModuleType;
++  _bypassVoiceProcessing = bypassVoiceProcessing;
++  return [self initWithMediaAndDependencies:dependencies];
++}
++
++- (void)prepareConferencePlayout {
++#if defined(WEBRTC_IOS)
++  // Only factory-created built-in iOS/Catalyst ADMs participate. Caller-owned
++  // native/ObjC devices preserve their lifecycle and public ADM vtable.
++  if (!_ownsConferenceAudioDevice) {
++    if (getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++      NSLog(@"Conference audio factory=%p unmanaged caller-owned ADM=%p", self,
++            _nativeAudioDeviceModule.get());
++    }
++    return;
++  }
++  auto adm = _nativeAudioDeviceModule;
++  if (!adm || !_workerThread) return;
++  auto admission = std::make_shared<std::atomic<int>>(kConferenceAudioPending);
++  const bool prepared = _workerThread->BlockingCall([adm, admission] {
++    return webrtc::ios_adm::PrepareConferenceAudio(adm.get(), admission);
++  });
++  if (getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++    NSLog(@"Conference audio factory=%p built-in ADM=%p managed=%d", self, adm.get(), prepared);
++  }
++  if (!prepared) return;
++  _conferencePlayoutState = std::move(admission);
++  _conferencePlayoutOwner = ++gNextConferenceAudioOwner;
++#endif
++}
++
++- (void)registerConferencePlayout {
++  if (!_conferencePlayoutState) return;
++  // Capturing self here transfers a lifetime lease to the control queue, not to
++  // the worker. There is no synchronous wait for hardware on the caller.
++  dispatch_async(ConferenceControlQueue(), ^{
++    // A retained obsolete SDK factory may create another publisher/subscriber.
++    // Its new peer must not take ownership back from the replacement factory.
++    if (self->_conferencePlayoutState->load(std::memory_order_acquire) == kConferenceAudioRetired) {
++      if (getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++        NSLog(@"Conference audio ignores retired factory=%p owner=%llu", self,
++              (unsigned long long)self->_conferencePlayoutOwner);
++      }
++      return;
++    }
++    auto &coordinator = ConferenceCoordinator();
++    coordinator.owners.try_emplace(self->_conferencePlayoutOwner, ConferenceAudioOwner{
++        self, self->_workerThread.get(), self->_nativeAudioDeviceModule, self->_conferencePlayoutState});
++    coordinator.ownership.Select(self->_conferencePlayoutOwner);
++    DriveConferenceAudio();
++  });
++}
++
+ - (RTC_OBJC_TYPE(RTCRtpCapabilities) *)rtpSenderCapabilitiesForKind:
+     (NSString *)kind {
+   webrtc::MediaType mediaType = [[self class] mediaTypeForKind:kind];
+@@ -266,6 +595,10 @@ - (instancetype)initWithMediaAndDependencies:
+       initWithNativeRtpCapabilities:rtpCapabilities];
+ }
+ 
++- (RTC_OBJC_TYPE(RTCAudioProcessingState) *)audioProcessingState {
++  return webrtc::objc::AudioProcessingStateToObjC(_nativeFactory->GetAudioProcessingState());
++}
++
+ - (RTC_OBJC_TYPE(RTCAudioSource) *)audioSourceWithConstraints:
+     (nullable RTC_OBJC_TYPE(RTCMediaConstraints) *)constraints {
+   std::unique_ptr<webrtc::MediaConstraints> nativeConstraints;
+@@ -281,6 +614,14 @@ - (instancetype)initWithMediaAndDependencies:
+                                               nativeAudioSource:source];
+ }
+ 
++- (RTC_OBJC_TYPE(RTCAudioSource) *)syntheticAudioSource {
++  webrtc::scoped_refptr<webrtc::SyntheticAudioSource> source =
++      webrtc::make_ref_counted<webrtc::SyntheticAudioSource>();
++  return [[RTC_OBJC_TYPE(RTCAudioSource) alloc] initWithFactory:self
++                                              nativeAudioSource:source
++                                           syntheticAudioSource:source];
++}
++
+ - (RTC_OBJC_TYPE(RTCAudioTrack) *)audioTrackWithTrackId:(NSString *)trackId {
+   RTC_OBJC_TYPE(RTCAudioSource) *audioSource =
+       [self audioSourceWithConstraints:nil];
+@@ -304,7 +645,7 @@ - (instancetype)initWithMediaAndDependencies:
+   return [[RTC_OBJC_TYPE(RTCVideoSource) alloc]
+         initWithFactory:self
+         signalingThread:_signalingThread.get()
+-           workerThread:_networkThread.get()
++           workerThread:_workerThread.get()
+       nativeVideoSource:webrtc::make_ref_counted<webrtc::ObjCVideoTrackSource>(
+                             *_env, forScreenCast)];
+ }
+@@ -330,11 +671,13 @@ - (instancetype)initWithMediaAndDependencies:
+                             (RTC_OBJC_TYPE(RTCMediaConstraints) *)constraints
+                            delegate:(nullable id<RTC_OBJC_TYPE(
+                                          RTCPeerConnectionDelegate)>)delegate {
+-  return [[RTC_OBJC_TYPE(RTCPeerConnection) alloc] initWithFactory:self
++  RTC_OBJC_TYPE(RTCPeerConnection) *peer = [[RTC_OBJC_TYPE(RTCPeerConnection) alloc] initWithFactory:self
+                                                      configuration:configuration
+                                                        constraints:constraints
+                                                certificateVerifier:nil
+                                                           delegate:delegate];
++  if (peer) [self registerConferencePlayout];
++  return peer;
+ }
+ 
+ - (nullable RTC_OBJC_TYPE(RTCPeerConnection) *)
+@@ -347,12 +690,14 @@ - (instancetype)initWithMediaAndDependencies:
+                         certificateVerifier
+                            delegate:(nullable id<RTC_OBJC_TYPE(
+                                          RTCPeerConnectionDelegate)>)delegate {
+-  return [[RTC_OBJC_TYPE(RTCPeerConnection) alloc]
++  RTC_OBJC_TYPE(RTCPeerConnection) *peer = [[RTC_OBJC_TYPE(RTCPeerConnection) alloc]
+           initWithFactory:self
+             configuration:configuration
+               constraints:constraints
+       certificateVerifier:certificateVerifier
+                  delegate:delegate];
++  if (peer) [self registerConferencePlayout];
++  return peer;
+ }
+ 
+ - (nullable RTC_OBJC_TYPE(RTCPeerConnection) *)
+@@ -366,12 +711,14 @@ - (instancetype)initWithMediaAndDependencies:
+                           delegate:
+                               (id<RTC_OBJC_TYPE(RTCPeerConnectionDelegate)>)
+                                   delegate {
+-  return [[RTC_OBJC_TYPE(RTCPeerConnection) alloc]
++  RTC_OBJC_TYPE(RTCPeerConnection) *peer = [[RTC_OBJC_TYPE(RTCPeerConnection) alloc]
+       initWithDependencies:self
+              configuration:configuration
+                constraints:constraints
+               dependencies:std::move(dependencies)
+                   delegate:delegate];
++  if (peer) [self registerConferencePlayout];
++  return peer;
+ }
+ 
+ - (void)setOptions:
+@@ -404,14 +751,16 @@ - (void)stopAecDump {
+   _hasStartedAecDump = NO;
+ }
+ 
+++ (void)configureFieldTrials:(nullable NSString *)fieldTrials {
++  gFieldTrials = [fieldTrials copy];
++}
++
+ - (webrtc::Thread *)signalingThread {
+   return _signalingThread.get();
+ }
+ 
+ - (webrtc::Thread *)workerThread {
+-  // The network thread also acts as the worker thread. See
+-  // https://groups.google.com/g/discuss-webrtc/c/Fs_Hd5XNJh0
+-  return _networkThread.get();
++  return _workerThread.get();
+ }
+ 
+ - (webrtc::Thread *)networkThread {
+@@ -421,9 +770,9 @@ - (void)stopAecDump {
+ #pragma mark - Private
+ 
+ + (webrtc::MediaType)mediaTypeForKind:(NSString *)kind {
+-  if (kind == kRTCMediaStreamTrackKindAudio) {
++  if ([kind isEqualToString:RTC_CONSTANT_TYPE(RTCMediaStreamTrackKindAudio)]) {
+     return webrtc::MediaType::AUDIO;
+-  } else if (kind == kRTCMediaStreamTrackKindVideo) {
++  } else if ([kind isEqualToString:RTC_CONSTANT_TYPE(RTCMediaStreamTrackKindVideo)]) {
+     return webrtc::MediaType::VIDEO;
+   } else {
+     RTC_DCHECK_NOTREACHED();

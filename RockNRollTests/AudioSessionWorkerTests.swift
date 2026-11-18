@@ -326,22 +326,6 @@ final class AudioSessionWorkerTests: XCTestCase {
         XCTAssertFalse(speaker.playing); XCTAssertNil(speaker.error)
     }
 
-    func testLeaveDuringRoomPreparationFinishesWithoutCallOwner() async throws {
-        let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false, activateAudioSession: {}, sessionWorker: AudioSessionWorker(activate: {}, deactivate: {}))
-        let engine = RockRoomEngine(catchUp: CatchUpStore(), chat: ChatStore(), systemCall: owner)
-        let target = try JamTarget.parse("https://rock.glowsoft.ru/jams/test")
-        let credentials = JamCredentials(serverURL: URL(string: "wss://example.invalid")!, participantToken: "unused",
-            jam: JamDetails(id: "test", title: "Pending join", community: "Test", description: ""))
-        let left = expectation(description: "early Leave finished")
-        engine.onEvent = { if $0 == .left { left.fulfill() } }
-        try engine.join(target: target, credentials: credentials, container: UIViewController())
-        XCTAssertNil(owner.callID)
-        engine.leave()
-        XCTAssertFalse(engine.hasJoinStarted)
-        await fulfillment(of: [left], timeout: 3)
-        XCTAssertNil(owner.callID)
-    }
-
     func testPersistentActivationFailureStopsAtEpisodeDeadline() async throws {
         let attempts = Counter(), worker = AudioSessionWorker(activate: {
             attempts.increment(); throw NSError(domain: "PersistentAudio", code: 1)

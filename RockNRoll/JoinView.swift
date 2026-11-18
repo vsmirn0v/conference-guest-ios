@@ -9,7 +9,6 @@ struct JoinView: View {
     @ObservedObject var continuation: MeetingContinuationCoordinator
     @ObservedObject var calendar: CalendarMeetingStore
     @ObservedObject var setup: MeetingSetupCoordinator
-    @StateObject private var nativeMacRecommendation = NativeMacRecommendation.current()
     @Environment(\.openURL) private var openURL
     @State private var setupAfterSettings: Int?
     @State private var showingSavedHistory = false
@@ -31,7 +30,7 @@ struct JoinView: View {
     @AppStorage(MeetingActivityCoordinator.enabledKey) private var meetingActivityEnabled = true
     @AppStorage(MeetingActivityCoordinator.titleKey) private var meetingActivityShowTitle = true
     @State private var showingAllRooms = false
-    @StateObject private var mediaCheck = StudioModel(audioControl: .fullProcessing, preferences: .standard)
+    @StateObject private var mediaCheck = Self.makeMediaCheck()
     @StateObject private var favoriteDrag = FavoriteDragState()
     @State private var editingRoom: RecentRoom?
     @State private var roomAlias = ""
@@ -61,17 +60,12 @@ struct JoinView: View {
                         .accessibilityIdentifier("home.library")
                 }
                 Form {
+                    activeMeetingsSection
                     urgentSection
                     Section {
                         joinPanel(width: window.size.width - (wide ? min(320, window.size.width * 0.32) : 0))
                             .homeAnchor("join")
                             .background(HomeScrollReference(state: homeInteraction))
-                    }
-                    if showsNativeMacRecommendation {
-                        Section {
-                            NativeMacRecommendationCard(recommendation: nativeMacRecommendation, getApp: openNativeMacDownload)
-                                .homeAnchor("native-mac-recommendation")
-                        }
                     }
                     if !wide { library(wide: false) }
                     CalendarAgendaView(calendar: calendar, history: history, continuation: continuation,
@@ -88,7 +82,7 @@ struct JoinView: View {
                 .onPreferenceChange(HomeRowFrames.self) { homeInteraction.layoutChanged($0) }
             }
             .background(HomeInteractionProbe(state: homeInteraction))
-            .navigationTitle(ProcessInfo.processInfo.isiOSAppOnMac ? L("Home") : "Rock’n’Roll")
+            .navigationTitle("Rock’n’Roll")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -133,7 +127,6 @@ struct JoinView: View {
             .sheet(isPresented: Binding(get: { mediaCheck.presented }, set: { if !$0 { mediaCheck.close() } })) {
                 StudioPanel(model: mediaCheck)
             }
-            .onChange(of: busy) { nativeMacRecommendation.observeMeetingActivity($0) }
             .onChange(of: model.isJoining) {
                 if $0 { setup.suspendForMeeting(); nameFocused = false; linkFocused = false; sync.endNameEditing(); mediaCheck.close() }
             }
@@ -191,7 +184,6 @@ struct JoinView: View {
                 if required { nameFocused = true }
             }
             .onAppear {
-                nativeMacRecommendation.observeMeetingActivity(busy)
                 calendar.setScheduledUIBlocked(blocksScheduledJoining)
                 homeInteraction.resume(); homeVisible = false; refreshHome(); homeVisible = true
                 offerSetup()
@@ -265,11 +257,19 @@ struct JoinView: View {
                 .presentationDetents([.medium])
             }
             .confirmationDialog(
-                L("Leave the current jam and open the new invitation?"),
-                isPresented: $model.showSwitchConfirmation
+                model.canJoinAlongsidePending
+                    ? L("Already in %ld active meeting(s). Join this meeting too?", model.sessions.count)
+                    : L("Maximum of 4 meetings reached. Leave the current meeting and switch?"),
+                isPresented: $model.showSwitchConfirmation,
+                titleVisibility: .visible
             ) {
-                Button(L("Leave current jam")) { model.replaceWithPending() }
-                Button(L("Stay here"), role: .cancel) { model.dismissPending() }
+                if model.canJoinAlongsidePending {
+                    Button(L("Join Alongside")) { model.joinAlongsidePending() }
+                    Button(L("Leave & Switch"), role: .destructive) { model.replaceWithPending() }
+                } else {
+                    Button(L("Leave Current & Switch"), role: .destructive) { model.replaceWithPending() }
+                }
+                Button(L("Cancel"), role: .cancel) { model.dismissPending() }
             }
           }
         }
@@ -280,8 +280,9 @@ struct JoinView: View {
         nameFocused || linkFocused || showingSettings || showingAgenda || showingDevices || mediaCheck.presented ||
             editingRoom != nil || calendar.choosingMeeting != nil || confirmingStaleContinuation || showingSavedHistory
     }
-    private var showsNativeMacRecommendation: Bool { nativeMacRecommendation.showsNotice(isIdle: !busy) }
-    private var busy: Bool { model.isJoining || model.isInConference || model.isLeaving || continuation.moving }
+    private var busy: Bool {
+        model.isJoining || (!model.isCallMinimized && model.isInConference) || model.isLeaving || continuation.moving
+    }
     private var homeInteracting: Bool {
         setup.isPresented || homeInteraction.active || nameFocused || linkFocused || favoriteDrag.session != nil || showingSettings || showingAgenda ||
             showingDevices || editingRoom != nil || mediaCheck.presented || confirmingStaleContinuation ||
@@ -309,13 +310,56 @@ struct JoinView: View {
                 let surviving = Set(updated.items.map { "urgent." + $0.id.homeAnchorID })
                     .union(after.map { "calendar." + $0 }).union(favorites.map { "favorite." + $0.id })
                     .union(recent.map { "recent." + $0.id }).union(["join"])
-                    .union(showsNativeMacRecommendation ? ["native-mac-recommendation"] : [])
                 homeInteraction.preserveVisibleAnchor(surviving: surviving)
             }
             homeLayoutNow = homeNow
         }
         homeSnapshot = updated
     }
+    @ViewBuilder private var activeMeetingsSection: some View {
+        if !model.sessions.isEmpty {
+            Section(L("Active meetings (%ld/4)", model.sessions.count)) {
+                ForEach(model.sessions) { session in
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.title).font(.headline).lineLimit(1)
+                            HStack(spacing: 6) {
+                                Text(session.isTalkRoom ? L("Talk active") : L("Listening"))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(session.isTalkRoom ? accent : .secondary)
+                                if session.phase == .lobby {
+                                    Text(L("· Lobby")).font(.caption).foregroundStyle(.orange)
+                                } else if session.phase == .reconnecting {
+                                    Text(L("· Reconnecting")).font(.caption).foregroundStyle(.orange)
+                                }
+                            }
+                        }
+                        Spacer()
+                        if !session.isTalkRoom {
+                            Button(L("Talk")) { model.switchTalk(to: session.id) }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("active.talk.\(session.id.uuidString)")
+                        }
+                        Button(L("Return")) { model.presentSession(id: session.id) }
+                            .buttonStyle(.borderedProminent)
+                            .tint(accent)
+                            .foregroundStyle(.black)
+                            .accessibilityIdentifier("active.return.\(session.id.uuidString)")
+                        Button { model.leaveSession(id: session.id) } label: {
+                            Image(systemName: "phone.down.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.red)
+                        .accessibilityLabel(L("Leave %@", session.title))
+                        .accessibilityIdentifier("active.leave.\(session.id.uuidString)")
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .accessibilityIdentifier("home.active-meetings")
+        }
+    }
+
     @ViewBuilder private var urgentSection: some View {
         if !homeSnapshot.items.isEmpty {
             Section {
@@ -403,7 +447,8 @@ struct JoinView: View {
                 .labelStyle(.titleAndIcon).font(.subheadline).frame(minHeight: 44)
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel(L("Check camera & sound")).accessibilityIdentifier("studio.prejoin").disabled(busy)
+        .accessibilityLabel(L("Check camera & sound")).accessibilityIdentifier("studio.prejoin")
+        .disabled(busy || !model.sessions.isEmpty)
     }
     private var joinButton: some View {
         Button { join() } label: {
@@ -608,6 +653,11 @@ struct JoinView: View {
                         Label(L("Calendars"), systemImage: "calendar")
                     }.accessibilityIdentifier("calendar.settings")
                     NavigationLink {
+                        TranscriptionAndVoiceSettingsView()
+                    } label: {
+                        Label(L("Transcription & voice"), systemImage: "captions.bubble")
+                    }.accessibilityIdentifier("settings.transcription-voice")
+                    NavigationLink {
                         Form {
                             Section {
                                 Text(L("Names and saved invitations, including invitation passwords, stay in your private iCloud storage."))
@@ -617,21 +667,9 @@ struct JoinView: View {
                         }.navigationTitle(L("Across your devices"))
                     } label: { Label(L("Across your devices"), systemImage: "icloud") }
                         .accessibilityIdentifier("settings.devices")
-                    if nativeMacRecommendation.isSupportedHost {
-                        NavigationLink { NativeMacRecommendationDetails(getApp: openNativeMacDownload) } label: {
-                            Label(L("Rock'N'Roll for Mac"), systemImage: "desktopcomputer")
-                        }.accessibilityIdentifier("settings.nativeMacApp")
-                    }
-                    if !ProcessInfo.processInfo.isiOSAppOnMac {
-                        NavigationLink { Form { phoneSettings }.navigationTitle(L("Phone calls")) } label: {
-                            Label(L("Phone calls"), systemImage: "phone")
-                        }.accessibilityIdentifier("settings.phone")
-                    }
-                    if NativeGuestCompanionEngine.isSupported {
-                        NavigationLink { NativeGuestSettingsView() } label: {
-                            Label(L("Native guest preview"), systemImage: "desktopcomputer")
-                        }.accessibilityIdentifier("settings.nativeGuest")
-                    }
+                    NavigationLink { Form { phoneSettings }.navigationTitle(L("Phone calls")) } label: {
+                        Label(L("Phone calls"), systemImage: "phone")
+                    }.accessibilityIdentifier("settings.phone")
                     NavigationLink { Form { websiteSettings }.navigationTitle(L("Meeting websites")) } label: {
                         Label(L("Meeting websites"), systemImage: "globe")
                     }.accessibilityIdentifier("settings.websites")
@@ -646,10 +684,6 @@ struct JoinView: View {
             .navigationTitle(L("Settings"))
             .toolbar { Button(L("Done")) { showingSettings = false } }
         }
-    }
-    private func openNativeMacDownload() {
-        calendar.cancelAutomaticJoin(suppress: true)
-        nativeMacRecommendation.visitDownloadPage { openURL($0) }
     }
     private func offerSetup() {
         setup.offerIfAppropriate(homeVisible && foreground && !homeInteracting && model.invite.isEmpty &&
@@ -690,6 +724,19 @@ struct JoinView: View {
             Link(L("Support"), destination: URL(string: "https://rock.glowsoft.ru/support")!)
             Link(L("Third-party notices"), destination: URL(string: "https://rock.glowsoft.ru/notices")!)
         }
+    }
+    private static func makeMediaCheck() -> StudioModel {
+        #if DEBUG
+        if CalendarUIFixture.mode != nil {
+            return StudioModel(
+                audioControl: .fullProcessing,
+                privateCamera: StudioCameraFixture(),
+                preferences: .standard,
+                privateMicrophone: StudioMicrophoneFixture()
+            )
+        }
+        #endif
+        return StudioModel(audioControl: .fullProcessing, preferences: .standard)
     }
 }
 

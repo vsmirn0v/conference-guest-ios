@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 final class ParticipationContextTests: XCTestCase {

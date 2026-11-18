@@ -405,6 +405,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// SQLite handle — a `closeSync` racing one of these in-flight writes corrupts
     /// the connection exactly like a racing prepare did.
     private var persistTasks: [UUID: Task<Void, Never>] = [:]
+    /// Notifies workspace CloudKit sync when an outcome or task mutation finishes committing.
+    var onLocalOutcomeMutation: ((UUID?) -> Void)?
     /// Every journal append, from the main thread and from seen-marks, runs here in order.
     private let journalQueue = DispatchQueue(label: "attention.journal.append")
 
@@ -454,6 +456,12 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         load()
         momentLoadTask = Task { @MainActor [weak self] in await self?.loadMoments() }
         installMeetingLibrary()
+        CalendarReminderBroker.shared.isTaskReminderAllowed = { [weak self] taskID in
+            guard let self else { return false }
+            await self.waitForMeetingLibrary()
+            return (try? await self.meetingLibrary.store.taskReminderAllowed(
+                taskID, profile: self.assistant.taskProfile)) == true
+        }
     }
 
     // MARK: Meeting library
@@ -477,7 +485,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
             self.latestOutcomeCommits[id] = nil
             self.pendingOutcomeEdits[id] = nil
             self.assistant.setOutcomeWriteError(nil, for: id)
-            self.trackPersistTask { await self.meetingLibrary.removeOutcome(id) }
+            self.trackPersistTask {
+                await self.meetingLibrary.removeOutcome(id)
+                self.onLocalOutcomeMutation?(nil)
+            }
         }
         libraryTask = Task { @MainActor [weak self] in
             guard !Task.isCancelled else { return }
@@ -543,6 +554,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         let projected = (pendingOutcomeEdits[id] ?? []).reduce(latest.outcome) { $1.apply(to: $0) }
         assistant.restorePersistedOutcomes([projected])
         assistant.applyEffectiveTitles(meetingLibrary.cards)
+        onLocalOutcomeMutation?(projected.meetingID)
     }
 
     /// Runs `operation` as a tracked task: teardown cancels and drains tracked tasks
@@ -598,6 +610,15 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         guard FileManager.default.fileExists(atPath: source.path),
               !FileManager.default.fileExists(atPath: target.path) else { return }
         try? FileManager.default.copyItem(at: source, to: target)
+    }
+
+    func applyRemoteSeriesTransition(_ mode: SameRoomMeetingTransitionMode?, seriesID: String) {
+        if let mode {
+            seriesTransitions[seriesID] = mode
+        } else {
+            seriesTransitions.removeValue(forKey: seriesID)
+        }
+        save()
     }
 
     private var documentURL: URL { root.appendingPathComponent("presets.json") }

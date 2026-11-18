@@ -13,7 +13,8 @@ enum NativeSettingsSearchCatalog {
 
         /// These controls only appear after an explicit feature or engine choice.
         var requiresPrerequisite: Bool {
-            ["settings.handoff", "settings.sync-recent", "settings.sync-now",
+            ["settings.handoff", "settings.sync-recent", "settings.sync-workspace", "settings.sync-calendar",
+             "settings.sync-transcripts", "settings.sync-now",
              "settings.calendar-privacy", "settings.calendar-refresh", "settings.reminder-before-time",
              "settings.reminder-follow-up-delay", "settings.voice-detector",
              "settings.provider-address", "settings.provider-model", "settings.api-key", "settings.provider-choose",
@@ -45,6 +46,10 @@ enum NativeSettingsSearchCatalog {
         .init("sync", "Sync with iCloud", 0, "General"),
         .init("handoff", "Show active jams on my devices", 0, "General"),
         .init("sync-recent", "Include recent jams", 0, "General"),
+        .init("sync-workspace", "Sync meeting history, summaries, notes & tasks", 0, "General"),
+        .init("sync-calendar", "Share calendar schedule", 0, "General"),
+        .init("sync-transcripts", "Raw transcript sync", 0, "General"),
+        .init("transcript-archive", "Transcript backup folder", 0, "General"),
         .init("sync-now", "Sync now", 0, "General"),
         .init("calendar-enabled", "Find meetings in Calendar", 1, "Calendars"),
         .init("calendar-selection", "Choose calendars", 1, "Calendars"),

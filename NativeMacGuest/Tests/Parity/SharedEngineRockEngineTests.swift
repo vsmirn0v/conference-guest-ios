@@ -3,6 +3,7 @@ import ConferenceCore
 import LiveKit
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// R4 S4: the app's Rock engine on the shared owner (a real `GuestSystemAudio`, manual

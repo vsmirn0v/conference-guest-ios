@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Atomic file writes with backups, and the outbox worker end-to-end against a

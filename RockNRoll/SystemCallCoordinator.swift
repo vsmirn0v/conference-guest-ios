@@ -124,7 +124,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         self.recoveryWindow = recoveryWindow; self.recoveryInterval = recoveryInterval
         registrationOverride = systemCallRegistration
         var register = systemCallRegistration ?? (transactionRequester != nil ||
-            (!ProcessInfo.processInfo.isiOSAppOnMac && UserDefaults.standard.bool(forKey: Self.controlsPreferenceKey)))
+            UserDefaults.standard.bool(forKey: Self.controlsPreferenceKey))
         #if DEBUG
         if systemCallRegistration == nil && transactionRequester == nil,
            ProcessInfo.processInfo.environment["CONFERENCE_TEST_APP_AUDIO_SESSION"] == "1" { register = false }
@@ -192,7 +192,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         guard callID == nil else { return }
         applicationMute = accessoryMute ?? defaultApplicationMute
         usesSystemCall = registrationOverride ?? (transactionRequester != nil ||
-            (!ProcessInfo.processInfo.isiOSAppOnMac && UserDefaults.standard.bool(forKey: Self.controlsPreferenceKey)))
+            UserDefaults.standard.bool(forKey: Self.controlsPreferenceKey))
         #if DEBUG
         if registrationOverride == nil && transactionRequester == nil,
            ProcessInfo.processInfo.environment["CONFERENCE_TEST_APP_AUDIO_SESSION"] == "1" { usesSystemCall = false }
@@ -279,6 +279,20 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     func setMuted(_ muted: Bool) {
         setMuted(muted, force: false)
+    }
+
+    func updateLocalizedTitle(_ title: String) {
+        guard usesSystemCall, let callID else { return }
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        let update = CXCallUpdate()
+        update.localizedCallerName = clean
+        update.supportsHolding = true
+        update.supportsGrouping = false
+        update.supportsUngrouping = false
+        update.supportsDTMF = false
+        if let callUpdateReporter { callUpdateReporter(callID, update) }
+        else if transactionRequester == nil { provider.reportCall(with: callID, updated: update) }
     }
 
     private func setMuted(_ muted: Bool, force: Bool) {

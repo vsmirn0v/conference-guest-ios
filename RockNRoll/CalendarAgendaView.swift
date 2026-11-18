@@ -23,8 +23,14 @@ struct CalendarAgendaView: View {
         if home { homeAgenda } else { fullAgenda }
     }
     @ViewBuilder private var homeAgenda: some View {
-        let state = homeState ?? .init(enabled: calendar.enabled, available: calendar.access == .allowed && !calendar.selected.isEmpty,
-            hasSelection: !calendar.selected.isEmpty, loading: calendar.loading, error: calendar.error)
+        let hasRemote = !calendar.syncedRemoteMeetings.isEmpty
+        let state = homeState ?? .init(
+            enabled: calendar.enabled || hasRemote,
+            available: (calendar.access == .allowed && !calendar.selected.isEmpty) || hasRemote,
+            hasSelection: !calendar.selected.isEmpty || hasRemote,
+            loading: calendar.loading,
+            error: calendar.error
+        )
         if state.enabled {
             if state.available {
                 let now = homeNow ?? calendar.now
@@ -90,11 +96,12 @@ struct CalendarAgendaView: View {
         }
     }
     private func current(_ meeting: CalendarMeeting) -> CalendarMeeting? {
-        guard calendar.enabled, calendar.access == .allowed, calendar.selected.contains(meeting.calendarID) else { return nil }
+        guard meeting.isRemoteSynced || (calendar.enabled && calendar.access == .allowed && calendar.selected.contains(meeting.calendarID)) else { return nil }
         return calendar.upcoming.first { $0.id == meeting.id && $0.roomIdentity == meeting.roomIdentity && $0.end > Date() }
     }
     @ViewBuilder private var fullAgenda: some View {
-        if calendar.enabled {
+        let hasRemote = !calendar.syncedRemoteMeetings.isEmpty
+        if calendar.enabled || hasRemote {
             if let meeting = calendar.joiningMeeting, let seconds = calendar.countdown {
                 Section {
                     Text(meeting.title).font(.headline)
@@ -111,7 +118,7 @@ struct CalendarAgendaView: View {
                 } header: { Text(next.isScheduledNow(calendar.now) ? L("Scheduled now") : L("Next meeting")) }
             }
             Section {
-                if calendar.access != .allowed || calendar.selected.isEmpty {
+                if (calendar.access != .allowed || calendar.selected.isEmpty) && !hasRemote {
                     Button { onSettings() } label: { Label(L("Choose calendars"), systemImage: "calendar") }
                 } else {
                     let rows = calendar.upcoming.filter { $0.id != calendar.next?.id }

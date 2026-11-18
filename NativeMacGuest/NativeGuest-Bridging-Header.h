@@ -1,1 +1,1 @@
-#import "../RockNRoll/MacScreenCaptureBridge.h"
+#import "MacScreenCaptureBridge.h"

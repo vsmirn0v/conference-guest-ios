@@ -5,34 +5,6 @@ import XCTest
 
 @MainActor
 final class MeetingActivitySessionTests: XCTestCase {
-    func testNativeStudioReplacementKeepsBoundActivityCurrent() async {
-        let preferences = UserDefaults(suiteName: UUID().uuidString)!
-        let driver = ActivityDriverStub()
-        let id = UUID()
-        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
-        let oldStudio = engine.studioForTesting
-        oldStudio.end() // A previous meeting ended before its replacement overlay arrived.
-        let session = MeetingActivitySession(changes: Empty().eraseToAnyPublisher(), preferences: preferences,
-            driver: driver, foreground: { true }) {
-            .init(sessionID: id, title: nil, engine: engine,
-                reconnecting: false, systemControls: false, otherCall: false, audioReady: true)
-        }
-        session.foregrounded(); await session.coordinator.task?.value
-        XCTAssertEqual(driver.started.first?.state.microphone, .unknown)
-        let replacement = StudioModel(audioControl: .noiseSuppression, preferences: preferences)
-        replacement.microphoneActivity.setStatus(.muted)
-        engine.studioForTesting = replacement
-        session.foregrounded(); await session.coordinator.task?.value
-        XCTAssertEqual(driver.updates.last?.state.microphone, .muted)
-        oldStudio.microphoneActivity.setStatus(.on)
-        session.foregrounded(); await session.coordinator.task?.value
-        XCTAssertEqual(driver.updates.last?.state.microphone, .muted)
-        replacement.microphoneActivity.setStatus(.on)
-        session.foregrounded(); await session.coordinator.task?.value
-        XCTAssertEqual(driver.updates.last?.state.microphone, .on)
-        XCTAssertEqual(driver.started.count, 1)
-        oldStudio.end(); replacement.end()
-    }
     func testAllEngineStateUsesConfirmedMicrophoneAndShowsTitleUnlessDisabled() async {
         let preferences = UserDefaults(suiteName: UUID().uuidString)!
         let changes = PassthroughSubject<Void, Never>()
@@ -112,6 +84,55 @@ final class MeetingActivitySessionTests: XCTestCase {
         XCTAssertEqual(driver.started.count, 2)
         active = false; session.foregrounded(); await session.coordinator.task?.value
         XCTAssertEqual(driver.ends.count, 2)
+    }
+
+    func testAdditionalMeetingCountDecodesLegacyPayloadAndPropagatesThroughSession() async throws {
+        let legacyJSON = """
+        {
+          "startedAt": 100,
+          "connection": "connected",
+          "microphone": "muted",
+          "title": "Main Room",
+          "route": "iPhone"
+        }
+        """.data(using: .utf8)!
+        let decodedLegacy = try JSONDecoder().decode(MeetingActivityState.self, from: legacyJSON)
+        XCTAssertEqual(decodedLegacy.additionalMeetingCount, 0)
+
+        let multiState = MeetingActivityState(
+            startedAt: Date(timeIntervalSince1970: 100),
+            connection: .connected,
+            microphone: .muted,
+            title: "Main Room",
+            route: "iPhone",
+            additionalMeetingCount: 2
+        )
+        let roundTrip = try JSONDecoder().decode(MeetingActivityState.self, from: try JSONEncoder().encode(multiState))
+        XCTAssertEqual(roundTrip.additionalMeetingCount, 2)
+
+        let preferences = UserDefaults(suiteName: UUID().uuidString)!
+        let changes = PassthroughSubject<Void, Never>()
+        let engine = ActivityEngineStub(), driver = ActivityDriverStub()
+        let context = MeetingActivitySession.Context(
+            sessionID: UUID(),
+            title: "Main Room",
+            engine: engine,
+            reconnecting: false,
+            systemControls: false,
+            otherCall: false,
+            audioReady: true,
+            additionalMeetingCount: 2
+        )
+        let session = MeetingActivitySession(
+            changes: changes.eraseToAnyPublisher(),
+            preferences: preferences,
+            driver: driver,
+            foreground: { true },
+            source: { context }
+        )
+        session.foregrounded()
+        await session.coordinator.task?.value
+        XCTAssertEqual(driver.started.last?.state.additionalMeetingCount, 2)
     }
 }
 

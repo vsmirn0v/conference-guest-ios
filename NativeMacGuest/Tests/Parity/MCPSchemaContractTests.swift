@@ -2,6 +2,7 @@ import AppKit
 import ConferenceCore
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Contract tests for the published inputSchemas and the pre-dispatch validator:

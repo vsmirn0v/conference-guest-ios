@@ -1,6 +1,7 @@
 import AVFoundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Microphone moves and voice replies: the move record, keeping the device warm,
@@ -406,6 +407,140 @@ import XCTest
         XCTAssertEqual(stalePlayback, .notStarted)
         XCTAssertEqual(try audio.renderRMS(), 0, accuracy: 0)
     }
+
+    func testNonTalkRoomCanSpeakApprovedReplyWithoutStealingMicrophoneOrOpeningGate() async throws {
+        let engineA = VoiceTestEngine()
+        let meetingA = NativeDesktopMeetingModel(
+            destination: try .verified(URL(string: "https://example.test/calls/talk-\(UUID())")!, engine: .guest),
+            name: "Vitalii",
+            title: "Talk",
+            engine: engineA
+        )
+        meetingA.configureForConcurrentJoin(ownsMicrophone: true)
+        try await meetingA.connect()
+
+        let engineB = VoiceTestEngine()
+        let meetingB = NativeDesktopMeetingModel(
+            destination: try .verified(URL(string: "https://example.test/calls/nontalk-\(UUID())")!, engine: .guest),
+            name: "Vitalii",
+            title: "Listen",
+            engine: engineB
+        )
+        var arbiterCalls = 0
+        meetingB.microphoneArbiter = { _ in arbiterCalls += 1; return true }
+        meetingB.configureForConcurrentJoin(ownsMicrophone: false)
+        try await meetingB.connect()
+
+        XCTAssertTrue(meetingA.ownsMicrophone)
+        XCTAssertFalse(meetingB.ownsMicrophone)
+        XCTAssertTrue(meetingB.canSpeakApprovedWorkspaceReply)
+
+        engineA.events = []
+        engineB.events = []
+        try await meetingB.speak(Self.tone(seconds: 0.2, frequency: 300, amplitude: 0.2))
+
+        XCTAssertEqual(engineB.events, ["play"])
+        XCTAssertEqual(arbiterCalls, 0)
+        XCTAssertTrue(meetingA.ownsMicrophone)
+        XCTAssertFalse(meetingB.ownsMicrophone)
+        XCTAssertFalse(meetingB.snapshot.microphoneOn)
+        XCTAssertTrue(engineA.events.isEmpty)
+
+        _ = await meetingB.leave()
+        _ = await meetingA.leave()
+    }
+
+    func testSyntheticAudioSourceDeliversRTPFramesOverLoopbackWithoutHardwareADM() async throws {
+        let factory = SharedAudioEngine.liveKitFactory(voiceProcessing: false)
+        let config = LKRTCConfiguration()
+        config.sdpSemantics = .unifiedPlan
+        let constraints = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        let relay = LoopbackSyntheticPeerRelay()
+        guard let sender = factory.peerConnection(with: config, constraints: constraints, delegate: relay),
+              let receiver = factory.peerConnection(with: config, constraints: constraints, delegate: relay) else {
+            XCTFail("Failed to create loopback peer connections")
+            return
+        }
+        relay.attach(sender: sender, receiver: receiver)
+        defer {
+            sender.close()
+            receiver.close()
+        }
+
+        let source = factory.syntheticAudioSource()
+        XCTAssertTrue(source.isSynthetic)
+        let track = factory.audioTrack(with: source, trackId: "synth0")
+        track.isEnabled = true
+        let transceiverInit = LKRTCRtpTransceiverInit()
+        transceiverInit.direction = .sendOnly
+        _ = sender.addTransceiver(with: track, init: transceiverInit)
+
+        let offer = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<LKRTCSessionDescription, Error>) in
+            sender.offer(for: constraints) { sdp, error in
+                if let error { cont.resume(throwing: error) }
+                else if let sdp { cont.resume(returning: sdp) }
+                else { cont.resume(throwing: NativeDesktopRTCError.invalidResponse) }
+            }
+        }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            sender.setLocalDescription(offer) { error in
+                if let error { cont.resume(throwing: error) } else { cont.resume() }
+            }
+        }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            receiver.setRemoteDescription(offer) { error in
+                if let error { cont.resume(throwing: error) } else { cont.resume() }
+            }
+        }
+        relay.remoteDescriptionSet(forReceiver: true)
+
+        let answer = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<LKRTCSessionDescription, Error>) in
+            receiver.answer(for: constraints) { sdp, error in
+                if let error { cont.resume(throwing: error) }
+                else if let sdp { cont.resume(returning: sdp) }
+                else { cont.resume(throwing: NativeDesktopRTCError.invalidResponse) }
+            }
+        }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            receiver.setLocalDescription(answer) { error in
+                if let error { cont.resume(throwing: error) } else { cont.resume() }
+            }
+        }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            sender.setRemoteDescription(answer) { error in
+                if let error { cont.resume(throwing: error) } else { cont.resume() }
+            }
+        }
+        relay.remoteDescriptionSet(forReceiver: false)
+
+        for _ in 0..<100 where sender.iceConnectionState != .connected && sender.iceConnectionState != .completed {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertTrue(sender.iceConnectionState == .connected || sender.iceConnectionState == .completed,
+                      "Loopback ICE did not connect: \(sender.iceConnectionState.rawValue)")
+
+        let played = await SyntheticVoiceReplyPlayer.play(
+            Self.tone(seconds: 0.25, frequency: 330, amplitude: 0.35),
+            into: source,
+            localGain: nil,
+            canContinue: { true }
+        )
+        XCTAssertTrue(played)
+        try await Task.sleep(for: .milliseconds(50))
+
+        let stats = await withCheckedContinuation { (cont: CheckedContinuation<(packets: Int, bytes: Int), Never>) in
+            sender.statistics { report in
+                let outbound = report.statistics.values.filter {
+                    $0.type == "outbound-rtp" && ($0.values["kind"] as? String ?? $0.values["mediaType"] as? String) == "audio"
+                }
+                let packets = outbound.compactMap { ($0.values["packetsSent"] as? NSNumber)?.intValue }.reduce(0, +)
+                let bytes = outbound.compactMap { ($0.values["bytesSent"] as? NSNumber)?.intValue }.reduce(0, +)
+                cont.resume(returning: (packets, bytes))
+            }
+        }
+        XCTAssertGreaterThanOrEqual(stats.packets, 5, "Expected >=5 synthetic audio RTP packets, got \(stats.packets)")
+        XCTAssertGreaterThanOrEqual(stats.bytes, 200, "Expected >=200 synthetic audio RTP bytes, got \(stats.bytes)")
+    }
 #endif
 
     // MARK: Helpers
@@ -499,4 +634,60 @@ import XCTest
     }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { events.append("play"); return playResult }
     func leave() async -> Bool { snapshot.phase = .left; onState?(snapshot); return true }
+}
+
+private final class LoopbackSyntheticPeerRelay: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "test.loopback.ice")
+    private weak var sender: LKRTCPeerConnection?
+    private weak var receiver: LKRTCPeerConnection?
+    private var senderReady = false
+    private var receiverReady = false
+    private var pendingForSender: [LKRTCIceCandidate] = []
+    private var pendingForReceiver: [LKRTCIceCandidate] = []
+
+    func attach(sender: LKRTCPeerConnection, receiver: LKRTCPeerConnection) {
+        queue.sync {
+            self.sender = sender
+            self.receiver = receiver
+        }
+    }
+
+    func remoteDescriptionSet(forReceiver: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if forReceiver {
+                self.receiverReady = true
+                let list = self.pendingForReceiver
+                self.pendingForReceiver.removeAll()
+                for c in list { self.receiver?.add(c) { _ in } }
+            } else {
+                self.senderReady = true
+                let list = self.pendingForSender
+                self.pendingForSender.removeAll()
+                for c in list { self.sender?.add(c) { _ in } }
+            }
+        }
+    }
+
+    func peerConnection(_ pc: LKRTCPeerConnection, didGenerate candidate: LKRTCIceCandidate) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if pc === self.sender {
+                if self.receiverReady { self.receiver?.add(candidate) { _ in } }
+                else { self.pendingForReceiver.append(candidate) }
+            } else {
+                if self.senderReady { self.sender?.add(candidate) { _ in } }
+                else { self.pendingForSender.append(candidate) }
+            }
+        }
+    }
+
+    func peerConnection(_ pc: LKRTCPeerConnection, didChange stateChanged: LKRTCSignalingState) {}
+    func peerConnection(_ pc: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {}
+    func peerConnection(_ pc: LKRTCPeerConnection, didRemove stream: LKRTCMediaStream) {}
+    func peerConnectionShouldNegotiate(_ pc: LKRTCPeerConnection) {}
+    func peerConnection(_ pc: LKRTCPeerConnection, didChange newState: LKRTCIceConnectionState) {}
+    func peerConnection(_ pc: LKRTCPeerConnection, didChange newState: LKRTCIceGatheringState) {}
+    func peerConnection(_ pc: LKRTCPeerConnection, didRemove candidates: [LKRTCIceCandidate]) {}
+    func peerConnection(_ pc: LKRTCPeerConnection, didOpen dataChannel: LKRTCDataChannel) {}
 }

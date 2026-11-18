@@ -170,9 +170,9 @@ import Foundation
         calendar.finishScheduledTransportPreparation()
     }
     func open(_ meeting: CalendarMeeting) {
-        guard calendar.enabled, calendar.access == .allowed,
-              let current = calendar.meetings.first(where: { $0.id == meeting.id }),
-              calendar.selected.contains(current.calendarID), current.end > Date(),
+        guard let current = calendar.meetings.first(where: { $0.id == meeting.id }),
+              current.isRemoteSynced || (calendar.enabled && calendar.access == .allowed && calendar.selected.contains(current.calendarID)),
+              current.end > Date(),
               current.hasResolvedInvitation, let invitation = current.invitation else { return }
         calendar.suppressAutomaticJoin(for: current)
         setup.performMeetingIntent { [weak self] in

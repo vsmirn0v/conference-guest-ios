@@ -11,13 +11,16 @@ final class NativeScreenSender {
     private let source: LKRTCVideoSource
     private let sink: Sink
     private let preview: LocalSharePreview
-    private var capture: GuestScreenCapture?
+    private var nativeCapture: (any PresenterScreenSource)?
     private var broadcastTrack: LocalVideoTrack?
     private var closed = false
     private(set) var composed = false
+    private(set) var isBroadcast = false
     private var stopping: Task<Void, Never>?
     private var energySubscription: AnyCancellable?
     private let onEnd: (String?) -> Void
+    var latestFrame: LKRTCVideoFrame? { sink.latestFrame }
+    func replayLatestFrame() { sink.replayLatestFrame() }
     init(factory: LKRTCPeerConnectionFactory, preview: LocalSharePreview,
          onFirstFrame: @escaping () -> Void, onEnd: @escaping (String?) -> Void) {
         source = factory.videoSource(forScreenCast: true)
@@ -31,31 +34,53 @@ final class NativeScreenSender {
     func start(broadcast: Bool) async throws {
         guard !closed else { throw CancellationError() }
         if broadcast {
+            isBroadcast = true
             let track = await LocalVideoTrack.createBroadcastScreenCapturerTrack(options: ScreenShareCaptureOptions(dimensions: .h1080_169, fps: 15, appAudio: false))
             guard !closed, !Task.isCancelled else { throw CancellationError() }
             broadcastTrack = track; track.add(videoRenderer: sink)
-            preview.begin()
+            if BroadcastManager.shared.isBroadcasting {
+                preview.begin(source: .screen)
+            }
             try await track.start()
             if closed || Task.isCancelled { try? await track.stop(); throw CancellationError() }
         } else {
-            capture = GuestScreenCaptureFactory.make(preview: preview, onFrame: { [weak self] sample in self?.sink.receive(sample) },
-                onEnd: { [weak self] message in self?.onEnd(message) }, onError: { _ in })
-            preview.begin(source: .selected); capture?.start()
+            isBroadcast = false
+            guard let capture = IOSNativeScreenCaptureAvailability.make(
+                onFrame: { [weak self] sample, source in
+                    guard let self, !self.closed else { return }
+                    if self.preview.active {
+                        self.preview.updateSource(source)
+                    } else {
+                        self.preview.begin(source: source)
+                    }
+                    self.sink.receive(sample)
+                },
+                onSelection: { _ in },
+                onEnd: { [weak self] message in self?.onEnd(message) },
+                onError: { [weak self] message in self?.onEnd(message) }
+            ) else {
+                throw IOSNativeScreenCaptureUnavailableError()
+            }
+            nativeCapture = capture
+            capture.start()
         }
     }
     func stop() async {
         if let stopping { await stopping.value; return }
         guard !closed else { return }
         closed = true; energySubscription = nil; sink.retire(); preview.end()
-        let capture = self.capture, track = broadcastTrack
-        self.capture = nil; broadcastTrack = nil
+        let capture = nativeCapture, track = broadcastTrack
+        nativeCapture = nil; broadcastTrack = nil
         track?.remove(videoRenderer: sink)
-        stopping = Task { await capture?.stop(); try? await track?.stop() }
+        stopping = Task {
+            await capture?.stop()
+            try? await track?.stop()
+        }
         await stopping?.value; stopping = nil
     }
     func retrySelection() {
         guard !closed, !composed else { return }
-        capture?.start()
+        nativeCapture?.start()
     }
     func startComposed() throws {
         guard !closed else { throw CancellationError() }
@@ -82,6 +107,12 @@ final class NativeScreenSender {
         private var outputSize = CGSize.zero
         private var fps = 15
         private var adaptedFPS = 0
+        private var latestFrameValue: LKRTCVideoFrame?
+        var latestFrame: LKRTCVideoFrame? {
+            lock.lock()
+            defer { lock.unlock() }
+            return latestFrameValue
+        }
         var isAdaptiveStreamEnabled: Bool { false }
         var adaptiveStreamSize: CGSize { .zero }
         init(source: LKRTCVideoSource, preview: LocalSharePreview, onFirst: @escaping @MainActor () -> Void) {
@@ -115,6 +146,7 @@ final class NativeScreenSender {
             let previewWanted = !previewPending
             if previewWanted { previewPending = true }
             let frame = LKRTCVideoFrame(buffer: LKRTCCVPixelBuffer(pixelBuffer: pixels), rotation: LKRTCVideoRotation(rawValue: rotation) ?? ._0, timeStampNs: timestamp)
+            latestFrameValue = frame
             source.capturer(capturer, didCapture: frame)
             lock.unlock()
             if first || previewWanted {
@@ -122,11 +154,28 @@ final class NativeScreenSender {
                     guard let self else { return }
                     self.lock.lock(); let active = !self.retired; self.previewPending = false; self.lock.unlock()
                     guard active else { return }
-                    if first { self.onFirst() }
+                    if first {
+                        if !self.preview.active { self.preview.begin(source: .screen) }
+                        self.onFirst()
+                    }
                     if previewWanted { self.preview.accept(pixels, rotation: rotation) }
                 }
             }
         }
-        func retire() { lock.lock(); retired = true; lock.unlock() }
+        func replayLatestFrame() {
+            lock.lock()
+            guard !retired, let previous = latestFrameValue else { lock.unlock(); return }
+            let nextTimestamp = max(lastTime + 1_000_000, previous.timeStampNs + 1_000_000)
+            lastTime = nextTimestamp
+            let replayed = LKRTCVideoFrame(
+                buffer: previous.buffer,
+                rotation: previous.rotation,
+                timeStampNs: nextTimestamp
+            )
+            latestFrameValue = replayed
+            source.capturer(capturer, didCapture: replayed)
+            lock.unlock()
+        }
+        func retire() { lock.lock(); retired = true; latestFrameValue = nil; lock.unlock() }
     }
 }

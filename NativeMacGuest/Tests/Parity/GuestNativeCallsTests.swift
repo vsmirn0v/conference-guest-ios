@@ -1,6 +1,7 @@
 import Foundation
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// A Guest peer's calls into WebRTC never block the main thread. When WebRTC's

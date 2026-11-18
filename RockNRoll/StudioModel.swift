@@ -193,7 +193,7 @@ final class StudioModel: ObservableObject {
         refreshPresenter()
     }
 
-    func handleBackground(isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac) {
+    func handleBackground(isMac: Bool = false) {
         // Choosing a source on another Space temporarily backgrounds UIKit-on-Mac.
         // Keep its private selection owned until the user returns or closes it.
         // Presenter pauses private setup while hidden, but keeps a published
@@ -416,10 +416,6 @@ final class StudioModel: ObservableObject {
 
     func showSystemSettings(_ kind: AVCaptureDevice.SystemUserInterface) {
         guard systemSettingsAvailable, kind == .videoEffects ? (cameraOn || previewRunning || presenter.cameraDevice != nil) : (microphoneOn || soundCheck.capturing) else { return }
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            systemSettingsHelp = kind == .videoEffects ? .camera : .microphone
-            return
-        }
         openSystemSettings(kind)
     }
 

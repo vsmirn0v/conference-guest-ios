@@ -1,6 +1,5 @@
 import AVFoundation
 import XCTest
-import WebRTC
 @testable import RockNRoll
 
 private final class EnqueueRecorder: @unchecked Sendable {
@@ -13,15 +12,6 @@ private final class EnqueueRecorder: @unchecked Sendable {
     }
     var snapshot: [(Double, Bool)] { lock.lock(); defer { lock.unlock() }; return entries }
     func reset() { lock.lock(); entries.removeAll(); lock.unlock() }
-}
-
-private final class CameraFrameCounter: NSObject, RTCVideoCapturerDelegate, @unchecked Sendable {
-    private let lock = NSLock()
-    private var frames = 0
-    var count: Int { lock.lock(); defer { lock.unlock() }; return frames }
-    func capturer(_ capturer: RTCVideoCapturer, didCapture frame: RTCVideoFrame) {
-        lock.lock(); frames += 1; lock.unlock()
-    }
 }
 
 @MainActor
@@ -70,32 +60,6 @@ final class BackgroundVideoDeliveryTests: XCTestCase {
         sink.render(pixels: pixels, rotation: 0)
         try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(recorder.snapshot.count, count)
-    }
-
-    func testGuestDecodedPiPDoesNotWaitForItsInlineUICallback() async throws {
-        let renderer = target()
-        guard renderer.supportsBackground else { throw XCTSkip("Background renderer requires iOS 17") }
-        let delivery = SampleBufferFrameDelivery(target: renderer) { _, _ in }
-        let recorder = record(delivery); delivery.setActive(true)
-        let processor = GuestVideoFrameProcessor()
-        processor.setFloatingDelivery(delivery); processor.setFrameRate(30); processor.setEnabled(true)
-        var inline = 0
-        processor.onSample = { _, _, _ in inline += 1 }
-        let pixels = try XCTUnwrap(CMSampleBufferGetImageBuffer(sample()))
-        let buffer = RTCCVPixelBuffer(pixelBuffer: pixels)
-        let queue = DispatchQueue(label: "test.guest.decoded"), start = DispatchTime.now()
-        for index in 0..<6 {
-            queue.asyncAfter(deadline: start + Double(index) / 30) {
-                processor.submit(RTCVideoFrame(buffer: buffer, rotation: ._0, timeStampNs: Int64(index)))
-            }
-        }
-        blockUI()
-        XCTAssertGreaterThanOrEqual(recorder.snapshot.count, 5)
-        XCTAssertTrue(recorder.snapshot.allSatisfy { !$0.1 })
-        XCTAssertEqual(inline, 0)
-        processor.setEnabled(false); delivery.invalidate()
-        try await Task.sleep(nanoseconds: 30_000_000)
-        XCTAssertEqual(inline, 0, "Disable must discard the waiting inline frame")
     }
 
     func testSourceSwitchAndClearRejectOldFramesAndPendingGeometry() async throws {
@@ -152,67 +116,5 @@ final class BackgroundVideoDeliveryTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(recorder.snapshot.count, 2); XCTAssertEqual(layouts, 2)
         delivery.invalidate()
-    }
-
-    func testRealMacCameraKeepsPiPEnqueueMovingDuringUIWork() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac,
-              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1" else {
-            throw XCTSkip("Opt-in real Mac camera qualification")
-        }
-        let peer = try NativeRTCPeer(target: "PREVIEW_DELIVERY", factory: NativeRTCPeer.makeFactory(), ice: [])
-        peer.preferredCameraDevice = CameraDevices.available().first { $0.deviceType == .builtInWideAngleCamera }
-        let view = GuestSampleBufferView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
-        let delivery = view.makeFrameDelivery { _, _ in }
-        let recorder = record(delivery); delivery.setActive(true)
-        let sink = RoomFloatingVideoSink(backgroundDeliver: { delivery.deliver($0, rotation: $1) })
-        sink.setWanted(true, fps: 30)
-        var source: CameraCapturePreview?
-        do {
-            try await peer.setCamera(true)
-            let capture = try XCTUnwrap(peer.cameraPreview); source = capture
-            capture.setFloatingDemand(true); capture.frames.add(sink)
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-            XCTAssertGreaterThan(recorder.snapshot.count, 10, "Qualify real camera frames before blocking UI")
-            recorder.reset(); blockUI()
-            XCTAssertGreaterThanOrEqual(recorder.snapshot.count, 4)
-            XCTAssertLessThanOrEqual(recorder.snapshot.count, 9)
-            XCTAssertTrue(recorder.snapshot.allSatisfy { !$0.1 })
-            XCTAssertTrue(capture.session.outputs.compactMap { $0 as? AVCaptureVideoDataOutput }
-                .allSatisfy(\.alwaysDiscardsLateVideoFrames))
-        } catch {
-            sink.retire(); delivery.invalidate(); source?.setFloatingDemand(false); source?.frames.remove(sink)
-            try? await peer.setCamera(false); await peer.close(); throw error
-        }
-        sink.retire(); delivery.invalidate(); source?.setFloatingDemand(false); source?.frames.remove(sink)
-        try await peer.setCamera(false); await peer.close()
-        XCTAssertFalse(source?.session.isRunning == true)
-    }
-
-    func testRealMacGuestSDKCapturerDiscardsLateFrames() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac,
-              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1",
-              let device = CameraDevices.available().first(where: { $0.deviceType == .builtInWideAngleCamera }) else {
-            throw XCTSkip("Opt-in real Mac guest SDK camera qualification")
-        }
-        GuestCaptureDeviceObserver.prepare()
-        let counter = CameraFrameCounter()
-        let capturer = RTCCameraVideoCapturer(delegate: counter)
-        do {
-            try await withCheckedThrowingContinuation { (completion: CheckedContinuation<Void, Error>) in
-                capturer.startCapture(with: device, format: device.activeFormat, fps: 30) {
-                    if let error = $0 { completion.resume(throwing: error) } else { completion.resume() }
-                }
-            }
-            let outputs = capturer.captureSession.outputs.compactMap { $0 as? AVCaptureVideoDataOutput }
-            XCTAssertFalse(outputs.isEmpty)
-            XCTAssertTrue(outputs.allSatisfy(\.alwaysDiscardsLateVideoFrames))
-            try await Task.sleep(nanoseconds: 700_000_000)
-            XCTAssertGreaterThan(counter.count, 0, "The SDK capture hook must keep forwarding real frames")
-        } catch {
-            await withCheckedContinuation { completion in capturer.stopCapture { completion.resume() } }
-            throw error
-        }
-        await withCheckedContinuation { completion in capturer.stopCapture { completion.resume() } }
-        XCTAssertFalse(capturer.captureSession.isRunning)
     }
 }

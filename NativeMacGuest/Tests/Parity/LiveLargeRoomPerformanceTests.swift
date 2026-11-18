@@ -4,6 +4,7 @@ import ConferenceCore
 import LiveKitWebRTC
 import MetalKit
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Authorized disposable Guest rooms only. Unlike the offline workload, these

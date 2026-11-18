@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 final class WorkspaceScrollFollowTests: XCTestCase {

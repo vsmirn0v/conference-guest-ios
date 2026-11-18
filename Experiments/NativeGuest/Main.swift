@@ -1,3 +1,4 @@
+import ConferenceCore
 import Foundation
 import AppKit
 import AVFoundation

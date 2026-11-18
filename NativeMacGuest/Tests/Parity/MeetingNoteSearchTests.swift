@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Note chunking and case-insensitive search over committed notes.

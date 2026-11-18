@@ -1,0 +1,101 @@
+{
+  "version": "0.3.0",
+  "build": "117",
+  "channel": "beta",
+  "sourceCommit": "e57cc23bf183345b4b71407fbaa9c712db94642f",
+  "sourceState": "Workspace on top of e57cc23b with unified multiplatform ConferenceCore + MeetingEngine + M157 LiveKitWebRTC (all P0-P8 & pre-beta fixes).",
+  "sourceManifest": {
+    "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-117/build/build-evidence.json",
+    "sha256": "46c7430bae33828a1f6dfb4da845503219cedcf0d3606aad52628359afcd6399"
+  },
+  "validation": {
+    "architectureGate": {
+      "command": "python3 NativeMacGuest/Tests/verify-universal-architecture.py",
+      "passed": true
+    },
+    "conferenceCoreTests": {
+      "executed": 160,
+      "failed": 0
+    },
+    "meetingEngineTests": {
+      "executed": 3,
+      "failed": 0
+    },
+    "nativeDesktopTests": {
+      "sharedEngineSuite": {
+        "executed": 75,
+        "failed": 0
+      },
+      "postFinalEditGate": {
+        "executed": 5,
+        "failed": 0
+      },
+      "note": "See docs/ios-universal-engine-qualification-ledger-2026-11-17.md for full SPM, Mac fixture, Python unit/distribution test counts."
+    },
+    "archive": {
+      "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-117/build/RockNRollNativeGuest-0.3.0-117.xcarchive",
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-117/archive-build.log",
+      "appGroupCheckPassed": true,
+      "embeddedVoiceWorkerCheckPassed": true
+    }
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-117/build/RockNRollNativeGuest-0.3.0-117.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-117/export-117/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "117",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "117",
+    "file": "RockNRoll-0.3.0-117-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-117-arm64.dmg",
+    "sha256": "39b25970503f20eed76e085343a212c4754a81f69ac3eff649b375dee5ba4b3e",
+    "length": 39385082,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-117/package-117/RockNRoll-0.3.0-117-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "evidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-117/publication-117.json",
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-117-arm64.dmg",
+      "sha256": "39b25970503f20eed76e085343a212c4754a81f69ac3eff649b375dee5ba4b3e",
+      "length": 39385082
+    },
+    "state": {
+      "appcastSHA256": "1d23e1ea2c802019932c123f075495b0f4d72a4c5af6da3d6d9f43bf61660413",
+      "inventorySHA256": "caeb2bb08cbca09be53e0412375cadc14d65a68b1d90cb8fb33b8760975e3f4c",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-117-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/78f121c1f0cf452c81ae3a83440b0d67/backup",
+    "httpsVerified": true
+  },
+  "inventory": {
+    "schemaVersion": 1,
+    "stable": {
+      "version": "0.3.0",
+      "build": "53",
+      "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009"
+    },
+    "beta": {
+      "version": "0.3.0",
+      "build": "117",
+      "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-117-arm64.dmg",
+      "sha256": "39b25970503f20eed76e085343a212c4754a81f69ac3eff649b375dee5ba4b3e"
+    }
+  },
+  "recordedAt": "2026-11-18T09:59:39Z"
+}

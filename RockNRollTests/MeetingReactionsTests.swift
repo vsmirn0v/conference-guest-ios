@@ -1,5 +1,6 @@
 import AVFoundation
 import ConferenceCore
+@testable import MeetingEngine
 import XCTest
 @testable import RockNRoll
 
@@ -99,11 +100,42 @@ final class MeetingReactionsTests: XCTestCase {
     }
     func testLegacyCapabilityRejectsUnsupportedReactionWithoutConsumingSendGate() {
         let model = MeetingReactionsModel(clock: { 0 })
-        model.available = true; model.ready = true; model.supportedReactions = GuestReactionCode.legacy
+        model.available = true; model.ready = true; model.supportedReactions = MeetingReaction.allCases.filter { $0 != .heart }
         var sent: [MeetingReaction] = []
         model.sender = { sent.append($0); return true }
         XCTAssertFalse(model.send(.heart))
         XCTAssertTrue(model.send(.like))
+        XCTAssertEqual(sent, [.like])
+    }
+
+    func testControllerCameraReactionGatingRequiresForegroundAndActiveCamera() {
+        let observerID = UUID()
+        var currentCallbacks = 0
+        IOSCameraCapture.addObserver(
+            id: observerID,
+            onCurrentChanged: { _ in currentCallbacks += 1 },
+            onObservedReaction: { _, _ in }
+        )
+        XCTAssertEqual(currentCallbacks, 1)
+        IOSCameraCapture.removeObserver(id: observerID)
+
+        let suite = "reactions-camera-\(UUID())"
+        let prefs = UserDefaults(suiteName: suite)!
+        defer { prefs.removePersistentDomain(forName: suite) }
+        var sent: [MeetingReaction] = []
+        let model = MeetingReactionsModel(preferences: prefs, clock: { 10 })
+        model.available = true
+        model.ready = true
+        model.sender = { kind in sent.append(kind); return true }
+        model.setForwarding(true)
+        model.cameraStatus = .ready
+
+        XCTAssertTrue(model.send(.like, source: .camera, effectID: "eff-1"))
+        XCTAssertFalse(model.send(.like, source: .camera, effectID: "eff-1"))
+        model.cameraStatus = .paused
+        XCTAssertFalse(model.send(.heart, source: .camera, effectID: "eff-2"))
+        model.cameraStatus = .off
+        XCTAssertFalse(model.send(.applause, source: .camera, effectID: "eff-3"))
         XCTAssertEqual(sent, [.like])
     }
 }

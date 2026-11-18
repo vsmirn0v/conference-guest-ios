@@ -43,7 +43,7 @@ final class CallFocusController {
     }
     func installHint(in view: UIView) {
         let label = UILabel()
-        label.text = ProcessInfo.processInfo.isiOSAppOnMac ? L("Click anywhere to show controls · Esc") : L("Tap anywhere to show controls")
+        label.text = L("Tap anywhere to show controls")
         label.font = .preferredFont(forTextStyle: .callout)
         label.adjustsFontForContentSizeCategory = true
         label.textColor = .white

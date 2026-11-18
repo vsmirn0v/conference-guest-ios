@@ -20,7 +20,7 @@ final class CalendarMeetingStore: ObservableObject {
         #if os(macOS)
         true
         #else
-        ProcessInfo.processInfo.isiOSAppOnMac
+        false
         #endif
     }
     @Published private(set) var enabled: Bool
@@ -31,6 +31,7 @@ final class CalendarMeetingStore: ObservableObject {
     @Published private(set) var selected: Set<String>
     @Published private(set) var calendars: [MeetingCalendar] = []
     @Published private(set) var meetings: [CalendarMeeting] = []
+    @Published private(set) var syncedRemoteMeetings: [CalendarMeeting] = []
     @Published private(set) var access: CalendarAccess = .notDetermined
     @Published private(set) var loading = false
     @Published private(set) var error: String?
@@ -51,6 +52,8 @@ final class CalendarMeetingStore: ObservableObject {
     var onScheduledActivity: (Date?) -> Void = { _ in }
     var onScheduledInvalidation: () -> Void = {}
     var schedulingIsAvailable: () -> Bool = { true }
+    var onLocalScheduleSnapshot: (([CalendarMeeting], [String: URL], [String: Date]) -> Void)?
+    var onLocalOccurrenceStateChanged: ((String) -> Void)?
     @Published var showingMacSettings = false {
         didSet { if showingMacSettings { cancelAutomaticJoin(suppress: true) } }
     }
@@ -75,6 +78,9 @@ final class CalendarMeetingStore: ObservableObject {
     private var scheduledTransportPreparing = false
     private var scheduledUIBlocked = false
     private var resolvedEndpoints: [URL: URL] = [:]
+    private var localMeetings: [CalendarMeeting] = []
+    private var remoteOccurrences: [SyncedCalendarOccurrence] = []
+    private var lastLocalDeviceID: String = ""
     private let clock: () -> Date
     private let countdownInterval: Duration
     private var observer: NSObjectProtocol?
@@ -114,6 +120,10 @@ final class CalendarMeetingStore: ObservableObject {
             guard let self, let meeting = self.meetings.first(where: { $0.id == eventID }) else { return }
             self.suppressAutomaticJoin(for: meeting)
         }
+        self.reminders.onOccurrenceStateChanged = { [weak self] eventID in
+            guard let self, let meeting = self.meetings.first(where: { $0.id == eventID }) else { return }
+            self.onLocalOccurrenceStateChanged?(meeting.occurrenceSyncKey)
+        }
         observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.calendarDidChange() }
         }
@@ -128,9 +138,11 @@ final class CalendarMeetingStore: ObservableObject {
         enabled = value; preferences.set(value, forKey: "calendarMeetings.enabled")
         if !value {
             revision = UUID(); task?.cancel(); task = nil; loading = false
-            boundaryTask?.cancel(); cancelAutomaticJoin(); meetings = []; calendars = []
+            boundaryTask?.cancel(); cancelAutomaticJoin(); localMeetings = []; calendars = []
+            rebuildMeetings()
             state.visits = [:]; persist()
             updateReminders()
+            onLocalScheduleSnapshot?([], state.bindings, state.suppressed)
         } else { armedAfter = clock(); refresh(requestPermission: true) }
     }
     func setAutomaticJoin(_ value: Bool) {
@@ -191,10 +203,16 @@ final class CalendarMeetingStore: ObservableObject {
     func select(_ id: String, included: Bool) {
         invalidateScheduledAdmission()
         if included { selected.insert(id) } else { selected.remove(id) }
-        meetings.removeAll { !selected.contains($0.calendarID) }
+        localMeetings.removeAll { !selected.contains($0.calendarID) }
+        rebuildMeetings()
         preferences.set(selected.sorted(), forKey: "calendarMeetings.selected")
         state.visits = [:]; persist(); cancelAutomaticJoin(); armedAfter = clock(); refresh()
         updateReminders()
+    }
+    private func handleReminderOccurrenceStateChanged(_ eventID: String) {
+        if let meeting = meetings.first(where: { $0.id == eventID }) {
+            onLocalOccurrenceStateChanged?(meeting.occurrenceSyncKey)
+        }
     }
     func foregrounded(allowAutomaticJoin: Bool) {
         foreground = true; automaticEntry = allowAutomaticJoin
@@ -236,7 +254,9 @@ final class CalendarMeetingStore: ObservableObject {
                 guard !Task.isCancelled, revision == token else { return }
                 access = authorization
                 guard authorization == .allowed else {
-                    meetings = []; calendars = []; loading = false; state.visits = [:]; persist(); updateReminders(); return
+                    localMeetings = []; calendars = []; loading = false; rebuildMeetings(); state.visits = [:]; persist(); updateReminders()
+                    onLocalScheduleSnapshot?([], state.bindings, state.suppressed)
+                    return
                 }
                 let snapshot = await reader.read(selected: selected, now: clock(), knownOrigins: knownOrigins(), aliases: aliases())
                 guard !Task.isCancelled, revision == token else { return }
@@ -244,8 +264,8 @@ final class CalendarMeetingStore: ObservableObject {
                 // Removed calendars and new accounts never silently widen selection.
                 let available = Set(calendars.map(\.id))
                 selected.formIntersection(available)
-                if meetings.contains(where: { !selected.contains($0.calendarID) }) {
-                    meetings.removeAll { !selected.contains($0.calendarID) }
+                if localMeetings.contains(where: { !selected.contains($0.calendarID) }) {
+                    localMeetings.removeAll { !selected.contains($0.calendarID) }
                 }
                 preferences.set(selected.sorted(), forKey: "calendarMeetings.selected")
                 var incoming = snapshot.meetings.filter { selected.contains($0.calendarID) }
@@ -299,27 +319,83 @@ final class CalendarMeetingStore: ObservableObject {
                 // Deduplicate identical copies without collapsing different events in one room.
                 now = clock()
                 var seen: Set<CalendarCopy> = []
-                meetings = incoming.filter { seen.insert(CalendarCopy($0)).inserted }
+                localMeetings = incoming.filter { seen.insert(CalendarCopy($0)).inserted }
+                rebuildMeetings()
                 loading = false; task = nil
                 let retained = state.suppressed.filter { $0.value > now }
                 if retained != state.suppressed { state.suppressed = retained; persist() }
                 completedRevision = token
                 updateReminders(); scheduleBoundary(); considerAutomaticJoin()
+                onLocalScheduleSnapshot?(localMeetings, state.bindings, state.suppressed)
             } catch {
                 guard !Task.isCancelled, revision == token else { return }
                 self.error = L("Calendar access could not be completed. Try again."); loading = false
             }
         }
     }
+    func applyRemoteSchedule(_ occurrences: [SyncedCalendarOccurrence], localDeviceID: String) {
+        lastLocalDeviceID = localDeviceID
+        remoteOccurrences = occurrences
+        rebuildMeetings()
+        reminders.applyRemoteOccurrenceStates(occurrences, to: meetings, localDeviceID: localDeviceID)
+        updateReminders()
+        scheduleBoundary()
+        considerAutomaticJoin()
+    }
+    private func rebuildMeetings() {
+        let localKeys = Set(localMeetings.map(\.occurrenceSyncKey))
+        let remoteByKey = Dictionary(uniqueKeysWithValues: remoteOccurrences.map { ($0.occurrenceKey, $0) })
+        let enrichedLocal = localMeetings.map { item -> CalendarMeeting in
+            var updated = item
+            if updated.invitation == nil, let bound = remoteByKey[item.occurrenceSyncKey]?.boundInvitation?.value {
+                updated.invitation = bound
+                updated.engine = updated.engine ?? remoteByKey[item.occurrenceSyncKey]?.engine
+            }
+            return updated
+        }
+        let remoteOnly: [CalendarMeeting] = remoteOccurrences.compactMap { occ in
+            guard !localKeys.contains(occ.occurrenceKey),
+                  !occ.isDeleted.value,
+                  occ.sourceDevices.keys.contains(where: { $0 != lastLocalDeviceID }) || lastLocalDeviceID.isEmpty else {
+                return nil
+            }
+            let resolvedURL = occ.boundInvitation?.value ?? occ.invitation
+            let links = occ.links.isEmpty ? (resolvedURL.map { [$0] } ?? []) : occ.links
+            var meeting = CalendarMeeting(
+                id: "remote|" + occ.occurrenceKey,
+                seriesID: occ.seriesKey,
+                calendarID: "remote",
+                calendarTitle: occ.calendarTitle,
+                title: occ.title,
+                start: occ.start,
+                end: occ.end,
+                allDay: occ.allDay,
+                tentative: occ.tentative,
+                links: links,
+                endpoint: occ.endpoint.flatMap(URL.init(string:)),
+                externalSeriesID: occ.seriesKey,
+                isRemoteSynced: true
+            )
+            meeting.invitation = resolvedURL
+            meeting.engine = occ.engine
+            meeting.requiresChoice = occ.requiresChoice && resolvedURL == nil
+            return meeting
+        }
+        syncedRemoteMeetings = remoteOnly
+        meetings = (enrichedLocal + remoteOnly).sorted { ($0.start, $0.title, $0.id) < ($1.start, $1.title, $1.id) }
+    }
     private func updateReminders() {
-        reminders.update(meetings: meetings, available: enabled && access == .allowed && !selected.isEmpty)
+        let hasLocal = enabled && access == .allowed && !selected.isEmpty
+        reminders.update(meetings: meetings, available: hasLocal || !syncedRemoteMeetings.isEmpty)
     }
     private func refreshForReminder() async -> Bool {
+        if !enabled && !syncedRemoteMeetings.isEmpty { return true }
         automaticEntry = false; cancelAutomaticJoin(); refresh()
         for _ in 0..<2 {
             let token = revision
             await task?.value
             if revision != token { continue }
+            if !syncedRemoteMeetings.isEmpty && access != .allowed { return true }
             return completedRevision == token && enabled && access == .allowed && !loading && error == nil
         }
         return false
@@ -366,6 +442,7 @@ final class CalendarMeetingStore: ObservableObject {
         state.bindings[series ? meeting.seriesID : meeting.id] = url
         if series { state.bindings.removeValue(forKey: meeting.id) }
         persist(); choosingMeeting = nil; refresh()
+        onLocalScheduleSnapshot?(localMeetings, state.bindings, state.suppressed)
     }
     func forgetBindings() { state.bindings = [:]; persist(); refresh() }
     private func meeting(matching invitation: URL, engine: MeetingEngineKind?, in candidates: [CalendarMeeting]) -> CalendarMeeting? {
@@ -375,7 +452,7 @@ final class CalendarMeetingStore: ObservableObject {
         }
     }
     func subtitle(for room: RecentRoom) -> String? {
-        guard enabled, access == .allowed else { return nil }
+        guard (enabled && access == .allowed) || !syncedRemoteMeetings.isEmpty else { return nil }
         if let meeting = meeting(matching: room.joinURL, engine: room.engine, in: upcoming) {
             return CalendarMeetingPresentation.subtitle(meeting, at: now, roomTitle: room.displayTitle)
         }
@@ -385,7 +462,7 @@ final class CalendarMeetingStore: ObservableObject {
         return nil
     }
     func timing(for room: RecentRoom) -> String? {
-        guard enabled, access == .allowed else { return nil }
+        guard (enabled && access == .allowed) || !syncedRemoteMeetings.isEmpty else { return nil }
         if let meeting = meeting(matching: room.joinURL, engine: room.engine, in: upcoming) {
             return CalendarMeetingPresentation.timeRange(meeting)
         }
@@ -472,11 +549,12 @@ final class CalendarMeetingStore: ObservableObject {
         if scheduled { onScheduledActivity(meeting.start.addingTimeInterval(15)) }
         countdownTask = Task { [weak self] in
             for remaining in stride(from: 5, through: 1, by: -1) {
-                guard let self, self.automaticJoinAllowed(scheduled: scheduled), self.canAutomaticallyJoin(meeting) else { self?.cancelAutomaticJoin(); return }
+                guard !Task.isCancelled, let self, self.joiningMeeting?.id == meeting.id else { return }
+                guard self.automaticJoinAllowed(scheduled: scheduled), self.canAutomaticallyJoin(meeting) else { self.cancelAutomaticJoin(); return }
                 self.countdown = remaining
                 do { try await Task.sleep(for: self.countdownInterval) } catch { return }
             }
-            guard let self else { return }
+            guard !Task.isCancelled, let self, self.joiningMeeting?.id == meeting.id else { return }
             guard self.automaticJoinAllowed(scheduled: scheduled), self.canAutomaticallyJoin(meeting),
                   self.automaticCandidate(at: self.clock(), scheduled: scheduled)?.id == meeting.id else { self.cancelAutomaticJoin(); return }
             self.state.suppressed[meeting.id] = meeting.end; self.persist()

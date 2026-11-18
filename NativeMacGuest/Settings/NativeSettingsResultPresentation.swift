@@ -12,7 +12,7 @@ enum NativeSettingsResultPresentation {
         for id in ["settings.relay"] { result[id] = "Choose the connection route for guest meetings." }
         for id in ["settings.mic-warm", "settings.mic-readiness"] { result[id] = "Prepare the microphone for use in meetings." }
         for id in ["settings.headset"] { result[id] = "Use headset controls to mute and unmute." }
-        for id in ["settings.sync", "settings.handoff", "settings.sync-recent", "settings.sync-now"] { result[id] = "Sync saved meetings or share active jams across your devices." }
+        for id in ["settings.sync", "settings.handoff", "settings.sync-recent", "settings.sync-workspace", "settings.sync-calendar", "settings.sync-transcripts", "settings.transcript-archive", "settings.sync-now"] { result[id] = "Sync saved meetings, notes, tasks, calendar schedule or active jams across your devices." }
         for id in ["settings.calendar-enabled", "settings.calendar-selection", "settings.calendar-privacy", "settings.calendar-refresh"] { result[id] = "Choose which calendars provide meetings." }
         for id in ["settings.menu-bar", "settings.auto-join"] { result[id] = "Control background operation and automatic joining." }
         for id in ["settings.reminders", "settings.reminder-timing", "settings.reminder-before", "settings.reminder-before-time", "settings.reminder-at-start", "settings.reminder-follow-up", "settings.reminder-follow-up-delay", "settings.reminder-name", "settings.reminder-sound", "settings.reminder-sensitive", "settings.reminder-other-devices", "settings.notification-settings"] { result[id] = "Choose when and how meeting reminders appear." }
@@ -77,6 +77,10 @@ enum NativeSettingsResultPresentation {
         case "settings.sync": return toggle(library.sync.enabled)
         case "settings.handoff": return toggle(library.continuation.enabled)
         case "settings.sync-recent": return toggle(library.sync.includeRecent)
+        case "settings.sync-workspace": return toggle(library.sync.syncWorkspace)
+        case "settings.sync-calendar": return toggle(library.sync.shareCalendar)
+        case "settings.sync-transcripts": return library.sync.transcriptRetention.title
+        case "settings.transcript-archive": return library.sync.archiveFolderName ?? L("On this device")
         case "settings.calendar-enabled": return toggle(library.calendar.enabled)
         case "settings.menu-bar": return toggle(library.calendar.keepInMenuBar)
         case "settings.auto-join": return library.calendar.automaticJoinMode.title

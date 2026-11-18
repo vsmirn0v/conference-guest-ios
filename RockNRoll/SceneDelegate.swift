@@ -4,17 +4,9 @@ import ConferenceCore
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
-    private var macMeeting: MacMeetingCoordinator?
     private var conference: ConferenceModel?
     #if DEBUG
     var meetingForTesting: ConferenceModel? { conference }
-    var macMeetingForTesting: MacMeetingCoordinator? { macMeeting }
-    func restoreMacMeetingForTesting() {
-        guard let conference, let window else { return }
-        macMeeting = MacMeetingCoordinator(model: conference, window: window)
-    }
-    private var presenterExperiment: MacPresenterQualification?
-    private var previewExperiment: PreviewCadenceExperiment?
     private var backgroundJoinFixture: BackgroundJoinDeviceFixture?
     #endif
 
@@ -42,16 +34,6 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             let window = UIWindow(windowScene: windowScene)
             window.rootViewController = RendererResetProbeViewController()
             window.makeKeyAndVisible(); self.window = window
-            return
-        }
-        if let experiment = MacPresenterQualification.make(windowScene: windowScene) {
-            presenterExperiment = experiment; window = experiment.window
-            experiment.start()
-            return
-        }
-        if let experiment = PreviewCadenceExperiment.make(windowScene: windowScene) {
-            previewExperiment = experiment; window = experiment.window
-            experiment.start()
             return
         }
         #endif
@@ -91,9 +73,6 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         model.configure(container: controller)
         model.registerMeetingUnderlay(hosting.view)
         BackgroundAudioJoinPrototype.shared.attach(model, container: controller)
-        if ProcessInfo.processInfo.isiOSAppOnMac { macMeeting = MacMeetingCoordinator(model: model, window: window) }
-        controller.canHideMeeting = { [weak self] in self?.macMeeting?.canHideMeeting == true }
-        controller.hideMeeting = { [weak self] in self?.macMeeting?.hideMeeting() }
 
         #if DEBUG
         ColdJoinDeviceFixture.prepareIfRequested(model: model)
@@ -117,9 +96,6 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
         model.setup.finishLaunch(hasMeetingIntent: !connectionOptions.urlContexts.isEmpty || !connectionOptions.userActivities.isEmpty ||
             CalendarReminderBroker.shared.hasPendingIntent || model.calendar.reminders.hasOpenIntent)
-        #if DEBUG
-        if CalendarUIFixture.mode == "mac-idle-schedule" { qualifyIdleScheduling(model) }
-        #endif
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
@@ -140,9 +116,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #if DEBUG
         backgroundJoinFixture?.foregrounded()
         #endif
-        if !ProcessInfo.processInfo.isiOSAppOnMac { conference?.reminderVisibilityChanged(true) }
+        conference?.reminderVisibilityChanged(true)
         conference?.meetingActivityForegrounded()
-        macMeeting?.becameActive()
         conference?.calendarForegrounded()
         conference?.sync.foregrounded()
         conference?.continuation.setForeground(true)
@@ -164,55 +139,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneDidDisconnect(_ scene: UIScene) {
         conference?.reminderVisibilityChanged(false)
-        macMeeting?.invalidate()
-        macMeeting = nil
         if let conference, BackgroundAudioJoinPrototype.shared.sceneDisconnected(conference) {
             window?.rootViewController = nil; window = nil
         }
     }
-    #if DEBUG
-    private func qualifyIdleScheduling(_ model: ConferenceModel) {
-        guard ProcessInfo.processInfo.isiOSAppOnMac else { return }
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("rock-mac-idle-calendar-qa.json")
-        func record(_ values: [String: Any]) {
-            if let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys, .prettyPrinted]) {
-                try? data.write(to: file, options: .atomic)
-                FileHandle.standardError.write(data + Data("\n".utf8))
-            }
-            NSLog("MAC_IDLE_QUALIFICATION %@", file.path)
-        }
-        model.setup.suspendForMeeting()
-        model.calendar.canAutomaticallyJoin = { _ in true }
-        let fresh = !MacCallActivity.shared.hasActivityForTesting && NSClassFromString("XCTestCase") == nil
-        var frontmost: Int?
-        model.calendar.onScheduledJoin = { [weak self, weak model] meeting in
-            guard let model else { return }
-            let state = self?.macMeeting?.stateForTesting ?? [:]
-            model.calendar.finishScheduledTransportPreparation()
-            record(["stage": "completed", "freshWithoutMediaOrXCTest": fresh,
-                "latenessSeconds": Date().timeIntervalSince(meeting.start), "hidden": state["hidden"] as? Bool ?? false,
-                "frontmostUnchanged": frontmost == state["frontmostPID"] as? Int,
-                "graphicsActivity": MacCallActivity.shared.hasActivityForTesting,
-                "pid": getpid(), "schedulingAvailable": state["schedulingAvailable"] as? Bool ?? false])
-        }
-        Task { @MainActor [weak self] in
-            for _ in 0..<30 {
-                guard let self, let desktop = self.macMeeting else { return }
-                desktop.becameActive()
-                if desktop.canHideMeeting {
-                    desktop.closeForTesting()
-                    model.calendar.backgrounded()
-                    try? await Task.sleep(for: .milliseconds(300))
-                    frontmost = desktop.stateForTesting["frontmostPID"] as? Int
-                    record(["stage": "armed", "freshWithoutMediaOrXCTest": fresh, "pid": getpid(),
-                        "hidden": desktop.stateForTesting["hidden"] as? Bool ?? false,
-                        "frontmostPID": frontmost ?? 0])
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-            record(["stage": "failed-binding", "pid": getpid()])
-        }
-    }
-    #endif
 }

@@ -170,4 +170,33 @@ final class LocalSharePreviewTests: XCTestCase {
         preview.begin()
         XCTAssertTrue(preview.acceptsFrames)
     }
+
+    func testPhoneAllowsLiveForegroundPreviewWhenOwnSceneIsNotCaptured() {
+        let preview = LocalSharePreview(isMac: false, observeLifecycle: false)
+        var sceneCaptured = true
+        preview.ownSceneIsNotCaptured = { !sceneCaptured }
+        preview.begin(source: .window)
+        preview.acceptThumbnail(thumbnail)
+        XCTAssertNil(preview.image, "Foreground capture of own scene must remain suppressed")
+        XCTAssertFalse(preview.live)
+
+        sceneCaptured = false
+        preview.refreshPolicy()
+        XCTAssertTrue(preview.live)
+        preview.acceptThumbnail(thumbnail)
+        let firstExternal = preview.image
+        XCTAssertNotNil(firstExternal)
+
+        preview.setEnlarged(true)
+        XCTAssertFalse(preview.live)
+        preview.acceptThumbnail(thumbnail)
+        XCTAssertTrue(preview.image === firstExternal)
+
+        preview.setEnlarged(false)
+        XCTAssertTrue(preview.live)
+
+        sceneCaptured = true
+        preview.refreshPolicy()
+        XCTAssertFalse(preview.live)
+    }
 }

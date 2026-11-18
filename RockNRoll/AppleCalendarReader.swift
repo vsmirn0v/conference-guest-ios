@@ -65,12 +65,13 @@ actor AppleCalendarReader: CalendarReading {
                 aliases: aliases, title: event.title, nativeSchemes: VendorEndpointResolver.calendarNativeSchemes)
             guard !event.isAllDay || groups.contains(where: { !$0.links.isEmpty }) else { return nil }
             let series = digest(eventCalendar.calendarIdentifier + "|" + (event.calendarItemExternalIdentifier ?? event.calendarItemIdentifier))
+            let externalSeries = event.calendarItemExternalIdentifier.map { digest("ext|" + $0) }
             let occurrence = event.occurrenceDate ?? begin
             return CalendarMeeting(id: series + "|" + String(occurrence.timeIntervalSince1970),
                 seriesID: series, calendarID: eventCalendar.calendarIdentifier, calendarTitle: eventCalendar.title ?? L("Untitled calendar"),
                 title: String((event.title ?? L("Untitled meeting")).prefix(160)), start: begin, end: finish,
                 allDay: event.isAllDay, tentative: event.status == .tentative,
-                linkGroups: groups)
+                linkGroups: groups, externalSeriesID: externalSeries)
         }.sorted { ($0.start, $0.title, $0.id) < ($1.start, $1.title, $1.id) }
         let upcoming = Array(meetings.filter { $0.end > now }.prefix(300))
         let past = Array(meetings.filter { $0.end <= now }.suffix(50))

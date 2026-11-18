@@ -1,4 +1,5 @@
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// The local-model status surface: readiness mapped from the stores and engine

@@ -3,6 +3,7 @@ import AppKit
 import ConferenceCore
 import Sparkle
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 private final class DirectUpdaterStorage: RoomHistoryStorage, ReminderStorage, @unchecked Sendable {

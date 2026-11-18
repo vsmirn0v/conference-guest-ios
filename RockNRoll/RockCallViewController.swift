@@ -2,6 +2,7 @@ import ConferenceCore
 import AVKit
 import Combine
 import LiveKit
+import MeetingEngine
 import ReplayKit
 import UIKit
 
@@ -9,19 +10,6 @@ import UIKit
 final class RockCallViewController: UIViewController, UIScrollViewDelegate, UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .allButUpsideDown }
     override var shouldAutorotate: Bool { true }
-    private let spacebarShortcut = CallSpacebarShortcut()
-    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        let remaining = spacebarShortcut.began(presses, in: view) { self.keyToggleMicrophone() }
-        if !remaining.isEmpty { super.pressesBegan(remaining, with: event) }
-    }
-    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        let remaining = spacebarShortcut.ended(presses)
-        if !remaining.isEmpty { super.pressesEnded(remaining, with: event) }
-    }
-    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        spacebarShortcut.reset()
-        super.pressesCancelled(presses, with: event)
-    }
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
             chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +
@@ -30,15 +18,34 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
              UIKeyCommand(title: L("View"), action: #selector(keyOpenView), input: "l", modifierFlags: .command.union(.shift)),
              UIKeyCommand(title: L("More"), action: #selector(keyOpenMore), input: "m", modifierFlags: .command.union(.shift))]
     }
+    struct SwitcherItem: Equatable {
+        let id: UUID
+        let title: String
+        let subtitle: String
+        let isCurrent: Bool
+        let isTalk: Bool
+    }
+
     var onLeave: (() -> Void)?
     var onMicrophone: ((Bool) -> Void)?
+    var onToggleMicrophone: (() -> Void)?
     var onCamera: ((Bool) -> Void)?
+    var onToggleCamera: (() -> Void)?
     var onSpeaker: ((Bool) -> Void)?
+    var onChooseAudioOutput: (() -> Void)?
     var onShare: ((Bool) -> Void)?
     var onVideoDemandChanged: (() -> Void)?
     var onFloatingChanged: ((Bool) -> Void)?
     var onDisplayMode: ((ConferenceDisplayMode) -> Void)?
+    var onMinimize: (() -> Void)? { didSet { refreshSwitcherChrome() } }
+    var activeMeetingsForSwitcher: [SwitcherItem] = [] { didSet { refreshSwitcherChrome() } }
+    var isTalkRoom = true { didSet { refreshSwitcherChrome() } }
+    var onSelectMeeting: ((UUID) -> Void)?
+    var onTalkHere: ((UUID) -> Void)?
+    var onLeaveMeeting: ((UUID) -> Void)?
+    var reactions: MeetingReactionsModel?
     var studio: StudioModel?
+    private(set) var isFloatingVideoPresenting = false
     let activeSpeaker = ActiveSpeakerStore()
     private var speakerReceptionAvailable = true
 
@@ -104,7 +111,20 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let conversationButton = UIButton(type: .system)
     private let missedButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
+    private let minimizeButton = UIButton(type: .system)
+    private let switcherButton = UIButton(type: .system)
+    private let talkHereButton = UIButton(type: .system)
     private let reactionsButton = AlignedCallButton(frame: .zero)
+    private let reactionOverlay = ReceivedReactionOverlay()
+    private let meetingStatusButton = UIButton(type: .system)
+    #if DEBUG
+    var exposeReactionOverlayForTesting = false {
+        didSet { reactionOverlay.accessibilityElementsHidden = !exposeReactionOverlayForTesting }
+    }
+    #endif
+    func showReaction(_ reaction: MeetingReaction, from name: String) {
+        reactionOverlay.show(reaction, from: name)
+    }
     private var actionsMenu: UIMenu?
     private let shareOffer = UIButton(type: .system)
     private var textCapture: SharedTextOverlay?
@@ -206,7 +226,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var usesBroadcastPickerForTesting = false
     #endif
     private var usesBroadcastPicker: Bool {
-        guard !usesNativeShareControl, !ProcessInfo.processInfo.isiOSAppOnMac else { return false }
+        guard !usesNativeShareControl else { return false }
         #if DEBUG
         if usesBroadcastPickerForTesting { return true }
         #endif
@@ -300,6 +320,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         view.addSubview(layoutControls); view.addSubview(participantStrip)
         layoutControls.navigationOnly = true
         view.addSubview(accessControls)
+        view.addSubview(reactionOverlay)
         sourceSelector.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         layoutControls.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         compactHeader.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
@@ -527,6 +548,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         streamScroll.accessibilityLabel = L("Meeting content")
         streamScroll.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
         header.isHidden = focus.hidden || geometry.compactHeader; toolbar.isHidden = focus.hidden
+        meetingStatusButton.accessibilityLabel = [titleLabel.text, countLabel.text, routeLabel.text].compactMap { $0 }.joined(separator: ", ")
         compactHeader.frame = geometry.header
         compactHeader.isHidden = focus.hidden || !geometry.compactHeader
         let pin = currentPrimaryKey.flatMap { videoTiles[$0]?.pin }
@@ -539,7 +561,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             chatValue: chat.unreadCount > 0 ? conversationButton.accessibilityLabel : nil,
             chatCount: chat.unreadCount, missedCount: store.timeline.unreadCount,
             status: isHeld || mediaStatus != nil ? statusLabel.text : nil,
-            speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil, chatAvailable: supportsChat,
+            speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil, chatAvailable: true,
             meetingName: titleLabel.text)
         // Layout and receive filtering have one stable, visible entry in the dock.
         compactHeader.setLayout(mode: effectiveLayoutMode, available: false, choose: { _ in })
@@ -602,6 +624,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         flipCamera.alpha = focus.hidden ? 0 : 1
         flipCamera.isHidden = studio?.canFlipCamera != true
         flipCamera.isEnabled = studio?.canFlipCamera == true
+        view.bringSubviewToFront(reactionOverlay)
+        reactionOverlay.frame = view.bounds
+        reactionOverlay.suppressed = focus.hidden || textCapture != nil
+        reactionOverlay.presentationRect = ReactionOverlayGeometry.contentRect(
+            stage: stage,
+            header: geometry.header,
+            headerVisible: !header.isHidden || !compactHeader.isHidden
+        )
         if let textCapture {
             view.bringSubviewToFront(textCapture)
             view.bringSubviewToFront(toolbar)
@@ -663,7 +693,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         view.tintColor = .white
         view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.085, alpha: 1)
         floatingVideo = RockVideoPictureInPicture(sourceView: view, speaker: activeSpeaker)
-        floatingVideo?.onPresentationChanged = { [weak self] in self?.onFloatingChanged?($0) }
+        floatingVideo?.onPresentationChanged = { [weak self] active in
+            self?.isFloatingVideoPresenting = active
+            self?.onFloatingChanged?(active)
+        }
         if let studio { floatingVideo?.bindMicrophoneActivity(studio.microphoneActivity) }
         activeSpeaker.$current.sink { [weak self] speaker in
             self?.compactHeader.setSpeaker(speaker)
@@ -676,8 +709,36 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel])
         identity.axis = .vertical
         identity.spacing = 2
-        let header = UIStackView(arrangedSubviews: [identity, participantsButton,
-                                                    missedButton, conversationButton])
+        identity.isUserInteractionEnabled = false
+        var statusConfiguration = UIButton.Configuration.plain()
+        statusConfiguration.contentInsets = .zero
+        meetingStatusButton.configuration = statusConfiguration
+        meetingStatusButton.accessibilityIdentifier = "Meeting status"
+        meetingStatusButton.accessibilityHint = L("Meeting details")
+        meetingStatusButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.workspace.showDetails(from: self.meetingStatusButton, presenter: self,
+                title: self.titleLabel.text ?? L("Jam"),
+                lines: [self.countLabel.text, self.workspace.roomIdentifier, self.routeLabel.text,
+                        self.statusLabel.text].compactMap { $0 })
+        }, for: .touchUpInside)
+        let identityContainer = UIView()
+        meetingStatusButton.translatesAutoresizingMaskIntoConstraints = false
+        identity.translatesAutoresizingMaskIntoConstraints = false
+        identityContainer.addSubview(meetingStatusButton)
+        identityContainer.addSubview(identity)
+        NSLayoutConstraint.activate([
+            meetingStatusButton.leadingAnchor.constraint(equalTo: identityContainer.leadingAnchor),
+            meetingStatusButton.trailingAnchor.constraint(equalTo: identityContainer.trailingAnchor),
+            meetingStatusButton.topAnchor.constraint(equalTo: identityContainer.topAnchor),
+            meetingStatusButton.bottomAnchor.constraint(equalTo: identityContainer.bottomAnchor),
+            identity.leadingAnchor.constraint(equalTo: identityContainer.leadingAnchor),
+            identity.trailingAnchor.constraint(equalTo: identityContainer.trailingAnchor),
+            identity.topAnchor.constraint(equalTo: identityContainer.topAnchor),
+            identity.bottomAnchor.constraint(equalTo: identityContainer.bottomAnchor)
+        ])
+        let header = UIStackView(arrangedSubviews: [minimizeButton, identityContainer, talkHereButton, switcherButton,
+                                                    participantsButton, missedButton, conversationButton])
         headerView = header
         header.axis = .horizontal
         header.alignment = .center
@@ -733,15 +794,39 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self?.openConversation(.catchUp)
         }, for: .touchUpInside)
         configure(participantsButton, symbol: "person.2.fill", label: L("Musicians"))
+        configure(minimizeButton, symbol: "chevron.down", label: L("Return to Home"))
+        minimizeButton.accessibilityIdentifier = "call.minimize"
+        minimizeButton.addAction(UIAction { [weak self] _ in self?.onMinimize?() }, for: .touchUpInside)
+        configure(switcherButton, symbol: "rectangle.stack.fill", label: L("Active meetings"))
+        switcherButton.accessibilityIdentifier = "call.switcher"
+        switcherButton.addAction(UIAction { [weak self] _ in self?.presentSwitcher() }, for: .touchUpInside)
+        var talkConfig = UIButton.Configuration.filled()
+        talkConfig.title = L("Talk Here")
+        talkConfig.image = UIImage(systemName: "mic.fill")
+        talkConfig.imagePadding = 4
+        talkConfig.cornerStyle = .capsule
+        talkConfig.baseBackgroundColor = accent
+        talkConfig.baseForegroundColor = .black
+        talkConfig.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
+        talkHereButton.configuration = talkConfig
+        talkHereButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        talkHereButton.accessibilityIdentifier = "call.talkHere"
+        talkHereButton.addAction(UIAction { [weak self] _ in
+            guard let self, let id = self.activeMeetingsForSwitcher.first(where: \.isCurrent)?.id else { return }
+            self.onTalkHere?(id)
+        }, for: .touchUpInside)
         configure(reactionsButton, symbol: "face.smiling", label: L("Reactions"), title: L("Reactions"))
         reactionsButton.accessibilityIdentifier = "call.reactions"
         let showActions: (Bool) -> Void = { [weak self] more in
             guard let self else { return }
             self.focus.interaction()
             self.configureMoreMenu()
-            MeetingActionsController.show(model: nil, menu: self.accessControls.menuWithReminders(self.actionsMenu),
+            MeetingActionsController.show(model: self.reactions, menu: self.accessControls.menuWithReminders(self.actionsMenu),
                 from: more ? (self.textCapture?.moreAnchor ?? self.accessControls.moreButton) : self.reactionsButton,
-                startsWithMore: more, openChat: self.supportsChat ? { [weak self] in self?.openConversation(.chat) } : nil,
+                startsWithMore: more, openChat: { [weak self] in
+                    guard let self else { return }
+                    self.openConversation(self.supportsChat ? .chat : .liveText)
+                },
                 owner: self.panelOwner, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 || self?.textCapture != nil })
         }
         reactionsButton.addAction(UIAction { _ in showActions(false) }, for: .touchUpInside)
@@ -773,28 +858,33 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         #else
         participantsButton.isEnabled = false
         #endif
-        let routePicker: UIView
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            routePicker = MacAudioRouteButton()
-        } else {
-            let systemPicker = AVRoutePickerView()
-            systemPicker.tintColor = accent
-            systemPicker.activeTintColor = accent
-            routePicker = systemPicker
-        }
-        routePicker.accessibilityLabel = ProcessInfo.processInfo.isiOSAppOnMac ? L("Audio devices") : L("Choose audio output")
+        let routePicker = AVRoutePickerView()
+        routePicker.tintColor = accent
+        routePicker.activeTintColor = accent
+        routePicker.accessibilityLabel = L("Choose audio output")
         MeetingChromeSurface.hidePickerArtwork(in: routePicker)
+        routePicker.addGestureRecognizer(AudioRouteInteractionObserver { [weak self] in
+            self?.onChooseAudioOutput?()
+        })
         let leave = AlignedCallButton(frame: .zero)
         configure(leave, symbol: "phone.down.fill", label: L("Leave"), title: L("Leave"))
         leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            self.onMicrophone?(!self.isMicrophoneOn)
+            if let onToggleMicrophone = self.onToggleMicrophone {
+                onToggleMicrophone()
+            } else {
+                self.onMicrophone?(!self.isMicrophoneOn)
+            }
         }, for: .touchUpInside)
         camera.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            self.onCamera?(!self.isCameraOn)
+            if let onToggleCamera = self.onToggleCamera {
+                onToggleCamera()
+            } else {
+                self.onCamera?(!self.isCameraOn)
+            }
         }, for: .touchUpInside)
         if let studio {
             MicrophoneActivityView.install(on: microphone, model: studio.microphoneActivity)
@@ -813,7 +903,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             StudioShortcut.install(on: speaker, pane: .sound, model: studio, devices: true)
         }
         if !supportsSharing { share.isEnabled = false; sharePicker.isHidden = true }
-        conversationButton.isHidden = !supportsChat
+        conversationButton.isHidden = false
         share.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.onShare?(!self.isSharingScreen)
@@ -827,7 +917,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.speaker.accessibilityLabel = self.isSpeakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker")
         }, for: .touchUpInside)
         conversationButton.addAction(UIAction { [weak self] _ in
-            self?.openConversation(.chat)
+            guard let self else { return }
+            self.openConversation(self.supportsChat ? .chat : .liveText)
         }, for: .touchUpInside)
         participantsButton.addAction(UIAction { [weak self] _ in
             guard let self, self.presentedViewController == nil else { return }
@@ -853,8 +944,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         workspace.openReactions = { [weak self] anchor, visibility in
             guard let self else { return }
             self.configureMoreMenu()
-            MeetingActionsController.show(model: nil, menu: self.accessControls.menuWithReminders(self.actionsMenu), from: anchor,
-                openChat: {}, owner: self.panelOwner, onVisibilityChanged: { [weak self] shown in
+            MeetingActionsController.show(model: self.reactions, menu: self.accessControls.menuWithReminders(self.actionsMenu), from: anchor,
+                openChat: { [weak self] in
+                    guard let self else { return }
+                    self.openConversation(self.supportsChat ? .chat : .liveText)
+                }, owner: self.panelOwner, onVisibilityChanged: { [weak self] shown in
                     self?.focus.menuVisible = shown
                     visibility(shown)
                 })
@@ -961,6 +1055,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             header.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
             header.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
             header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            minimizeButton.widthAnchor.constraint(equalToConstant: 44).withPriority(.defaultHigh),
+            minimizeButton.heightAnchor.constraint(equalToConstant: 44),
+            switcherButton.widthAnchor.constraint(equalToConstant: 48).withPriority(.defaultHigh),
+            switcherButton.heightAnchor.constraint(equalToConstant: 44),
             participantsButton.widthAnchor.constraint(equalToConstant: 48),
             participantsButton.heightAnchor.constraint(equalToConstant: 48),
             missedButton.widthAnchor.constraint(equalToConstant: 48).withPriority(.defaultHigh),
@@ -992,6 +1090,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             conversationHost.bottomAnchor.constraint(equalTo: streamScroll.bottomAnchor)
         ])
         installFocus()
+        refreshSwitcherChrome()
         Publishers.CombineLatest(chat.$unreadCount, store.$timeline)
             .receive(on: DispatchQueue.main).sink { [weak self] count, timeline in
             guard let self else { return }
@@ -1006,8 +1105,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }.store(in: &subscriptions)
     }
 
-    private func openConversation(_ selected: ConversationMode) {
-        guard supportsChat || selected != .chat else { return }
+    private func openConversation(_ requestedMode: ConversationMode) {
+        let selected: ConversationMode = (!supportsChat && requestedMode == .chat) ? .liveText : requestedMode
         guard presentedViewController == nil else { return }
         if view.bounds.width >= 700 {
             if dockedConversation != nil { return }
@@ -1622,13 +1721,40 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 }
         ]
         var invite: [UIMenuElement] = []
-        var meeting: [UIMenuElement] = [UIAction(title: L("Meeting details"), image: UIImage(systemName: "info.circle")) { [weak self] _ in
+        var meeting: [UIMenuElement] = [UIAction(title: L("Voice reply"), image: UIImage(systemName: "waveform.and.mic"),
+                attributes: isHeld ? [.disabled] : []) { [weak self] _ in
+            self?.workspace.openVoiceReply?()
+        }, UIAction(title: L("Meeting details"), image: UIImage(systemName: "info.circle")) { [weak self] _ in
             guard let self else { return }
             let details = [self.workspace.roomIdentifier, self.workspace.invitationURL?.absoluteString].compactMap { $0 }.joined(separator: "\n")
             let alert = UIAlertController(title: self.titleLabel.text, message: details, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: L("Done"), style: .default))
             self.reactionsButton.callActionPresenter?.present(alert, animated: true)
         }]
+        if onMinimize != nil {
+            meeting.append(UIAction(title: L("Return to Home"), image: UIImage(systemName: "house")) { [weak self] _ in
+                self?.onMinimize?()
+            })
+        }
+        if activeMeetingsForSwitcher.count > 1 {
+            let roomActions = activeMeetingsForSwitcher.flatMap { item -> [UIMenuElement] in
+                var actions: [UIMenuElement] = []
+                if !item.isCurrent {
+                    actions.append(UIAction(title: L("Switch to %@", item.title), image: UIImage(systemName: "arrow.left.arrow.right")) { [weak self] _ in
+                        self?.onSelectMeeting?(item.id)
+                    })
+                }
+                if !item.isTalk {
+                    actions.append(UIAction(title: L("Talk Here (%@)", item.title), image: UIImage(systemName: "mic.fill")) { [weak self] _ in
+                        self?.onTalkHere?(item.id)
+                    })
+                }
+                return actions
+            }
+            if !roomActions.isEmpty {
+                meeting.append(UIMenu(title: L("Active meetings"), options: .displayInline, children: roomActions))
+            }
+        }
         if let studio {
             cameraSound = [UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
                 guard let self else { return }
@@ -1637,6 +1763,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 guard let self else { return }
                 studio.audioSection = .devices
                 StudioPresentation.show(studio, from: self.reactionsButton, pane: .sound)
+            }, UIAction(title: L("Transcription & voice"), image: UIImage(systemName: "captions.bubble")) { [weak self] _ in
+                self?.workspace.openTranscriptionSettings?()
             }]
             if studio.availableCameraCount > 1 {
                 cameraSound.append(UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
@@ -1648,7 +1776,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                     StudioPresentation.show(studio, from: self.reactionsButton, pane: .presenter)
                 })
         }
-        if !ProcessInfo.processInfo.isiOSAppOnMac {
         cameraSound.append(UIAction(title: isSpeakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker"),
             image: UIImage(systemName: "speaker.wave.2")) { [weak self] _ in
                 guard let self else { return }
@@ -1657,7 +1784,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 self.onSpeaker?(self.isSpeakerOn)
                 self.configureMoreMenu()
             })
-        }
         if workspace.invitationURL != nil {
             invite = [UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
@@ -1696,7 +1822,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func performGroupedShareAction() {
         guard supportsSharing, sharingAvailable || isSharingScreen else { return }
-        if isSharingScreen || usesNativeShareControl || ProcessInfo.processInfo.isiOSAppOnMac {
+        if isSharingScreen || usesNativeShareControl {
             onShare?(!isSharingScreen)
         } else if #available(iOS 27.0, *) {
             onShare?(true)
@@ -1776,6 +1902,79 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         updateStatus()
     }
 
+    /// Computes transport video subscription demand for `MeetingEngine` separately from
+    /// inline view-level pixel rendering (`visibleVideoQualities`). Never emits an empty
+    /// `visibleParticipantIDs` set when foreground video is active, so newly started remote
+    /// cameras and screen shares are discovered and subscribed automatically.
+    func videoSubscriptionDemand(foreground: Bool, wantsVideo: Bool) -> MeetingEngine.MeetingVideoDemand {
+        _ = visibleVideoQualities(foreground: foreground, wantsVideo: wantsVideo)
+        guard (foreground || wantsVideo) && !isHeld && displayMode != .audioOnly else {
+            return MeetingEngine.MeetingVideoDemand(
+                visibleParticipantIDs: [],
+                focusedParticipantID: nil,
+                preferredScreenParticipantID: nil,
+                receivesCameras: false
+            )
+        }
+        let receivesCameras = (displayMode == .all)
+        let focusedID = currentPrimaryTarget?.participantID
+        let preferredScreenID = currentPrimaryTarget?.isScreenShare == true
+            ? currentPrimaryTarget?.participantID
+            : selectedShare?.participantID
+
+        let visibleParticipantIDs: Set<String>?
+        if !foreground && wantsVideo {
+            if let pipParticipantID = (selectedShare ?? currentPrimaryTarget)?.participantID {
+                visibleParticipantIDs = [pipParticipantID]
+            } else {
+                visibleParticipantIDs = nil
+            }
+        } else if displayMode == .screenShares || (displayedSnapshot?.remoteParticipants.count ?? 0) <= 6 {
+            visibleParticipantIDs = nil
+        } else {
+            var ids = Set<String>()
+            if effectiveLayoutMode == .grid {
+                if streamScroll.bounds.width > 0 && streamScroll.bounds.height > 0 {
+                    for tile in tiles.arrangedSubviews where !tile.isHidden {
+                        let rect = tile.convert(tile.bounds, to: streamScroll)
+                        if streamScroll.bounds.intersects(rect),
+                           let participantID = tileSelections[ObjectIdentifier(tile)]?.participantID {
+                            ids.insert(participantID)
+                        }
+                    }
+                }
+            } else {
+                for candidate in [focusedID,
+                                  preferredScreenID,
+                                  selectedShare?.participantID,
+                                  cameraFocusShare?.participantID,
+                                  activeSpeaker.current?.id] {
+                    if let candidate { ids.insert(candidate) }
+                }
+                for stripID in participantStrip.visiblePreviewIDs {
+                    if let participantID = streamPinTargets[stripID]?.participantID {
+                        ids.insert(participantID)
+                    }
+                }
+                if let target = currentPrimaryTarget, let index = orderedStreams.firstIndex(of: target) {
+                    for adjacent in [index - 1, index + 1] where orderedStreams.indices.contains(adjacent) {
+                        ids.insert(orderedStreams[adjacent].participantID)
+                    }
+                }
+            }
+            if let focusedID { ids.insert(focusedID) }
+            if let preferredScreenID { ids.insert(preferredScreenID) }
+            visibleParticipantIDs = ids.isEmpty ? nil : ids
+        }
+
+        return MeetingEngine.MeetingVideoDemand(
+            visibleParticipantIDs: visibleParticipantIDs,
+            focusedParticipantID: focusedID,
+            preferredScreenParticipantID: preferredScreenID,
+            receivesCameras: receivesCameras
+        )
+    }
+
     /// Stream metadata stays present when its pixels are paused, so browsing and pinning remain available.
     func visibleVideoQualities(foreground: Bool, wantsVideo: Bool) -> [String: Bool] {
         let inlineVisible = foreground && stageSurfaceVisible
@@ -1844,6 +2043,44 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             (mediaStatus ?? L("Microphone %@ · Camera %@", isMicrophoneOn ? L("on") : L("off"), isCameraOn ? L("on") : L("off")))
         statusLabel.textColor = mediaStatus == nil ? .lightGray : .systemOrange
         view.setNeedsLayout()
+    }
+
+    private func refreshSwitcherChrome() {
+        guard isViewLoaded else { return }
+        minimizeButton.isHidden = onMinimize == nil
+        let multiple = activeMeetingsForSwitcher.count > 1
+        switcherButton.isHidden = !multiple
+        switcherButton.configuration?.title = multiple ? "\(activeMeetingsForSwitcher.count)" : nil
+        talkHereButton.isHidden = isTalkRoom || !multiple
+        configureMoreMenu()
+        view.setNeedsLayout()
+    }
+
+    private func presentSwitcher() {
+        guard presentedViewController == nil, !activeMeetingsForSwitcher.isEmpty else { return }
+        let sheet = UIAlertController(title: L("Active meetings"), message: nil, preferredStyle: .actionSheet)
+        for item in activeMeetingsForSwitcher {
+            let role = item.isTalk ? L("Talk") : L("Listening")
+            let label = item.isCurrent ? "\(item.title) · \(role) (\(L("Current")))" : "\(item.title) · \(role)"
+            sheet.addAction(UIAlertAction(title: label, style: .default) { [weak self] _ in
+                guard let self else { return }
+                if !item.isCurrent { self.onSelectMeeting?(item.id) }
+            })
+            if !item.isTalk {
+                sheet.addAction(UIAlertAction(title: L("Talk in %@", item.title), style: .default) { [weak self] _ in
+                    self?.onTalkHere?(item.id)
+                })
+            }
+            sheet.addAction(UIAlertAction(title: L("Leave %@", item.title), style: .destructive) { [weak self] _ in
+                self?.onLeaveMeeting?(item.id)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: L("Cancel"), style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = switcherButton
+            popover.sourceRect = switcherButton.bounds
+        }
+        present(sheet, animated: true)
     }
 
     private func configure(_ button: UIButton, symbol: String, label: String, title: String? = nil) {

@@ -31,12 +31,17 @@ final class RoomSyncCoordinator: ObservableObject {
     }
     @Published private(set) var enabled = false
     @Published private(set) var includeRecent = true
+    @Published private(set) var syncWorkspace = true
+    @Published private(set) var shareCalendar = true
+    @Published private(set) var transcriptRetention: TranscriptSyncRetention = .days30
+    @Published private(set) var archiveFolderName: String?
     @Published private(set) var status = L("Stored on this device")
     @Published private(set) var nameChoice: NameChoice?
     @Published private(set) var needsFreshAccount = false
     @Published private(set) var busy = false
     @Published private(set) var storageWarning: String?
     @Published private(set) var offerSync = false
+    @Published private(set) var activeCloudSession: RoomCloudSession?
     private var state: State
     private let history: RoomHistoryStore
     private let storage: any RoomHistoryStorage
@@ -52,6 +57,8 @@ final class RoomSyncCoordinator: ObservableObject {
     private var networkWasAvailable = false
     var onRemoteName: ((String) -> Void)?
     var onCloudAccessChanged: ((String?) -> Void)?
+    var onSyncNow: (() -> Void)?
+    var onSyncPreferencesChanged: (() -> Void)?
     var beforeDeleteSyncedData: (() async throws -> Void)?
     var deviceID: String { state.document.device }
     var cloudAccount: String? { enabled && !needsFreshAccount ? state.owner : nil }
@@ -71,6 +78,13 @@ final class RoomSyncCoordinator: ObservableObject {
         }
         state.document.migrateFavoriteOrderIfNeeded()
         enabled = state.enabled; includeRecent = state.includeRecent
+        syncWorkspace = preferences.object(forKey: "iCloudSync.workspace") as? Bool ?? true
+        shareCalendar = preferences.object(forKey: "iCloudSync.shareCalendar") as? Bool ?? true
+        if let rawRetention = preferences.string(forKey: "iCloudSync.transcriptRetention"),
+           let parsed = TranscriptSyncRetention(rawValue: rawRetention) {
+            transcriptRetention = parsed
+        }
+        archiveFolderName = preferences.string(forKey: TranscriptArchiveStore.folderNameKey)
         status = enabled ? L("Changes pending") : L("Stored on this device")
         if let local = state.conflictingLocalName {
             nameChoice = NameChoice(local: local, cloud: state.conflictingCloudName ?? state.document.name?.value ?? "")
@@ -123,7 +137,7 @@ final class RoomSyncCoordinator: ObservableObject {
         guard value != enabled else { return }
         revision += 1; task?.cancel(); task = nil
         enabled = value; state.enabled = value
-        if !value { onCloudAccessChanged?(nil) }
+        if !value { activeCloudSession = nil; onCloudAccessChanged?(nil) }
         if value {
             status = L("Connecting to iCloud…")
             state.needsInitialNameCheck = state.needsInitialNameCheck || state.generation == nil
@@ -142,6 +156,41 @@ final class RoomSyncCoordinator: ObservableObject {
         guard value != includeRecent else { return }
         includeRecent = value; state.includeRecent = value
         changed()
+    }
+
+    func setSyncWorkspace(_ value: Bool) {
+        guard value != syncWorkspace else { return }
+        syncWorkspace = value
+        preferences.set(value, forKey: "iCloudSync.workspace")
+        onSyncPreferencesChanged?()
+        if value { onSyncNow?() }
+    }
+
+    func setShareCalendar(_ value: Bool) {
+        guard value != shareCalendar else { return }
+        shareCalendar = value
+        preferences.set(value, forKey: "iCloudSync.shareCalendar")
+        onSyncPreferencesChanged?()
+        if value { onSyncNow?() }
+    }
+
+    func setTranscriptRetention(_ value: TranscriptSyncRetention) {
+        guard value != transcriptRetention else { return }
+        transcriptRetention = value
+        preferences.set(value.rawValue, forKey: "iCloudSync.transcriptRetention")
+        onSyncPreferencesChanged?()
+        if value != .off { onSyncNow?() }
+    }
+
+    func updateTranscriptArchiveFolder(url: URL?) {
+        let store = TranscriptArchiveStore(preferences: preferences)
+        Task {
+            await store.setCustomFolderURL(url)
+            let name = await store.currentFolderName()
+            await MainActor.run { [weak self] in
+                self?.archiveFolderName = name
+            }
+        }
     }
 
     func startFreshForCurrentAccount() {
@@ -191,6 +240,7 @@ final class RoomSyncCoordinator: ObservableObject {
 
     func requestSync(immediate: Bool = false) {
         guard enabled, !needsFreshAccount else { return }
+        if immediate { onSyncNow?() }
         if busy { anotherPass = true; return }
         task?.cancel()
         let expected = revision
@@ -262,7 +312,9 @@ final class RoomSyncCoordinator: ObservableObject {
                 return
             }
             state.owner = session.account; state.generation = session.generation
+            activeCloudSession = session
             onCloudAccessChanged?(session.account)
+            onSyncNow?()
             for attempt in 0..<3 {
                 let changes = try await transport.fetch(session: session, after: state.token)
                 guard valid(expected) else { return }
@@ -364,6 +416,7 @@ final class RoomSyncCoordinator: ObservableObject {
 
     private func pause(_ message: String) {
         enabled = false; state.enabled = false; status = message
+        activeCloudSession = nil
         onCloudAccessChanged?(nil)
         networkMonitor?.cancel(); networkMonitor = nil
         keepLocalNameWhenPausing()

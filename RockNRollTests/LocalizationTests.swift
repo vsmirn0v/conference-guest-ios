@@ -74,14 +74,11 @@ final class LocalizationTests: XCTestCase {
     }
 
     func testBroadcastExtensionsIncludeRussianResources() throws {
-        for target in ["GuestBroadcast", "RockBroadcast"] {
+        for target in ["RockBroadcast"] {
             let root = try XCTUnwrap(Bundle.main.url(forResource: target, withExtension: "appex", subdirectory: "PlugIns"))
             let ru = try XCTUnwrap(Bundle(url: root.appendingPathComponent("ru.lproj")))
             let name = ru.localizedString(forKey: "CFBundleDisplayName", value: nil, table: "InfoPlist")
             XCTAssertTrue(name.contains("экран"), target)
-            if target == "GuestBroadcast" {
-                XCTAssertEqual(ru.localizedString(forKey: "The meeting has ended.", value: nil, table: nil), "Встреча завершена.")
-            }
         }
     }
 }

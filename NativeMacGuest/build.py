@@ -56,8 +56,13 @@ subprocess.run(['python3',str(ROOT/'NativeMacGuest/prepare-sherpa.py')],check=Tr
 subprocess.run(['python3',str(ROOT/'NativeMacGuest/prepare-livekit.py'),
                 '--framework',str(framework_root/'LiveKitWebRTC.xcframework'),
                 '--destination',str(dependency_root)],check=True,env=env)
+unified_root = ROOT / '.build/unified-sdk-dependencies'
+if not (unified_root / 'native-livekit.json').is_file():
+    subprocess.run(['python3', str(ROOT/'NativeMacGuest/prepare-livekit.py'),
+                    '--framework', str(framework_root/'LiveKitWebRTC.xcframework'),
+                    '--destination', str(unified_root)], check=True, env=env)
 for name in ['client-sdk-swift','webrtc-xcframework']:
-    spec_source = spec_source.replace('../.build/native-desktop-dependencies/'+name,str(dependency_root/name))
+    spec_source = spec_source.replace('../.build/unified-sdk-dependencies/'+name,str(dependency_root/name))
 # Resolve source/package and file-setting paths independently of output depth.
 spec_source = resolve_source_paths(ROOT, spec_source)
 spec_dir = build/'Spec'; spec_dir.mkdir(parents=True, exist_ok=True)
@@ -106,9 +111,9 @@ if 'TeamIdentifier=5V64BP2H3P' not in signature.stderr:
 executable = application_executable(app)
 subprocess.run([str(executable),'--check-container'],check=True)
 subprocess.run([str(executable),'--check-voice-worker'],check=True,timeout=20)
-sources = sorted(x for x in (ROOT/'Experiments/NativeGuest').glob('*.swift') if x.name not in {'Main.swift', 'GuestCompanionPeer.swift'})
+sources = sorted((ROOT/'MeetingEngine/Sources').rglob('*.swift')) + [ROOT/'MeetingEngine/Package.swift']
 sources += sorted(x for x in (ROOT/'NativeMacGuest').rglob('*.swift') if 'Tests' not in x.parts)
-sources += [ROOT/'Shared/NativeGuestCompanionProtocol.swift', ROOT/'RockNRoll/NativeVideoPixelBuffer.swift']
+sources += [ROOT/'Shared/NativeGuestCompanionProtocol.swift']
 for source in re.findall(r'(?m)^      - path: (\.\./.+)$', (ROOT/'NativeMacGuest/project.yml').read_text()):
     path = (ROOT/'NativeMacGuest'/source).resolve()
     if path.is_file(): sources.append(path)
@@ -119,7 +124,7 @@ sources += [ROOT/'NativeMacGuest/VoiceWorker/Worker.entitlements', ROOT/'NativeM
 sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/PrivacyInfo.xcprivacy',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
 sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-livekit.json']
 sources += sorted((ROOT/'Dependencies/native-macos/livekit-patches').glob('*.patch'))
-sources += [ROOT/'NativeMacGuest/native_dependencies.py', ROOT/'Dependencies/native-macos/sdk.lock.json']
+sources += [ROOT/'NativeMacGuest/native_dependencies.py', ROOT/'Dependencies/native-macos/sdk.unified.lock.json']
 if a.distribution == 'direct':
     sources += audio_route_recovery_lock_paths(ROOT)
     sources += [ROOT/'Experiments/WebRTCM157'/(name+'.patch') for name in AUDIO_ROUTE_RECOVERY_PATCHES]

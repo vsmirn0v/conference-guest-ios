@@ -26,7 +26,7 @@ private struct PresenterWorkspaceControls: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(.borderless).accessibilityIdentifier("presenter.source")
                 .confirmationDialog(L("Content"), isPresented: $showSource, titleVisibility: .visible) {
-                    Button(ProcessInfo.processInfo.isiOSAppOnMac ? L("Screen or window") : L("Screen / other apps")) { owner.chooseScreenContent() }
+                    Button(L("Screen / other apps")) { owner.chooseScreenContent() }
                         .disabled(model.screenPicking)
                     Button(L("Choose slide or background")) { images.chooseImage() }
                     Button(L("Blank canvas")) { owner.chooseCanvasContent(clearImage: true) }
@@ -38,7 +38,7 @@ private struct PresenterWorkspaceControls: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if model.source == .screen && !ProcessInfo.processInfo.isiOSAppOnMac {
+            if model.source == .screen {
                 Text(L("Camera overlays and drawings are available with images and canvases. Entire-screen sharing uses the iOS broadcast picker."))
                     .font(.footnote).foregroundStyle(.secondary)
             }
@@ -69,10 +69,7 @@ private struct PresenterWorkspaceControls: View {
                 Text(L("This canvas is private. Your separate camera video is already live in the meeting."))
                     .font(.footnote).foregroundStyle(.orange)
             }
-            if model.canCompose && ProcessInfo.processInfo.isiOSAppOnMac {
-                Text(L("After you start sharing, your camera and drawings stay live when you switch apps or desktops."))
-                    .font(.footnote).foregroundStyle(.secondary)
-            } else if model.screenSelected {
+            if model.screenSelected {
                 Text(L("The screen continues in the background. The app camera layer and drawings return when you reopen the app; macOS manages its own overlay."))
                     .font(.footnote).foregroundStyle(.secondary)
             } else if model.source == .canvas {
@@ -107,11 +104,11 @@ private struct PresenterWorkspaceControls: View {
                 Picker(L("Encoding"), selection: $owner.encodingPreference) {
                     Text(L("Efficient · Default")).tag(ShareEncodingPreference.efficient)
                     Text(L("Text detail · VP9")).tag(ShareEncodingPreference.textDetail)
-                        .disabled(!owner.supportsVP9 || (model.source == .screen && !ProcessInfo.processInfo.isiOSAppOnMac))
+                        .disabled(!owner.supportsVP9 || model.source == .screen)
                 }
                 Text(owner.encodingPreference == .textDetail ? L("May make small text slightly clearer. Uses more CPU and battery.") : L("Uses hardware H.264 when available to save energy."))
                     .font(.footnote).foregroundStyle(.secondary)
-                if model.source == .screen && !ProcessInfo.processInfo.isiOSAppOnMac {
+                if model.source == .screen {
                     Text(L("VP9 is not yet available for entire-screen broadcasts on iPhone or iPad.")).font(.footnote).foregroundStyle(.secondary)
                 } else if !owner.supportsVP9, let reason = owner.vp9UnavailableReason { Text(reason).font(.footnote).foregroundStyle(.secondary) }
                 if owner.running { Text(L("Encoding changes apply after Stop → Start sharing.")).font(.footnote).foregroundStyle(.secondary) }
@@ -136,7 +133,7 @@ final class PresenterImageImport: ObservableObject {
     private var operation: Task<Void, Never>?
     init(model: PresenterModel) { self.model = model }
     func chooseImage() {
-        if ProcessInfo.processInfo.isiOSAppOnMac { showFile = true } else { showPhoto = true }
+        showPhoto = true
     }
     func loadPhoto(_ item: PhotosPickerItem?) {
         guard let item else { cancel(); return }

@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import ConferenceCore
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 final class ParticipationTests: XCTestCase {

@@ -11,13 +11,18 @@ final class MeetingActionsTests: XCTestCase {
         let window = UIWindow(windowScene: scene), host = UIViewController()
         window.rootViewController = host
         window.isHidden = false
-        let controls = CallControls(localPreview: LocalSharePreview(), state: nil, coordinator: nil,
-            router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: .all,
-            invitationURL: nil, roomIdentifier: nil, onDisplayMode: { _ in }, onFloat: {},
-            onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
-            onMicrophoneState: { _ in }, onCameraState: { _ in })
-        host.view.addSubview(controls)
-        defer { controls.removeFromSuperview(); window.isHidden = true }
+        let call = RockCallViewController(title: "Reactions", catchUp: CatchUpStore(), chat: ChatStore())
+        call.loadViewIfNeeded()
+        host.addChild(call)
+        host.view.addSubview(call.view)
+        call.view.frame = host.view.bounds
+        call.didMove(toParent: host)
+        defer {
+            call.willMove(toParent: nil)
+            call.view.removeFromSuperview()
+            call.removeFromParent()
+            window.isHidden = true
+        }
         let button = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }
             .first { $0.accessibilityIdentifier == "call.reactions" })
         XCTAssertFalse(button.showsLargeContentViewer, "The large-content viewer competes with the More shortcut")
@@ -89,8 +94,6 @@ final class MeetingActionsTests: XCTestCase {
         call.onShare = { direct.append($0) }
         call.performGroupedShareAction()
         if #available(iOS 27.0, *) {
-            XCTAssertEqual(direct, [true]); XCTAssertEqual(requests, 0)
-        } else if ProcessInfo.processInfo.isiOSAppOnMac {
             XCTAssertEqual(direct, [true]); XCTAssertEqual(requests, 0)
         } else {
             XCTAssertTrue(direct.isEmpty); XCTAssertEqual(requests, 1)

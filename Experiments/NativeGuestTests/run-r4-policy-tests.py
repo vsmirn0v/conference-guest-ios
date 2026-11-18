@@ -13,11 +13,11 @@ import tempfile
 sys.dont_write_bytecode = True
 TESTS = Path(__file__).resolve().parent
 UNITS = {
-    "lease": ("Shared/GuestAudioOwnerLease.swift", "struct GuestPrivateInputLeasePolicy"),
-    "policy": ("Experiments/NativeGuest/GuestSystemAudio.swift", "enum GuestVPIOReleasePolicy:"),
+    "lease": ("MeetingEngine/Sources/MeetingEngine/Audio/GuestAudioOwnerLease.swift", "struct GuestPrivateInputLeasePolicy"),
+    "policy": ("MeetingEngine/Sources/MeetingEngine/Providers/Guest/GuestSystemAudio.swift", "enum GuestVPIOReleasePolicy:"),
     "captureGuard": ("NativeMacGuest/MicrophoneActivationExperiment.swift", "private func privateSoundCaptureClosed("),
-    "senderTrackFlags": ("Experiments/NativeGuest/GuestEngine.swift", "var audioSenderTrackEnabledForTesting:"),
-    "senderFullInventory": ("Experiments/NativeGuest/GuestEngine.swift", "var audioSendersForTesting:"),
+    "senderTrackFlags": ("MeetingEngine/Sources/MeetingEngine/Providers/Guest/GuestEngine.swift", "var audioSenderTrackEnabledForTesting:"),
+    "senderFullInventory": ("MeetingEngine/Sources/MeetingEngine/Providers/Guest/GuestEngine.swift", "var audioSendersForTesting:"),
 }
 
 

@@ -167,7 +167,7 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
              #if DEBUG
              if ColdJoinDeviceFixture.active { return true }
              #endif
-             return !ProcessInfo.processInfo.isiOSAppOnMac && BackgroundAudioJoinPrototype.preferenceEnabled()
+             return BackgroundAudioJoinPrototype.preferenceEnabled()
          },
          makePrepared: @escaping @MainActor () -> Prepared = {
              #if DEBUG

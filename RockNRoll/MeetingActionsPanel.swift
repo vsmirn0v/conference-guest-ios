@@ -233,7 +233,7 @@ final class MeetingActionsShortcut: NSObject {
         }
         #endif
         guard gesture.state == .began else { return }
-        if !ProcessInfo.processInfo.isiOSAppOnMac { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         show()
     }
     @objc private func open() -> Bool { show(); return true }
@@ -255,7 +255,7 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
             select: { [weak model] kind in
                 guard model?.send(kind) == true else { return }
                 UIAccessibility.post(notification: .announcement, argument: L("You, %@", kind.title))
-                if !ProcessInfo.processInfo.isiOSAppOnMac { UISelectionFeedbackGenerator().selectionChanged() }
+                UISelectionFeedbackGenerator().selectionChanged()
             }, perform: { [weak self, weak model] action in
                 guard let self, let model else { return }
                 let generation = model.generation

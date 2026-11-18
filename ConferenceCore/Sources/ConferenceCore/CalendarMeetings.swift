@@ -104,15 +104,24 @@ public struct CalendarMeeting: Identifiable, Equatable, Sendable {
     public var engine: MeetingEngineKind?
     public var endpoint: URL? = nil
     public var requiresChoice: Bool = false
+    public var externalSeriesID: String? = nil
+    public var isRemoteSynced: Bool = false
+
+    public var occurrenceSyncKey: String {
+        (externalSeriesID ?? seriesID) + "|" + String(Int64(start.timeIntervalSince1970.rounded()))
+    }
 
     public init(id: String, seriesID: String, calendarID: String, calendarTitle: String,
                 title: String, start: Date, end: Date, allDay: Bool = false, tentative: Bool = false,
-                links: [URL] = [], linkGroups: [CalendarLinkGroup]? = nil, endpoint: URL? = nil) {
+                links: [URL] = [], linkGroups: [CalendarLinkGroup]? = nil, endpoint: URL? = nil,
+                externalSeriesID: String? = nil, isRemoteSynced: Bool = false) {
         self.id = id; self.seriesID = seriesID; self.calendarID = calendarID; self.calendarTitle = calendarTitle
         self.title = title; self.start = start; self.end = end; self.allDay = allDay; self.tentative = tentative
         self.linkGroups = (linkGroups ?? [.init(source: .notes, links: links)])
             .sorted { $0.source.rawValue < $1.source.rawValue }
         self.endpoint = endpoint
+        self.externalSeriesID = externalSeriesID
+        self.isRemoteSynced = isRemoteSynced
     }
 
     public func isScheduledNow(_ now: Date) -> Bool { start <= now && end > now }

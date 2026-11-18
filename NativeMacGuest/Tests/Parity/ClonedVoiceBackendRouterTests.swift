@@ -1,4 +1,5 @@
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 final class ClonedVoiceBackendRouterTests: XCTestCase {

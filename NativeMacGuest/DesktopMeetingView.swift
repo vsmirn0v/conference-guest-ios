@@ -331,7 +331,7 @@ struct NativeDesktopMeetingView: View {
                 if !embedded {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.title).font(.headline).lineLimit(1)
-                        Text(model.connected ? L("%ld participants", model.participants.count) : L(model.snapshot.phase.rawValue.capitalized)).font(.caption).foregroundStyle(.secondary)
+                        Text(model.connected ? L("%ld participants", model.participants.count) : (model.snapshot.phase == .lobby ? L("Waiting for host…") : L(model.snapshot.phase.rawValue.capitalized))).font(.caption).foregroundStyle(.secondary)
                     }.padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome()
                 }
                 NativeDesktopTranscriptionPill(model: model)

@@ -37,6 +37,7 @@ private func XCTAssertThrowsError<T>(_ value: @autoclosure () throws -> T, _ han
 }
 #else
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 #endif
 

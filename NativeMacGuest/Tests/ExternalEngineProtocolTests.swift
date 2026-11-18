@@ -89,6 +89,29 @@ import ConferenceCore
             try await tc.connect(invitation: URL(string: "https://example.invalid/c/room")!, name: "Tester", quiet: false, sessionID: UUID())
             throw NSError(domain: "UnsafeRejoinAccepted", code: 1)
         } catch NativeDesktopRTCError.cleanupFailed { checks += 1 }
+        for rtcError in [NativeDesktopRTCError.closed, .invalidResponse, .cleanupFailed, .permissionDenied] {
+            let text = rtcError.localizedDescription
+            try expect(!text.isEmpty && !text.contains("NativeDesktopRTCError"), "RTC error uses user-facing localized copy")
+        }
+        let connectingTelemost = TelemostAdapter()
+        connectingTelemost.snapshot.phase = .connecting
+        try await connectingTelemost.setPlayout(false)
+        try expect(!connectingTelemost.snapshot.playoutOn && !connectingTelemost.sessionSnapshot.intent.playoutOn,
+            "Telemost playout toggle during early connecting updates intent without invalidResponse")
+        do {
+            try await connectingTelemost.setMicrophone(true)
+            throw NSError(domain: "EarlyMicAllowed", code: 1)
+        } catch MeetingSessionError.notConnected { checks += 1 }
+
+        let connectingTrueConf = TrueConfAdapter()
+        connectingTrueConf.snapshot.phase = .connecting
+        try await connectingTrueConf.setPlayout(false)
+        try expect(!connectingTrueConf.snapshot.playoutOn && !connectingTrueConf.sessionSnapshot.intent.playoutOn,
+            "TrueConf playout toggle during early connecting updates intent without invalidResponse")
+        do {
+            try await connectingTrueConf.setMicrophone(true)
+            throw NSError(domain: "EarlyMicAllowed", code: 1)
+        } catch MeetingSessionError.notConnected { checks += 1 }
         print("PASS: \(checks) native external-engine protocol and lifecycle assertions; no live network or physical media")
     }
 }

@@ -1,5 +1,6 @@
 import AVFoundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor

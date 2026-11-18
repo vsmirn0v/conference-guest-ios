@@ -1,6 +1,7 @@
 import CoreVideo
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 final class ScreenEncoderQualityTests: XCTestCase {

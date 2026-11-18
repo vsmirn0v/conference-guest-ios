@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 @MainActor private final class CanceledPrivateAudioFixture: NativeDesktopPrivateAudioOwner {

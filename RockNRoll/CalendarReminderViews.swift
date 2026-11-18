@@ -33,7 +33,7 @@ struct CalendarReminderSettingsView: View {
             ReminderTimingEditor(timing: Binding(get: { reminders.profile.timing }, set: { timing in
                 var value = reminders.profile; value.timing = timing; reminders.setProfile(value)
             }))
-            if !ProcessInfo.processInfo.isiOSAppOnMac { BackgroundAudioJoinSettingsSection() }
+            BackgroundAudioJoinSettingsSection()
             Section {
                 NavigationLink(L("Delivery and privacy")) { ReminderDeliveryView(reminders: reminders) }
                     .accessibilityIdentifier("reminders.delivery")

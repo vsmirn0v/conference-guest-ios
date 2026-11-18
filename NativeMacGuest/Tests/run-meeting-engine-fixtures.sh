@@ -4,7 +4,7 @@ suite="$1"
 shift
 source_dir="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 repo_dir="$(dirname -- "$source_dir")"
-framework_root="${NATIVE_GUEST_FRAMEWORK_ROOT:-$(python3 - "$repo_dir/Dependencies/native-macos/sdk.lock.json" "$repo_dir" <<'PYLOCK'
+framework_root="${NATIVE_GUEST_FRAMEWORK_ROOT:-$(python3 - "$repo_dir/Dependencies/native-macos/sdk.unified.lock.json" "$repo_dir" <<'PYLOCK'
 import json, pathlib, sys
 print(pathlib.Path(sys.argv[2]) / json.loads(pathlib.Path(sys.argv[1]).read_text())['destination'])
 PYLOCK
@@ -75,19 +75,46 @@ print('Meeting fixture framework SHA256: ' + actual)
 PYVERIFY
 module_maps="$livekit_dir/out/Intermediates.noindex/GeneratedModuleMaps"
 sources=()
-for file in "$repo_dir"/Experiments/NativeGuest/*.swift; do
-    case "$file" in */Main.swift|*/GuestCompanionPeer.swift) continue ;; esac
+for file in "$repo_dir"/MeetingEngine/Sources/MeetingEngine/Providers/Guest/*.swift; do
+    case "$(basename -- "$file")" in
+        GuestAdapter.swift|GuestFeatureServices.swift|VendorEndpointResolver.swift|AdditionalRootTrust.swift|GuestSiteLinkAdapter.swift) continue ;;
+    esac
     sources+=("$file")
 done
+cat > "$build_dir/ConferenceCoreShims.swift" <<'PYSHIM'
+import ConferenceCore
+import Foundation
+
+public func L(_ key: String, _ arguments: CVarArg...) -> String {
+    Localization.text(key, arguments: arguments)
+}
+
+public func probeLog(_ event: String, _ fields: [String: Any] = [:]) {
+    ConferenceCore.probeLog(event, fields)
+}
+
+public func probeSafe(_ value: Any) -> Any {
+    ConferenceCore.probeSafe(value)
+}
+
+public func probeLogHistory() -> [String] {
+    ConferenceCore.probeLogHistory()
+}
+
+public func setProbeLogSink(_ value: ((String) -> Void)?) {
+    ConferenceCore.setProbeLogSink(value)
+}
+PYSHIM
 sources+=(
-    "$source_dir/Engines/MeetingAudioSource.swift"
-    "$source_dir/Engines/NativeDesktopExternalEngine.swift"
-    "$source_dir/Engines/SharedAudioEngine.swift"
-    "$source_dir/Engines/SharedAudioEngine+LiveKit.swift"
-    "$repo_dir/Shared/GuestAudioOwnerLease.swift"
-    "$repo_dir/Shared/GuestAudioProfile.swift"
-    "$repo_dir/Shared/Localization.swift"
-    "$repo_dir/RockNRoll/NativeVideoPixelBuffer.swift"
+    "$build_dir/ConferenceCoreShims.swift"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/MeetingAudioSource.swift"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/NativeDesktopExternalEngine.swift"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/SharedAudioEngine.swift"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/SharedAudioEngine+LiveKit.swift"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/GuestAudioOwnerLease.swift"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/GuestAudioProfile.swift"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/SyntheticVoiceReplyPlayer.swift"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/NativeVideoPixelBuffer.swift"
 )
 extra_objects=()
 compiler_flags=()
@@ -96,78 +123,78 @@ case "$suite" in
         # The private lease fixture exercises the explicitly selected compatibility path.
         compiler_flags+=(-D NATIVE_LEGACY_AUDIO)
         sources+=(
-            "$source_dir/Engines/NativeDesktopRockPolicies.swift"
-            "$source_dir/MeetingEngine/Core/MeetingSessionContracts.swift"
-            "$source_dir/MeetingEngine/Core/MeetingProviderAdapter.swift"
-            "$source_dir/MeetingEngine/Features/MeetingFeatureServices.swift"
-            "$source_dir/MeetingEngine/Media/MeetingMediaHandles.swift"
-            "$source_dir/MeetingEngine/Providers/Rock/RockAudioBridge.swift"
-            "$source_dir/MeetingEngine/Providers/Rock/RockMediaBridges.swift"
-            "$source_dir/MeetingEngine/Providers/Rock/RockAdapter.swift"
-            "$source_dir/MeetingLibrary/MeetingWorkspaceEvent.swift"
-            "$repo_dir/RockNRoll/VideoSubscriptionCoordinator.swift"
-            "$repo_dir/RockNRoll/JamService.swift"
-            "$repo_dir/RockNRoll/ChatStore.swift"
-            "$repo_dir/RockNRoll/ReactionHistoryStore.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/NativeDesktopRockPolicies.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Core/MeetingSessionContracts.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Core/MeetingProviderAdapter.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Features/MeetingFeatureServices.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/MeetingMediaHandles.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Rock/RockAudioBridge.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Rock/RockMediaBridges.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Rock/RockAdapter.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Core/MeetingWorkspaceEvent.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Features/VideoSubscriptionCoordinator.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Rock/JamService.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Features/ChatStore.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Features/ReactionHistoryStore.swift"
             "$source_dir/Tests/NativeDesktopRockEngineTests.swift"
         )
         ;;
     external)
         sources+=(
-            "$source_dir/Engines/NativeDesktopRTCPeer.swift"
-            "$source_dir/Engines/SharedGuestMeetingAudio.swift"
-            "$source_dir/MeetingEngine/Core/MeetingSessionContracts.swift"
-            "$source_dir/MeetingEngine/Core/MeetingProviderAdapter.swift"
-            "$source_dir/MeetingEngine/Core/MeetingSession.swift"
-            "$source_dir/MeetingEngine/Features/MeetingFeatureServices.swift"
-            "$source_dir/MeetingEngine/Media/MeetingMediaHandles.swift"
-            "$source_dir/MeetingEngine/Media/NativePeerOperations.swift"
-            "$source_dir/MeetingEngine/Providers/Telemost/TelemostAdapter.swift"
-            "$source_dir/MeetingEngine/Providers/TrueConf/TrueConfAdapter.swift"
-            "$source_dir/MeetingLibrary/MeetingWorkspaceEvent.swift"
-            "$repo_dir/RockNRoll/ChatStore.swift"
-            "$repo_dir/RockNRoll/ReactionHistoryStore.swift"
-            "$repo_dir/RockNRoll/Telemost/TelemostBootstrap.swift"
-            "$repo_dir/RockNRoll/Telemost/TelemostTransport.swift"
-            "$repo_dir/RockNRoll/Telemost/TelemostChat.swift"
-            "$repo_dir/RockNRoll/Telemost/TelemostChatWire.swift"
-            "$repo_dir/RockNRoll/TrueConf/TrueConfBootstrap.swift"
-            "$repo_dir/RockNRoll/TrueConf/TrueConfTransport.swift"
-            "$repo_dir/RockNRoll/TrueConf/TrueConfRoster.swift"
-            "$repo_dir/RockNRoll/VendorIntegration/AdditionalRootTrust.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/NativeDesktopRTCPeer.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/SharedGuestMeetingAudio.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Core/MeetingSessionContracts.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Core/MeetingProviderAdapter.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Core/MeetingSession.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Features/MeetingFeatureServices.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/MeetingMediaHandles.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/NativePeerOperations.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Telemost/TelemostAdapter.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/TrueConf/TrueConfAdapter.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Core/MeetingWorkspaceEvent.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Features/ChatStore.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Features/ReactionHistoryStore.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Telemost/TelemostBootstrap.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Telemost/TelemostTransport.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Telemost/TelemostChat.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Telemost/TelemostChatWire.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/TrueConf/TrueConfBootstrap.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/TrueConf/TrueConfTransport.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/TrueConf/TrueConfRoster.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Providers/Guest/AdditionalRootTrust.swift"
             "$source_dir/Tests/ExternalEngineProtocolTests.swift"
         )
         ;;
     presenter)
         bridge_obj="$build_dir/MacScreenCaptureBridge.o"
-        xcrun clang -fobjc-arc -target arm64-apple-macos13.0 -c "$repo_dir/RockNRoll/MacScreenCaptureBridge.m" -o "$bridge_obj"
+        xcrun clang -fobjc-arc -target arm64-apple-macos13.0 -c "$source_dir/MacScreenCaptureBridge.m" -o "$bridge_obj"
         extra_objects+=("$bridge_obj")
-        compiler_flags+=(-D DEBUG -import-objc-header "$repo_dir/RockNRoll/MacScreenCaptureBridge.h" -framework CoreMedia)
+        compiler_flags+=(-D DEBUG -import-objc-header "$source_dir/MacScreenCaptureBridge.h" -framework CoreMedia)
         sources+=(
-            "$source_dir/Engines/NativeDesktopRTCPeer.swift"
-            "$repo_dir/RockNRoll/PresenterCompositor.swift"
-            "$repo_dir/RockNRoll/PresenterCanvasEdit.swift"
-            "$repo_dir/RockNRoll/H264InputColorSignalling.swift"
-            "$repo_dir/RockNRoll/VendorIntegration/H264ColorSignalling.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/NativeDesktopRTCPeer.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/PresenterCompositor.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/PresenterCanvasEdit.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/H264InputColorSignalling.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/H264ColorSignalling.swift"
             "$source_dir/DesktopShareCapture.swift"
             "$source_dir/DesktopPresenterSession.swift"
-            "$source_dir/DesktopPresenterRelay.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/DesktopPresenterRelay.swift"
             "$source_dir/DesktopPresenterEditor.swift"
-            "$source_dir/NativeDesktopCameraLease.swift"
-            "$repo_dir/RockNRoll/CameraReactionObserver.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/NativeDesktopCameraLease.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/CameraReactionObserver.swift"
             "$source_dir/Tests/NativeDesktopPresenterTests.swift"
         )
         ;;
     share-capture)
         bridge_obj="$build_dir/MacScreenCaptureBridge.o"
-        xcrun clang -fobjc-arc -target arm64-apple-macos13.0 -c "$repo_dir/RockNRoll/MacScreenCaptureBridge.m" -o "$bridge_obj"
+        xcrun clang -fobjc-arc -target arm64-apple-macos13.0 -c "$source_dir/MacScreenCaptureBridge.m" -o "$bridge_obj"
         extra_objects+=("$bridge_obj")
-        compiler_flags+=(-D DEBUG -import-objc-header "$repo_dir/RockNRoll/MacScreenCaptureBridge.h" -framework CoreMedia)
+        compiler_flags+=(-D DEBUG -import-objc-header "$source_dir/MacScreenCaptureBridge.h" -framework CoreMedia)
         sources+=(
-            "$source_dir/Engines/NativeDesktopRTCPeer.swift"
-            "$repo_dir/RockNRoll/PresenterCompositor.swift"
-            "$repo_dir/RockNRoll/H264InputColorSignalling.swift"
-            "$repo_dir/RockNRoll/VendorIntegration/H264ColorSignalling.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/NativeDesktopRTCPeer.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/PresenterCompositor.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/H264InputColorSignalling.swift"
+            "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/H264ColorSignalling.swift"
             "$source_dir/DesktopShareCapture.swift"
             "$source_dir/Tests/NativeDesktopShareCaptureTests.swift"
         )

@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Manual (user-initiated) Markdown export: rendering, file naming, worklog order.

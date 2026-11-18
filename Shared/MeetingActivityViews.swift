@@ -1,3 +1,4 @@
+import ConferenceCore
 import SwiftUI
 
 @available(iOS 16.2, *)
@@ -30,14 +31,32 @@ struct MeetingActivityDetails: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if typeSize.isAccessibilitySize {
-                Text(stale || state.connection != .connected ? state.connectionLabel(stale: stale)
-                     : state.title ?? L("Meeting in progress"))
-                    .font(.caption.weight(.medium)).lineLimit(1)
-                    .privacySensitive(!stale && state.connection == .connected && state.title != nil)
+                HStack(spacing: 4) {
+                    Text(stale || state.connection != .connected ? state.connectionLabel(stale: stale)
+                         : state.title ?? L("Meeting in progress"))
+                        .font(.caption.weight(.medium)).lineLimit(1)
+                        .privacySensitive(!stale && state.connection == .connected && state.title != nil)
+                    if state.additionalMeetingCount > 0 {
+                        Text("+\(state.additionalMeetingCount)")
+                            .font(.caption2.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.orange)
+                    }
+                }
                 MeetingActivityMicrophone(state: state, stale: stale)
             } else {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("Rock’n’Roll").font(.caption.weight(.medium)).foregroundStyle(.orange)
+                    if state.additionalMeetingCount > 0 {
+                        Text("+\(state.additionalMeetingCount)")
+                            .font(.caption2.weight(.semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.18), in: Capsule())
+                            .foregroundStyle(.orange)
+                            .accessibilityIdentifier("activity.additional-meetings")
+                    }
                     Spacer(minLength: 8)
                     MeetingActivityMicrophone(state: state, stale: stale)
                 }

@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 final class ICEEndpointDiagnosticTests: XCTestCase {

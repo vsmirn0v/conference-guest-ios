@@ -111,8 +111,7 @@ final class VideoPreviewPacingTests: XCTestCase {
         let native = try XCTUnwrap(view.subviews.first { $0 is CameraCapturePreviewView } as? CameraCapturePreviewView)
         let layer = try XCTUnwrap(native.layer as? AVCaptureVideoPreviewLayer)
         XCTAssertTrue(native.sourceSessionForTesting === session)
-        if ProcessInfo.processInfo.isiOSAppOnMac { XCTAssertNil(layer.session) }
-        else { XCTAssertTrue(layer.session === session) }
+        XCTAssertTrue(layer.session === session)
         XCTAssertTrue(source.wantsFrames); XCTAssertEqual(source.frameRate, 30)
         XCTAssertFalse(session.isRunning, "Preview borrows capture ownership")
         view.isEnabled = false
@@ -136,41 +135,6 @@ final class VideoPreviewPacingTests: XCTestCase {
         XCTAssertTrue(surface.subviews.first === first)
         surface.clear()
         XCTAssertTrue(surface.subviews.isEmpty)
-    }
-
-    func testMacRawPreviewRendersDuringUIStallAndRetiresWithoutGraphChanges() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac raw preview path") }
-        let session = AVCaptureSession()
-        let source = CameraCapturePreview(session: session, device: nil, budget: MediaEnergyBudget(observeSystem: false))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
-        window.rootViewController = UIViewController(); window.isHidden = false
-        let preview = source.makeView(); preview.frame = window.bounds
-        window.rootViewController?.view.addSubview(preview); preview.layoutIfNeeded()
-        defer { preview.stop(); window.isHidden = true }
-        XCTAssertNil((preview.layer as? AVCaptureVideoPreviewLayer)?.session)
-        XCTAssertTrue(source.session.connections.isEmpty)
-        let frames = PreviewFrames(), delivery = try XCTUnwrap(preview.frameDeliveryForTesting)
-        delivery.onEnqueuedForTesting = { _, accepted in if accepted { frames.record() } }
-        var pixels: CVPixelBuffer?
-        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 16, 8, kCVPixelFormatType_32BGRA,
-            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
-        let input = try XCTUnwrap(pixels), bus = source.frames
-        let queue = DispatchQueue(label: "test.mac.preview.capture"), start = DispatchTime.now()
-        for index in 0..<6 { queue.asyncAfter(deadline: start + Double(index) / 30) { bus.render(input, rotation: 0) } }
-        blockUI(for: 0.25)
-        XCTAssertGreaterThanOrEqual(frames.times.count, 5, "Preview rendering must continue while UI is busy")
-        XCTAssertTrue(frames.offMain)
-        await Task.yield()
-        XCTAssertTrue(preview.hasDisplayedFrameForTesting)
-        preview.stop()
-        let count = frames.times.count
-        bus.render(input, rotation: 0)
-        try await Task.sleep(nanoseconds: 60_000_000)
-        XCTAssertEqual(frames.times.count, count, "Retirement rejects late camera frames")
-        XCTAssertFalse(source.wantsFrames)
-        XCTAssertTrue(source.session.connections.isEmpty)
-        XCTAssertTrue(source.session.outputs.isEmpty)
-        XCTAssertFalse(session.isRunning)
     }
 
     func testFloatingRawFramesPrimeOnceAndRetireWithoutAnotherCaptureOutput() async throws {
@@ -198,77 +162,5 @@ final class VideoPreviewPacingTests: XCTestCase {
         try await Task.sleep(nanoseconds: 60_000_000)
         XCTAssertEqual(delivered, 2); XCTAssertFalse(frames.hasSinks)
         XCTAssertEqual(source.frameRate, 0); XCTAssertTrue(source.session.outputs.isEmpty)
-    }
-
-    func testRealCameraPreviewUsesThirtyFPSAndRestoresPublishingCadence() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac,
-              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1" else {
-            throw XCTSkip("Opt-in real Mac camera qualification")
-        }
-        let peer = try NativeRTCPeer(target: "PREVIEW_CADENCE", factory: NativeRTCPeer.makeFactory(), ice: [])
-        peer.preferredCameraDevice = CameraDevices.available().first { $0.deviceType == .builtInWideAngleCamera }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
-        window.rootViewController = UIViewController(); window.isHidden = false
-        let view = CallVideoView(); view.frame = window.bounds
-        window.rootViewController?.view.addSubview(view)
-        do {
-            try await peer.setCamera(true)
-            let source = try XCTUnwrap(peer.cameraPreview)
-            let outputs = source.session.outputs.compactMap { $0 as? AVCaptureVideoDataOutput }
-            XCTAssertFalse(outputs.isEmpty)
-            XCTAssertTrue(outputs.allSatisfy(\.alwaysDiscardsLateVideoFrames))
-            let bindingStart = ProcessInfo.processInfo.systemUptime
-            view.track = .cameraPreview(source)
-            view.isMirrored = true; view.layoutIfNeeded()
-            let second = source.makeView()
-            second.frame = CGRect(x: 0, y: 0, width: 160, height: 120)
-            window.rootViewController?.view.addSubview(second); second.layoutIfNeeded()
-            let first = try XCTUnwrap(view.subviews.first { $0 is CameraCapturePreviewView } as? CameraCapturePreviewView)
-            XCTAssertTrue(first.sourceSessionForTesting === source.session)
-            XCTAssertNil((first.layer as? AVCaptureVideoPreviewLayer)?.session,
-                "Mac preview must not synchronously attach a native capture connection")
-            let bindingCost = ProcessInfo.processInfo.systemUptime - bindingStart
-            print("MAC_PREVIEW_BIND_MS=\(bindingCost * 1000)")
-            XCTAssertLessThan(bindingCost, 0.25, "A borrowed preview must not wait for capture graph reconfiguration")
-            let displayed = PreviewFrames()
-            try XCTUnwrap(first.frameDeliveryForTesting).onEnqueuedForTesting = { _, accepted in
-                if accepted { displayed.record() }
-            }
-            XCTAssertNil((second.layer as? AVCaptureVideoPreviewLayer)?.session,
-                "Secondary preview shares raw capture instead of adding another native connection")
-            try await Task.sleep(nanoseconds: 1_600_000_000)
-            let times = peer.captureTimestampsForTesting.suffix(30)
-            XCTAssertTrue(first.hasDisplayedFrameForTesting)
-            let renderTimes = displayed.times
-            XCTAssertGreaterThan(renderTimes.count, 20, "Measure frames accepted by the renderer, not capture alone")
-            XCTAssertEqual(source.session.outputs.count, outputs.count, "Views reuse the existing capture output")
-            XCTAssertTrue(displayed.offMain, "Mac rendering must not wait on the UI thread")
-            let previewIntervals = zip(renderTimes.dropFirst(), renderTimes).map { $0 - $1 }.sorted()
-            let previewMedian = try XCTUnwrap(previewIntervals.dropFirst(previewIntervals.count / 2).first)
-            print("RAW_PREVIEW_MEDIAN_FRAME_MS=\(previewMedian * 1000)")
-            XCTAssertEqual(previewMedian, 1.0 / 30, accuracy: 0.008)
-            XCTAssertTrue(second.hasDisplayedFrameForTesting, "The secondary Studio surface must show fresh frames")
-            XCTAssertGreaterThan(times.count, 20)
-            guard times.count > 1 else { throw NativeRTCError.invalidResponse }
-            let differences = zip(times.dropFirst(), times).map { Double($0 - $1) / 1_000_000_000 }.sorted()
-            let median = differences[differences.count / 2]
-            print("NATIVE_PREVIEW_MEDIAN_FRAME_MS=\(median * 1000)")
-            print("NATIVE_PREVIEW_DEVICE=\(peer.captureDevice?.localizedName ?? "unknown")")
-            XCTAssertEqual(median, 1.0 / 30, accuracy: 0.006)
-            view.isEnabled = false
-            second.stop(); second.removeFromSuperview()
-            try await Task.sleep(nanoseconds: 250_000_000)
-            let duration = try XCTUnwrap(peer.captureDevice).activeVideoMinFrameDuration
-            XCTAssertGreaterThanOrEqual(CMTimeGetSeconds(duration), 1.0 / 24 - 0.001,
-                "Hidden preview must restore the outgoing 20/24 fps budget")
-            let retirementStart = ProcessInfo.processInfo.systemUptime
-            view.track = nil
-            let retirementCost = ProcessInfo.processInfo.systemUptime - retirementStart
-            print("MAC_PREVIEW_RETIRE_MS=\(retirementCost * 1000)")
-            XCTAssertLessThan(retirementCost, 0.25)
-            window.isHidden = true
-            await peer.close()
-            XCTAssertFalse(source.session.isRunning)
-        } catch { view.track = nil; window.isHidden = true; await peer.close(); throw error }
     }
 }

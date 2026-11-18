@@ -193,32 +193,20 @@ final class MeetingChromeSurfaceTests: XCTestCase {
         XCTAssertEqual(actions, 2)
     }
 
-    func testBothCallImplementationsKeepPickerOverlaysClear() throws {
+    func testCallImplementationKeepsPickerOverlaysClear() throws {
         let native = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
         native.loadViewIfNeeded()
-        let guest = CallControls(localPreview: LocalSharePreview(), state: nil, coordinator: nil,
-            router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: .all,
-            invitationURL: nil, roomIdentifier: "fixture", onDisplayMode: { _ in }, onFloat: {},
-            onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
-            onMicrophoneState: { _ in }, onCameraState: { _ in })
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-        let window = UIWindow(windowScene: scene), host = UIViewController()
-        window.rootViewController = host; window.isHidden = false
-        defer { window.isHidden = true }
-        guest.frame = host.view.bounds; host.view.addSubview(guest)
-        for root in [native.view!, host.view!] {
-            let toolbar = try XCTUnwrap(descendants(root).compactMap { $0 as? CallToolbar }.first)
-            let items = toolbar.accessibilityElements?.compactMap { $0 as? UIView } ?? []
-            XCTAssertEqual(items.count, 6)
-            let route = items[2]
-            if let artwork = route.subviews.compactMap({ $0 as? AlignedCallButton }).first {
-                XCTAssertEqual(artwork.backgroundColor?.cgColor.alpha ?? 0, 0)
-                XCTAssertFalse(artwork.isUserInteractionEnabled)
-                XCTAssertTrue(artwork.accessibilityElementsHidden)
-                XCTAssertTrue(route.subviews.contains { $0.layer.mask?.opacity == 0 })
-            } else { XCTAssertTrue(descendants(route).contains { $0 is MacAudioRouteButton }) }
-        }
-        var expectsLegacy = !ProcessInfo.processInfo.isiOSAppOnMac
+        let root = try XCTUnwrap(native.view)
+        let toolbar = try XCTUnwrap(descendants(root).compactMap { $0 as? CallToolbar }.first)
+        let items = toolbar.accessibilityElements?.compactMap { $0 as? UIView } ?? []
+        XCTAssertEqual(items.count, 6)
+        let route = items[2]
+        let artwork = try XCTUnwrap(route.subviews.compactMap { $0 as? AlignedCallButton }.first)
+        XCTAssertEqual(artwork.backgroundColor?.cgColor.alpha ?? 0, 0)
+        XCTAssertFalse(artwork.isUserInteractionEnabled)
+        XCTAssertTrue(artwork.accessibilityElementsHidden)
+        XCTAssertTrue(route.subviews.contains { $0.layer.mask?.opacity == 0 })
+        var expectsLegacy = true
         if #available(iOS 27.0, *) { expectsLegacy = false }
         let broadcast = try XCTUnwrap(descendants(native.view).compactMap { $0 as? RPSystemBroadcastPickerView }.first)
         XCTAssertEqual(!broadcast.isHidden, expectsLegacy)
@@ -231,40 +219,6 @@ final class MeetingChromeSurfaceTests: XCTestCase {
                 .first { !$0.isHidden && $0.isUserInteractionEnabled })
             XCTAssertEqual(share.accessibilityLabel, L("Share screen"))
         }
-    }
-
-    func testNativeMacAudioButtonPresentsActualDevicePicker() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac audio picker") }
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let previous = scene.windows.first { $0.isKeyWindow }
-        let window = UIWindow(windowScene: scene)
-        let call = RockCallViewController(title: "Audio picker qualification", catchUp: CatchUpStore(), chat: ChatStore())
-        window.rootViewController = call; window.makeKeyAndVisible()
-        defer { window.isHidden = true; previous?.makeKey() }
-        let route = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MacAudioRouteButton }.first)
-        XCTAssertEqual(route.layer.mask?.opacity, 0)
-        route.sendActions(for: .touchUpInside)
-        for _ in 0..<100 where call.presentedViewController == nil {
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        let navigation = try XCTUnwrap(call.presentedViewController as? UINavigationController)
-        let picker = try XCTUnwrap(navigation.topViewController as? MacAudioDevicePicker)
-        picker.loadViewIfNeeded(); picker.tableView.layoutIfNeeded()
-        for _ in 0..<100 where navigation.isBeingPresented || picker.view.window == nil {
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        XCTAssertFalse(navigation.isBeingPresented)
-        XCTAssertNotNil(picker.view.window)
-        XCTAssertFalse(picker.tableView.visibleCells.isEmpty)
-        XCTAssertEqual(picker.tableView.numberOfSections, 2)
-        XCTAssertGreaterThan(picker.tableView.numberOfRows(inSection: 0), 0)
-        XCTAssertGreaterThan(picker.tableView.numberOfRows(inSection: 1), 0)
-        let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-        })
-        attachment.name = "Native Mac audio picker from masked control"
-        attachment.lifetime = .keepAlways; add(attachment)
-        navigation.dismiss(animated: false)
     }
 
     /// Run twice with MEETING_CHROME_PROFILE=1, then with MEETING_CHROME_SOLID=1.

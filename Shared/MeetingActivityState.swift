@@ -1,3 +1,4 @@
+import ConferenceCore
 import Foundation
 
 /// Only presentation data crosses into the widget. No invitation or participant identity.
@@ -9,6 +10,31 @@ struct MeetingActivityState: Codable, Hashable, Sendable {
     var microphone: Microphone
     var title: String?
     var route: String?
+    var additionalMeetingCount: Int = 0
+
+    init(startedAt: Date,
+         connection: Connection,
+         microphone: Microphone,
+         title: String?,
+         route: String?,
+         additionalMeetingCount: Int = 0) {
+        self.startedAt = startedAt
+        self.connection = connection
+        self.microphone = microphone
+        self.title = title
+        self.route = route
+        self.additionalMeetingCount = max(0, additionalMeetingCount)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        connection = try container.decode(Connection.self, forKey: .connection)
+        microphone = try container.decode(Microphone.self, forKey: .microphone)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        route = try container.decodeIfPresent(String.self, forKey: .route)
+        additionalMeetingCount = max(0, try container.decodeIfPresent(Int.self, forKey: .additionalMeetingCount) ?? 0)
+    }
 
     func microphoneSymbol(stale: Bool) -> String {
         guard !stale else { return "questionmark.circle" }

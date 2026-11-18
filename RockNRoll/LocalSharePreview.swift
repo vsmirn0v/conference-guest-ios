@@ -33,7 +33,7 @@ final class LocalSharePreview: ObservableObject {
     private var observations: [NSObjectProtocol] = []
     let isMac: Bool
 
-    init(isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac, observeLifecycle: Bool = true) {
+    init(isMac: Bool = false, observeLifecycle: Bool = true) {
         self.isMac = isMac
         if observeLifecycle {
             foreground = UIApplication.shared.applicationState != .background
@@ -50,12 +50,20 @@ final class LocalSharePreview: ObservableObject {
         guard active, !hidden, !editorVisible else { return false }
         if refreshRequested { return true }
         if source == .presenter { return foreground && !paused }
-        if !isMac { return !foreground }
+        if !isMac {
+            if !foreground { return true }
+            return !paused && !enlarged && ownSceneIsNotCaptured?() == true
+        }
         // The compact thumbnail shrinks recursion rather than amplifying it.
         // Enlarging a captured/unknown scene pauses the feedback loop.
         return foreground && !paused && (!enlarged || ownSceneIsNotCaptured?() == true)
     }
 
+    func updateSource(_ source: Source) {
+        guard self.source != source else { return }
+        self.source = source
+        refreshPolicy()
+    }
     func togglePaused() { paused.toggle(); refreshPolicy() }
     func setEditorVisible(_ value: Bool) { editorVisible = value; refreshPolicy() }
     func setEnlarged(_ value: Bool) { enlarged = value; refreshPolicy() }
@@ -95,7 +103,8 @@ final class LocalSharePreview: ObservableObject {
     }
 
     func refreshPolicy() {
-        let nowLive = active && foreground && (isMac || source == .presenter) && !hidden && !paused && !editorVisible &&
+        let iosExternalLive = !isMac && ownSceneIsNotCaptured?() == true && !enlarged
+        let nowLive = active && foreground && (isMac || source == .presenter || iosExternalLive) && !hidden && !paused && !editorVisible &&
             (source == .presenter || !enlarged || ownSceneIsNotCaptured?() == true)
         if live != nowLive { live = nowLive }
         let wanted = acceptsFrames
@@ -308,6 +317,7 @@ final class LocalSharePreviewCard: UIView {
     override func didMoveToWindow() { super.didMoveToWindow(); model.refreshPolicy(); refreshLayout() }
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
+        model.refreshPolicy()
         refreshLayout()
     }
 
@@ -327,8 +337,8 @@ final class LocalSharePreviewCard: UIView {
         visibility.setImage(UIImage(systemName: model.hidden ? "eye" : "eye.slash"), for: .normal)
         visibility.accessibilityLabel = model.hidden ? L("Show local preview") : L("Hide local preview")
         if model.image == nil {
-            let hint = model.isMac ? (model.live ? L("Waiting for preview…") : L("Preview paused to avoid repetition")) :
-                L("Switch apps to share content")
+            let hint = model.live ? L("Waiting for preview…") :
+                (model.isMac ? L("Preview paused to avoid repetition") : L("Switch apps to share content"))
             detail.text = "\(model.source.title)\n\(hint)"
         } else {
             detail.text = model.live ? L("%@ · Live preview", model.source.title) :

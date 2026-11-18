@@ -1,0 +1,71 @@
+diff --git a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+index 1111111..2222222 100644
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+@@ -73,10 +73,7 @@
+ #import "sdk/objc/native/api/audio_device_module.h"
+ #endif
+ 
+-#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+-// Native AppKit uses AudioEngine/ObjC/custom/legacy ADM paths, all of which
+-// converge at AudioDeviceBuffer. The iOS device implementation remains separate.
++// Native AppKit and iOS ADM capture paths converge at AudioDeviceBuffer.
+ void RTC_OBJC_TYPE(RTCSetApplicationCaptureMuted)(int muted) {
+   webrtc::SetApplicationCaptureMuted(muted != 0);
+ }
+@@ -89,6 +86,8 @@ uint64_t RTC_OBJC_TYPE(RTCApplicationCaptureState)() {
+ BOOL RTC_OBJC_TYPE(RTCUnmuteApplicationCaptureIfState)(uint64_t expected_state) {
+   return webrtc::UnmuteApplicationCaptureIfState(expected_state);
+ }
++
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
+ void RTC_OBJC_TYPE(RTCSetApplicationInputMuteIntent)(int muted) {
+   webrtc::mac_adm::SetApplicationInputMuteIntent(muted);
+ }
+diff --git a/sdk/objc/native/src/audio/audio_device_ios.mm b/sdk/objc/native/src/audio/audio_device_ios.mm
+index 1111111..2222222 100644
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -24,6 +24,7 @@
+ #include "api/task_queue/pending_task_safety_flag.h"
+ #include "api/units/time_delta.h"
+ #include "helpers.h"
++#include "modules/audio_device/audio_device_buffer.h"
+ #include "modules/audio_device/fine_audio_buffer.h"
+ #include "rtc_base/checks.h"
+ #include "rtc_base/logging.h"
+@@ -39,7 +40,6 @@
+ #import "helpers/AudioTimeStamp+Nanoseconds.h"
+ 
+ namespace {
+-std::atomic<bool> mac_application_capture_muted{false};
+ bool IsIOSAppOnMac() {
+   if (@available(iOS 14.0, *)) {
+     return [NSProcessInfo processInfo].isiOSAppOnMac;
+@@ -75,15 +75,6 @@ void ScheduleApplicationInputMuteRestore(int delay_ms = 0) {
+ }
+ }
+ 
+-// macOS delegates per-application input muting to the app. This gate must
+-// complete synchronously on its accessory callback, without a main/worker hop.
+-void RTC_OBJC_TYPE(RTCSetApplicationCaptureMuted)(int muted) {
+-  mac_application_capture_muted.store(muted != 0, std::memory_order_release);
+-}
+-int RTC_OBJC_TYPE(RTCApplicationCaptureMuted)() {
+-  return mac_application_capture_muted.load(std::memory_order_acquire) ? 1 : 0;
+-}
+-
+ void RTC_OBJC_TYPE(RTCSetApplicationInputMuteIntent)(int muted) {
+   // ApplicationMicrophoneMute serializes ownership and platform writes on main.
+   RTC_DCHECK([NSThread isMainThread]);
+@@ -508,8 +499,8 @@ static void LogDeviceInfo() {
+   RTC_DCHECK_RUN_ON(&io_thread_checker_);
+   OSStatus result = noErr;
+-  // Simply return if recording is not enabled.
++  // Simply return if recording is not enabled or capture is gated closed.
+   if (!recording_.load(std::memory_order_acquire) ||
+-      mac_application_capture_muted.load(std::memory_order_acquire)) return result;
++      (webrtc::ApplicationCaptureState() & 1) != 0) return result;
+ 
+   // Set the size of our own audio buffer and clear it first to avoid copying
+   // in combination with potential reallocations.

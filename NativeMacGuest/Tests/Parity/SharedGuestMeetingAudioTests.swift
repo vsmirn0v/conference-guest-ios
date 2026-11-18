@@ -2,6 +2,7 @@ import AVFoundation
 import LiveKit
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// R4 S2: Guest meetings on the shared engine through `GuestMeetingAudio`, on the real

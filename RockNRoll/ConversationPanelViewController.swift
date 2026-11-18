@@ -33,6 +33,12 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private let activityFilterButton = UIButton(type: .system)
     private let reactionHistoryInfo = UIButton(type: .system)
     private let activityTools = UIStackView()
+    private let transcriptToolsScroll = UIScrollView()
+    private let transcriptTools = UIStackView()
+    private let transcriptToggleButton = UIButton(type: .system)
+    private let transcriptHistoryButton = UIButton(type: .system)
+    private let transcriptSettingsButton = UIButton(type: .system)
+    private let voiceReplyButton = UIButton(type: .system)
     private let reactionsButton = UIButton(type: .system)
     private var reactionToolsPresented = false
     private var activityFilter: ConversationActivityFilter
@@ -150,7 +156,77 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         activityTools.heightAnchor.constraint(equalToConstant: 44).withPriority(.defaultHigh).isActive = true
         activityTools.addArrangedSubview(activityFilterButton)
         activityTools.addArrangedSubview(reactionHistoryInfo)
-        let column = UIStackView(arrangedSubviews: [header, mode, activityTools, content, footer, callStrip])
+
+        transcriptTools.axis = .horizontal
+        transcriptTools.spacing = 8
+        transcriptTools.alignment = .center
+        transcriptTools.translatesAutoresizingMaskIntoConstraints = false
+        transcriptToolsScroll.showsHorizontalScrollIndicator = false
+        transcriptToolsScroll.setContentHuggingPriority(.required, for: .vertical)
+        transcriptToolsScroll.heightAnchor.constraint(equalToConstant: 38).withPriority(.defaultHigh).isActive = true
+        transcriptToolsScroll.addSubview(transcriptTools)
+        NSLayoutConstraint.activate([
+            transcriptTools.leadingAnchor.constraint(equalTo: transcriptToolsScroll.contentLayoutGuide.leadingAnchor),
+            transcriptTools.trailingAnchor.constraint(equalTo: transcriptToolsScroll.contentLayoutGuide.trailingAnchor),
+            transcriptTools.topAnchor.constraint(equalTo: transcriptToolsScroll.contentLayoutGuide.topAnchor),
+            transcriptTools.bottomAnchor.constraint(equalTo: transcriptToolsScroll.contentLayoutGuide.bottomAnchor),
+            transcriptTools.heightAnchor.constraint(equalTo: transcriptToolsScroll.frameLayoutGuide.heightAnchor)
+        ])
+
+        var toggleConfig = UIButton.Configuration.bordered()
+        toggleConfig.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10)
+        toggleConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var result = attributes; result.font = UIFont.preferredFont(forTextStyle: .footnote); return result
+        }
+        transcriptToggleButton.configuration = toggleConfig
+        transcriptToggleButton.accessibilityIdentifier = "transcript.toggle"
+        transcriptToggleButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.catchUp.onSetTranscriptionEnabled?(!self.catchUp.transcriptionEnabled)
+        }, for: .touchUpInside)
+
+        var historyConfig = UIButton.Configuration.plain()
+        historyConfig.title = L("Load meeting transcript")
+        historyConfig.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
+        historyConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var result = attributes; result.font = UIFont.preferredFont(forTextStyle: .footnote); return result
+        }
+        transcriptHistoryButton.configuration = historyConfig
+        transcriptHistoryButton.accessibilityIdentifier = "transcript.load-history"
+        transcriptHistoryButton.addAction(UIAction { [weak self] _ in
+            self?.catchUp.onLoadTranscriptHistory?()
+        }, for: .touchUpInside)
+
+        var voiceConfig = UIButton.Configuration.bordered()
+        voiceConfig.title = L("Voice reply")
+        voiceConfig.image = UIImage(systemName: "waveform.and.mic")
+        voiceConfig.imagePadding = 4
+        voiceConfig.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
+        voiceConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var result = attributes; result.font = UIFont.preferredFont(forTextStyle: .footnote); return result
+        }
+        voiceReplyButton.configuration = voiceConfig
+        voiceReplyButton.accessibilityIdentifier = "conversation.voice-reply"
+        voiceReplyButton.addAction(UIAction { [weak self] _ in
+            self?.call?.openVoiceReply?()
+        }, for: .touchUpInside)
+
+        var settingsConfig = UIButton.Configuration.bordered()
+        settingsConfig.image = UIImage(systemName: "gearshape")
+        settingsConfig.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
+        transcriptSettingsButton.configuration = settingsConfig
+        transcriptSettingsButton.accessibilityLabel = L("Transcription & voice")
+        transcriptSettingsButton.accessibilityIdentifier = "transcript.settings"
+        transcriptSettingsButton.addAction(UIAction { [weak self] _ in
+            self?.call?.openTranscriptionSettings?()
+        }, for: .touchUpInside)
+
+        transcriptTools.addArrangedSubview(transcriptToggleButton)
+        transcriptTools.addArrangedSubview(transcriptHistoryButton)
+        transcriptTools.addArrangedSubview(voiceReplyButton)
+        transcriptTools.addArrangedSubview(transcriptSettingsButton)
+
+        let column = UIStackView(arrangedSubviews: [header, mode, activityTools, transcriptToolsScroll, content, footer, callStrip])
         column.axis = .vertical
         column.spacing = 6
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -190,6 +266,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         reactionHistoryInfo.accessibilityHint = L("About reaction history")
         reactionHistoryInfo.addAction(UIAction { [weak self] _ in self?.showReactionHistoryInfo() }, for: .touchUpInside)
         updateReactionHistoryInfo()
+        updateTranscriptTools()
         messageList.delegate = self
 
         mode.accessibilityLabel = L("Conversation mode")
@@ -205,7 +282,15 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
                 self.timeline = timeline
                 self.canViewTranscript = canView
                 self.transcriptionEnabled = enabled
+                self.updateTranscriptTools()
                 self.requestContentRender(messages: false)
+            }
+            .store(in: &subscriptions)
+        Publishers.CombineLatest(catchUp.$canManageTranscript, catchUp.$isLoadingTranscriptHistory)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _, _ in
+                self?.updateTranscriptTools()
+                self?.renderMode()
             }
             .store(in: &subscriptions)
         chat.$items.receive(on: DispatchQueue.main)
@@ -641,6 +726,27 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         button.titleLabel?.minimumScaleFactor = 0.8
     }
 
+    private func updateTranscriptTools() {
+        let showToggle = catchUp.canManageTranscript && catchUp.onSetTranscriptionEnabled != nil
+        transcriptToggleButton.isHidden = !showToggle
+        transcriptToggleButton.configuration?.title = catchUp.transcriptionEnabled
+            ? L("Stop transcription")
+            : L("Start transcription")
+        let showHistory = (catchUp.canViewTranscript == true) && catchUp.onLoadTranscriptHistory != nil
+        transcriptHistoryButton.isHidden = !showHistory
+        transcriptHistoryButton.isEnabled = !catchUp.isLoadingTranscriptHistory
+        voiceReplyButton.isHidden = call?.openVoiceReply == nil
+        transcriptSettingsButton.isHidden = call?.openTranscriptionSettings == nil
+        let selected = ConversationMode(rawValue: mode.selectedSegmentIndex) ?? .chat
+        let anyVisible = !transcriptToggleButton.isHidden
+            || !transcriptHistoryButton.isHidden
+            || !voiceReplyButton.isHidden
+            || !transcriptSettingsButton.isHidden
+        let hidden = selected != .liveText || !anyVisible
+        transcriptTools.isHidden = hidden
+        transcriptToolsScroll.isHidden = hidden
+    }
+
     private func renderMode() {
         let selected = ConversationMode(rawValue: mode.selectedSegmentIndex) ?? .chat
         chat.isConversationOpen = selected == .chat && activityFilter != .reactions && panelVisible &&
@@ -648,6 +754,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         activityFilterButton.isHidden = selected != .chat || !chat.reactionHistoryAvailable
         reactionHistoryInfo.isHidden = selected != .chat || activityFilter == .messages || !chat.reactionHistoryAvailable
         activityTools.isHidden = selected != .chat || !chat.reactionHistoryAvailable
+        transcriptTools.isHidden = selected != .liveText || (transcriptToggleButton.isHidden && transcriptHistoryButton.isHidden)
         messageList.isHidden = selected != .chat
         transcript.isHidden = selected != .liveText
         catchUpHost.view.isHidden = selected != .catchUp

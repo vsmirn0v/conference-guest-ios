@@ -5,6 +5,7 @@ import Darwin
 import LiveKitWebRTC
 import MetalKit
 import XCTest
+@testable import MeetingEngine
 @testable import RockNativeDesktop
 
 /// Opt-in, camera/microphone/network-free qualification of the real signed

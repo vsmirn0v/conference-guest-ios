@@ -293,6 +293,85 @@ public final class VoxCPM2Model: Module, SpeechGenerationModel, @unchecked Senda
             reference: reference, continuation: continuation, patches: patches, transcript: transcript, savedTokenIDs: tokenIDs)
     }
 
+    /// Zero-shot speech synthesis using explicit BPE token IDs without a saved voice reference.
+    public func generateZeroShot(text: String, tokenIDs: [Int]? = nil,
+                                 generationParameters: GenerateParameters) async throws -> MaterializedArray {
+        return try await generateInternal(text: text, refAudio: nil, generationParameters: generationParameters, savedTokenIDs: tokenIDs)
+    }
+
+    /// Configures MLX GPU cache recycling limits cleanly from app targets without importing MLX directly.
+    public static func configureMemoryLimit(cacheBytes: Int = 256 * 1024 * 1024) {
+        Memory.cacheLimit = cacheBytes
+    }
+
+    public static func clearMemoryCache() {
+        Memory.clearCache()
+    }
+
+    public func synthesizeZeroShotSamples(text: String, tokenIDs: [Int]? = nil, maxTokens: Int = 256) async throws -> [Float] {
+        let output = try await generateZeroShot(
+            text: text,
+            tokenIDs: tokenIDs,
+            generationParameters: GenerateParameters(maxTokens: maxTokens)
+        )
+        return output.asArray(Float.self)
+    }
+
+    public func synthesizeSavedVoiceSamples(
+        text: String,
+        transcript: String,
+        patches: Int,
+        reference: [Float]?,
+        continuation: [Float]?,
+        tokenIDs: [Int]? = nil,
+        maxTokens: Int = 256
+    ) async throws -> [Float] {
+        let output = try await generateSavedVoice(
+            text: text,
+            transcript: transcript,
+            patches: patches,
+            reference: reference,
+            continuation: continuation,
+            tokenIDs: tokenIDs,
+            generationParameters: GenerateParameters(maxTokens: maxTokens)
+        )
+        return output.asArray(Float.self)
+    }
+
+    /// Encodes 16 kHz mono reference speech into revision-pinned prompt latents for `generateSavedVoice`.
+    public func encodeVoicePromptLatents(
+        samples16k: [Float],
+        includeReference: Bool = true,
+        includeContinuation: Bool = true
+    ) throws -> (patches: Int, reference: [Float]?, continuation: [Float]?) {
+        guard !samples16k.isEmpty, samples16k.allSatisfy(\.isFinite) else {
+            throw AudioGenerationError.invalidInput("Reference audio is empty")
+        }
+        let alignment = patchSize * audioVAE.chunkSize
+        let count = (samples16k.count + alignment - 1) / alignment
+        let maxPos = min(8192, config.lmConfig.maxPositionEmbeddings)
+        guard count > 0, count + 4 < maxPos else {
+            throw AudioGenerationError.invalidInput("Reference audio exceeds model context")
+        }
+        let pad = count * alignment - samples16k.count
+        let encRate = audioVAE.encodeSampleRate
+
+        func encodeAligned(_ aligned16k: [Float]) -> [Float] {
+            let inp = MLXArray(aligned16k).reshaped(1, aligned16k.count, 1)
+            let feat = audioVAE.encode(inp, sampleRate: encRate).squeezed(axis: 0)
+            let expectedFrames = count * patchSize
+            let trimmed = feat.dim(0) > expectedFrames ? feat[0..<expectedFrames] : feat
+            eval(trimmed)
+            let values = trimmed.asArray(Float.self)
+            Memory.clearCache()
+            return values
+        }
+
+        let reference = includeReference ? encodeAligned(samples16k + [Float](repeating: 0, count: pad)) : nil
+        let continuation = includeContinuation ? encodeAligned([Float](repeating: 0, count: pad) + samples16k) : nil
+        return (count, reference, continuation)
+    }
+
     private func generateInternal(text: String, refAudio: MaterializedArray?, generationParameters: GenerateParameters,
         reference: [Float]? = nil, continuation: [Float]? = nil, patches: Int = 0,
         transcript: String = "", savedTokenIDs: [Int]? = nil) async throws -> MaterializedArray {
@@ -626,7 +705,8 @@ public final class VoxCPM2Model: Module, SpeechGenerationModel, @unchecked Senda
 
     public static func fromModelDirectory(
         _ modelDir: URL,
-        hfToken: String?
+        hfToken: String?,
+        loadTokenizer: Bool = true
     ) async throws -> VoxCPM2Model {
         // Load config
         let configURL = modelDir.appendingPathComponent("config.json")
@@ -640,10 +720,14 @@ public final class VoxCPM2Model: Module, SpeechGenerationModel, @unchecked Senda
 
         // Load tokenizer before model construction (tokenizer is let)
         let tokenizer: Tokenizers.Tokenizer?
-        do {
-            tokenizer = try await AutoTokenizer.from(modelFolder: modelDir)
-        } catch {
-            print("[VoxCPM2] Warning: Could not load tokenizer: \(error)")
+        if loadTokenizer {
+            do {
+                tokenizer = try await AutoTokenizer.from(modelFolder: modelDir)
+            } catch {
+                print("[VoxCPM2] Warning: Could not load tokenizer: \(error)")
+                tokenizer = nil
+            }
+        } else {
             tokenizer = nil
         }
 

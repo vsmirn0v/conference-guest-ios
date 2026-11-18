@@ -19,7 +19,12 @@ struct MeetingActivityWidget: Widget {
                         .environment(\.colorScheme, .dark)
                 }
             } compactLeading: {
-                Text("R").font(.caption.weight(.bold)).foregroundStyle(.orange)
+                Text(context.state.additionalMeetingCount > 0
+                     ? "R+\(context.state.additionalMeetingCount)"
+                     : "R")
+                    .font(.caption.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.orange)
             } compactTrailing: {
                 MeetingActivityMicrophone(state: context.state, stale: context.isStale, showsLabel: false)
                     .environment(\.colorScheme, .dark)

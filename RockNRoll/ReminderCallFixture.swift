@@ -5,8 +5,7 @@ import UIKit
 
 /// Uses the real call controls with synthetic calendar data and no media/network.
 final class ReminderCallFixture: UIViewController {
-    private let call: UIViewController = ProcessInfo.processInfo.environment["CONFERENCE_TEST_REMINDER_HOST"] == "guest"
-        ? GuestCallLayoutFixture() : RockCallViewController(title: "Current meeting", catchUp: CatchUpStore(), chat: ChatStore())
+    private let call: RockCallViewController = RockCallViewController(title: "Current meeting", catchUp: CatchUpStore(), chat: ChatStore())
     private var coordinator: CalendarReminderCoordinator?
     private let reminder = MeetingReminderPresenter()
     override func viewDidLoad() {
@@ -26,7 +25,7 @@ final class ReminderCallFixture: UIViewController {
             room: MeetingRoomIdentity(URL(string: "https://salutejazz.ru/calls/current")!, engine: .guest), usable: owner?.presenting == false) }
         owner.onPresentation = { [weak self, weak owner] events in
             guard let self, let owner else { return [] }
-            let endpoint = (call as? RockCallViewController)?.reminderHost ?? (call as? GuestCallLayoutFixture)?.reminderHostForTesting
+            let endpoint = call.reminderHost
             return reminder.render(events, host: endpoint, coordinator: owner)
         }
         owner.onBackground = { [weak self] in self?.reminder.backgrounded() }

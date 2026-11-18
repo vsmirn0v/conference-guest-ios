@@ -33,19 +33,25 @@ final class AudioCoordinator {
     private var outputRecoveryTask: Task<Void, Never>?
     private var outputRecoveryRevision = 0
     private var observers: [NSObjectProtocol] = []
+    private struct RouteSnapshot: Sendable {
+        let outputName: String
+        let builtInSpeaker: Bool?
+        let needsMixingRestore: Bool
+        let debugSummary: String
+    }
+
+    private final class SnapshotBox: @unchecked Sendable {
+        var value: RouteSnapshot?
+        var changed = false
+    }
+
+    private var cachedOutputName: String = L("Audio output")
+    private var cachedBuiltInSpeaker: Bool?
+    private var routeSnapshotRevision = 0
     private var audioWarning: String?
     private var cameraWarning: String?
-    private var macRouteSubscription: AnyCancellable?
 
-    var outputName: String {
-        if ProcessInfo.processInfo.isiOSAppOnMac, let name = MacAudioDevices.shared.snapshot.outputName { return name }
-        guard let output = AVAudioSession.sharedInstance().currentRoute.outputs.first else { return L("Audio output") }
-        switch output.portType {
-        case .builtInSpeaker: return L("Speaker")
-        case .builtInReceiver: return L("iPhone receiver")
-        default: return output.portName
-        }
-    }
+    var outputName: String { cachedOutputName }
 
     init(worker: AudioSessionWorker = .shared,
          prepareSession: (@Sendable () throws -> Void)? = nil,
@@ -59,10 +65,6 @@ final class AudioCoordinator {
         self.restoreMixingSession = restoreMixingSession
         self.recoveryWindow = recoveryWindow; self.recoveryInterval = recoveryInterval
         self.notifications = notifications
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            macRouteSubscription = MacAudioDevices.shared.$snapshot.dropFirst()
-                .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.onRouteChanged?() }
-        }
         let center = notifications
         for name in [AVAudioSession.interruptionNotification,
                      AVAudioSession.routeChangeNotification,
@@ -132,10 +134,9 @@ final class AudioCoordinator {
                     if delay > 0 { try await Task.sleep(for: .milliseconds(delay)) }
                     guard self.lease === expected, expected.isActive,
                           self.outputRecoveryRevision == revision,
-                          let current = self.currentBuiltInSpeaker else { return }
-                    if current != speaker {
-                        try await self.applyBuiltInOutput(speaker: speaker, preservingExternalRoute: true)
-                    }
+                          self.currentBuiltInSpeaker != nil else { return }
+                    try await self.applyBuiltInOutput(speaker: speaker, preservingExternalRoute: true, onlyIfDifferent: true)
+                    guard self.currentBuiltInSpeaker != nil else { return }
                 } catch is CancellationError { return }
                 catch {
                     #if DEBUG
@@ -161,7 +162,59 @@ final class AudioCoordinator {
     }
 
     private var currentBuiltInSpeaker: Bool? {
-        Self.builtInSpeaker(AVAudioSession.sharedInstance())
+        cachedBuiltInSpeaker
+    }
+
+    private func applyRouteSnapshot(_ snapshot: RouteSnapshot) {
+        cachedOutputName = snapshot.outputName
+        cachedBuiltInSpeaker = snapshot.builtInSpeaker
+    }
+
+    private func refreshRouteSnapshot(notify: Bool, after: (@MainActor () -> Void)? = nil) {
+        let expected = lease
+        routeSnapshotRevision &+= 1
+        let revision = routeSnapshotRevision
+        let box = SnapshotBox()
+        worker.enqueue(lease: expected, operation: {
+            box.value = Self.inspectRouteSnapshot()
+        }) { [weak self] result in
+            guard case .success = result, let snapshot = box.value else { return }
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.observingSession,
+                      self.lease === expected,
+                      expected.isActive,
+                      self.routeSnapshotRevision == revision else { return }
+                let previousName = self.cachedOutputName
+                self.applyRouteSnapshot(snapshot)
+                #if DEBUG
+                print("Audio route types: \(snapshot.debugSummary)")
+                #endif
+                after?()
+                if notify && self.cachedOutputName != previousName {
+                    self.onRouteChanged?()
+                }
+            }
+        }
+    }
+
+    private nonisolated static func inspectRouteSnapshot(_ session: AVAudioSession = AVAudioSession.sharedInstance()) -> RouteSnapshot {
+        let outputs = session.currentRoute.outputs
+        let inputs = session.currentRoute.inputs
+        let outputName: String
+        if let first = outputs.first {
+            switch first.portType {
+            case .builtInSpeaker: outputName = L("Speaker")
+            case .builtInReceiver: outputName = L("iPhone receiver")
+            default: outputName = first.portName
+            }
+        } else {
+            outputName = L("Audio output")
+        }
+        let speaker = builtInSpeaker(session)
+        let needsMixing = session.category == .playAndRecord && !session.categoryOptions.contains(.mixWithOthers)
+        let summary = "input=[\(inputs.map { $0.portType.rawValue }.joined(separator: ","))] output=[\(outputs.map { $0.portType.rawValue }.joined(separator: ","))]"
+        return RouteSnapshot(outputName: outputName, builtInSpeaker: speaker, needsMixingRestore: needsMixing, debugSummary: summary)
     }
 
     private nonisolated static func builtInSpeaker(_ session: AVAudioSession) -> Bool? {
@@ -202,10 +255,17 @@ final class AudioCoordinator {
         let expected = lease
         let prepare = preserveCurrentRoute && needsInitialPreparation ? Self.prepareListeningSession :
             needsInitialPreparation ? prepareInitialSession : prepareSession
-        try await worker.perform(lease: expected, operation: prepare)
+        let box = SnapshotBox()
+        try await worker.perform(lease: expected) {
+            try prepare()
+            box.value = Self.inspectRouteSnapshot()
+        }
         guard lease === expected, expected.isActive else { throw CancellationError() }
         needsInitialPreparation = false
         observingSession = true
+        if let snapshot = box.value {
+            applyRouteSnapshot(snapshot)
+        }
         // The call owner activates the session before the SDK starts media.
         audioWarning = nil
         cameraWarning = nil
@@ -220,15 +280,24 @@ final class AudioCoordinator {
         outputRecovery.observe(currentSpeaker: currentBuiltInSpeaker)
     }
 
-    private func applyBuiltInOutput(speaker: Bool, preservingExternalRoute: Bool = false) async throws {
+    private func applyBuiltInOutput(speaker: Bool, preservingExternalRoute: Bool = false, onlyIfDifferent: Bool = false) async throws {
         guard let configuration = configurationLease, configuration.isActive else { throw CancellationError() }
         let expected = lease
         routeLease?.invalidate()
         let request = AudioSessionLease(); routeLease = request
+        let box = SnapshotBox()
         try await worker.perform(lease: request) {
             try expected.check(); try configuration.check()
             let session = AVAudioSession.sharedInstance()
-            if preservingExternalRoute && Self.builtInSpeaker(session) == nil { return }
+            let currentSpeaker = Self.builtInSpeaker(session)
+            if preservingExternalRoute && currentSpeaker == nil {
+                box.value = Self.inspectRouteSnapshot(session)
+                return
+            }
+            if onlyIfDifferent && currentSpeaker == speaker {
+                box.value = Self.inspectRouteSnapshot(session)
+                return
+            }
             var options = session.categoryOptions
             if !speaker { options.remove(.defaultToSpeaker) }
             let mode: AVAudioSession.Mode = [.voiceChat, .videoChat].contains(session.mode)
@@ -237,15 +306,26 @@ final class AudioCoordinator {
                 try session.setCategory(session.category, mode: mode, options: options)
             }
             try expected.check(); try request.check(); try configuration.check()
-            if preservingExternalRoute && Self.builtInSpeaker(session) == nil { return }
+            if preservingExternalRoute && Self.builtInSpeaker(session) == nil {
+                box.value = Self.inspectRouteSnapshot(session)
+                return
+            }
             if let input = session.availableInputs?.first(where: { $0.portType == .builtInMic }), session.preferredInput != input {
                 try session.setPreferredInput(input)
             }
             try expected.check(); try request.check(); try configuration.check()
             try session.overrideOutputAudioPort(speaker ? .speaker : .none)
+            box.changed = true
+            box.value = Self.inspectRouteSnapshot(session)
         }
         guard lease === expected, expected.isActive, routeLease === request else { throw CancellationError() }
-        onRouteChanged?()
+        let previousName = cachedOutputName
+        if let snapshot = box.value {
+            applyRouteSnapshot(snapshot)
+        }
+        if box.changed || cachedOutputName != previousName {
+            onRouteChanged?()
+        }
     }
 
     /// The SDK changes the shared session after join; restore coexistence without
@@ -292,7 +372,7 @@ final class AudioCoordinator {
         if session.category != .playAndRecord || session.mode != .videoChat || session.categoryOptions != options {
             try session.setCategory(.playAndRecord, mode: .videoChat, options: options)
         }
-        if resetBuiltInRoute && !ProcessInfo.processInfo.isiOSAppOnMac {
+        if resetBuiltInRoute {
             // A built-in choice belongs to its meeting. Release its pins before
             // fresh activation so the system can keep the selected headset.
             // Recovery retains the current meeting's explicit route instead.
@@ -316,8 +396,10 @@ final class AudioCoordinator {
         if configurationLease == nil { configurationLease = AudioSessionLease() }
         audioWarning = nil
         ensureMixing()
-        outputRecovery.observe(currentSpeaker: currentBuiltInSpeaker)
-        logRoute()
+        refreshRouteSnapshot(notify: true) { [weak self] in
+            guard let self else { return }
+            self.outputRecovery.observe(currentSpeaker: self.currentBuiltInSpeaker)
+        }
         publishStatus()
     }
 
@@ -327,22 +409,27 @@ final class AudioCoordinator {
     func reactivateAfterInterruption() async throws {
         let expected = lease
         let restore = restoreMixingSession
+        let box = SnapshotBox()
         try await worker.perform(lease: expected) {
             try AVAudioSession.sharedInstance().setActive(true)
             try expected.check(); try restore()
+            box.value = Self.inspectRouteSnapshot()
         }
         guard lease === expected, expected.isActive else { throw CancellationError() }
         audioWarning = nil
-        logRoute()
+        if let snapshot = box.value {
+            let previousName = cachedOutputName
+            applyRouteSnapshot(snapshot)
+            #if DEBUG
+            print("Audio route types: \(snapshot.debugSummary)")
+            #endif
+            if cachedOutputName != previousName { onRouteChanged?() }
+        }
         publishStatus()
     }
 
     private func handle(_ notification: Notification) {
         guard observingSession else { return }
-        #if DEBUG
-        let session = AVAudioSession.sharedInstance()
-        print("Audio event: \(notification.name.rawValue), category=\(session.category.rawValue), mode=\(session.mode.rawValue), options=\(session.categoryOptions.rawValue), appState=\(UIApplication.shared.applicationState.rawValue)")
-        #endif
         switch notification.name {
         case AVAudioSession.interruptionNotification:
             let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
@@ -376,13 +463,34 @@ final class AudioCoordinator {
             // Ignore Phone's temporary built-in route while an interruption is active.
             let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             let reason = rawReason.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
-            if currentBuiltInSpeaker == nil { cancelOutputRestoration() }
-            if reason != .categoryChange && reason != .routeConfigurationChange {
-                outputRecovery.observe(currentSpeaker: currentBuiltInSpeaker)
+            let expected = lease
+            routeSnapshotRevision &+= 1
+            let revision = routeSnapshotRevision
+            let box = SnapshotBox()
+            worker.enqueue(lease: expected, operation: {
+                box.value = Self.inspectRouteSnapshot()
+            }) { [weak self] result in
+                guard case .success = result, let snapshot = box.value else { return }
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.observingSession,
+                          self.lease === expected,
+                          expected.isActive,
+                          self.routeSnapshotRevision == revision else { return }
+                    self.applyRouteSnapshot(snapshot)
+                    #if DEBUG
+                    print("Audio route types: \(snapshot.debugSummary)")
+                    #endif
+                    if self.currentBuiltInSpeaker == nil { self.cancelOutputRestoration() }
+                    if reason != .categoryChange && reason != .routeConfigurationChange {
+                        self.outputRecovery.observe(currentSpeaker: self.currentBuiltInSpeaker)
+                    }
+                    if snapshot.needsMixingRestore {
+                        self.ensureMixing()
+                    }
+                    self.onRouteChanged?()
+                }
             }
-            logRoute()
-            ensureMixing()
-            onRouteChanged?()
         default:
             break
         }
@@ -447,15 +555,6 @@ final class AudioCoordinator {
     private func publishStatus() {
         onStatus?(audioWarning ?? cameraWarning)
     }
-
-    private func logRoute() {
-        #if DEBUG
-        let route = AVAudioSession.sharedInstance().currentRoute
-        let inputs = route.inputs.map { $0.portType.rawValue }.joined(separator: ",")
-        let outputs = route.outputs.map { $0.portType.rawValue }.joined(separator: ",")
-        print("Audio route types: input=[\(inputs)] output=[\(outputs)]")
-        #endif
-    }
 }
 
 /// Stores only built-in output intent. A new external route wins over restoration.
@@ -483,5 +582,23 @@ struct BuiltInOutputRecovery {
     mutating func cancelForUserSelection(currentSpeaker: Bool?) {
         interrupted = false; restoring = false
         lastSpeaker = currentSpeaker
+    }
+}
+
+/// Observe intent before the system route chooser opens, leaving native touch handling untouched.
+final class AudioRouteInteractionObserver: UIGestureRecognizer {
+    private let onInteraction: () -> Void
+
+    init(onInteraction: @escaping () -> Void) {
+        self.onInteraction = onInteraction
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onInteraction()
+        state = .failed
     }
 }

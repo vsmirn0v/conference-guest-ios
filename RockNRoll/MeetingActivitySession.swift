@@ -12,6 +12,7 @@ final class MeetingActivitySession {
         let systemControls: Bool
         let otherCall: Bool
         let audioReady: Bool
+        var additionalMeetingCount: Int = 0
     }
     private let preferences: UserDefaults
     private let source: () -> Context?
@@ -88,7 +89,8 @@ final class MeetingActivitySession {
         let title = showsTitle ? context.title.map { String($0.prefix(120)) } : nil
         let route = controls?.routeName.trimmingCharacters(in: .whitespacesAndNewlines)
         let state = MeetingActivityState(startedAt: startedAt ?? Date(), connection: connection, microphone: status,
-            title: title, route: route.flatMap { $0.isEmpty ? nil : String($0.prefix(80)) })
+            title: title, route: route.flatMap { $0.isEmpty ? nil : String($0.prefix(80)) },
+            additionalMeetingCount: context.additionalMeetingCount)
         coordinator.update(MeetingActivitySnapshot(sessionID: context.sessionID, state: state))
         // A quiet meeting has no state events. One tolerant local tick renews
         // freshness while the app executes; it adds no network or audio work.

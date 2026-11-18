@@ -561,15 +561,6 @@ import XCTest
         XCTAssertNil(opened.first?.query)
     }
 
-    func testOpenMacNotificationSettingsWhenRequested() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac,
-              ProcessInfo.processInfo.environment["ROCK_TEST_OPEN_NOTIFICATION_SETTINGS"] == "1" else {
-            throw XCTSkip("Opt-in live Mac settings destination check")
-        }
-        let opened = await NotificationSettingsLink.open()
-        XCTAssertTrue(opened)
-    }
-
     func testConnectedSameRoomSuppressesBackToBackWithdrawsDeliveredAndRestoresOnEarlyLeave() async throws {
         var now = Date()
         let prefs = preferences()

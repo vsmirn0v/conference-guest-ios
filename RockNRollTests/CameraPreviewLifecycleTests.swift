@@ -8,11 +8,7 @@ final class CameraPreviewLifecycleTests: XCTestCase {
     private func assertSource(_ view: CameraCapturePreviewView, session: AVCaptureSession,
                               file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(view.sourceSessionForTesting === session, file: file, line: line)
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            XCTAssertNil((view.layer as? AVCaptureVideoPreviewLayer)?.session, file: file, line: line)
-        } else {
-            XCTAssertTrue((view.layer as? AVCaptureVideoPreviewLayer)?.session === session, file: file, line: line)
-        }
+        XCTAssertTrue((view.layer as? AVCaptureVideoPreviewLayer)?.session === session, file: file, line: line)
     }
 
     private final class PrivateCapture: PrivateCameraPreviewing {
@@ -123,43 +119,5 @@ final class CameraPreviewLifecycleTests: XCTestCase {
         assertSource(active, session: replacement.session)
         XCTAssertFalse(active.enabled, "A nested hide request wins over the older visible request")
         surface.clear()
-    }
-
-    func testLiveMacCameraSurvivesRepeatedGalleryRetirementAndReattachment() async throws {
-        guard ProcessInfo.processInfo.isiOSAppOnMac,
-              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1" else {
-            throw XCTSkip("Opt-in real Mac camera qualification")
-        }
-        let peer = try NativeRTCPeer(target: "PREVIEW_LIFECYCLE", factory: NativeRTCPeer.makeFactory(), ice: [])
-        peer.preferredCameraDevice = CameraDevices.available().first { $0.deviceType == .builtInWideAngleCamera }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
-        window.rootViewController = UIViewController(); window.isHidden = false
-        let surface = GuestSampleBufferView(frame: window.bounds)
-        window.rootViewController?.view.addSubview(surface)
-        do {
-            try await peer.setCamera(true)
-            let source = try XCTUnwrap(peer.cameraPreview)
-            for _ in 0..<16 {
-                surface.setCameraPreview(source)
-                surface.layoutIfNeeded()
-                try await Task.sleep(for: .milliseconds(120))
-                let preview = try XCTUnwrap(surface.subviews.first as? CameraCapturePreviewView)
-                assertSource(preview, session: source.session)
-                preview.willDetachSessionForTesting = { [weak surface] in
-                    surface?.layoutIfNeeded()
-                    surface?.clear()
-                }
-                surface.clear()
-                surface.layoutIfNeeded()
-                XCTAssertTrue(surface.subviews.isEmpty)
-                XCTAssertNil((preview.layer as? AVCaptureVideoPreviewLayer)?.session)
-                XCTAssertTrue(source.session.isRunning, "Gallery only borrows the publishing capture")
-            }
-            XCTAssertGreaterThan(peer.captureTimestampsForTesting.count, 20)
-            window.isHidden = true; await peer.close()
-            XCTAssertFalse(source.session.isRunning)
-        } catch {
-            surface.clear(); window.isHidden = true; await peer.close(); throw error
-        }
     }
 }
