@@ -1499,12 +1499,9 @@ private final class DesktopActivitySpy: NSUserActivity {
         features.permissions.canViewTranscript = true
         model.receiveFeaturesForTesting(features)
         XCTAssertEqual(model.transcriptionIndicator, .on); XCTAssertNotNil(model.transcriptionSince)
-        XCTAssertTrue(model.transcriptionAnnouncement, "Joining a transcribed meeting announces it once")
         model.showLiveText()
         XCTAssertEqual(model.conversationTab, 1); XCTAssertEqual(model.panel, .conversation)
-        XCTAssertFalse(model.transcriptionAnnouncement)
         model.receiveFeaturesForTesting(features)
-        XCTAssertFalse(model.transcriptionAnnouncement, "An unchanged status never re-announces")
         features.transcriptionStatus = .failed
         model.receiveFeaturesForTesting(features)
         XCTAssertNil(model.transcriptionIndicator, "Attendees are not shown an error they cannot fix")

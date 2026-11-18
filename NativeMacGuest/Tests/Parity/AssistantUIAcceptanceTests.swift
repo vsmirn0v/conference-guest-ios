@@ -1022,7 +1022,6 @@ import XCTest
         features.transcriptionStatus = .active
         features.permissions.canViewTranscript = true
         model.receiveFeaturesForTesting(features)
-        model.dismissTranscriptionAnnouncement()
         await settle()
         XCTAssertEqual(model.transcriptionIndicator, .on)
 

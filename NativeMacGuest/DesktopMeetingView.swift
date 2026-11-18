@@ -248,7 +248,6 @@ struct NativeDesktopMeetingView: View {
                     if !model.controlsHidden && !textSelection.isOpen && !embedded && chromeShown { header.padding(.horizontal, 18).padding(.top, 10) }
                     if let workspace, !textSelection.isOpen { NativeDesktopListeningBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if let workspace, !textSelection.isOpen { NativeDesktopSameRoomTransitionBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
-                    if !textSelection.isOpen && !embedded { NativeDesktopTranscriptionBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { NativeDesktopLocalFallbackBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { NativeDesktopCatchUpCard(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if model.isSharingLive && !textSelection.isOpen { shareBanner.padding(.top, 8).padding(.trailing, reserved) }
@@ -1321,27 +1320,9 @@ struct NativeDesktopTranscriptionPill: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     /// Toolbar size; the stage header uses the regular size.
     var compact = false
-    /// When the toolbar has room, the one-time announcement grows out of the pill.
-    var announcesInline = false
     @State private var open = false
     var body: some View {
-        if announcesInline, model.transcriptionAnnouncement, model.transcriptionIndicator == .on {
-            // Orange marks the status only; the sentence stays in the primary text
-            // colour on an opaque material so it reads on any toolbar backdrop.
-            // A prominent (filled) button here tints a toolbar item's whole glass.
-            HStack(spacing: 8) {
-                Circle().fill(Color.orange).frame(width: 7, height: 7)
-                Image(systemName: "text.bubble.fill").foregroundStyle(.orange)
-                (Text(L("Transcription started.")).bold().foregroundColor(.orange) + Text(" ") +
-                 Text(L("What people say, including you, is turned into text.")))
-                    .foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
-                Button(L("Show live text")) { model.showLiveText() }
-                    .buttonStyle(.bordered).controlSize(.small)
-                Button { model.dismissTranscriptionAnnouncement() } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel(L("Dismiss"))
-            }.font(.callout).padding(.horizontal, 6).fixedSize()
-                .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
-        } else if let state = model.transcriptionIndicator {
+        if let state = model.transcriptionIndicator {
             let tint: Color = state == .failed ? .red : state == .local ? .teal : .orange
             let title = state == .on ? L("Transcribing") : state == .local ? L("Transcribing on this Mac") : L("Transcription stopped")
             Button { open.toggle() } label: {
@@ -1485,25 +1466,6 @@ struct NativeDesktopLocalFallbackOffer: View {
     }
 }
 
-/// Shown once when transcription starts or is found running on join.
-struct NativeDesktopTranscriptionBanner: View {
-    @ObservedObject var model: NativeDesktopMeetingModel
-    var body: some View {
-        if model.transcriptionAnnouncement {
-            HStack(spacing: 10) {
-                Image(systemName: "text.bubble.fill").foregroundStyle(.orange)
-                (Text(L("Transcription started.")).bold() + Text(" ") +
-                 Text(L("What people say, including you, is turned into text.")).foregroundColor(.secondary))
-                    .font(.callout).lineLimit(2)
-                Button(L("Show live text")) { model.showLiveText() }.controlSize(.small)
-                Button { model.dismissTranscriptionAnnouncement() } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel(L("Dismiss"))
-            }.padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
-                .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
-        }
-    }
-}
-
 /// While sound is off, says live text is being kept; when sound returns, offers
 /// what was said in the meantime.
 struct NativeDesktopCatchUpCard: View {
@@ -1538,27 +1500,6 @@ struct NativeDesktopCatchUpCard: View {
             Label(L("Sound is off · live text is saved for catch-up"), systemImage: "speaker.slash.fill")
                 .font(.callout).padding(.horizontal, 14).padding(.vertical, 7).nativeMeetingChrome()
                 .accessibilityIdentifier("catchup.saving")
-        }
-    }
-}
-
-/// A narrow main window shows the announcement as a strip that moves the stage down.
-struct NativeDesktopTranscriptionStrip: View {
-    @ObservedObject var model: NativeDesktopMeetingModel
-    var body: some View {
-        if model.transcriptionAnnouncement, model.transcriptionIndicator == .on {
-            HStack(spacing: 10) {
-                Image(systemName: "text.bubble.fill").foregroundStyle(.orange)
-                (Text(L("Transcription started.")).bold().foregroundColor(.orange) + Text(" ") +
-                 Text(L("What people say, including you, is turned into text.")))
-                    .foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
-                Spacer(minLength: 8)
-                Button(L("Show live text")) { model.showLiveText() }.buttonStyle(.bordered).controlSize(.small)
-                Button { model.dismissTranscriptionAnnouncement() } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel(L("Dismiss"))
-            }.font(.callout).padding(.horizontal, 14).frame(height: 40)
-                .background(Color.orange.opacity(0.16)).overlay(alignment: .bottom) { Color.orange.opacity(0.35).frame(height: 1) }
-                .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
         }
     }
 }

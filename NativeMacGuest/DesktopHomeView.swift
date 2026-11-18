@@ -45,9 +45,6 @@ struct NativeDesktopHomeView: View {
     @State private var renamed = ""
     @State private var homeSnapshot = HomeMeetingSnapshot()
     @State private var hoveringHomeMeetings = false
-    @State private var detailWidth: CGFloat = 0
-    /// Below this width the transcription announcement leaves the toolbar for a strip.
-    private static let inlineAnnouncementWidth: CGFloat = 1050
     private var embeddedMeeting: NativeDesktopMeetingModel? {
         workspace.selectedMeeting.flatMap { workspace.isDetached($0) ? nil : $0 }
     }
@@ -169,13 +166,6 @@ struct NativeDesktopHomeView: View {
             .sheet(item: Binding(get: { workspace.attention.editingPreset }, set: { workspace.attention.editingPreset = $0 })) { target in
                 MeetingPresetEditor(store: workspace.attention.store, target: target)
             }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let meeting = embeddedMeeting, detailWidth < Self.inlineAnnouncementWidth { NativeDesktopTranscriptionStrip(model: meeting) }
-            }
-            .background(GeometryReader { proxy in
-                Color.clear.onAppear { detailWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { detailWidth = $0 }
-            })
         }
         .tint(.orange)
         .onAppear { refreshHome(); library.calendar.setScheduledUIBlocked(blocksScheduledJoining) }
@@ -251,7 +241,7 @@ struct NativeDesktopHomeView: View {
         if let meeting = embeddedMeeting, meeting.transcriptionIndicator != nil {
             // Its own glass group. Sharing the button group's capsule clips this pill.
             ToolbarItem(placement: .primaryAction) {
-                NativeDesktopTranscriptionPill(model: meeting, compact: true, announcesInline: detailWidth >= Self.inlineAnnouncementWidth)
+                NativeDesktopTranscriptionPill(model: meeting, compact: true)
             }
         }
         // The chip sits in its own toolbar item: sharing the button group's

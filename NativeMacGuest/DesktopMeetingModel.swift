@@ -143,9 +143,6 @@ import UniformTypeIdentifiers
     @Published private(set) var lastSpokeAt: [String: Date] = [:]
     /// When this app saw transcription turn on; the service does not say who started it.
     @Published private(set) var transcriptionSince: Date?
-    /// The one-time notice that speech is now being turned into text.
-    @Published private(set) var transcriptionAnnouncement = false
-    private var transcriptionAnnouncementTask: Task<Void, Never>?
     enum TranscriptionIndicator { case on, local, failed }
     /// A failure is shown only to people who can restart transcription. Local
     /// transcription is shown when this Mac is producing the text the person can read.
@@ -552,7 +549,7 @@ import UniformTypeIdentifiers
         receiveLocalLine(line, generation: generation)
     }
 #endif
-    func showLiveText() { conversationTab = 1; panel = .conversation; dismissTranscriptionAnnouncement() }
+    func showLiveText() { conversationTab = 1; panel = .conversation }
     /// The sound-off period offered for catch-up after sound returns.
     @Published private(set) var catchUpOffer: UUID?
     /// The Catch up tab scrolls to this period once.
@@ -608,22 +605,12 @@ import UniformTypeIdentifiers
             catchUpOffer = interval.id
         }
     }
-    func dismissTranscriptionAnnouncement() {
-        transcriptionAnnouncementTask?.cancel(); transcriptionAnnouncementTask = nil
-        if transcriptionAnnouncement { transcriptionAnnouncement = false }
-    }
     private func noteTranscription(from previous: GuestMeetingSnapshot.TranscriptionStatus, to status: GuestMeetingSnapshot.TranscriptionStatus) {
         guard previous != status else { return }
         if status == .active && guestFeatures.permissions.canViewTranscript {
-            transcriptionSince = Date(); transcriptionAnnouncement = true
-            transcriptionAnnouncementTask?.cancel()
-            transcriptionAnnouncementTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(8))
-                guard !Task.isCancelled else { return }
-                self?.dismissTranscriptionAnnouncement()
-            }
+            transcriptionSince = Date()
         } else if previous == .active {
-            transcriptionSince = nil; dismissTranscriptionAnnouncement()
+            transcriptionSince = nil
         }
     }
     /// The organizer ended the meeting: the shell leaves it and says so instead of reporting an error.
@@ -1892,7 +1879,6 @@ import UniformTypeIdentifiers
         if features.transcriptionStatus != .active || features.permissions.canViewTranscript { localFallbackDeclined = false }
         if features.transcriptionStatus == .active && !features.permissions.canViewTranscript {
             transcriptionSince = nil
-            dismissTranscriptionAnnouncement()
         }
         participation.updateAudience(participationAudience)
         noteTranscription(from: previousTranscription, to: features.transcriptionStatus)
