@@ -21,11 +21,21 @@ struct ClonedVoiceWorkerOutput: Sendable {
     var memoryBytes: UInt64?
     var message: String?
     var repairedAsset: String?
+    var repairedAssets: [String]? = nil
 }
 
 protocol ClonedVoiceWorkerConnection: Sendable {
     func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval) async throws -> ClonedVoiceWorkerOutput
+    func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval,
+                 onProgress: (@Sendable (ClonedVoiceWire.Response.Progress) -> Void)?) async throws -> ClonedVoiceWorkerOutput
     func stop() async
+}
+
+extension ClonedVoiceWorkerConnection {
+    func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval,
+                 onProgress: (@Sendable (ClonedVoiceWire.Response.Progress) -> Void)?) async throws -> ClonedVoiceWorkerOutput {
+        try await execute(request, timeout: timeout)
+    }
 }
 
 /// Owns one child, one operation, and its idle timer. Identical callers share the
@@ -53,13 +63,75 @@ actor ClonedVoiceEngine {
 
     var runtimeSnapshot: ClonedVoiceRuntimeSnapshot { runtimeState }
 
-    @discardableResult func prepare(_ folder: URL, repairAsset: String? = nil) async throws -> String? {
-        if repairAsset != nil {
+    @discardableResult func prepare(_ folder: URL, repairAsset: String? = nil, repairAssets: [String]? = nil,
+                                    onProgress: (@Sendable (ClonedVoiceWire.Response.Progress) -> Void)? = nil) async throws -> [String] {
+        if repairAsset != nil || !(repairAssets ?? []).isEmpty {
             // Never evict a cache entry while this process is using its model.
             guard operation == nil, stopping == nil else { throw ClonedVoiceWorkerError.busy }
             if worker != nil { await unload() }
         }
-        return try await execute(.init(operation: .prepare, folder: folder.standardizedFileURL, repairAsset: repairAsset)).repairedAsset
+        let output = try await execute(.init(operation: .prepare, folder: folder.standardizedFileURL,
+                                             repairAsset: repairAsset, repairAssets: repairAssets),
+                                       onProgress: onProgress)
+        return output.repairedAssets ?? (output.repairedAsset.map { [$0] } ?? [])
+    }
+
+    /// Checks specialization cache readiness in a short-lived background worker without updating residency UI.
+    func verify(_ folder: URL) async throws {
+        try Task.checkCancellation()
+        if let stopping {
+            await stopping.value
+            try await verify(folder)
+            return
+        }
+        guard operation == nil else { throw ClonedVoiceWorkerError.busy }
+        let standardized = folder.standardizedFileURL
+        if worker != nil, runtimeState.folder == standardized, runtimeState.phase == .loaded {
+            return
+        }
+        if worker != nil {
+            await unload()
+            try await verify(standardized)
+            return
+        }
+        let generation = runtimeState.generation
+        let request = ClonedVoiceWire.Request(operation: .verify, folder: standardized)
+        let task = Task<ClonedVoiceWorkerOutput, Error>(priority: .utility) {
+            guard runtimeState.generation == generation, stopping == nil else { throw ClonedVoiceWorkerError.stopped }
+            let probe = try connect()
+            worker = probe
+            do {
+                let output = try await probe.execute(request, timeout: 60, onProgress: nil)
+                guard runtimeState.generation == generation else { throw ClonedVoiceWorkerError.stopped }
+                worker = nil
+                operation = nil
+                await stopProbe(probe, generation: generation)
+                return output
+            } catch {
+                guard runtimeState.generation == generation else { throw ClonedVoiceWorkerError.stopped }
+                worker = nil
+                operation = nil
+                await stopProbe(probe, generation: generation)
+                throw error
+            }
+        }
+        operation = (request, task)
+        _ = try await task.value
+    }
+
+    private func stopProbe(_ probe: any ClonedVoiceWorkerConnection, generation: Int) async {
+        let completion = Task { [weak self] in
+            await probe.stop()
+            await self?.finishProbeStop(generation: generation)
+        }
+        stopping = completion
+        await completion.value
+    }
+
+    private func finishProbeStop(generation: Int) {
+        if runtimeState.generation == generation {
+            stopping = nil
+        }
     }
 
     func speak(_ text: String, voice: VoxVoice, folder: URL) async throws -> [Float] {
@@ -99,11 +171,12 @@ actor ClonedVoiceEngine {
         publish()
     }
 
-    private func execute(_ request: ClonedVoiceWire.Request) async throws -> ClonedVoiceWorkerOutput {
+    private func execute(_ request: ClonedVoiceWire.Request,
+                         onProgress: (@Sendable (ClonedVoiceWire.Response.Progress) -> Void)? = nil) async throws -> ClonedVoiceWorkerOutput {
         try Task.checkCancellation()
         if let stopping {
             await stopping.value
-            return try await execute(request)
+            return try await execute(request, onProgress: onProgress)
         }
         if let operation {
             guard operation.request == request else { throw ClonedVoiceWorkerError.busy }
@@ -111,7 +184,7 @@ actor ClonedVoiceEngine {
         }
         if worker != nil, runtimeState.folder != request.folder {
             await unload()
-            return try await execute(request)
+            return try await execute(request, onProgress: onProgress)
         }
 
         idle?.cancel()
@@ -125,13 +198,14 @@ actor ClonedVoiceEngine {
         runtimeState.activeSpeeches = request.operation == .speak ? 1 : 0
         publish()
 
-        let task = Task {
+        let priority: TaskPriority = request.operation == .prepare ? .utility : .userInitiated
+        let task = Task(priority: priority) {
             guard runtimeState.generation == generation, stopping == nil else { throw ClonedVoiceWorkerError.stopped }
             do {
                 if worker == nil { worker = try connect() }
                 guard let worker else { throw ClonedVoiceWorkerError.unavailable }
                 let timeout: TimeInterval = request.operation == .prepare ? 65 * 60 : (isCold ? 10 * 60 : 3 * 60)
-                let output = try await worker.execute(request, timeout: timeout)
+                let output = try await worker.execute(request, timeout: timeout, onProgress: onProgress)
                 guard runtimeState.generation == generation else { throw ClonedVoiceWorkerError.stopped }
                 operation = nil
                 runtimeState.phase = .loaded
@@ -213,6 +287,11 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
     var pid: Int32 { process.processIdentifier }
 
     func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval) async throws -> ClonedVoiceWorkerOutput {
+        try await execute(request, timeout: timeout, onProgress: nil)
+    }
+
+    func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval,
+                 onProgress: (@Sendable (ClonedVoiceWire.Response.Progress) -> Void)?) async throws -> ClonedVoiceWorkerOutput {
         try await withCheckedThrowingContinuation { continuation in
             io.async {
                 let id = UUID()
@@ -223,7 +302,7 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
                 if let previous { continuation.resume(throwing: previous); return }
                 let watchdog = DispatchWorkItem { [weak self] in self?.interrupt(.timeout, operation: id) }
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: watchdog)
-                let result = Result { try self.exchange(request) }
+                let result = Result { try self.exchange(request, onProgress: onProgress) }
                 self.state.lock()
                 self.current = nil
                 let interruption = self.interruption
@@ -255,11 +334,12 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
 
-    private func exchange(_ request: ClonedVoiceWire.Request) throws -> ClonedVoiceWorkerOutput {
+    private func exchange(_ request: ClonedVoiceWire.Request,
+                          onProgress: (@Sendable (ClonedVoiceWire.Response.Progress) -> Void)?) throws -> ClonedVoiceWorkerOutput {
         let wire = ClonedVoiceWire.self
         do {
             try wire.write(JSONEncoder().encode(request), to: input, limit: wire.controlLimit)
-            let response = try readResponse(request: request.operation)
+            let response = try readResponse(request: request.operation, onProgress: onProgress)
 
             switch response.failure {
             case .busy: throw ClonedVoiceWorkerError.busy
@@ -267,7 +347,7 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
             case .runtime:
                 if let failure = response.failureInfo {
                     probeLog("voice-worker-failure", failure.diagnosticFields.merging(["operation": request.operation.rawValue]) { current, _ in current })
-                    throw ClonedVoiceWorkerError.diagnosed(failure, repairedAsset: response.repairedAsset)
+                    throw ClonedVoiceWorkerError.diagnosed(failure, repairedAsset: response.repairedAsset, repairedAssets: response.repairedAssets)
                 }
                 throw ClonedVoiceWorkerError.runtime(response.message ?? "", repairAsset: response.repairAsset)
             case nil: break
@@ -283,7 +363,7 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
                 samples = nil
             }
             return .init(samples: samples, memoryBytes: response.memoryBytes, message: response.message,
-                         repairedAsset: response.repairedAsset)
+                         repairedAsset: response.repairedAsset, repairedAssets: response.repairedAssets)
         } catch let error as ClonedVoiceWorkerError {
             throw error
         } catch {
@@ -291,15 +371,26 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
         }
     }
 
-    private func readResponse(request: ClonedVoiceWire.Request.Operation) throws -> ClonedVoiceWire.Response {
+    private func readResponse(request: ClonedVoiceWire.Request.Operation,
+                              onProgress: (@Sendable (ClonedVoiceWire.Response.Progress) -> Void)?) throws -> ClonedVoiceWire.Response {
         let wire = ClonedVoiceWire.self
-        for _ in 0..<4 {
+        let identifierCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        for _ in 0..<32 {
             guard let control = try wire.read(from: output, limit: wire.controlLimit) else {
                 throw ClonedVoiceWorkerError.stopped
             }
             let response = try JSONDecoder().decode(wire.Response.self, from: control)
-            guard let stage = response.stage else { return response }
-            probeLog("voice-worker-stage", ["operation": request.rawValue, "stage": stage.rawValue, "pid": pid])
+            guard let stage = response.stage ?? response.progress?.stage else { return response }
+            let progress = response.progress ?? .init(stage: stage)
+            var fields: [String: Any] = ["operation": request.rawValue, "stage": progress.stage.rawValue, "pid": pid]
+            if let asset = progress.asset, !asset.isEmpty, asset.count <= 64,
+               asset.unicodeScalars.allSatisfy(identifierCharacters.contains), !asset.contains("..") {
+                fields["asset"] = asset
+            }
+            if let step = progress.step { fields["step"] = step }
+            if let totalSteps = progress.totalSteps { fields["totalSteps"] = totalSteps }
+            probeLog("voice-worker-stage", fields)
+            onProgress?(progress)
         }
         throw ClonedVoiceWorkerError.protocolFailure
     }

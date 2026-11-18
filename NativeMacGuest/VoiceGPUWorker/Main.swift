@@ -95,7 +95,7 @@ private final class GPUVoiceWorkerRuntime {
             guard let inputText = request.text, let inputVoice = request.voice else { throw ClonedVoiceWorkerError.protocolFailure }
             text = inputText
             voice = inputVoice
-        case .ping, .cacheScope: return nil
+        case .ping, .cacheScope, .verify: return nil
         }
         guard voice.revision == VoxVoice.revision,
               (voice.mode == .clone && voice.reference != nil && voice.continuation == nil) ||

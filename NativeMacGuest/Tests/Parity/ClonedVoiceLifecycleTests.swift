@@ -551,6 +551,130 @@ final class ClonedVoiceLifecycleTests: XCTestCase {
         XCTAssertFalse(VoxAssetFailure(asset: asset, cause: NSError(domain: hiddenLoadFailure.domain, code: 1), cachedFunctionLoad: true).missingSpecialization)
     }
 
+    func testLaunchMaintenanceVerifiesReadyReceiptAndBatchRepairsEvictedAssets() async throws {
+        let encoder = "encoder.h16g.aimodelc", base = "base-0.h16g.aimodelc"
+        let fixtures = try modelFixture(assets: [encoder, base])
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .ready,
+                                   startedAt: Date(), recentStarts: []).write(fixtures.modelFolder)
+        let ane = FixtureWorker(pcm: pcm)
+        let store = fixtures.store(ane)
+        store.maintainAtLaunch()
+        try await waitUntil {
+            let count = await ane.requests.count
+            let stops = await ane.stops
+            return count == 1 && stops == 1
+        }
+        let cleanRequests = await ane.requests
+        XCTAssertEqual(cleanRequests.map(\.operation), [.verify])
+        XCTAssertEqual(store.preparation, .ready)
+        store.maintainAtLaunch()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        let repeatedCount = await ane.requests.count
+        XCTAssertEqual(repeatedCount, 1)
+
+        let staleFixtures = try modelFixture(assets: [encoder, base])
+        let staleIdentity = ClonedVoicePreparation.identity(for: staleFixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: staleIdentity, attempt: UUID(), state: .ready,
+                                   startedAt: Date(), recentStarts: []).write(staleFixtures.modelFolder)
+        let staleWorker = FixtureWorker(pcm: pcm)
+        await staleWorker.enqueue([
+            .failure(.diagnosed(.init(kind: .cache, repairAsset: encoder, repairAssets: [encoder, base]))),
+            .success(.init(repairedAsset: encoder, repairedAssets: [encoder, base]))
+        ])
+        let staleStore = staleFixtures.store(staleWorker)
+        staleStore.maintainAtLaunch()
+        try await waitUntil { await staleWorker.requests.count == 2 && staleStore.preparation == .ready }
+        let staleRequests = await staleWorker.requests
+        XCTAssertEqual(staleRequests.map(\.operation), [.verify, .prepare])
+        XCTAssertEqual(staleRequests[1].repairAsset, encoder)
+        XCTAssertEqual(staleRequests[1].repairAssets, [encoder, base])
+        let receipt = try XCTUnwrap(ClonedVoicePreparation.read(staleFixtures.modelFolder, identity: staleIdentity))
+        XCTAssertEqual(receipt.repairedAssets, [encoder, base])
+    }
+
+    func testLaunchMaintenanceResumesInterruptedPreparationWithinHourlyBudget() async throws {
+        let now = Date()
+        let fixtures = try modelFixture(assets: ["base-0.h16g.aimodelc"])
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .preparing,
+                                   startedAt: now, recentStarts: [now]).write(fixtures.modelFolder)
+        let worker = FixtureWorker(pcm: pcm)
+        let store = fixtures.store(worker, now: { now })
+        store.maintainAtLaunch()
+        try await waitUntil { store.preparation == .ready }
+        let requests = await worker.requests
+        XCTAssertEqual(requests.map(\.operation), [.prepare])
+        let updated = try XCTUnwrap(ClonedVoicePreparation.read(fixtures.modelFolder, identity: identity))
+        XCTAssertEqual(updated.recentStarts.count, 2)
+
+        let cappedFixtures = try modelFixture(assets: ["base-0.h16g.aimodelc"])
+        let cappedIdentity = ClonedVoicePreparation.identity(for: cappedFixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: cappedIdentity, attempt: UUID(), state: .preparing,
+                                   startedAt: now, recentStarts: [now, now, now]).write(cappedFixtures.modelFolder)
+        let cappedWorker = FixtureWorker(pcm: pcm)
+        let cappedStore = cappedFixtures.store(cappedWorker, now: { now })
+        cappedStore.maintainAtLaunch()
+        XCTAssertEqual(cappedStore.failure?.kind, .interrupted)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let cappedRequests = await cappedWorker.requests
+        XCTAssertTrue(cappedRequests.isEmpty)
+        XCTAssertEqual(cappedStore.failure?.kind, .interrupted)
+    }
+
+    func testPreSynthesisANECacheMissFailsOverToGPUAndDefersRecoveryUntilUtteranceEnds() async throws {
+        let base = "base-0.h16g.aimodelc"
+        let fixtures = try modelFixture(assets: [base], includeGPU: true)
+        let enrolled = StoredClonedVoice(voice: voice, recordedAt: Date(), seconds: 5)
+        try JSONEncoder().encode(enrolled).write(to: fixtures.root.appendingPathComponent("voxcpm2-voice.json"))
+        let identity = ClonedVoicePreparation.identity(for: fixtures.model, osBuild: "fixture")
+        try ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .ready,
+                                   startedAt: Date(), recentStarts: []).write(fixtures.modelFolder)
+        let gpuPCM = Array(repeating: Float(0.25), count: 4_800)
+        let ane = FixtureWorker(pcm: pcm), gpu = FixtureWorker(pcm: gpuPCM)
+        let store = fixtures.store(ane, gpuWorker: gpu)
+        try await waitUntil { store.gpuPreparation == .ready }
+        try await waitUntil { await gpu.stops == 1 }
+        await ane.enqueue([
+            .failure(.diagnosed(.init(kind: .cache, repairAsset: base))),
+            .success(.init(repairedAsset: base)),
+            .success(.init(samples: pcm))
+        ])
+        await gpu.block()
+        let firstTask = Task { try await store.speak("hello", recordedAt: enrolled.recordedAt) }
+        try await waitUntil { await gpu.requests.count == 2 }
+        try await Task.sleep(nanoseconds: 30_000_000)
+        let aneDuringGPU = await ane.requests
+        XCTAssertEqual(aneDuringGPU.map(\.operation), [.speak], "recovery must wait until the GPU utterance finishes")
+        await gpu.release()
+        let first = try await firstTask.value
+        XCTAssertEqual(first, gpuPCM)
+        try await waitUntil {
+            let stops = await gpu.stops
+            return store.preparation == .ready && stops == 2
+        }
+        let aneAfterRecovery = await ane.requests
+        XCTAssertEqual(aneAfterRecovery.map(\.operation), [.speak, .prepare])
+        XCTAssertEqual(aneAfterRecovery[1].repairAsset, base)
+        XCTAssertNil(aneAfterRecovery[1].repairAssets)
+        let second = try await store.speak("after", recordedAt: enrolled.recordedAt)
+        XCTAssertEqual(second, pcm)
+    }
+
+    func testPreparationPublishesStageProgressAndClearsOnCompletion() async throws {
+        let fixtures = try modelFixture(assets: ["base-0.h16g.aimodelc"])
+        let worker = FixtureWorker(pcm: pcm)
+        let expected = ClonedVoiceWire.Response.Progress(stage: .load, asset: "base-0", step: 1, totalSteps: 4)
+        await worker.enqueueProgress([expected])
+        await worker.block()
+        let store = fixtures.store(worker)
+        store.prepare()
+        try await waitUntil { store.preparation == .preparing && store.preparationProgress == expected }
+        await worker.release()
+        try await waitUntil { store.preparation == .ready }
+        XCTAssertNil(store.preparationProgress)
+    }
+
     private func temporaryFolder() throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("voice-worker-\(UUID())", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -626,6 +750,7 @@ private actor FixtureWorker: ClonedVoiceWorkerConnection {
     private var failure: ClonedVoiceWorkerError?
     private var repairedAsset: String?
     private var replies: [Result<ClonedVoiceWorkerOutput, ClonedVoiceWorkerError>] = []
+    private var progressQueue: [[ClonedVoiceWire.Response.Progress]] = []
     private var resume: CheckedContinuation<Void, Never>?
     private(set) var requests: [ClonedVoiceWire.Request] = []
     private(set) var stops = 0
@@ -640,6 +765,8 @@ private actor FixtureWorker: ClonedVoiceWorkerConnection {
 
     func enqueue(_ replies: [Result<ClonedVoiceWorkerOutput, ClonedVoiceWorkerError>]) { self.replies = replies }
 
+    func enqueueProgress(_ items: [ClonedVoiceWire.Response.Progress]) { progressQueue.append(items) }
+
     func release() {
         blocked = false
         resume?.resume()
@@ -647,7 +774,17 @@ private actor FixtureWorker: ClonedVoiceWorkerConnection {
     }
 
     func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval) async throws -> ClonedVoiceWorkerOutput {
+        try await execute(request, timeout: timeout, onProgress: nil)
+    }
+
+    func execute(_ request: ClonedVoiceWire.Request, timeout: TimeInterval,
+                 onProgress: (@Sendable (ClonedVoiceWire.Response.Progress) -> Void)?) async throws -> ClonedVoiceWorkerOutput {
         requests.append(request)
+        if !progressQueue.isEmpty {
+            for item in progressQueue.removeFirst() {
+                onProgress?(item)
+            }
+        }
         if blocked { await withCheckedContinuation { resume = $0 } }
         if !replies.isEmpty { return try replies.removeFirst().get() }
         if let failure { throw failure }

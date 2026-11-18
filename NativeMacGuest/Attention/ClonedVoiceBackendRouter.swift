@@ -41,6 +41,7 @@ actor ClonedVoiceBackendRouter {
     private var activeRequest: UUID?
     private var cancellingRequest: UUID?
     private var cancelledRequests: Set<UUID> = []
+    private var gpuIdleWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var generation: UInt64 = 0
     nonisolated let changes = CurrentValueSubject<Snapshot, Never>(.init(neuralEngine: .unavailable, gpu: .unavailable, active: nil))
 
@@ -75,6 +76,43 @@ actor ClonedVoiceBackendRouter {
         generation &+= 1
         await stopGPU()
         if cancellingRequest == request { cancellingRequest = nil }
+        resumeGPUIdleWaiters()
+    }
+
+    /// Suspends until no GPU synthesis or GPU cancellation is in flight.
+    func waitUntilGPUIdle() async throws {
+        try Task.checkCancellation()
+        guard active == .gpu || cancellingRequest != nil else { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                guard active == .gpu || cancellingRequest != nil else {
+                    continuation.resume()
+                    return
+                }
+                gpuIdleWaiters[id] = continuation
+            }
+        } onCancel: {
+            Task { await self.cancelGPUIdleWaiter(id) }
+        }
+    }
+
+    private func cancelGPUIdleWaiter(_ id: UUID) {
+        guard let continuation = gpuIdleWaiters.removeValue(forKey: id) else { return }
+        continuation.resume(throwing: CancellationError())
+    }
+
+    private func resumeGPUIdleWaiters() {
+        guard active != .gpu, cancellingRequest == nil, !gpuIdleWaiters.isEmpty else { return }
+        let waiters = gpuIdleWaiters
+        gpuIdleWaiters.removeAll()
+        for continuation in waiters.values {
+            continuation.resume()
+        }
     }
 
     var snapshot: Snapshot {
@@ -102,7 +140,13 @@ actor ClonedVoiceBackendRouter {
         active = selected
         activeRequest = request
         changes.send(snapshot)
-        defer { active = nil; activeRequest = nil; cancelledRequests.remove(request); changes.send(snapshot) }
+        defer {
+            active = nil
+            activeRequest = nil
+            cancelledRequests.remove(request)
+            changes.send(snapshot)
+            resumeGPUIdleWaiters()
+        }
         // A failure is returned to the caller. Retrying it on the other backend
         // could replay an expired or already-authorized meeting utterance.
         let samples: [Float]

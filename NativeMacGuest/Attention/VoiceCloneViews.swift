@@ -203,7 +203,14 @@ struct VoiceCloneSettingsView: View {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L("Preparing for this Mac's Neural Engine…"))
-                    Text(L("The voice worker specializes the model and checks that it can synthesize speech. This can take several minutes."))
+                    if let progress = clone.preparationProgress {
+                        Text(stageDescription(progress))
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("voiceModel.preparationStage")
+                    }
+                    Text(clone.gpuReady
+                         ? L("First-time or rebuilt Neural Engine compilation can take 25–45 minutes in the background. Your saved voice uses the GPU fallback until it finishes.")
+                         : L("First-time or rebuilt Neural Engine compilation can take 25–45 minutes in the background. You can keep using meetings while it finishes."))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     if let started = clone.preparingSince {
                         Text(started, style: .timer).font(.caption).monospacedDigit().foregroundStyle(.secondary)
@@ -215,6 +222,25 @@ struct VoiceCloneSettingsView: View {
                 .nativeSettingAnchor("settings.voice-preparation")
         case .failed:
             preparationFailure
+        }
+    }
+
+    private func stageDescription(_ progress: ClonedVoiceWire.Response.Progress) -> String {
+        switch progress.stage {
+        case .validate, .synthesize:
+            return L("Checking speech synthesis…")
+        case .load:
+            let roleTitle: String? = switch progress.asset {
+            case "base-0": L("base language model")
+            case "residual": L("residual model")
+            case "encoder": L("audio encoder")
+            case "dit": L("diffusion sampler")
+            default: nil
+            }
+            if let step = progress.step, let total = progress.totalSteps, total > 0, let roleTitle {
+                return L("Specializing step %ld of %ld: %@…", step, total, roleTitle)
+            }
+            return L("Loading voice model…")
         }
     }
 

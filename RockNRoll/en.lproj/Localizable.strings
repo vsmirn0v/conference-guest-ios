@@ -3025,3 +3025,12 @@
 "Always keep as one in this room" = "Always keep as one in this room";
 "Open new note" = "Open new note";
 "Scheduled meeting started: %@" = "Scheduled meeting started: %@";
+"First-time or rebuilt Neural Engine compilation can take 25–45 minutes in the background. Your saved voice uses the GPU fallback until it finishes." = "First-time or rebuilt Neural Engine compilation can take 25–45 minutes in the background. Your saved voice uses the GPU fallback until it finishes.";
+"First-time or rebuilt Neural Engine compilation can take 25–45 minutes in the background. You can keep using meetings while it finishes." = "First-time or rebuilt Neural Engine compilation can take 25–45 minutes in the background. You can keep using meetings while it finishes.";
+"Loading voice model…" = "Loading voice model…";
+"Checking speech synthesis…" = "Checking speech synthesis…";
+"Specializing step %ld of %ld: %@…" = "Specializing step %ld of %ld: %@…";
+"base language model" = "base language model";
+"residual model" = "residual model";
+"audio encoder" = "audio encoder";
+"diffusion sampler" = "diffusion sampler";

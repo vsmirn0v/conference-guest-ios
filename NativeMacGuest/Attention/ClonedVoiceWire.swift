@@ -9,6 +9,7 @@ struct ClonedVoiceFailure: Codable, Equatable, Sendable {
     var storage: VoiceStorageSnapshot?
     var technicalDetails: String?
     var repairAsset: String?
+    var repairAssets: [String]? = nil
     var failedAt: Date?
     var retryAfter: Date?
     /// Which independent budget blocked the last action, when rate-limited.
@@ -19,7 +20,10 @@ struct ClonedVoiceFailure: Codable, Equatable, Sendable {
     var errorDomain: String?
     var errorCode: Int?
 
-    var repairAvailable: Bool { (kind == .cache || kind == .preparationSpace || kind == .busy || kind == .interrupted || kind == .rateLimited) && repairAsset != nil }
+    var repairAvailable: Bool {
+        (kind == .cache || kind == .preparationSpace || kind == .busy || kind == .interrupted || kind == .rateLimited) &&
+        (repairAsset != nil || !(repairAssets ?? []).isEmpty)
+    }
 
     var preparationRecovery: Bool { kind == .storage || kind == .preparationSpace || kind == .compilation }
 
@@ -33,7 +37,7 @@ struct ClonedVoiceFailure: Codable, Equatable, Sendable {
     var diagnosticFields: [String: Any] {
         var fields: [String: Any] = ["kind": kind.rawValue, "repairAvailable": repairAvailable]
         let identifierCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-        for (key, value) in [("asset", asset ?? repairAsset), ("domain", errorDomain)] {
+        for (key, value) in [("asset", asset ?? repairAsset ?? repairAssets?.first), ("domain", errorDomain)] {
             if let value, !value.isEmpty, value.count <= 160,
                value.unicodeScalars.allSatisfy(identifierCharacters.contains), !value.contains("..") {
                 fields[key] = value
@@ -48,21 +52,30 @@ struct ClonedVoiceFailure: Codable, Equatable, Sendable {
 /// Requests carry only the installed model path and an optional text/voice pair.
 enum ClonedVoiceWire {
     struct Request: Codable, Equatable, Sendable {
-        enum Operation: String, Codable, Sendable { case ping, cacheScope, prepare, speak }
+        enum Operation: String, Codable, Sendable { case ping, cacheScope, verify, prepare, speak }
         var operation: Operation
         var folder: URL?
         var text: String?
         var voice: VoxVoice?
         var repairAsset: String?
+        var repairAssets: [String]? = nil
     }
 
     struct Response: Codable, Sendable {
         enum Failure: String, Codable, Sendable { case busy, context, runtime }
         enum Stage: String, Codable, Sendable { case load, validate, synthesize }
+        struct Progress: Codable, Equatable, Sendable {
+            var stage: Stage
+            var asset: String? = nil
+            var step: Int? = nil
+            var totalSteps: Int? = nil
+        }
         var stage: Stage?
+        var progress: Progress? = nil
         var failure: Failure?
         var message: String?
         var repairAsset: String?
+        var repairedAssets: [String]? = nil
         var failureInfo: ClonedVoiceFailure?
         /// A cache entry actually removed during this request, even if later work failed.
         var repairedAsset: String?
@@ -114,7 +127,7 @@ enum ClonedVoiceWire {
 enum ClonedVoiceWorkerError: LocalizedError, Equatable {
     case busy, stopped, timeout, protocolFailure, unavailable
     case context(String), runtime(String, repairAsset: String? = nil)
-    case diagnosed(ClonedVoiceFailure, repairedAsset: String? = nil)
+    case diagnosed(ClonedVoiceFailure, repairedAsset: String? = nil, repairedAssets: [String]? = nil)
 
     var errorDescription: String? {
         switch self {
@@ -124,7 +137,7 @@ enum ClonedVoiceWorkerError: LocalizedError, Equatable {
         case .protocolFailure: "The cloned voice worker returned an incomplete or invalid response."
         case .unavailable: "The cloned voice worker could not start."
         case .context(let message), .runtime(let message, _): message
-        case .diagnosed(let failure, _): failure.technicalDetails ?? "The cloned voice worker failed."
+        case .diagnosed(let failure, _, _): failure.technicalDetails ?? "The cloned voice worker failed."
         }
     }
 }

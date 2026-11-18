@@ -3025,3 +3025,12 @@
 "Always keep as one in this room" = "Всегда объединять в этой комнате";
 "Open new note" = "Открыть новую заметку";
 "Scheduled meeting started: %@" = "Началась встреча по расписанию: %@";
+"First-time or rebuilt Neural Engine compilation can take 25–45 minutes in the background. Your saved voice uses the GPU fallback until it finishes." = "Первая или повторная компиляция для Neural Engine в фоне может занять 25–45 минут. Пока она не завершится, ваш сохранённый голос работает через запасной вариант на GPU.";
+"First-time or rebuilt Neural Engine compilation can take 25–45 minutes in the background. You can keep using meetings while it finishes." = "Первая или повторная компиляция для Neural Engine в фоне может занять 25–45 минут. Пока она идёт, можно продолжать участвовать во встречах.";
+"Loading voice model…" = "Загрузка голосовой модели…";
+"Checking speech synthesis…" = "Проверка синтеза речи…";
+"Specializing step %ld of %ld: %@…" = "Специализация, шаг %ld из %ld: %@…";
+"base language model" = "базовая языковая модель";
+"residual model" = "уточняющая модель";
+"audio encoder" = "аудиокодер";
+"diffusion sampler" = "диффузионный сэмплер";

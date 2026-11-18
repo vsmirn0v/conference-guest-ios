@@ -17,21 +17,24 @@ struct ClonedVoiceWorkerMain {
         signal(SIGPIPE, SIG_IGN)
         let protocolOutput = dup(STDOUT_FILENO)
         guard protocolOutput >= 0, dup2(STDERR_FILENO, STDOUT_FILENO) >= 0 else { return }
-        let output = FileHandle(fileDescriptor: protocolOutput, closeOnDealloc: true)
+        let output = PipeWriter(handle: FileHandle(fileDescriptor: protocolOutput, closeOnDealloc: true))
         let input = FileHandle.standardInput
         let worker = ClonedVoiceWorkerRuntime()
         do {
             while let bytes = try ClonedVoiceWire.read(from: input, limit: ClonedVoiceWire.controlLimit) {
                 let request = try JSONDecoder().decode(ClonedVoiceWire.Request.self, from: bytes)
-                let result = await worker.perform(request) { stage in
-                    if let bytes = try? JSONEncoder().encode(ClonedVoiceWire.Response(stage: stage)) {
-                        try? ClonedVoiceWire.write(bytes, to: output, limit: ClonedVoiceWire.controlLimit)
+                let priority: TaskPriority = (request.operation == .prepare || request.operation == .verify) ? .utility : .userInitiated
+                let result = await Task.detached(priority: priority) {
+                    await worker.perform(request) { update in
+                        if let bytes = try? JSONEncoder().encode(ClonedVoiceWire.Response(stage: update.stage, progress: update)) {
+                            try? output.write(bytes, limit: ClonedVoiceWire.controlLimit)
+                        }
                     }
-                }
-                try ClonedVoiceWire.write(JSONEncoder().encode(result.0), to: output, limit: ClonedVoiceWire.controlLimit)
+                }.value
+                try output.write(JSONEncoder().encode(result.0), limit: ClonedVoiceWire.controlLimit)
                 if let samples = result.1 {
                     let pcm = samples.withUnsafeBytes { Data($0) }
-                    try ClonedVoiceWire.write(pcm, to: output, limit: ClonedVoiceWire.pcmLimit)
+                    try output.write(pcm, limit: ClonedVoiceWire.pcmLimit)
                 }
             }
         } catch {
@@ -40,17 +43,33 @@ struct ClonedVoiceWorkerMain {
     }
 }
 
-private final class ClonedVoiceWorkerRuntime {
+private final class PipeWriter: @unchecked Sendable {
+    private let handle: FileHandle
+    private let lock = NSLock()
+
+    init(handle: FileHandle) { self.handle = handle }
+
+    func write(_ data: Data, limit: Int) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try ClonedVoiceWire.write(data, to: handle, limit: limit)
+    }
+}
+
+private final class ClonedVoiceWorkerRuntime: @unchecked Sendable {
     private let baseline = ProcessMemoryProbe.footprint()
     private var folder: URL?
     private var lease: ClonedVoiceLease?
     private var model: AnyObject?
-    private var repairedAsset: String?
+    private var repairedAssets: [String] = []
     private var pendingRepairAsset: String?
 
+    private var primaryRepaired: String? { repairedAssets.first }
+    private var reportedRepairedList: [String]? { repairedAssets.isEmpty ? nil : repairedAssets }
+
     func perform(_ request: ClonedVoiceWire.Request,
-                 progress: (ClonedVoiceWire.Response.Stage) -> Void) async -> (ClonedVoiceWire.Response, [Float]?) {
-        repairedAsset = nil
+                 progress: @escaping @Sendable (ClonedVoiceWire.Response.Progress) -> Void) async -> (ClonedVoiceWire.Response, [Float]?) {
+        repairedAssets = []
         pendingRepairAsset = nil
         do {
             if request.operation == .ping { return (.init(), nil) }
@@ -59,7 +78,9 @@ private final class ClonedVoiceWorkerRuntime {
                 if request.operation == .cacheScope { return (.init(message: "worker-default"), nil) }
                 if let folder = request.folder {
                     let samples = try await generate(request, folder: folder, progress: progress)
-                    return (.init(repairedAsset: repairedAsset, pcm: samples != nil, memoryBytes: measuredMemory), samples)
+                    let memory = (samples != nil || model != nil) ? measuredMemory : nil
+                    return (.init(repairedAssets: reportedRepairedList, repairedAsset: primaryRepaired,
+                                  pcm: samples != nil, memoryBytes: memory), samples)
                 }
             }
             #endif
@@ -74,7 +95,20 @@ private final class ClonedVoiceWorkerRuntime {
                 technicalDetails: failure.localizedDescription,
                 repairAsset: pendingRepairAsset, failedAt: Date())
             return (.init(failure: .runtime, message: failure.localizedDescription,
-                          failureInfo: diagnosis, repairedAsset: repairedAsset), nil)
+                          repairedAssets: reportedRepairedList,
+                          failureInfo: diagnosis, repairedAsset: primaryRepaired), nil)
+        } catch let failure as VoxVerificationFailure {
+            let isStorage = VoiceStorage.isOutOfSpace(failure.cause)
+            let primary = isStorage ? nil : failure.staleAssets.first
+            let batch = (isStorage || failure.staleAssets.isEmpty) ? nil : failure.staleAssets
+            let kind: ClonedVoiceFailure.Kind = isStorage ? .storage : .cache
+            let detail = failure.cause as NSError
+            let diagnosis = ClonedVoiceFailure(kind: kind, technicalDetails: failure.localizedDescription,
+                                                repairAsset: primary, repairAssets: batch, failedAt: Date(),
+                                                asset: failure.staleAssets.first, errorDomain: detail.domain, errorCode: detail.code)
+            probeLog("voice-worker-failure-classified", ["kind": kind.rawValue, "repairAvailable": primary != nil])
+            return (.init(failure: .runtime, message: failure.localizedDescription, repairAsset: primary,
+                          repairedAssets: reportedRepairedList, failureInfo: diagnosis, repairedAsset: primaryRepaired), nil)
         } catch let failure as VoxAssetFailure {
             let asset = failure.missingSpecialization ? failure.asset : nil
             let kind: ClonedVoiceFailure.Kind = VoiceStorage.isOutOfSpace(failure.cause) ? .storage :
@@ -85,15 +119,16 @@ private final class ClonedVoiceWorkerRuntime {
                                                 errorDomain: detail.domain, errorCode: detail.code)
             probeLog("voice-worker-failure-classified", ["kind": kind.rawValue, "repairAvailable": asset != nil])
             return (.init(failure: .runtime, message: failure.localizedDescription, repairAsset: asset,
-                          failureInfo: diagnosis, repairedAsset: repairedAsset), nil)
+                          repairedAssets: reportedRepairedList, failureInfo: diagnosis, repairedAsset: primaryRepaired), nil)
         } catch {
             let detail = error as NSError
             probeLog("voice-worker-operation-failed", ["domain": detail.domain, "code": detail.code])
             let message = error is VoxError ? error.localizedDescription : "The Neural Engine could not run the voice model (\(detail.domain) \(detail.code))."
             let kind: ClonedVoiceFailure.Kind = VoiceStorage.isOutOfSpace(error) ? .storage : .unknown
             return (.init(failure: .runtime, message: message,
+                          repairedAssets: reportedRepairedList,
                           failureInfo: .init(kind: kind, technicalDetails: message, failedAt: Date()),
-                          repairedAsset: repairedAsset), nil)
+                          repairedAsset: primaryRepaired), nil)
         }
     }
 
@@ -105,31 +140,49 @@ private final class ClonedVoiceWorkerRuntime {
     #if canImport(CoreAI)
     @available(macOS 27.0, *)
     private func generate(_ request: ClonedVoiceWire.Request, folder: URL,
-                          progress: (ClonedVoiceWire.Response.Stage) -> Void) async throws -> [Float]? {
+                          progress: @escaping @Sendable (ClonedVoiceWire.Response.Progress) -> Void) async throws -> [Float]? {
         let folder = folder.standardizedFileURL
         guard self.folder == nil || self.folder == folder else { throw ClonedVoiceWorkerError.protocolFailure }
         if lease == nil { lease = try ClonedVoiceLease(folder: folder, purpose: "worker") }
         self.folder = folder
+        if request.operation == .verify {
+            progress(.init(stage: .validate))
+            if let resident = model as? VoxCPM2 {
+                try resident.verifyLoadedFunctions()
+            } else {
+                try VoxCoreAI.verify(bundle: folder)
+            }
+            return nil
+        }
         let loaded: VoxCPM2
         if let resident = model as? VoxCPM2 {
             // An owner still using the model must never have its cache invalidated.
-            guard request.repairAsset == nil else { throw ClonedVoiceWorkerError.busy }
+            guard request.repairAsset == nil, (request.repairAssets ?? []).isEmpty else { throw ClonedVoiceWorkerError.busy }
             loaded = resident
         } else {
-            progress(.load)
-            if request.operation == .prepare, let asset = request.repairAsset {
-                pendingRepairAsset = asset
-                if try VoxCoreAI.repair(asset, in: folder) { repairedAsset = asset }
-                pendingRepairAsset = nil
+            progress(.init(stage: .load))
+            if request.operation == .prepare {
+                var seen = Set<String>()
+                let targets = (request.repairAssets ?? (request.repairAsset.map { [$0] } ?? [])).filter { seen.insert($0).inserted }
+                for asset in targets {
+                    pendingRepairAsset = asset
+                    if try VoxCoreAI.repair(asset, in: folder) { repairedAssets.append(asset) }
+                    pendingRepairAsset = nil
+                }
+                loaded = try await VoxCPM2(bundle: folder) { role, _, step, total in
+                    progress(.init(stage: .load, asset: role, step: step, totalSteps: total))
+                }
+            } else {
+                loaded = try await VoxCPM2(bundle: folder)
             }
-            loaded = try await VoxCPM2(bundle: folder)
             model = loaded
         }
 
         switch request.operation {
-        case .ping, .cacheScope: return nil
+        case .ping, .cacheScope, .verify: return nil
         case .prepare:
-            progress(.validate)
+            progress(.init(stage: .validate))
+            try loaded.verifyLoadedFunctions()
             // A reference patch drives the encoder too, unlike a text-only probe.
             // This is synthetic conditioning data, independent of the user's enrollment.
             let reference = (0..<256).map { 0.25 * sin(Float($0) * 0.1) }
@@ -140,7 +193,7 @@ private final class ClonedVoiceWorkerRuntime {
             try ClonedVoiceWire.validatePCM(pcm)
             return nil
         case .speak:
-            progress(.synthesize)
+            progress(.init(stage: .synthesize))
             guard let text = request.text, let voice = request.voice else { throw ClonedVoiceWorkerError.protocolFailure }
             let pcm = try await loaded.generate(text, voice: voice, seed: UInt64.random(in: UInt64.min...UInt64.max))
             try ClonedVoiceWire.validatePCM(pcm)

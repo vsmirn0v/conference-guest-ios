@@ -30,6 +30,21 @@ struct VoxAssetFailure: LocalizedError {
     }
 }
 
+/// Reports one or more stale or missing cached assets discovered during verification.
+struct VoxVerificationFailure: LocalizedError {
+    var staleAssets: [String]
+    var missingUncachedAssets: Bool
+    var cause: Error
+
+    var errorDescription: String? {
+        let underlying = cause as NSError
+        if let first = staleAssets.first {
+            return "The Neural Engine could not run \(first) (\(underlying.domain) \(underlying.code))."
+        }
+        return "The Neural Engine voice specialization cache is incomplete and needs preparation."
+    }
+}
+
 #if canImport(CoreAI)
 import CoreAI
 
@@ -57,6 +72,79 @@ enum VoxCoreAI {
 
     /// This Mac's Neural Engine architecture, as named in bundle file names (for example "h16g").
     static var architecture: String { AIModel.deviceArchitectureName }
+
+    static func validatedManifest(in bundle: URL) throws -> VoxManifest {
+        let manifest = try JSONDecoder().decode(VoxManifest.self, from: Data(contentsOf: bundle.appendingPathComponent("model.json")))
+        guard manifest.kind == VoxCPM2.kind, manifest.version == 2 else { throw VoxError.unsupported("bundle kind \(manifest.kind)") }
+        guard manifest.source.revision == VoxCPM2.sourceRevision, manifest.source.code_revision == VoxCPM2.codeRevision else {
+            throw VoxError.unsupported("bundle revision differs from this app")
+        }
+        guard manifest.architecture == architecture else {
+            throw VoxError.unsupported("bundle is for \(manifest.architecture), this Mac is \(architecture)")
+        }
+        return manifest
+    }
+
+    static func verificationFunctionName(for stage: VoxManifest.Asset, model: AIModel? = nil) -> String? {
+        if stage.cached { return stage.cache_functions?.first?.name ?? model?.functionNames.first }
+        if let samplers = stage.sampler_functions, !samplers.isEmpty {
+            return (samplers.max(by: { ($0.steps ?? 0) < ($1.steps ?? 0) }) ?? samplers[0]).name
+        }
+        if let main = stage.local_functions?["main"]?.name { return main }
+        return model?.functionNames.first
+    }
+
+    /// Checks that every bundle asset is cached and can load an inference function without compiling.
+    static func verify(bundle: URL) throws {
+        let manifest = try validatedManifest(in: bundle)
+        var staleAssets: [String] = []
+        var missingAny = false
+        var firstCause: Error?
+
+        for stage in manifest.assets {
+            let resolved = bundle.appendingPathComponent(stage.asset).resolvingSymlinksInPath()
+            let cachedModel: AIModel?
+            do {
+                cachedModel = try cache.model(for: resolved, options: options)
+            } catch {
+                if VoiceStorage.isOutOfSpace(error) { throw error }
+                staleAssets.append(stage.asset)
+                firstCause = firstCause ?? error
+                continue
+            }
+            guard let cachedModel else {
+                probeLog("vox-cache-lookup", ["asset": stage.asset, "present": false])
+                missingAny = true
+                continue
+            }
+            probeLog("vox-cache-lookup", ["asset": stage.asset, "present": true])
+            guard let functionName = verificationFunctionName(for: stage, model: cachedModel) else {
+                throw VoxError.engine("missing verification function for \(stage.asset)")
+            }
+            do {
+                guard try cachedModel.loadFunction(named: functionName) != nil else {
+                    throw VoxError.engine("missing function \(functionName)")
+                }
+            } catch {
+                if VoiceStorage.isOutOfSpace(error) { throw error }
+                let assetFailure = VoxAssetFailure(asset: stage.asset, cause: error, cachedFunctionLoad: true)
+                if assetFailure.missingSpecialization {
+                    staleAssets.append(stage.asset)
+                    firstCause = firstCause ?? error
+                } else {
+                    throw assetFailure
+                }
+            }
+        }
+
+        if !staleAssets.isEmpty || missingAny {
+            throw VoxVerificationFailure(
+                staleAssets: staleAssets,
+                missingUncachedAssets: missingAny,
+                cause: firstCause ?? NSError(domain: "com.apple.appleneuralengine", code: 16)
+            )
+        }
+    }
 
     static func load(_ url: URL) async throws -> AIModel {
         // Core AI rejects an asset directory that is itself a symbolic link.

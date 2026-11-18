@@ -158,6 +158,48 @@ final class ClonedVoiceBackendRouterTests: XCTestCase {
         catch { XCTAssertEqual(error as? ClonedVoiceBackendRouter.Failure, .invalidated) }
     }
 
+    func testWaitUntilGPUIdleWaitsOnlyForActiveGPUSpeechAndSupportsCancellation() async throws {
+        let ane = BackendFixture(blocked: true), gpu = BackendFixture(blocked: true)
+        let router = ClonedVoiceBackendRouter(neuralEngine: { try await ane.speak($0, $1) },
+            gpu: { try await gpu.speak($0, $1) }, now: { Date(timeIntervalSince1970: 1) })
+        try await router.waitUntilGPUIdle()
+
+        await router.setReadiness(.ready, for: .neuralEngine)
+        let voice = self.voice, deadline = self.deadline
+        let aneSpeech = Task { try await router.speak("ane", voice: voice, expiresAt: deadline) }
+        try await waitUntil { await ane.count == 1 }
+        try await router.waitUntilGPUIdle()
+        await ane.release()
+        let aneResult = try await aneSpeech.value
+        XCTAssertEqual(aneResult.backend, .neuralEngine)
+
+        await router.setReadiness(.unavailable, for: .neuralEngine)
+        await router.setReadiness(.ready, for: .gpu)
+        let gpuSpeech = Task { try await router.speak("gpu", voice: voice, expiresAt: deadline) }
+        try await waitUntil { await gpu.count == 1 }
+
+        let waiter = Task {
+            try await router.waitUntilGPUIdle()
+            return true
+        }
+        let cancelled = Task {
+            try await router.waitUntilGPUIdle()
+            return true
+        }
+        try await Task.sleep(nanoseconds: 30_000_000)
+        cancelled.cancel()
+        do { _ = try await cancelled.value; XCTFail("cancelled waiter succeeded") }
+        catch is CancellationError {}
+        let gpuCountWhileBlocked = await gpu.count
+        XCTAssertEqual(gpuCountWhileBlocked, 1)
+
+        await gpu.release()
+        let gpuResult = try await gpuSpeech.value
+        XCTAssertEqual(gpuResult.backend, .gpu)
+        let finished = try await waiter.value
+        XCTAssertTrue(finished)
+    }
+
     private func waitUntil(_ condition: () async -> Bool) async throws {
         for _ in 0..<100 {
             if await condition() { return }

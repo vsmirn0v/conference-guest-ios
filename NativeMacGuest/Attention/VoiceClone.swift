@@ -89,6 +89,7 @@ struct StoredClonedVoice: Codable, Equatable {
     @Published private(set) var stored: StoredClonedVoice?
     @Published private(set) var preparation: Preparation = .idle
     @Published private(set) var preparingSince: Date?
+    @Published private(set) var preparationProgress: ClonedVoiceWire.Response.Progress?
     /// Disk capacity is queried only for local presentation, never persisted.
     @Published private(set) var failure: ClonedVoiceFailure?
     @Published private(set) var gpuPreparation: Preparation = .idle
@@ -103,9 +104,11 @@ struct StoredClonedVoice: Codable, Equatable {
     private let preparationStorage: (URL) -> VoiceStorageSnapshot
     private var observation: AnyCancellable?
     private var prepareTask: Task<Void, Never>?
+    private var verifyTask: Task<Void, Never>?
     private var waitingForOwner: Task<Void, Never>?
     private var gpuPrepareTask: Task<Void, Never>?
     private var routerObservation: AnyCancellable?
+    private var verifiedInProcess = false
     @Published private(set) var gpuDeleting = false
     private var deleting = false
 
@@ -164,6 +167,8 @@ struct StoredClonedVoice: Codable, Equatable {
 
     private func display(_ record: ClonedVoicePreparation?) {
         preparingSince = record?.state == .preparing ? record?.startedAt : nil
+        if record?.state != .preparing { preparationProgress = nil }
+        if record?.state != .ready { verifiedInProcess = false }
         switch record?.state {
         case .preparing: failure = nil; preparation = .preparing
         case .ready: failure = nil; preparation = .ready
@@ -180,6 +185,14 @@ struct StoredClonedVoice: Codable, Equatable {
         retireGPUIfANEReady()
     }
 
+    static func sanitizedRepairAsset(_ value: String?) -> String? {
+        guard let value,
+              !value.isEmpty, value.hasSuffix(".aimodelc"),
+              value.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-").contains($0) }),
+              value != ".", value != ".." else { return nil }
+        return value
+    }
+
     /// Historical releases saved only a display string. An exact known opaque
     /// Core AI failure can offer a user-requested repair, never an automatic one.
     /// The worker independently validates the final asset against model.json.
@@ -190,10 +203,7 @@ struct StoredClonedVoice: Codable, Equatable {
         if asset == nil, message.hasPrefix(prefix), message.hasSuffix(suffix) {
             asset = String(message.dropFirst(prefix.count).dropLast(suffix.count))
         }
-        if let value = asset,
-           !value.isEmpty, value.hasSuffix(".aimodelc"),
-           value.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-").contains($0) }),
-           value != ".", value != ".." {
+        if let value = sanitizedRepairAsset(asset) {
             return .init(kind: .cache, technicalDetails: message, repairAsset: value)
         }
         return .init(kind: .unknown, technicalDetails: message)
@@ -209,7 +219,7 @@ struct StoredClonedVoice: Codable, Equatable {
     }
 
     private func diagnose(_ error: Error) -> ClonedVoiceFailure {
-        if case ClonedVoiceWorkerError.diagnosed(let diagnosis, _) = error {
+        if case ClonedVoiceWorkerError.diagnosed(let diagnosis, _, _) = error {
             return diagnosis.withoutStorageMeasurement
         }
         if case ClonedVoiceWorkerError.runtime(let message, let asset) = error {
@@ -271,6 +281,8 @@ struct StoredClonedVoice: Codable, Equatable {
         failure = diagnosis
         preparation = .failed(error.localizedDescription)
         preparingSince = nil
+        preparationProgress = nil
+        verifiedInProcess = false
         refreshStorage()
     }
 
@@ -313,9 +325,9 @@ struct StoredClonedVoice: Codable, Equatable {
     /// The engine makes the idle check and unload atomic. If synthesis or a
     /// smoke test is using it, leave the GPU alone and try again on completion.
     private func retireGPUIfANEReady() {
-        guard preparation == .ready, gpuPrepareTask == nil, gpuPreparation == .ready else { return }
+        guard preparation == .ready, verifyTask == nil, gpuPrepareTask == nil, gpuPreparation == .ready else { return }
         Task { [weak self] in
-            guard let self, self.preparation == .ready, self.gpuPrepareTask == nil else { return }
+            guard let self, self.preparation == .ready, self.verifyTask == nil, self.gpuPrepareTask == nil else { return }
             await self.gpuEngine.unloadIfIdle()
         }
     }
@@ -349,9 +361,13 @@ struct StoredClonedVoice: Codable, Equatable {
         guard !deleting, let model, let folder = bundleFolder else { return }
         deleting = true
         prepareTask?.cancel()
+        verifyTask?.cancel()
+        preparationProgress = nil
+        verifiedInProcess = false
         Task {
             await engine.unload()
             await prepareTask?.value
+            await verifyTask?.value
             defer { deleting = false }
             do {
                 let preparationLease = try ClonedVoiceLease(folder: folder, purpose: "preparation")
@@ -372,13 +388,79 @@ struct StoredClonedVoice: Codable, Equatable {
         if preparation == .idle { startPreparation(explicitRetry: false, requestedRepair: false) }
     }
 
+    /// Verifies persisted readiness at launch, resumes interrupted compilations,
+    /// and repairs evicted ANE cache entries automatically within the hourly budget.
+    func maintainAtLaunch() {
+        guard !deleting, prepareTask == nil, verifyTask == nil, installed, let folder = bundleFolder, let identity else { return }
+        restorePreparation()
+        switch preparation {
+        case .idle:
+            startPreparation(explicitRetry: false, requestedRepair: false, allowCacheRepair: true)
+        case .preparing:
+            return
+        case .failed:
+            if failure?.kind == .interrupted || failure?.kind == .cache {
+                startAutomaticCacheRecovery()
+            }
+        case .ready:
+            guard !verifiedInProcess else { return }
+            let receipt = ClonedVoicePreparation.read(folder, identity: identity)
+            verifyTask = Task(priority: .utility) { [weak self] in
+                guard let self else { return }
+                defer {
+                    self.verifyTask = nil
+                    self.retireGPUIfANEReady()
+                }
+                do {
+                    try await self.engine.verify(folder)
+                    guard !Task.isCancelled, !self.deleting, self.installed else { return }
+                    self.verifiedInProcess = true
+                    probeLog("voice-clone-verified", [:])
+                } catch is CancellationError {
+                    return
+                } catch ClonedVoiceWorkerError.busy, ClonedVoiceWorkerError.stopped {
+                    return
+                } catch {
+                    guard !Task.isCancelled, !self.deleting, self.installed else { return }
+                    self.recordInferenceFailure(error, folder: folder, receipt: receipt)
+                    if self.diagnose(error).kind == .cache {
+                        self.startAutomaticCacheRecovery()
+                    }
+                }
+            }
+        }
+    }
+
+    private func startAutomaticCacheRecovery() {
+        guard !deleting, prepareTask == nil, installed, let folder = bundleFolder, let identity else { return }
+        let previous = ClonedVoicePreparation.read(folder, identity: identity)
+        let now = currentTime()
+        let recent = (previous?.recentStarts ?? []).filter { $0 > now.addingTimeInterval(-ClonedVoicePreparation.retryInterval) }
+        guard recent.count < ClonedVoicePreparation.retryLimit else { return }
+        startPreparation(explicitRetry: false, requestedRepair: false, allowCacheRepair: true)
+    }
+
     /// An explicit retry may repair only confirmed stale specialization entries.
     /// Downloaded assets and the saved voice are never part of recovery.
-    func prepare() { startPreparation(explicitRetry: true, requestedRepair: false) }
+    func prepare() { startPreparation(explicitRetry: true, requestedRepair: false, allowCacheRepair: true) }
 
-    func repair() { startPreparation(explicitRetry: true, requestedRepair: true) }
+    func repair() { startPreparation(explicitRetry: true, requestedRepair: true, allowCacheRepair: true) }
 
-    private func startPreparation(explicitRetry: Bool, requestedRepair: Bool) {
+    private func allowedRepairAssets() -> Set<String> {
+        Set(model?.files.compactMap { file -> String? in
+            guard let first = file.name.split(separator: "/").first,
+                  first.hasSuffix(".aimodelc") else { return nil }
+            return String(first)
+        } ?? [])
+    }
+
+    private func appendUniqueRepairs(_ completed: [String], expected: Set<String>, into target: inout [String]?) {
+        for asset in completed where expected.contains(asset) && !(target ?? []).contains(asset) {
+            target = (target ?? []) + [asset]
+        }
+    }
+
+    private func startPreparation(explicitRetry: Bool, requestedRepair: Bool, allowCacheRepair: Bool = false) {
         guard !deleting, prepareTask == nil, installed, let folder = bundleFolder, let identity else { return }
         do {
             let lease = try ClonedVoiceLease(folder: folder, purpose: "preparation")
@@ -397,10 +479,23 @@ struct StoredClonedVoice: Codable, Equatable {
             // transient diagnosis is newer than the last durable receipt.
             let previousFailure = failure?.preparationRecovery == true ? failure : persistedFailure
             let storageRecovery = failure?.preparationRecovery == true || failure?.rateLimitedStorage == true || persistedFailure?.preparationRecovery == true
+            let allowed = allowedRepairAssets()
+            let canRepairCache = explicitRetry || allowCacheRepair
+            let validBatch: [String] = {
+                guard let previousFailure, previousFailure.repairAvailable else { return [] }
+                var seen = Set<String>()
+                let raw = previousFailure.repairAssets ?? (previousFailure.repairAsset.map { [$0] } ?? [])
+                return raw.compactMap { Self.sanitizedRepairAsset($0) }.filter {
+                    (allowed.isEmpty || allowed.contains($0)) && seen.insert($0).inserted
+                }
+            }()
             let validRepair = previousFailure.flatMap { diagnosis -> String? in
                 guard diagnosis.repairAvailable else { return nil }
-                return Self.legacyFailure(message: diagnosis.technicalDetails ?? "", repairAsset: diagnosis.repairAsset).repairAsset
-            }
+                return Self.legacyFailure(
+                    message: diagnosis.technicalDetails ?? "",
+                    repairAsset: diagnosis.repairAsset ?? diagnosis.repairAssets?.first
+                ).repairAsset
+            } ?? validBatch.first
             if requestedRepair, validRepair == nil { return }
 
             // Every deliberate retry can recover after cleanup, including older
@@ -418,12 +513,14 @@ struct StoredClonedVoice: Codable, Equatable {
             if let blockedUntil {
                 let message = L("The voice model reached its preparation retry limit. Try again in an hour.")
                 failure = .init(kind: .rateLimited, technicalDetails: message, repairAsset: validRepair,
+                                repairAssets: validBatch.count > 1 ? validBatch : nil,
                                 failedAt: now, retryAfter: blockedUntil, rateLimitedRepair: requestedRepair,
                                 rateLimitedStorage: storageRecovery)
-                preparation = .failed(message); preparingSince = nil; refreshStorage(); return
+                preparation = .failed(message); preparingSince = nil; preparationProgress = nil; refreshStorage(); return
             }
             let repaired = previous?.repairedAssets ?? []
-            let repair = explicitRetry ? validRepair : nil
+            let repair = canRepairCache ? (validBatch.first ?? validRepair) : nil
+            let initialBatch: [String]? = (canRepairCache && validBatch.count > 1) ? validBatch : nil
             let record = ClonedVoicePreparation(identity: identity, attempt: UUID(), state: .preparing,
                                                 startedAt: now, recentStarts: recovery ? recent : recent + [now],
                                                 repairAsset: repair ?? previous?.repairAsset, repairedAssets: repaired,
@@ -432,43 +529,50 @@ struct StoredClonedVoice: Codable, Equatable {
             display(record)
             let started = ProcessInfo.processInfo.systemUptime
             probeLog("voice-clone-prepare-started", ["architecture": model?.config["architecture"] ?? ""])
-            prepareTask = Task {
+            prepareTask = Task(priority: .utility) {
                 defer {
                     withExtendedLifetime(lease) {}
                     prepareTask = nil
+                    preparationProgress = nil
                 }
                 var outcome = record
                 do {
                     try Task.checkCancellation()
-                    // Repair one proven stale asset at a time, retaining each
-                    // successful result. The next asset can be stale too after
-                    // storage pressure. Each allowlisted asset gets one repair
-                    // per user action, so a persistent failure cannot loop.
-                    let allowed = Set(model?.files.compactMap { file -> String? in
-                        guard let first = file.name.split(separator: "/").first,
-                              first.hasSuffix(".aimodelc") else { return nil }
-                        return String(first)
-                    } ?? [])
+                    // Repair all proven stale assets together when known, or
+                    // one discovered batch at a time, retaining each result.
                     var attempted = Set<String>()
                     var nextRepair = repair
+                    var nextBatch = initialBatch
                     while true {
                         if let nextRepair { attempted.insert(nextRepair) }
+                        if let nextBatch { attempted.formUnion(nextBatch) }
+                        let expected = Set(nextBatch ?? (nextRepair.map { [$0] } ?? []))
                         do {
-                            let completed = try await engine.prepare(folder, repairAsset: nextRepair)
-                            if let completed, completed == nextRepair, !(outcome.repairedAssets ?? []).contains(completed) {
-                                outcome.repairedAssets = (outcome.repairedAssets ?? []) + [completed]
+                            try Task.checkCancellation()
+                            try await router.waitUntilGPUIdle()
+                            try Task.checkCancellation()
+                            guard installed, !deleting else { return }
+                            let completed = try await engine.prepare(folder, repairAsset: nextRepair, repairAssets: nextBatch) { [weak self] progress in
+                                Task { @MainActor in self?.preparationProgress = progress }
                             }
+                            appendUniqueRepairs(completed, expected: expected, into: &outcome.repairedAssets)
                             break
                         } catch {
-                            if case ClonedVoiceWorkerError.diagnosed(_, let completed) = error,
-                               let completed, completed == nextRepair, !(outcome.repairedAssets ?? []).contains(completed) {
-                                outcome.repairedAssets = (outcome.repairedAssets ?? []) + [completed]
+                            if case ClonedVoiceWorkerError.diagnosed(_, let singleCompleted, let batchCompleted) = error {
+                                let done = batchCompleted ?? (singleCompleted.map { [$0] } ?? [])
+                                appendUniqueRepairs(done, expected: expected, into: &outcome.repairedAssets)
                             }
                             let diagnosis = diagnose(error)
-                            guard explicitRetry, diagnosis.kind == .cache, let asset = diagnosis.repairAsset,
-                                  allowed.contains(asset), !attempted.contains(asset) else { throw error }
+                            guard canRepairCache, diagnosis.kind == .cache else { throw error }
+                            var seenCandidates = Set<String>()
+                            let rawCandidates = diagnosis.repairAssets ?? (diagnosis.repairAsset.map { [$0] } ?? [])
+                            let candidates = rawCandidates.compactMap { Self.sanitizedRepairAsset($0) }.filter {
+                                allowed.contains($0) && !attempted.contains($0) && seenCandidates.insert($0).inserted
+                            }
+                            guard let firstCandidate = candidates.first else { throw error }
                             try Task.checkCancellation()
-                            nextRepair = asset
+                            nextRepair = firstCandidate
+                            nextBatch = candidates.count > 1 ? candidates : nil
                         }
                     }
                     outcome.state = .ready
@@ -485,11 +589,14 @@ struct StoredClonedVoice: Codable, Equatable {
                     outcome.message = error.localizedDescription
                     let diagnosis = diagnose(error)
                     outcome.failureInfo = diagnosis.withoutStorageMeasurement
-                    outcome.repairAsset = diagnosis.repairAsset ?? repair ?? previous?.repairAsset
+                    outcome.repairAsset = diagnosis.repairAsset ?? diagnosis.repairAssets?.first ?? repair ?? previous?.repairAsset
                 }
                 guard installed, !deleting else { return }
-                do { try outcome.write(folder); display(outcome) }
-                catch { displayFailure(error) }
+                do {
+                    try outcome.write(folder)
+                    display(outcome)
+                    if outcome.state == .ready, preparation == .ready { verifiedInProcess = true }
+                } catch { displayFailure(error) }
                 probeLog(outcome.state == .ready && preparation == .ready ? "voice-clone-prepared" : "voice-clone-prepare-failed",
                          ["seconds": Int(ProcessInfo.processInfo.systemUptime - started)])
             }
@@ -567,6 +674,12 @@ struct StoredClonedVoice: Codable, Equatable {
         guard let enrolled = stored, recordedAt == nil || enrolled.recordedAt == recordedAt else {
             throw VoiceSynthesisError.cloneVoiceMissing
         }
+        if let verifyTask {
+            await withTaskCancellationHandler {
+                await verifyTask.value
+            } onCancel: {}
+            try Task.checkCancellation()
+        }
         restorePreparation()
         prepareGPUIfNeeded()
         let aneReady = !deleting && installed && preparation == .ready
@@ -580,37 +693,71 @@ struct StoredClonedVoice: Codable, Equatable {
         }
         let folder = bundleFolder
         let receipt = folder.flatMap { folder in identity.flatMap { ClonedVoicePreparation.read(folder, identity: $0) } }
+        let deadline = expiresAt ?? currentTime().addingTimeInterval(180)
         do {
             await router.setReadiness(aneReady ? .ready : .unavailable, for: .neuralEngine)
             await router.setReadiness(gpuReady ? .ready : .unavailable, for: .gpu)
-            let output = try await withTaskCancellationHandler {
-                try await router.speak(text, voice: enrolled.voice, expiresAt: expiresAt ?? Date().addingTimeInterval(180), request: request)
-            } onCancel: { [router] in
-                Task { await router.cancelGPURequest(request) }
-            }
+            let output = try await invokeRouterSpeak(text, voice: enrolled.voice, deadline: deadline, request: request)
             try Task.checkCancellation()
             guard stored == enrolled else { throw VoiceSynthesisError.cloneVoiceMissing }
             return output.samples
         } catch is CancellationError {
             throw CancellationError()
         } catch let failure as ClonedVoiceBackendRouter.BackendFailure {
+            recordRouterBackendFailure(failure, folder: folder, receipt: receipt)
             let error = failure.underlying
-            switch error as? ClonedVoiceWorkerError {
-            case .busy, .context: break
-            default:
-                if failure.backend == .neuralEngine, let folder {
-                    recordInferenceFailure(error, folder: folder, receipt: receipt)
-                } else if failure.backend == .gpu {
-                    gpuPreparation = .failed(error.localizedDescription)
+            if failure.backend == .neuralEngine {
+                let diagnosis = diagnose(error)
+                if diagnosis.kind == .cache {
+                    await router.setReadiness(.unavailable, for: .neuralEngine)
+                    if self.gpuReady, !Task.isCancelled, currentTime() < deadline, stored == enrolled {
+                        probeLog("voice-clone-gpu-failover", ["asset": diagnosis.asset ?? diagnosis.repairAsset ?? ""])
+                        defer { startAutomaticCacheRecovery() }
+                        await router.setReadiness(.ready, for: .gpu)
+                        do {
+                            let gpuOutput = try await invokeRouterSpeak(text, voice: enrolled.voice, deadline: deadline, request: request)
+                            try Task.checkCancellation()
+                            guard stored == enrolled else { throw VoiceSynthesisError.cloneVoiceMissing }
+                            return gpuOutput.samples
+                        } catch let gpuFailure as ClonedVoiceBackendRouter.BackendFailure {
+                            recordRouterBackendFailure(gpuFailure, folder: folder, receipt: receipt)
+                            throw gpuFailure.underlying
+                        }
+                    } else {
+                        startAutomaticCacheRecovery()
+                    }
                 }
             }
             throw error
+        } catch {
+            throw error
+        }
+    }
+
+    private func invokeRouterSpeak(_ text: String, voice: VoxVoice, deadline: Date, request: UUID) async throws -> ClonedVoiceBackendRouter.Output {
+        do {
+            return try await withTaskCancellationHandler {
+                try await router.speak(text, voice: voice, expiresAt: deadline, request: request)
+            } onCancel: { [router] in
+                Task { await router.cancelGPURequest(request) }
+            }
         } catch ClonedVoiceBackendRouter.Failure.busy {
             throw ClonedVoiceWorkerError.busy
         } catch ClonedVoiceBackendRouter.Failure.expired, ClonedVoiceBackendRouter.Failure.invalidated {
             throw CancellationError()
-        } catch {
-            throw error
+        }
+    }
+
+    private func recordRouterBackendFailure(_ failure: ClonedVoiceBackendRouter.BackendFailure, folder: URL?, receipt: ClonedVoicePreparation?) {
+        let error = failure.underlying
+        switch error as? ClonedVoiceWorkerError {
+        case .busy, .context: break
+        default:
+            if failure.backend == .neuralEngine, let folder {
+                recordInferenceFailure(error, folder: folder, receipt: receipt)
+            } else if failure.backend == .gpu {
+                gpuPreparation = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -623,7 +770,7 @@ struct StoredClonedVoice: Codable, Equatable {
             current.message = error.localizedDescription
             let diagnosis = diagnose(error)
             current.failureInfo = diagnosis.withoutStorageMeasurement
-            current.repairAsset = diagnosis.repairAsset
+            current.repairAsset = diagnosis.repairAsset ?? diagnosis.repairAssets?.first
             do { try current.write(folder); display(current) }
             catch { displayFailure(error) }
         }

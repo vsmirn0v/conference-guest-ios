@@ -205,15 +205,8 @@ final class VoxCPM2 {
 
     /// Loads a bundle folder holding model.json, the `.aimodelc` assets and `checkpoint/`.
     /// The first load on a Mac compiles the assets for its Neural Engine and can take many minutes.
-    init(bundle: URL) async throws {
-        manifest = try JSONDecoder().decode(VoxManifest.self, from: Data(contentsOf: bundle.appendingPathComponent("model.json")))
-        guard manifest.kind == Self.kind, manifest.version == 2 else { throw VoxError.unsupported("bundle kind \(manifest.kind)") }
-        guard manifest.source.revision == Self.sourceRevision, manifest.source.code_revision == Self.codeRevision else {
-            throw VoxError.unsupported("bundle revision differs from this app")
-        }
-        guard manifest.architecture == VoxCoreAI.architecture else {
-            throw VoxError.unsupported("bundle is for \(manifest.architecture), this Mac is \(VoxCoreAI.architecture)")
-        }
+    init(bundle: URL, onAsset: ((_ role: String, _ asset: String, _ step: Int, _ totalSteps: Int) -> Void)? = nil) async throws {
+        manifest = try VoxCoreAI.validatedManifest(in: bundle)
         let checkpoint = bundle.appendingPathComponent("checkpoint", isDirectory: true)
         config = try JSONDecoder().decode(VoxCheckpointConfig.self, from: Data(contentsOf: checkpoint.appendingPathComponent("config.json")))
         guard config.patch_size == 4, config.feat_dim == 64 else { throw VoxError.unsupported("patch layout") }
@@ -267,7 +260,8 @@ final class VoxCPM2 {
             throw VoxError.unsupported("bundle stages")
         }
         var assets: [String: VoxAsset] = [:]
-        for stage in manifest.assets {
+        for (index, stage) in manifest.assets.enumerated() {
+            onAsset?(stage.role, stage.asset, index + 1, manifest.assets.count)
             assets[stage.role] = try await VoxAsset(url: bundle.appendingPathComponent(stage.asset))
         }
         self.assets = assets
@@ -283,6 +277,36 @@ final class VoxCPM2 {
         base = try cached(baseStage)
         residual = try cached(residualStage)
         schedule = try makeSchedule(steps: 10)
+    }
+
+    /// Loads one inference function from every asset to detect all dangling specializations in one pass.
+    func verifyLoadedFunctions() throws {
+        var staleAssets: [String] = []
+        var firstCause: Error?
+        for stage in manifest.assets {
+            guard let voxAsset = assets[stage.role],
+                  let functionName = VoxCoreAI.verificationFunctionName(for: stage) else {
+                throw VoxError.engine("missing verification function for \(stage.asset)")
+            }
+            do {
+                _ = try voxAsset.function(functionName)
+            } catch let failure as VoxAssetFailure {
+                if VoiceStorage.isOutOfSpace(failure.cause) { throw failure.cause }
+                if failure.missingSpecialization {
+                    staleAssets.append(stage.asset)
+                    firstCause = firstCause ?? failure.cause
+                } else {
+                    throw failure
+                }
+            }
+        }
+        if !staleAssets.isEmpty {
+            throw VoxVerificationFailure(
+                staleAssets: staleAssets,
+                missingUncachedAssets: false,
+                cause: firstCause ?? NSError(domain: "com.apple.appleneuralengine", code: 16)
+            )
+        }
     }
 
     // MARK: Voices
