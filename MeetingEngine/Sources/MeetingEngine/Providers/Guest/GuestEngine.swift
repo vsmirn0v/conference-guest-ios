@@ -4,6 +4,7 @@ import LiveKitWebRTC
 
 public enum GuestEngineError: LocalizedError {
     case malformed, admissionDenied, evicted, publicationTimedOut, disconnected, mediaMissing
+    case screenShareUnavailable, screenShareBusy
     public var errorDescription: String? {
         switch self {
         case .malformed: "The meeting server sent an unexpected response."
@@ -13,6 +14,8 @@ public enum GuestEngineError: LocalizedError {
         case .publicationTimedOut: "Your microphone or camera did not start in time."
         case .disconnected: "The meeting connection closed."
         case .mediaMissing: "Meeting audio or video did not arrive."
+        case .screenShareUnavailable: NSLocalizedString("Screen sharing is not available in this meeting.", comment: "")
+        case .screenShareBusy: NSLocalizedString("Stop sharing before choosing different screen content.", comment: "")
         }
     }
 }
@@ -1837,17 +1840,22 @@ extension NativeGuestEngine {
 
     private func requireScreenPermission(generation: UInt64) throws {
         try checkActive()
-        guard screenIntent, generation == screenGeneration, !outputSuppressed,
-              permissions["canShareScreen"] == true else { throw GuestEngineError.admissionDenied }
+        guard permissions["canShareScreen"] == true else {
+            throw GuestEngineError.screenShareUnavailable
+        }
+        guard screenIntent, generation == screenGeneration, !outputSuppressed else { throw CancellationError() }
     }
 
     /// Update the source/encoder contract when a captured window changes size.
     func updateScreenShareProfile(_ profile: GuestVideoProfile) throws {
-        try requireScreenPermission(generation: screenGeneration)
+        // Capture can report its last size after the current share has been retired.
+        guard screenIntent, !outputSuppressed, permissions["canShareScreen"] == true,
+              let publisher, publisher.screenSource != nil else { return }
+        try checkActive()
         guard profile.width > 0, profile.height > 0, profile.fps > 0, profile.maximumBitrate > 0 else {
             throw GuestEngineError.malformed
         }
-        publisher?.updateScreenProfile(profile)
+        publisher.updateScreenProfile(profile)
     }
 
     private func drainScreenStop() async throws {
@@ -1872,10 +1880,13 @@ extension NativeGuestEngine {
     func startScreenShare(profile: GuestVideoProfile, codec: String = "h264",
                           captureFactory: (LKRTCVideoSource) -> any GuestCameraCapture) async throws {
         try checkActive()
-        guard joined, rtcJoined, !screenStarting, screenCapture == nil, let publisher,
-              published["screen"] == nil, publisher.localScreenVideoTrack == nil,
-              profile.width > 0, profile.height > 0, profile.fps > 0,
-              profile.maximumBitrate > 0 else { throw GuestEngineError.admissionDenied }
+        guard joined, rtcJoined, let publisher else { throw GuestEngineError.disconnected }
+        guard !screenStarting, screenCapture == nil, published["screen"] == nil, publisher.localScreenVideoTrack == nil else {
+            throw GuestEngineError.screenShareBusy
+        }
+        guard profile.width > 0, profile.height > 0, profile.fps > 0, profile.maximumBitrate > 0 else {
+            throw GuestEngineError.screenShareUnavailable
+        }
         screenStarting = true; screenIntent = true
         let generation = screenGeneration
         defer { screenStarting = false }

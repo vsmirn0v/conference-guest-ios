@@ -386,7 +386,7 @@ import LiveKitWebRTC
         do {
             try await engine.startScreenShare(profile: .camera) { _ in capture }
             preconditionFailure("Revoked capture started publishing")
-        } catch GuestEngineError.admissionDenied {}
+        } catch GuestEngineError.screenShareUnavailable {}
         precondition(capture.cancelled && capture.stopped && !registered && !engine.screenSharing)
         let stopped = await engine.leave(sendLeave: false); precondition(stopped)
     }

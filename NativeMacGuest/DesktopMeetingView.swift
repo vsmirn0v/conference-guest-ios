@@ -672,7 +672,7 @@ struct NativeDesktopMeetingView: View {
 private struct NativeDesktopContinuationStatus: View {
     @ObservedObject var coordinator: MeetingContinuationCoordinator
     var body: some View {
-        if let status = coordinator.status {
+        if let status = coordinator.bannerStatus {
             HStack(spacing: 12) {
                 Text(status).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
                 if coordinator.needsManualResume { Button(L("Resume here")) { coordinator.resumeHere() } }

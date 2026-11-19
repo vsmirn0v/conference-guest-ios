@@ -122,6 +122,37 @@ import XCTest
         let closed = await peer.close(); XCTAssertTrue(closed)
     }
 
+    func testLateScreenResizeDoesNotFailAfterShareRetires() async throws {
+        let engine = NativeGuestEngine(label: "Late screen resize")
+        _ = try await engine.prepareJoinForTesting()
+        engine.setScreenShareIntent(false)
+
+        XCTAssertNoThrow(try engine.updateScreenShareProfile(.camera))
+        XCTAssertFalse(engine.screenSharing)
+        let stopped = await engine.leave(sendLeave: false)
+        XCTAssertTrue(stopped)
+    }
+
+    func testScreenSharePermissionFailureDoesNotUseAdmissionError() async throws {
+        let engine = NativeGuestEngine(label: "Screen permission denied")
+        _ = try await engine.prepareJoinForTesting()
+        try await engine.processEventForTesting([
+            "event": "permissions-updated",
+            "payload": ["canShareScreen": false]
+        ])
+
+        do {
+            try await engine.startScreenShare(profile: .camera) { source in
+                XCTFail("Denied screen sharing should not start capture")
+                return NativeDesktopShareCapture(source: source, canvasOnly: true)
+            }
+            XCTFail("Screen share should fail without permission")
+        } catch GuestEngineError.screenShareUnavailable {}
+
+        let stopped = await engine.leave(sendLeave: false)
+        XCTAssertTrue(stopped)
+    }
+
     func testLeaveDrainsSubscriberCloseBeforePublisherAndBoundsStuckSubscriber() async throws {
         final class CloseRecorder: @unchecked Sendable {
             private let lock = NSLock()

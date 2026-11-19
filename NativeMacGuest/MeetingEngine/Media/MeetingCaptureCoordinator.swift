@@ -102,7 +102,10 @@ final class MeetingCaptureCoordinator {
             guard !isClosed(), let meetingSession = engine() as? MeetingSession,
                   meetingSession.supportsScreenSharePublication else { return }
             do { try meetingSession.updateScreenShareProfile(profile) }
-            catch { onError(error.localizedDescription) }
+            catch {
+                let detail = error as NSError
+                probeLog("screen-profile-update-error", ["domain": detail.domain, "code": detail.code])
+            }
         }
         session.objectWillChange.sink {
             onPresenterChange()
