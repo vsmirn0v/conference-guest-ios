@@ -5,13 +5,13 @@ import UIKit
 final class MeetingVideoDemand {
     private(set) var foreground = true
     private(set) var floating = false
-    private var recovering = false
+    private var floatingRecovery = false
     private var backgroundGrace = false
     private(set) var awaitingForeground = false
     private var grace: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     var onChange: (() -> Void)?
-    var wantsVideo: Bool { !awaitingForeground && (foreground || floating || recovering || backgroundGrace) }
+    var wantsVideo: Bool { !awaitingForeground && (foreground || floating || floatingRecovery || backgroundGrace) }
     /// Joining from a notification changes delivery demand, never the user's view mode.
     func beginJoin(inBackground: Bool) {
         awaitingForeground = inBackground
@@ -46,9 +46,9 @@ final class MeetingVideoDemand {
         if !value { backgroundGrace = false }
         onChange?()
     }
-    func setRecovering(_ value: Bool) {
-        guard recovering != value else { return }
-        recovering = value; onChange?()
+    func setFloatingRecovery(_ value: Bool) {
+        guard floatingRecovery != value else { return }
+        floatingRecovery = value; onChange?()
     }
     deinit { grace?.cancel(); observers.forEach(NotificationCenter.default.removeObserver) }
 }

@@ -294,6 +294,37 @@ final class IOSMultiMeetingTests: XCTestCase {
         }
     }
 
+    func testCatchUpTracksConnectionLossOnlyAfterAdmissionAndClosesItOnRecovery() throws {
+        let destination = try JoinDestination.parse("https://meeting.example.test/calls/room-guest?psw=secret123")
+        let adapter = MockMultiAdapter(kind: .guest)
+        let catchUp = CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let workspaceAudio = IOSWorkspaceAudioCoordinator(sharedAudio: nil, configureLiveKit: false)
+        let controller = IOSMeetingSessionController(
+            destination: destination,
+            session: MeetingSession(kind: .guest, adapter: adapter),
+            chat: ChatStore(),
+            catchUp: catchUp,
+            workspaceAudio: workspaceAudio,
+            initialTitle: nil
+        )
+
+        adapter.onSessionSnapshot?(MeetingSessionSnapshot(phase: .connecting))
+        adapter.onSessionSnapshot?(MeetingSessionSnapshot(phase: .reconnecting))
+        XCTAssertTrue(catchUp.timeline.intervals.isEmpty)
+        adapter.onSessionSnapshot?(MeetingSessionSnapshot(phase: .connected))
+        XCTAssertEqual(controller.phase, .connected)
+
+        let interruptionStarted = Date()
+        adapter.onSessionSnapshot?(MeetingSessionSnapshot(phase: .reconnecting))
+        let interval = try XCTUnwrap(catchUp.timeline.intervals.last)
+        XCTAssertGreaterThanOrEqual(interval.start, interruptionStarted)
+        XCTAssertNil(interval.end)
+        adapter.onSessionSnapshot?(MeetingSessionSnapshot(phase: .connecting))
+        adapter.onSessionSnapshot?(MeetingSessionSnapshot(phase: .connected))
+        XCTAssertEqual(catchUp.timeline.intervals.map(\.id), [interval.id])
+        XCTAssertNotNil(catchUp.timeline.intervals.last?.end)
+    }
+
     func testGuestTranscriptCaptureStaysOutOfChatAndWorkspaceChatEvents() throws {
         let destination = try JoinDestination.parse("https://meeting.example.test/calls/room-guest?psw=secret123")
         let adapter = MockMultiAdapter(kind: .guest, canViewTranscript: true)
@@ -589,6 +620,44 @@ final class IOSMultiMeetingTests: XCTestCase {
             for session in sessions { _ = await session.leave() }
             XCTAssertEqual(shared.ownershipDiagnostics["attachmentCount"] as? Int, 0)
         }
+    }
+
+    func testReplacementGuestConnectionKeepsAudioOnlyDemand() async throws {
+        let adapter = GuestAdapter()
+        let original = NativeGuestEngine(label: "Original")
+        adapter.bindHistoryForTesting(original)
+        try await adapter.setVideoDemand(MeetingEngine.MeetingVideoDemand(visibleParticipantIDs: [], receivesCameras: false))
+
+        let replacement = NativeGuestEngine(label: "Replacement")
+        var subscriptions: [[String]] = []
+        replacement.mediaNotifyForTesting = { payload in
+            guard let subscription = payload["subscription"] as? [String: Any],
+                  subscription["subscribe"] as? Bool == true,
+                  let tracks = subscription["trackSids"] as? [String] else { return }
+            subscriptions.append(tracks)
+        }
+        adapter.bindHistoryForTesting(replacement)
+        defer { adapter.unbindHistoryForTesting() }
+
+        _ = try await replacement.prepareJoinForTesting()
+        try await replacement.processEventForTesting([
+            "event": "media-out",
+            "payload": [
+                "method": "rtc:participants:update",
+                "update": ["participants": [[
+                    "sid": "remote", "identity": "presenter", "state": "ACTIVE",
+                    "tracks": [
+                        ["sid": "audio", "type": "AUDIO", "source": "MICROPHONE", "muted": false],
+                        ["sid": "screen", "type": "VIDEO", "source": "SCREEN_SHARE", "muted": false]
+                    ]
+                ]]]
+            ]
+        ])
+        XCTAssertEqual(subscriptions, [["audio"]])
+        try await adapter.setVideoDemand(MeetingEngine.MeetingVideoDemand())
+        XCTAssertEqual(subscriptions, [["audio"], ["screen"]])
+        _ = await replacement.leave(sendLeave: false)
+        _ = await original.leave(sendLeave: false)
     }
 
     func testForegroundVideoDemandPermitsCameraAndScreenShareDiscoveryAndRendersArbitraryTrackIDs() async throws {

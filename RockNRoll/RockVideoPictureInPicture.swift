@@ -14,6 +14,10 @@ final class RockVideoPictureInPicture {
     private var energySubscription: AnyCancellable?
     private var presenting = false
     var onPresentationChanged: ((Bool) -> Void)?
+    var onRecoveryDemandChanged: ((Bool) -> Void)? {
+        get { floating.onRecoveryDemandChanged }
+        set { floating.onRecoveryDemandChanged = newValue }
+    }
     private let caption = UILabel()
     private let floating: FloatingVideoController
     private weak var sourceView: UIView?

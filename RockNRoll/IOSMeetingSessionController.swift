@@ -94,6 +94,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     private var lastLoggedPhase: NativeDesktopMeetingPhase?
     private var lastLoggedVideoCount = -1
     private var appLifecycleObservers: [NSObjectProtocol] = []
+    private var backgroundRecoveryTask: UIBackgroundTaskIdentifier = .invalid
     private var privateCheckAudioSink: ((AVAudioPCMBuffer) -> Void)?
     private var providerTranscriptSegments: [TranscriptSegment] = []
     private var providerCanViewTranscript: Bool?
@@ -178,7 +179,9 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     deinit {
         appLifecycleObservers.forEach(NotificationCenter.default.removeObserver)
         let sessionID = id
+        let recoveryTask = backgroundRecoveryTask
         Task { @MainActor in
+            if recoveryTask != .invalid { UIApplication.shared.endBackgroundTask(recoveryTask) }
             IOSCameraCapture.removeObserver(id: sessionID)
         }
     }
@@ -233,6 +236,9 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         view.onFloatingChanged = { [weak self] active in
             self?.videoDemand.setFloating(active)
             self?.updateVideoDemand()
+        }
+        view.onFloatingRecoveryDemandChanged = { [weak self] needed in
+            self?.videoDemand.setFloatingRecovery(needed)
         }
         view.loadViewIfNeeded()
         view.updateAssistantBadge(
@@ -652,11 +658,37 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         for name in [UIApplication.didBecomeActiveNotification, UIApplication.didEnterBackgroundNotification] {
             appLifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor [weak self] in
+                    self?.updateBackgroundRecoveryTask()
                     self?.updateVideoDemand()
                     self?.refreshCameraReactionStatus()
                 }
             })
         }
+    }
+
+    private var isRecoveringConnection: Bool {
+        phase == .reconnecting || (phase == .connecting && everConnected)
+    }
+
+    private func updateBackgroundRecoveryTask() {
+        guard !leaving, everConnected, isRecoveringConnection,
+              UIApplication.shared.applicationState == .background else {
+            endBackgroundRecoveryTask()
+            return
+        }
+        guard backgroundRecoveryTask == .invalid else { return }
+        backgroundRecoveryTask = UIApplication.shared.beginBackgroundTask(withName: "Reconnect meeting audio") { [weak self] in
+            self?.endBackgroundRecoveryTask()
+            AppDiagnostics.log("meeting-background-recovery-expired")
+        }
+        AppDiagnostics.log("meeting-background-recovery", ["granted": backgroundRecoveryTask != .invalid])
+    }
+
+    private func endBackgroundRecoveryTask() {
+        guard backgroundRecoveryTask != .invalid else { return }
+        let task = backgroundRecoveryTask
+        backgroundRecoveryTask = .invalid
+        UIApplication.shared.endBackgroundTask(task)
     }
 
     private func updateBroadcastObservation() {
@@ -702,7 +734,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                 "participants": snapshot.participants.count
             ])
         }
-        videoDemand.setRecovering(snapshot.phase == .reconnecting)
+        if previous != phase { updateBackgroundRecoveryTask() }
+        callView?.setConnectionRecovering(isRecoveringConnection)
 
         if let error = snapshot.lastError {
             reportMediaStatus(error)
@@ -715,7 +748,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             break
         case .connecting:
             callView?.sharingAvailable = false
-            callView?.setConnectionRecovering(false)
+            if isRecoveringConnection { callView?.showMediaStatus(L("Restoring meeting media…")) }
             if previous != .connecting { onEvent?(.connecting) }
         case .lobby:
             callView?.sharingAvailable = false
@@ -723,15 +756,14 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             onEvent?(.lobby)
         case .connected:
             everConnected = true
-            callView?.setConnectionRecovering(false)
             callView?.sharingAvailable = !isHeld && !quiet
             studio.presenter.supportsVP9 = snapshot.capabilities.supportsScreenShareVP9
             workspaceAudio?.markSessionConnected(id: id)
             if previous == .reconnecting {
-                catchUp.end(.connection)
                 chat.reactionHistory.endGap()
             }
             if previous != .connected {
+                catchUp.end(.connection)
                 onEvent?(.active)
                 if studio.hasSelection {
                     let guestProfile: GuestAudioProfile = studio.profile == .music ? .music : .speech
@@ -756,10 +788,9 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             updateVideoDemand()
         case .reconnecting:
             callView?.sharingAvailable = false
-            callView?.setConnectionRecovering(true)
             callView?.showMediaStatus(L("Restoring meeting media…"))
             if previous != .reconnecting {
-                catchUp.begin(.connection)
+                if everConnected { catchUp.begin(.connection) }
                 chat.reactionHistory.beginGap()
             }
             onEvent?(.connecting)
@@ -1471,6 +1502,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         }
         emitWorkspaceEvents()
         leaving = true
+        endBackgroundRecoveryTask()
         connectTask?.cancel()
         connectTask = nil
         microphoneTask?.cancel()

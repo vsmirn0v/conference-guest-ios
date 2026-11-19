@@ -43,7 +43,10 @@ public final class CatchUpStore: ObservableObject {
         canViewTranscript = saved.canViewTranscript
         transcriptionEnabled = saved.transcriptionEnabled ?? false
         var restored = saved.timeline
-        restored.resumeAfterRestart(at: saved.savedAt)
+        // Only a recorded open interruption has a known start time.
+        if restored.intervals.last?.isOngoing == true {
+            restored.resumeAfterRestart(at: saved.savedAt)
+        }
         timeline = restored
     }
 

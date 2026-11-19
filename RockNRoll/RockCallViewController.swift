@@ -36,6 +36,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var onShare: ((Bool) -> Void)?
     var onVideoDemandChanged: (() -> Void)?
     var onFloatingChanged: ((Bool) -> Void)?
+    var onFloatingRecoveryDemandChanged: ((Bool) -> Void)?
     var onDisplayMode: ((ConferenceDisplayMode) -> Void)?
     var onMinimize: (() -> Void)? { didSet { refreshSwitcherChrome() } }
     var activeMeetingsForSwitcher: [SwitcherItem] = [] { didSet { refreshSwitcherChrome() } }
@@ -755,6 +756,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self?.isFloatingVideoPresenting = active
             self?.onFloatingChanged?(active)
         }
+        floatingVideo?.onRecoveryDemandChanged = { [weak self] needed in
+            self?.onFloatingRecoveryDemandChanged?(needed)
+        }
         if let studio { floatingVideo?.bindMicrophoneActivity(studio.microphoneActivity) }
         activeSpeaker.$current.sink { [weak self] speaker in
             self?.compactHeader.setSpeaker(speaker)
@@ -1384,7 +1388,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             if !pin.isScreenShare { layoutMode = .grid }
         }
         let identifier = workspace.roomIdentifier.map { " · \($0)" } ?? ""
-        countLabel.text = snapshot.remoteParticipants.isEmpty ? L("Only you here%@", identifier) : L("%ld musicians", participants.count) + identifier
+        if preservingPinDuringReconnect && snapshot.remoteParticipants.isEmpty {
+            countLabel.text = L("Reconnecting…")
+        } else {
+            countLabel.text = snapshot.remoteParticipants.isEmpty ? L("Only you here%@", identifier) : L("%ld musicians", participants.count) + identifier
+        }
         participantsButton.isEnabled = true
         participantsButton.accessibilityLabel = L("Musicians, %ld", participants.count)
         tiles.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -1506,12 +1514,22 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 }
             }
         }
-        if displayMode == .screenShares && streams.isEmpty && currentPrimaryTarget?.isScreenShare != true {
+        if preservingPinDuringReconnect {
+            if tiles.arrangedSubviews.isEmpty {
+                let status = UILabel()
+                status.text = L("Restoring meeting media…")
+                status.textColor = .lightGray
+                status.textAlignment = .center
+                status.numberOfLines = 0
+                tiles.addArrangedSubview(status)
+            }
+        } else if displayMode == .screenShares && streams.isEmpty && currentPrimaryTarget?.isScreenShare != true {
             let empty = UILabel(); empty.text = L("No screen share is live. Audio continues.")
             empty.textColor = .lightGray; empty.textAlignment = .center; empty.numberOfLines = 0
             tiles.addArrangedSubview(empty)
+        } else if snapshot.remoteParticipants.isEmpty && streams.isEmpty && displayMode == .all {
+            tiles.addArrangedSubview(waitingRoomView())
         }
-        if snapshot.remoteParticipants.isEmpty && streams.isEmpty && displayMode == .all { tiles.addArrangedSubview(waitingRoomView()) }
         participantsPanel?.update(participants.map(\.status), pinnedKey: pinnedStreamKey)
         tiles.arrange(size: streamScroll.bounds.size, mode: effectiveLayoutMode)
         refreshSpeaking(snapshot: snapshot)

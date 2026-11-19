@@ -9,7 +9,9 @@ final class MeetingContinuationCoordinator: ObservableObject {
     static weak var active: MeetingContinuationCoordinator?
     @Published private(set) var enabled: Bool
     @Published private(set) var candidates: [ActiveJam] = []
-    @Published private(set) var status: String?
+    @Published private(set) var bannerStatus: String?
+    @Published private var refreshWarning: String?
+    var status: String? { bannerStatus ?? refreshWarning }
     @Published private(set) var moving = false
     @Published private(set) var needsManualResume = false
     var waitingForMove: Bool { moving || prepared != nil }
@@ -118,7 +120,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
             guard expected == revision else { return }
             try? await transport.withdraw(deviceID: deviceID, sessionID: session)
         } }
-        published = nil; status = nil; onStatus?(nil, false)
+        published = nil; refreshWarning = nil; bannerStatus = nil; onStatus?(nil, false)
     }
     func setForeground(_ value: Bool) {
         foreground = value
@@ -147,7 +149,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
         if receiver != nil, let jam, jam.invitation != destinationInvitation || jam.sessionID != targetSession {
             requestCancellation(message: L("Move cancelled because another jam was opened."))
         }
-        if changedSession && receiver == nil { status = nil; onStatus?(nil, false) }
+        if changedSession && receiver == nil { bannerStatus = nil; onStatus?(nil, false) }
         Task { await refresh() }
     }
     func targetDidConnect(invitation: URL?, sessionID: UUID?) {
@@ -239,7 +241,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
             let snapshot = try await transport.snapshot(sourceSession: sourceSession)
             let remote = snapshot.jams
             guard expected == revision else { return }
-            if refreshFailed && !waitingForMove { show(nil) }
+            if refreshWarning != nil { refreshWarning = nil }
             refreshFailed = false
             consecutiveRefreshFailures = 0
             cloudBackoffUntil = .distantPast
@@ -278,8 +280,10 @@ final class MeetingContinuationCoordinator: ObservableObject {
             #endif
             if error is ContinuationError, case ContinuationError.expired = error {
                 enabled = false; preferences.set(false, forKey: "shareActiveJams"); stopSharing()
-                status = L("Active-jam sharing was reset. Enable it again to continue.")
-            } else if !moving && prepared == nil { status = L("Active jams could not refresh. Try again when iCloud is available.") }
+                refreshWarning = L("Active-jam sharing was reset. Enable it again to continue.")
+            } else if !waitingForMove, refreshWarning == nil {
+                refreshWarning = L("Active jams could not refresh. Try again when iCloud is available.")
+            }
         }
     }
     private func scheduleTick() {
@@ -513,7 +517,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
         }
     }
     private func show(_ value: String?) {
-        status = value; onStatus?(value, moving || prepared != nil)
+        bannerStatus = value; onStatus?(value, moving || prepared != nil)
     }
     private func clearPrepared() {
         prepared = nil; needsManualResume = false; holdExpiry?.cancel(); holdExpiry = nil

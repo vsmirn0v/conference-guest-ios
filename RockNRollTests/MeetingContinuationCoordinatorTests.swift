@@ -78,6 +78,17 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         while !condition(), Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(condition())
     }
+    func testBackgroundRefreshErrorStaysOutOfTheCallBanner() async {
+        let cloud = Cloud()
+        let coordinator = make(cloud, "phone")
+        await eventually { cloud.snapshotReads > 0 }
+
+        cloud.connectError = CKError(.networkFailure)
+        await coordinator.refresh()
+        XCTAssertNotNil(coordinator.status)
+        XCTAssertNil(coordinator.bannerStatus)
+    }
+
     @MainActor private final class SnapshotGate {
         var reads: [Int: CheckedContinuation<[ActiveJam], Error>] = [:]
         func read(_ pass: Int) async throws -> [ActiveJam] {

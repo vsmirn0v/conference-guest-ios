@@ -139,19 +139,19 @@ import XCTest
         XCTAssertFalse(fixture.floating.needsRecoveryFrames)
         XCTAssertEqual(fixture.starts, 1)
     }
-    func testRecoveryDemandSurvivesBackgroundGraceWithoutKeepingVideoOnAfterCancel() async throws {
+    func testFloatingRecoveryDemandSurvivesBackgroundGraceWithoutKeepingVideoOnAfterCancel() async throws {
         let demand = MeetingVideoDemand(observeLifecycle: false)
         let preference = FloatingVideoPreference.enabled
         FloatingVideoPreference.enabled = true
         defer { demand.onChange = nil; FloatingVideoPreference.enabled = preference }
         demand.setForeground(false, graceNanoseconds: 1)
-        demand.setRecovering(true)
+        demand.setFloatingRecovery(true)
         let expired = expectation(description: "Background grace expired")
         demand.onChange = { expired.fulfill() }
         await fulfillment(of: [expired], timeout: 2)
         demand.onChange = nil
         XCTAssertTrue(demand.wantsVideo)
-        demand.setRecovering(false)
+        demand.setFloatingRecovery(false)
         XCTAssertFalse(demand.wantsVideo)
     }
     func testUnavailableSystemPiPBoundsBackgroundVideoDemand() async throws {

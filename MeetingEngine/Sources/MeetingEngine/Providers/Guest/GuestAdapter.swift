@@ -73,6 +73,7 @@ public enum NativeDesktopGuestError: LocalizedError {
     private var microphoneRevision: UInt64 = 0
     private var cameraRevision: UInt64 = 0
     private var outputIntent = true
+    private var videoDemand = MeetingVideoDemand()
     private var quietJoin = false
     private var microphoneReadinessAllowed = false
     private var leaving = false
@@ -558,6 +559,7 @@ public enum NativeDesktopGuestError: LocalizedError {
     }
 
     func setVideoDemand(_ demand: MeetingVideoDemand) async throws {
+        videoDemand = demand
         try await currentNativeEngine?.setVisibleParticipantIDs(
             demand.visibleParticipantIDs,
             preferredScreenParticipantID: demand.preferredScreenParticipantID,
@@ -830,6 +832,9 @@ public enum NativeDesktopGuestError: LocalizedError {
             if let session { refresh(session.snapshot) } else { emit() }
             return
         }
+        engine.configureVideoDemand(videoDemand.visibleParticipantIDs,
+                                    preferredScreenParticipantID: videoDemand.preferredScreenParticipantID,
+                                    cameras: videoDemand.receivesCameras)
         engine.onCapturedMessages = { [weak self, weak engine] messages, transcript in
             guard let self, let engine, revision == token, currentNativeEngine === engine, !leaving else { return }
             onCapturedMessages?(messages, transcript)

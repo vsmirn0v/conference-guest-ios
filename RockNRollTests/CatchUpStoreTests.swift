@@ -3,6 +3,22 @@ import XCTest
 @testable import RockNRoll
 
 final class CatchUpStoreTests: XCTestCase {
+    func testRestoringCompletedHistoryDoesNotCreateAnInterruption() async {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        let queue = DispatchQueue(label: "test-catch-up-restore")
+        let store = CatchUpStore(storageURL: url, writer: queue)
+        store.enter(roomKey: "test-room")
+        store.begin(.connection)
+        store.end(.connection)
+        await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
+
+        let restored = CatchUpStore(storageURL: url)
+        restored.enter(roomKey: "test-room")
+        XCTAssertEqual(restored.timeline.intervals, store.timeline.intervals)
+        XCTAssertEqual(restored.timeline.unreadCount, 1)
+        await restored.finishMeeting().value
+    }
+
     func testQueuedHistoryRestoresAfterRestart() async {
         let store = CatchUpStore()
         let key = "test-room-\(UUID().uuidString)"

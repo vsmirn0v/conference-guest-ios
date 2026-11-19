@@ -204,6 +204,26 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertEqual(focusedName(call.view), "Person 0", "Following speaker must clear the browsing cursor")
     }
 
+    func testEmptyStageShowsRecoveryUntilConferenceReturns() {
+        let call = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
+        call.loadViewIfNeeded()
+        let snapshot = CallMediaSnapshot(participants: [])
+        let recoveryMessage = L("Restoring meeting media…")
+        let waitingMessage = L("You're connected. Waiting for others.")
+
+        call.setConnectionRecovering(true)
+        call.render(snapshot: snapshot)
+        var labels = descendants(call.view).compactMap { ($0 as? UILabel)?.text }
+        XCTAssertTrue(labels.contains(recoveryMessage))
+        XCTAssertFalse(labels.contains(waitingMessage))
+
+        call.setConnectionRecovering(false)
+        call.render(snapshot: snapshot)
+        labels = descendants(call.view).compactMap { ($0 as? UILabel)?.text }
+        XCTAssertFalse(labels.contains(recoveryMessage))
+        XCTAssertTrue(labels.contains(waitingMessage))
+    }
+
     func testNativeScreenOnlyDiscardsCameraSelectionAndShowsAvailableShare() throws {
         let factory = LKRTCPeerConnectionFactory()
         let source = factory.videoSource()

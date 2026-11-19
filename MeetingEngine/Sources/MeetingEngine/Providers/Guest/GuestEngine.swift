@@ -1710,11 +1710,16 @@ extension NativeGuestEngine {
     func setVisibleParticipantIDs(_ ids: Set<String>?, preferredScreenParticipantID: String? = nil,
                                   cameras: Bool = true) async throws {
         try checkActive()
-        visibleParticipantIDs = ids; self.preferredScreenParticipantID = preferredScreenParticipantID
-        receivesCameras = cameras
+        configureVideoDemand(ids, preferredScreenParticipantID: preferredScreenParticipantID, cameras: cameras)
         onIncomingVideoChange?(incomingVideo)
         try await reconcileSubscriptions()
         onIncomingVideoChange?(incomingVideo)
+    }
+
+    func configureVideoDemand(_ ids: Set<String>?, preferredScreenParticipantID: String?, cameras: Bool) {
+        visibleParticipantIDs = ids
+        self.preferredScreenParticipantID = preferredScreenParticipantID
+        receivesCameras = cameras
     }
 
     private func featureRequest(_ event: String, payload: [String: Any] = [:], requestID: String? = nil) async throws -> [String: Any] {

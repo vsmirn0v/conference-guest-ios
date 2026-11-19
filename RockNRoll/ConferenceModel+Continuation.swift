@@ -41,7 +41,7 @@ extension ConferenceModel {
         guard isInConference || isJoining else {
             continuationBanner.show(nil, in: nil); return
         }
-        let text = continuation.status
+        let text = continuation.bannerStatus
         if companionAudioPaused && isInConference {
             continuationBanner.show(L("Joined alongside the other device. Audio, microphone and camera are off."),
                                     in: continuationHostView, button: L("Enable audio here")) { [weak self] in self?.enableCompanionAudio() }
