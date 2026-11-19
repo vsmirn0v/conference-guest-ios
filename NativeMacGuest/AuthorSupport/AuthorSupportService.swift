@@ -98,7 +98,7 @@ final class AuthorSupportService: ObservableObject {
     func hasActiveSubscription(at now: Date) -> Bool {
         guard let receipt = currentReceipt else { return false }
         let seconds = Int(now.timeIntervalSince1970)
-        return receipt.issued - 300 <= seconds && seconds < receipt.through
+        return receipt.issued - 300 <= seconds && seconds <= receipt.through
     }
 
     func refresh() async {
