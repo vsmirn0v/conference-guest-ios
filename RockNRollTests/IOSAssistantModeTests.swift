@@ -172,6 +172,31 @@ final class IOSAssistantModeTests: XCTestCase {
         XCTAssertNil(coordinator.evaluationErrors[id])
     }
 
+    func testChatFailureStillSendsAutomaticVoiceAndReportsPartialDelivery() async throws {
+        let id = UUID(), suite = SuiteBox(), evaluator = MockEvaluator()
+        let alerted = expectation(description: "User is notified about the failed channel")
+        await evaluator.setVerdict(.init(needsUser: true, urgency: .now, reason: "Direct question",
+                                         suggestedReply: "Confirmed.", confidence: 1))
+        var spoken: [String] = []
+        var meeting = bridge(for: id) { spoken.append($0) }
+        meeting.isForeground = true
+        meeting.sendChat = { _ in throw URLError(.networkConnectionLost) }
+        let coordinator = IOSAssistantCoordinator(
+            workspace: nil, preferences: suite.defaults, evaluator: evaluator, modelAvailable: { true },
+            resolveBridge: { _ in meeting }, scheduleNotification: { _ in alerted.fulfill() }
+        )
+        coordinator.setMode(.participating, for: id)
+        coordinator.setParticipationOptions(for: id, askBeforeSending: false, output: .voiceAndChat, goal: "")
+        coordinator.observeEvents([makeEvent(id: "q", speaker: "Ирина", text: "Can you confirm?")], for: id)
+        await fulfillment(of: [alerted], timeout: 2)
+        let card = try XCTUnwrap(coordinator.alertCards.first)
+        XCTAssertEqual(spoken, ["Confirmed."])
+        XCTAssertTrue(card.deliveredAutomatically)
+        XCTAssertTrue(card.deliveryFailed)
+        XCTAssertTrue(card.deliveryNote?.contains(L("Voice")) == true)
+        XCTAssertTrue(card.deliveryNote?.contains(L("Chat")) == true)
+    }
+
     func testTurningParticipationOffWhileProviderIsThinkingDiscardsLateVoiceReply() async {
         let id = UUID(), suite = SuiteBox()
         let started = expectation(description: "Provider received the question")

@@ -101,7 +101,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     private var providerTranscriptActive = false
     private var providerCanManageTranscript = false
     private var didAutoStartLocalTranscription = false
-    private var voiceReplyTask: Task<Bool, Error>?
+    private var voiceReplyTask: Task<Void, Error>?
     private var micActiveStart: Date?
     private var micActiveIntervals: [DateInterval] = []
 
@@ -1002,39 +1002,56 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
 
     func speakVoiceReply(_ text: String, voiceStore: IOSVoiceStore = .shared) async throws {
         guard !leaving, phase == .connected else {
+            AppDiagnostics.log("voice-reply-unavailable", ["reason": "disconnected"])
             throw MeetingSessionError.notConnected
         }
         guard !isHeld else {
+            AppDiagnostics.log("voice-reply-unavailable", ["reason": "hold"])
             throw MeetingSessionError.unavailable(L("Cannot send a voice reply while the call is on hold."))
         }
         guard !quiet else {
+            AppDiagnostics.log("voice-reply-unavailable", ["reason": "soundOff"])
             throw MeetingSessionError.unavailable(L("Unmute meeting sound before sending a voice reply."))
         }
 
-        cancelVoiceReply()
+        let previous = voiceReplyTask
+        previous?.cancel()
         isSpeakingVoiceReply = true
-        let task = Task<Bool, Error> { @MainActor [weak self] in
-            let buffer = try await voiceStore.synthesize(text)
+        let task = Task<Void, Error> { @MainActor [weak self] in
+            // The previous reply must restore its sender before the next reply can borrow it.
+            _ = await previous?.result
             try Task.checkCancellation()
-            guard let self, !self.leaving, self.phase == .connected, !self.isHeld else {
-                throw CancellationError()
+            guard let self, !leaving, phase == .connected, !isHeld else { throw MeetingSessionError.notConnected }
+            var stage = "synthesis"
+            let engine = voiceStore.engine.rawValue
+            AppDiagnostics.log("voice-reply-start", ["engine": engine, "provider": kind.rawValue])
+            do {
+                let buffer = try await voiceStore.synthesize(text)
+                try Task.checkCancellation()
+                guard !leaving, phase == .connected, !isHeld else { throw MeetingSessionError.notConnected }
+                stage = "send"
+                AppDiagnostics.log("voice-reply-prepared", ["frames": Int(buffer.frameLength), "sampleRate": buffer.format.sampleRate])
+                let played = await session.playVoiceReply(buffer)
+                try Task.checkCancellation()
+                guard played else { throw MeetingSessionError.unavailable(L("Could not send the voice reply into this meeting.")) }
+                AppDiagnostics.log("voice-reply-finished", ["provider": kind.rawValue])
+            } catch {
+                AppDiagnostics.log("voice-reply-error", ["stage": stage, "engine": engine, "cancelled": Task.isCancelled])
+                throw error
             }
-            return await self.session.playVoiceReply(buffer)
         }
         voiceReplyTask = task
         defer {
-            if voiceReplyTask == task { voiceReplyTask = nil }
-            isSpeakingVoiceReply = false
+            if voiceReplyTask == task {
+                voiceReplyTask = nil
+                isSpeakingVoiceReply = false
+            }
         }
-        let played = try await task.value
-        if !played && !Task.isCancelled {
-            throw MeetingSessionError.unavailable(L("Could not send the voice reply into this meeting."))
-        }
+        try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
 
     func cancelVoiceReply() {
         voiceReplyTask?.cancel()
-        voiceReplyTask = nil
         isSpeakingVoiceReply = false
     }
 

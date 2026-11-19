@@ -1,3 +1,4 @@
+import MeetingEngine
 import ConferenceCore
 import Foundation
 import UIKit
@@ -121,6 +122,7 @@ struct IOSAssistantAlertCard: Identifiable, Equatable, Sendable {
     var suggestedReply: String
     var deliveredAutomatically: Bool = false
     var deliveryNote: String? = nil
+    var deliveryFailed: Bool = false
     var dismissed: Bool = false
 }
 
@@ -836,53 +838,48 @@ final class IOSAssistantCoordinator: ObservableObject {
             return
         }
 
-        var deliveredAutomatically = false
-        var deliveryNote: String?
-
-        if mode == .participating,
-           !effectiveAskBeforeSending(for: controllerID),
-           !replyText.isEmpty,
-           !(bridge?.isMicUnmuted ?? false),
-           let bridge {
-            let output = effectiveParticipationOutput(for: controllerID)
-            var sentChannels: [String] = []
-            do {
-                switch output {
-                case .chat:
-                    if bridge.canSendChat {
-                        try await bridge.sendChat(replyText)
-                        sentChannels.append(L("Chat"))
+        let output = effectiveParticipationOutput(for: controllerID)
+        let askFirst = effectiveAskBeforeSending(for: controllerID)
+        var sentChannels: [String] = []
+        var failures: [String] = []
+        if mode == .participating, !askFirst, !replyText.isEmpty, let bridge, !bridge.isMicUnmuted {
+            if output != .voice {
+                do {
+                    guard bridge.canSendChat else {
+                        throw MeetingSessionError.unavailable(L("Chat is unavailable in this meeting."))
                     }
-                case .voice:
-                    try await bridge.speakVoice(replyText)
-                    sentChannels.append(L("Voice"))
-                case .voiceAndChat:
-                    if bridge.canSendChat {
-                        try await bridge.sendChat(replyText)
-                        sentChannels.append(L("Chat"))
-                    }
-                    try Task.checkCancellation()
-                    try await bridge.speakVoice(replyText)
-                    sentChannels.append(L("Voice"))
+                    try await bridge.sendChat(replyText)
+                    sentChannels.append(L("Chat"))
+                } catch {
+                    failures.append(L("Chat") + " · " + error.localizedDescription)
                 }
-                if !sentChannels.isEmpty {
-                    deliveredAutomatically = true
-                    deliveryNote = L("Delivered via %@", sentChannels.joined(separator: " + "))
-                    recordActivity(
-                        controllerID: controllerID,
-                        title: title,
-                        mode: mode,
-                        summary: replyText,
-                        channel: sentChannels.joined(separator: " + ")
-                    )
+            }
+            guard !Task.isCancelled else { return }
+            if output != .chat, let current = resolveBridge(controllerID),
+               resolvedMode(for: controllerID) == .participating, !current.isMicUnmuted,
+               !effectiveAskBeforeSending(for: controllerID), effectiveParticipationOutput(for: controllerID) == output {
+                do {
+                    try await current.speakVoice(replyText)
+                    sentChannels.append(L("Voice"))
+                } catch {
+                    failures.append(L("Voice") + " · " + error.localizedDescription)
                 }
-            } catch {
-                deliveryNote = error.localizedDescription
             }
         }
-
         guard !Task.isCancelled else { return }
-        AppDiagnostics.log("assistant-alert", ["mode": mode.rawValue, "automaticDelivery": deliveredAutomatically, "output": effectiveParticipationOutput(for: controllerID).rawValue])
+        let deliveredAutomatically = !sentChannels.isEmpty
+        var notes: [String] = []
+        if deliveredAutomatically {
+            let channels = sentChannels.joined(separator: " + ")
+            notes.append(L("Delivered via %@", channels))
+            recordActivity(controllerID: controllerID, title: title, mode: mode, summary: replyText, channel: channels)
+        }
+        notes.append(contentsOf: failures)
+        let deliveryNote = notes.isEmpty ? nil : notes.joined(separator: "\n")
+        AppDiagnostics.log("assistant-alert", [
+            "mode": mode.rawValue, "automaticDelivery": deliveredAutomatically, "output": output.rawValue,
+            "askFirst": askFirst, "hasDraft": !replyText.isEmpty, "failedChannels": failures.count
+        ])
         let card = IOSAssistantAlertCard(
             controllerID: controllerID,
             workspaceSessionID: workspaceSID,
@@ -894,7 +891,8 @@ final class IOSAssistantCoordinator: ObservableObject {
             excerpt: fallbackExcerpt,
             suggestedReply: replyText,
             deliveredAutomatically: deliveredAutomatically,
-            deliveryNote: deliveryNote
+            deliveryNote: deliveryNote,
+            deliveryFailed: !failures.isEmpty
         )
 
         alertCards.insert(card, at: 0)
@@ -909,7 +907,7 @@ final class IOSAssistantCoordinator: ObservableObject {
             channel: deliveredAutomatically ? deliveryNote : nil
         )
         onBannerAlert?(card)
-        if !(bridge?.isForeground ?? false) || !deliveredAutomatically || UIApplication.shared.applicationState != .active {
+        if !(bridge?.isForeground ?? false) || !failures.isEmpty || !deliveredAutomatically || UIApplication.shared.applicationState != .active {
             await scheduleNotification(card)
         }
     }
@@ -929,10 +927,12 @@ final class IOSAssistantCoordinator: ObservableObject {
         guard let idx = alertCards.firstIndex(where: { $0.id == cardID }) else { return }
         let card = alertCards[idx]
         let text = card.suggestedReply.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let bridge = resolveBridge(card.controllerID) else { return }
+        guard !text.isEmpty else { return }
+        guard let bridge = resolveBridge(card.controllerID) else { throw MeetingSessionError.notConnected }
         try await bridge.sendChat(text)
         if let current = alertCards.firstIndex(where: { $0.id == cardID }) {
             alertCards[current].deliveredAutomatically = false
+            alertCards[current].deliveryFailed = false
             alertCards[current].deliveryNote = L("Sent to chat")
         }
         recordActivity(controllerID: card.controllerID, title: card.meetingTitle, mode: card.mode, summary: text, channel: L("Chat"))
@@ -942,9 +942,11 @@ final class IOSAssistantCoordinator: ObservableObject {
         guard let idx = alertCards.firstIndex(where: { $0.id == cardID }) else { return }
         let card = alertCards[idx]
         let text = card.suggestedReply.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let bridge = resolveBridge(card.controllerID) else { return }
+        guard !text.isEmpty else { return }
+        guard let bridge = resolveBridge(card.controllerID) else { throw MeetingSessionError.notConnected }
         try await bridge.speakVoice(text)
         if let current = alertCards.firstIndex(where: { $0.id == cardID }) {
+            alertCards[current].deliveryFailed = false
             alertCards[current].deliveryNote = L("Spoken in call")
         }
         recordActivity(controllerID: card.controllerID, title: card.meetingTitle, mode: card.mode, summary: text, channel: L("Voice"))

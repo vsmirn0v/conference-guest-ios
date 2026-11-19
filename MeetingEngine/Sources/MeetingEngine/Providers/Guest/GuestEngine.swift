@@ -1403,16 +1403,20 @@ public final class NativeGuestEngine {
     /// Plays a voice reply into a non-talk simultaneous Guest room through a synthetic WebRTC
     /// audio track without opening hardware capture or stealing active talk ownership.
     func playNonTalkVoiceReply(_ buffer: AVAudioPCMBuffer, localGain: Float?) async -> Bool {
+        func failed(_ stage: String) -> Bool {
+            probeLog("guest-voice-reply-failed", ["stage": stage])
+            return false
+        }
         guard !closing, failure == nil, !outputSuppressed, !nonTalkVoiceReplyActive,
-              participationVoiceSender == nil,
-              permissions["canShareMicrophone"] == true,
-              let sid = published["audio"], !forcedMuteSIDs.contains(sid),
-              let publisher else { return false }
+              participationVoiceSender == nil else { return failed("senderUnavailable") }
+        guard permissions["canShareMicrophone"] == true else { return failed("permission") }
+        guard let sid = published["audio"], let publisher else { return failed("unpublished") }
+        guard !forcedMuteSIDs.contains(sid) else { return failed("hostMuted") }
         let wasMutedOnServer = serverMute[sid] == true
 #if os(macOS)
-        guard wasMutedOnServer else { return false }
+        guard wasMutedOnServer else { return failed("muteState") }
 #else
-        guard wasMutedOnServer || serverMute[sid] == false else { return false }
+        guard wasMutedOnServer || serverMute[sid] == false else { return failed("muteState") }
 #endif
         nonTalkVoiceReplyActive = true
         defer { nonTalkVoiceReplyActive = false }
@@ -1423,43 +1427,57 @@ public final class NativeGuestEngine {
             let track = factory.audioTrack(with: source, trackId: "synth-\(UUID().uuidString)")
             track.isEnabled = false
             return (source, track)
-        }) else { return false }
+        }) else { return failed("createTrack") }
 
         let synthSource = pair.0
         let synthTrack = pair.1
-        guard await publisher.setSyntheticAudioTrack(synthTrack) else { return false }
+        guard await publisher.setSyntheticAudioTrack(synthTrack) else { return failed("attachTrack") }
 
-        var unmutedOnServer = false
-        let cleanup: @MainActor () async -> Void = { [weak self, weak publisher] in
+        let cleanup: @MainActor () async -> Bool = { [weak self, weak publisher] in
             synthTrack.isEnabled = false
-            await Task { @MainActor in
+            return await Task { @MainActor in
                 let restoreMicEnabled = {
                     guard let self, !wasMutedOnServer else { return false }
                     return !self.closing && self.failure == nil && !self.outputSuppressed
                         && self.localMuteIntent[false] == false && !self.forcedMuteSIDs.contains(sid)
                 }()
-                _ = await publisher?.setSyntheticAudioTrack(nil, restoreAudioEnabled: restoreMicEnabled)
-                if unmutedOnServer {
-                    try? await self?.signalParticipationMute(true, sid: sid)
+                let restored = await publisher?.setSyntheticAudioTrack(nil, restoreAudioEnabled: restoreMicEnabled) == true
+                if wasMutedOnServer, let self, !self.closing, self.publisher === publisher {
+                    // Even a timed-out unmute might have been applied. Restore the original mute.
+                    do { try await self.signalParticipationMute(true, sid: sid) }
+                    catch { self.recordFailure(GuestEngineError.disconnected); return false }
                 }
+                return restored
             }.value
         }
 
         if wasMutedOnServer {
+            // A cold SFU publication may be advertised only after its first RTP packet.
+            // Feed silence on the synthetic track until the server acknowledges unmute.
+            let primer = Task { @MainActor in
+                let silence = [Int16](repeating: 0, count: SyntheticVoiceReplyPlayer.frameSamples)
+                while !Task.isCancelled {
+                    silence.withUnsafeBufferPointer { pcm in
+                        synthSource.deliverPCMInt16(pcm.baseAddress!, frameCount: pcm.count,
+                                                   sampleRate: Int32(SyntheticVoiceReplyPlayer.targetSampleRate), channels: 1)
+                    }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+            }
             do {
+                defer { primer.cancel() }
                 try await signalParticipationMute(false, sid: sid)
-                unmutedOnServer = true
             } catch {
-                await cleanup()
-                return false
+                _ = await cleanup()
+                return failed("unmuteAcknowledgement")
             }
         }
 
         guard !Task.isCancelled, !closing, failure == nil, !outputSuppressed,
-              self.publisher === publisher, !forcedMuteSIDs.contains(sid),
+              self.publisher === publisher, !forcedMuteSIDs.contains(sid), serverMute[sid] == false,
               published["audio"] == sid else {
-            await cleanup()
-            return false
+            _ = await cleanup()
+            return failed("senderChanged")
         }
 
         let played = await SyntheticVoiceReplyPlayer.play(buffer, into: synthSource, localGain: localGain) { [weak self, weak publisher] in
@@ -1471,8 +1489,9 @@ public final class NativeGuestEngine {
             }
             return true
         }
-        await cleanup()
-        return played
+        guard await cleanup() else { return failed("restoreSender") }
+        guard played else { return failed("playback") }
+        return true
     }
 
     func applyAudioProfile(_ profile: GuestAudioProfile) async {

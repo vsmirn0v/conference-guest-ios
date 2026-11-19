@@ -111,9 +111,9 @@ struct IOSAssistantAlertCardView: View {
             }
 
             if let deliveryNote = card.deliveryNote, !deliveryNote.isEmpty {
-                Label(deliveryNote, systemImage: card.deliveredAutomatically ? "checkmark.circle.fill" : "checkmark")
+                Label(deliveryNote, systemImage: card.deliveryFailed ? "exclamationmark.triangle" : "checkmark")
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(card.deliveryFailed ? Color.orange : .green)
             }
 
             if card.mode == .participating || !draftReply.isEmpty {

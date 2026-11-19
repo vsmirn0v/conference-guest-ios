@@ -675,6 +675,91 @@ final class IOSMultiMeetingTests: XCTestCase {
         XCTAssertFalse(module.isEngineRunning)
     }
 
+    func testMutedGuestSendsVoiceReplyToRemoteDecoder() async throws {
+        let shared = SharedAudioEngine.live()
+        let audio = try await SharedGuestMeetingAudio.attach(to: shared)
+        let guest = NativeGuestEngine(label: "Voice publisher", systemAudio: audio)
+        let listener = NativeGuestEngine(label: "Voice listener")
+        addTeardownBlock {
+            _ = await guest.leave(sendLeave: false)
+            _ = await listener.leave(sendLeave: false)
+            _ = await audio.shutdown()
+        }
+        let listening = await audio.beginAttempt(sound: true)
+        XCTAssertTrue(listening)
+        let publisher = try await guest.prepareJoinForTesting(camera: false)
+        let subscriber = try await listener.prepareSubscriberForTesting()
+        for peer in [publisher, subscriber] {
+            let config = peer.connection.configuration
+            config.iceTransportPolicy = .all
+            XCTAssertTrue(peer.connection.setConfiguration(config))
+        }
+        publisher.sendCandidate = { [weak subscriber] candidate in
+            try await subscriber?.addCandidates([candidate.merging(["target": "SUBSCRIBER"]) { _, new in new }])
+        }
+        subscriber.sendCandidate = { [weak publisher] candidate in
+            try await publisher?.addCandidates([candidate.merging(["target": "PUBLISHER"]) { _, new in new }])
+        }
+        let mic = try await publisher.prepareAudio(cid: "mic")
+        try await publisher.attach(mic, codec: "opus")
+        guest.setLocalMuteIntent(true, video: false)
+        guest.preparePublicationForTesting(cid: "mic", video: false)
+        try await guest.processEventForTesting(["event": "media-out", "payload": [
+            "method": "rtc:track:published", "trackPublishedResponse": ["cid": "mic", "track": ["sid": "audio", "muted": true]]
+        ]])
+        let offer = try await publisher.makeOffer()
+        let answer = try await subscriber.answer(offer)
+        try await publisher.acceptAnswer(answer)
+        try await subscriber.didSendDescription()
+        try await publisher.didSendDescription()
+        try await waitUntil { publisher.transportConnected && subscriber.transportConnected }
+        XCTAssertTrue(publisher.transportConnected && subscriber.transportConnected)
+        var commands: [Bool] = []
+        guest.mediaNotifyForTesting = { payload in
+            let muted = try XCTUnwrap((payload["mute"] as? [String: Any])?["muted"] as? Bool)
+            commands.append(muted)
+            if !muted {
+                // Model a service that advertises a cold publisher only after receiving RTP.
+                func hasAudioPacket() async -> Bool {
+                    let rows = await subscriber.stats() ?? []
+                    return rows.contains {
+                        $0["type"] as? String == "inbound-rtp" && (($0["packetsReceived"] as? NSNumber)?.intValue ?? 0) > 0
+                    }
+                }
+                for _ in 0..<30 {
+                    if await hasAudioPacket() { break }
+                    try await Task.sleep(for: .milliseconds(30))
+                }
+                guard await hasAudioPacket() else { return }
+            }
+            try await guest.processEventForTesting(["event": "media-out", "payload": [
+                "method": "rtc:participants:update", "update": ["participants": [[
+                    "identity": "local", "sid": "local", "version": commands.count,
+                    "tracks": [["sid": "audio", "type": "AUDIO", "muted": muted]]
+                ]]]
+            ]])
+        }
+        defer { guest.mediaNotifyForTesting = nil }
+        let reply: AVAudioPCMBuffer
+        if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SYSTEM_VOICE_REPLY"] == "1" {
+            reply = try await IOSVoiceSynthesis.system("Проверка звука. Меня слышно?", language: "ru-RU")
+        } else {
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+            reply = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000))
+            reply.frameLength = reply.frameCapacity
+            for i in 0..<Int(reply.frameLength) { reply.floatChannelData![0][i] = 0.25 * sin(Float(i) * 0.07) }
+        }
+        let before = subscriber.pcmMeter.snapshot.nonSilentCallbacks
+        let played = await guest.playNonTalkVoiceReply(reply, localGain: nil)
+        XCTAssertTrue(played)
+        try await waitUntil { subscriber.pcmMeter.snapshot.nonSilentCallbacks > before + 5 }
+        XCTAssertGreaterThan(subscriber.pcmMeter.snapshot.nonSilentCallbacks, before + 5)
+        XCTAssertGreaterThan(subscriber.pcmMeter.snapshot.rms, 0.02, "Remote decoder received audible reply audio")
+        XCTAssertEqual(commands, [false, true])
+        XCTAssertFalse(mic.isEnabled)
+        XCTAssertFalse(audio.factory.audioDeviceModule.isRecording)
+    }
+
     func testLateGuestPublisherReachesListeningOutputWithVideoOff() async throws {
         let shared = SharedAudioEngine.live()
         let audio = try await SharedGuestMeetingAudio.attach(to: shared)

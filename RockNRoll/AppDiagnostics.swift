@@ -44,7 +44,7 @@ enum AppDiagnostics {
         started = true
         NativeDiagnosticsLog.shared.start()
         setProbeLogSink(events: [
-            "guest-audio-reception", "audio-device-route", "audio-engine-lifecycle",
+            "guest-voice-reply-failed", "guest-audio-reception", "audio-device-route", "audio-engine-lifecycle",
             "ice-state", "peer-transport-state", "ice-selected-route", "ice-incoming-demand",
             "ice-timeout", "ice-failed-checklist", "ice-tcp-relay-fallback", "ice-relay-media-verified",
             "session-control-failure", "session-recovery"
