@@ -11,6 +11,9 @@
 
 static NSErrorDomain CaptureErrorDomain;
 static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatusKey;
+// SCFrameStatus values from the public macOS ScreenCaptureKit ABI.
+static const NSInteger FrameStatusComplete = 0;
+static const NSInteger FrameStatusStarted = 4;
 
 // Signatures copied from Apple's public macOS ScreenCaptureKit headers. None
 // of these selectors depends on an API introduced in macOS/iOS 27.
@@ -298,6 +301,7 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
     CGSize _outputSize, _pendingSize;
     NSUInteger _resizeGeneration;
     BOOL _resizeScheduled, _resizeInFlight;
+    BOOL _hasInitialFrame;
 }
 
 static NSError *CaptureError(NSString *message) {
@@ -407,7 +411,7 @@ static NSError *CaptureError(NSString *message) {
     NSDictionary *rectInfo = info[ContentRectKey];
     CGRect rect;
     // Ignore idle/blank/minimized frames; never replace a valid size with zero.
-    if (![status isKindOfClass:NSNumber.class] || status.integerValue != 0 ||
+    if (![status isKindOfClass:NSNumber.class] || status.integerValue != FrameStatusComplete ||
         ![scale isKindOfClass:NSNumber.class] || ![contentScale isKindOfClass:NSNumber.class] ||
         ![rectInfo isKindOfClass:NSDictionary.class] ||
         !CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)rectInfo, &rect)) return;
@@ -554,6 +558,7 @@ static NSError *CaptureError(NSString *message) {
     if (generation != _generation || selection != _selection || _stopping) return;
     NSObject *capture = [[NSClassFromString(@"SCStream") alloc] initWithFilter:filter configuration:config delegate:self];
     _stream = capture; _pickerSession.stream = capture;
+    _hasInitialFrame = NO;
     if (_sourceStyle == 1) [self prepareWindowResizeForStream:capture configuration:config];
     NSError *error;
     if (![capture addStreamOutput:self type:0 sampleHandlerQueue:dispatch_get_main_queue() error:&error]) {
@@ -582,6 +587,15 @@ static NSError *CaptureError(NSString *message) {
     // The stream's output queue is main. Forward immediately, without copying
     // frame pixels or scheduling an unbounded queue of per-frame blocks.
     if (stream != _stream || type != 0 || !CMSampleBufferIsValid(sample) || !CMSampleBufferGetImageBuffer(sample)) return;
+    if (!_hasInitialFrame) {
+        NSArray *attachments = (__bridge NSArray *)CMSampleBufferGetSampleAttachmentsArray(sample, NO);
+        NSDictionary *info = [attachments.firstObject isKindOfClass:NSDictionary.class] ? attachments.firstObject : nil;
+        NSNumber *status = FrameStatusKey ? info[FrameStatusKey] : nil;
+        // A placeholder with an image buffer must not satisfy the initial-frame wait.
+        if ([status isKindOfClass:NSNumber.class] &&
+            status.integerValue != FrameStatusComplete && status.integerValue != FrameStatusStarted) return;
+        _hasInitialFrame = YES;
+    }
     [self observeWindowSample:sample];
     if (self.onFrame) self.onFrame(sample);
 }

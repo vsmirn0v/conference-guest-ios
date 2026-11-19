@@ -1,5 +1,46 @@
 #import <Foundation/Foundation.h>
+#import <CoreVideo/CoreVideo.h>
+#import <dlfcn.h>
 #import "MacScreenCaptureBridge.h"
+
+@interface MacScreenCaptureBridge (OutputFixture)
+- (void)stream:(id)stream didOutputSampleBuffer:(CMSampleBufferRef)sample ofType:(NSInteger)type;
+@end
+
+static void CheckInitialFrame(void) {
+    void *framework = dlopen("/System/Library/Frameworks/ScreenCaptureKit.framework/ScreenCaptureKit", RTLD_LAZY | RTLD_LOCAL);
+    NSCAssert(framework, @"ScreenCaptureKit is required for the fixture");
+    NSString *const __unsafe_unretained *statusKey =
+        (NSString *const __unsafe_unretained *)dlsym(framework, "SCStreamFrameInfoStatus");
+    NSCAssert(statusKey, @"The frame status key is required");
+    CVPixelBufferRef pixels = NULL;
+    CMVideoFormatDescriptionRef format = NULL;
+    CMSampleBufferRef sample = NULL;
+    CMSampleTimingInfo timing = {kCMTimeInvalid, kCMTimeZero, kCMTimeInvalid};
+    NSCAssert(CVPixelBufferCreate(NULL, 16, 16, kCVPixelFormatType_32BGRA, NULL, &pixels) == noErr, @"Pixels");
+    NSCAssert(CMVideoFormatDescriptionCreateForImageBuffer(NULL, pixels, &format) == noErr, @"Format");
+    NSCAssert(CMSampleBufferCreateReadyWithImageBuffer(NULL, pixels, format, &timing, &sample) == noErr, @"Sample");
+    NSArray *attachments = (__bridge NSArray *)CMSampleBufferGetSampleAttachmentsArray(sample, YES);
+    NSMutableDictionary *info = attachments.firstObject;
+    MacScreenCaptureBridge *bridge = [MacScreenCaptureBridge new];
+    NSObject *stream = [NSObject new];
+    [bridge setValue:stream forKey:@"stream"];
+    __block NSUInteger deliveries = 0;
+    bridge.onFrame = ^(CMSampleBufferRef frame) { deliveries++; };
+    info[*statusKey] = @2; // SCFrameStatusBlank
+    [bridge stream:stream didOutputSampleBuffer:sample ofType:0];
+    NSCAssert(deliveries == 0, @"A blank placeholder must not start the share");
+    info[*statusKey] = @4; // SCFrameStatusStarted
+    [bridge stream:stream didOutputSampleBuffer:sample ofType:0];
+    NSCAssert(deliveries == 1, @"The first captured frame must be forwarded");
+    info[*statusKey] = @2;
+    [bridge stream:stream didOutputSampleBuffer:sample ofType:0];
+    NSCAssert(deliveries == 2, @"An active share must preserve the system's blanking behavior");
+    CFRelease(sample);
+    CFRelease(format);
+    CFRelease(pixels);
+    dlclose(framework);
+}
 
 @interface PickerFixture : NSObject
 @property BOOL active;
@@ -25,6 +66,7 @@ static void Pump(void) { for (int n = 0; n < 4; n++) [NSRunLoop.currentRunLoop r
 int main(void) {
     @autoreleasepool {
         [MacScreenCaptureBridge isSupported]; // Load public types, without presenting real UI or opening capture.
+        CheckInitialFrame();
         PickerFixture *picker = [PickerFixture new];
         NSObject *prior = [NSObject new]; picker.defaultConfiguration = prior; picker.maximumStreamCount = @0;
         ScreenCapturePickerCoordinator *coordinator = [[ScreenCapturePickerCoordinator alloc] initWithPicker:picker];
@@ -68,7 +110,7 @@ int main(void) {
         NSCAssert([next presentWithError:&error], @"Replacement request"); Pump();
         NSCAssert(staleDeliveries == 0 && picker.active, @"A queued obsolete filter must be rejected after owner replacement");
         [next invalidate];
-        puts("PASS: explicit window picker, positive stream capacity, general choice, exact filter routing, queued cancel, configuration restore and reentrant removal; no capture/UI");
+        puts("PASS: first-frame filtering, picker selection and routing, queued cancellation, and configuration restoration");
     }
     return 0;
 }

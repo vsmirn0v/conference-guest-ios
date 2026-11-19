@@ -601,14 +601,25 @@ public final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         return names.sorted()
     }
 
-    func stats() async -> [[String: Any]]? {
+    func screenStats() async -> [[String: Any]]? {
+        guard let screenSender else { return nil }
+        let rows = await stats(sender: screenSender)
+        guard !closed, self.screenSender === screenSender else { return nil }
+        return rows
+    }
+
+    func stats(sender: LKRTCRtpSender? = nil) async -> [[String: Any]]? {
         guard !closed else { return nil }
 #if DEBUG
         if let statsOverrideForTesting { return await statsOverrideForTesting() }
 #endif
         let connection = connection!
         guard let report: LKRTCStatisticsReport = try? await native.call("statistics", timeout: 3, { done in
-            connection.statistics { done(.success($0)) }
+            if let sender {
+                connection.statistics(for: sender) { done(.success($0)) }
+            } else {
+                connection.statistics { done(.success($0)) }
+            }
         }) else { return nil }
         var keys = ["kind", "mid", "bytesReceived", "bytesSent", "packetsReceived", "packetsSent",
             "frames", "framesSent", "framesDecoded", "framesEncoded",

@@ -1912,11 +1912,9 @@ extension NativeGuestEngine {
     /// Sender-bound production evidence; camera/audio statistics never label a share.
     func screenEncodingEvidence() async -> (codec: String, powerEfficient: Bool?, encoder: String?)? {
         guard !closing, let publisher, let track = publisher.localScreenVideoTrack,
-              let sender = publisher.connection.senders.first(where: { $0.track?.trackId == track.trackId }),
-              let mid = publisher.connection.transceivers.first(where: { $0.sender.senderId == sender.senderId })?.mid,
-              let rows = await publisher.stats(), !closing, self.publisher === publisher,
+              let rows = await publisher.screenStats(), !closing, self.publisher === publisher,
               publisher.localScreenVideoTrack === track,
-              let outbound = rows.first(where: { $0["type"] as? String == "outbound-rtp" && $0["mid"] as? String == mid &&
+              let outbound = rows.first(where: { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" &&
                   (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 0 }),
               let codecID = outbound["codecId"] as? String,
               let mime = rows.first(where: { $0["id"] as? String == codecID })?["mimeType"] as? String,
