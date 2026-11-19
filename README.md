@@ -49,6 +49,10 @@ See [native Mac prerequisites, signing and dependency preparation](Dependencies/
 
 `RockNRollUITests.testCommunityJamConnectsMuted` exercises the public test room on an attached iPhone. The test file also covers layout in both orientations, a saved display name, chat, and native link handoff. Live media and CallKit behavior need a device; the simulator is useful for the home screen and core logic. App Store screenshots are in [AppStore/Screenshots](AppStore/Screenshots/). See the [current validation](docs/validation-2026-09-24.md), [earlier device coverage](docs/validation-2026-09-23.md), and [App Store preparation](docs/app-store-preparation-plan.md).
 
+## License and attribution
+
+You can reuse and adapt Rock’n’Roll’s original code under the Apache License 2.0. When distributing a derivative that includes project code, carry the applicable attribution from NOTICE in a readable place, such as your third-party notices, accompanying documentation or usual credits display. Third-party components retain their own licenses. [License](LICENSE) · [Attribution notice](NOTICE)
+
 ## Media behavior
 
 The app requests a genuine outgoing CallKit call for a user-requested jam and starts the selected media engine after the system activates audio. The microphone and camera start off. Routes can be selected through the in-call controls and iOS route picker. Another call holds the jam and restores the user’s media intent on return. iOS may interrupt sound while another telephone call owns audio; the app does not record it or claim to recover unheard speech. Background camera capture is not promised.

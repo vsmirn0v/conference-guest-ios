@@ -7,7 +7,7 @@ the immutable release ZIP with SHA-256; builds require no SDK bootstrap or
 GitHub credentials. LiveKit client, UniFFI and guest SDK revisions stay unchanged.
 The separate guest SDK WebRTC binary is unaffected.
 
-Artifact: [150.7871.03 r3](https://github.com/vsmirn0v/conference-guest-ios/releases/tag/native-webrtc-150.7871.03-r3).
+Artifact: [150.7871.03 r3](https://github.com/vsmirn0v/rocknroll/releases/tag/native-webrtc-150.7871.03-r3).
 Checksum: `5f008d7f913fe4fa8255637499dede73a016571e9d64b86c59c6f9e9bcb61dbc`.
 Its provenance records exact source, ordered patch hashes, compiler versions,
 GN flags, slice hashes and dependency licenses. Notices accompany every embedded

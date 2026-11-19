@@ -1,3 +1,3 @@
-module github.com/vsmirn0v/conference-guest-ios/RockServer
+module github.com/vsmirn0v/rocknroll/RockServer
 
 go 1.23
