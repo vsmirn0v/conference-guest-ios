@@ -1,0 +1,104 @@
+{
+  "version": "0.3.0",
+  "build": "132",
+  "channel": "beta",
+  "sourceCommit": "7a565b051a8d866b858fb6c8740da1b93f5399b2",
+  "sourceState": "Clean isolated checkout; 468 tracked inputs in build receipt independently matched source commit.",
+  "sourceManifest": {
+    "path": ".build/native-beta-132/build/build-evidence.json",
+    "sha256": "7aa063c00c924285a96eff04b56b5cb7203255b11f5e785e33d168a98d1c969f"
+  },
+  "validation": {
+    "nativeDesktopTests": {
+      "executed": 71,
+      "failed": 0,
+      "skipped": 2,
+      "configuration": "direct Debug, arm64",
+      "log": ".build/native-support-tests-debug.log",
+      "skips": [
+        "Opt-in localized snapshot, separately run below",
+        "Opt-in offline layout fixture"
+      ]
+    },
+    "localizedSettingsSnapshots": {
+      "languages": [
+        "ar",
+        "ru",
+        "es"
+      ],
+      "passed": 3,
+      "failed": 0,
+      "visualInspection": "Original transparent attachments retained; inspected after compositing over native dark window background. Arabic RTL and all three layouts readable.",
+      "paths": [
+        ".build/native-beta-132/screenshots-ar",
+        ".build/native-beta-132/screenshots-ru",
+        ".build/native-beta-132/screenshots-es"
+      ]
+    },
+    "iosLocalizationSimulator": {
+      "executed": 7,
+      "failed": 0,
+      "includes": "nine language app and extension resources",
+      "log": ".build/ios-localization-tests.log"
+    },
+    "distributionTests": {
+      "executed": 27,
+      "failed": 0
+    },
+    "authorSupportServerTests": {
+      "executed": 9,
+      "failed": 0
+    },
+    "architectureGatePassed": true,
+    "catalogSHA256": "81587b1d0c6c12621ddd59f9043c6653e6858ad02e4c7bc4fc30370dde3192d9",
+    "archivedResources": "Nine app and support language bundles and signed catalog checked against source; localization tables independently checked.",
+    "limits": [
+      "Installed Sparkle update and live provider meeting were not exercised in this release.",
+      "No real Boosty membership was issued or verified; anonymous registration and pending-review flow were tested separately.",
+      "Simulator and synthetic tests do not establish physical media or payment end-to-end acceptance."
+    ]
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/.codex-worktrees/rock-support-localization/.build/native-beta-132/build/RockNRollNativeGuest-0.3.0-132.xcarchive",
+    "app": "/Users/v.smirnov/docs/.codex-worktrees/rock-support-localization/.build/native-beta-132/export-132/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "132",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "132",
+    "file": "RockNRoll-0.3.0-132-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-132-arm64.dmg",
+    "sha256": "ac12c98b862ce53ea824f6707b5a247a3e99b9f5c4399c07a611932cd42b12a0",
+    "length": 42221347,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/.codex-worktrees/rock-support-localization/.build/native-beta-132/package-132/RockNRoll-0.3.0-132-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-132-arm64.dmg",
+      "sha256": "ac12c98b862ce53ea824f6707b5a247a3e99b9f5c4399c07a611932cd42b12a0",
+      "length": 42221347
+    },
+    "state": {
+      "appcastSHA256": "6fb5cfec2920645ce4e423cec60e0c89988a00699330b6d7406bfe90bccfbd51",
+      "inventorySHA256": "4772d0dfbf16613348d9dc6608e00f44af806d28d6cffadd2ec25da250609419",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-132-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/b32091c1c1f549c9af310d5903e0ef9b/backup",
+    "httpsVerified": true
+  },
+  "independentReadback": ".build/native-beta-132/independent-readback.json"
+}
