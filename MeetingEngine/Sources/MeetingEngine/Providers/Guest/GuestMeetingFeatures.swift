@@ -191,15 +191,17 @@ struct GuestMeetingFeatures {
     private var permissions: [String: Bool] = [:]
     private var stopped = false
 
-    mutating func receive(_ envelope: [String: Any], capture: (([GuestMeetingMessage], Bool) -> Void)? = nil) {
-        guard !stopped, let event = envelope["event"] as? String else { return }
+    @discardableResult
+    mutating func receive(_ envelope: [String: Any]) -> (message: GuestMeetingMessage, transcript: Bool)? {
+        guard !stopped, let event = envelope["event"] as? String else { return nil }
         let payload = envelope["payload"] as? [String: Any] ?? [:]
+        var captured: (message: GuestMeetingMessage, transcript: Bool)?
         if event == "joined" {
             guard let participant = payload["participant"] as? [String: Any],
                   let id = Self.identifier(participant["participantId"]),
                   let group = payload["participantGroup"] as? [String: Any],
                   let groupID = Self.identifier(group["groupId"]),
-                  let roomID = Self.identifier(payload["roomId"]) else { return }
+                  let roomID = Self.identifier(payload["roomId"]) else { return nil }
             if self.roomID != nil, self.roomID != roomID || self.groupID != groupID {
                 let nextEpoch = epoch &+ 1
                 self = GuestMeetingFeatures(); epoch = nextEpoch
@@ -219,7 +221,7 @@ struct GuestMeetingFeatures {
                 snapshot.title = String(title.prefix(512))
             }
         } else {
-            guard roomID != nil, acceptsScope(envelope) else { return }
+            guard roomID != nil, acceptsScope(envelope) else { return nil }
             switch event {
             case "participant-joined": addMember(payload)
             case "participant-left":
@@ -240,7 +242,7 @@ struct GuestMeetingFeatures {
                 if let title = payload["title"] as? String { snapshot.title = String(title.prefix(512)) }
             case "chat-message":
                 if snapshot.permissions.canViewChat, let message = decodeMessage(payload["message"], fallbackID: envelope["requestId"], receivedAt: Date()) {
-                    capture?([archiveMessage(message, raw: payload["message"])], false)
+                    captured = (archiveMessage(message, raw: payload["message"]), false)
                     upsert(message, transcript: false)
                 }
             case "reaction":
@@ -257,7 +259,7 @@ struct GuestMeetingFeatures {
                         loggedTranscriptShape = true
                         probeLog("transcript-message-shape", ["keys": fields.keys.sorted(), "dated": message.sentAt != nil])
                     }
-                    capture?([archiveMessage(message, raw: payload["message"])], true)
+                    captured = (archiveMessage(message, raw: payload["message"]), true)
                     upsert(message, transcript: true)
                 }
             case "transcription-started": snapshot.transcriptionStatus = .active
@@ -267,6 +269,7 @@ struct GuestMeetingFeatures {
             }
         }
         rebuildRoster()
+        return captured
     }
 
     func acceptsScope(_ envelope: [String: Any]) -> Bool {
@@ -320,30 +323,28 @@ struct GuestMeetingFeatures {
         snapshot.messages[index].delivery = succeeded ? .sent : .failed
     }
 
-    mutating func acceptHistory(_ payload: [String: Any], transcript: Bool, epoch: UInt64,
-                                capture: (([GuestMeetingMessage], Bool) -> Void)? = nil) throws {
+    @discardableResult
+    mutating func acceptHistory(_ payload: [String: Any], transcript: Bool, epoch: UInt64) throws -> [GuestMeetingMessage] {
         guard !stopped, epoch == self.epoch,
-              transcript ? snapshot.permissions.canViewTranscript : snapshot.permissions.canViewChat else { return }
+              transcript ? snapshot.permissions.canViewTranscript : snapshot.permissions.canViewChat else { return [] }
         guard let values = payload["messages"] as? [[String: Any]], values.count <= 1_000 else { throw GuestEngineError.malformed }
         // The server pages newest first. Upsert sorts by timestamp and identity,
         // so live events received during the request remain present.
         var captured: [GuestMeetingMessage] = []
-        var decodedCount = 0
         for value in values.reversed() {
             if let message = decodeMessage(value) {
-                decodedCount += 1
-                if capture != nil { captured.append(archiveMessage(message, raw: value)) }
+                captured.append(archiveMessage(message, raw: value))
                 upsert(message, transcript: transcript)
             }
         }
-        if !captured.isEmpty { capture?(captured, transcript) }
         let page = payload["nextPageKey"]
         let next: Any? = (page is String || page is NSNumber) ? page : nil
         if transcript { transcriptPage = next; snapshot.transcriptHasMore = next != nil; snapshot.transcriptHistoryLoaded = true }
         else { chatPage = next; snapshot.chatHasMore = next != nil; snapshot.chatHistoryLoaded = true }
         // Shape and counts only: never record transcript text or identifiers.
         probeLog("guest-history-page", ["kind": transcript ? "transcript" : "chat",
-            "rows": values.count, "decoded": decodedCount, "hasMore": next != nil])
+            "rows": values.count, "decoded": captured.count, "hasMore": next != nil])
+        return captured
     }
 
     mutating func stop() {

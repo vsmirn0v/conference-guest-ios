@@ -434,7 +434,10 @@ public final class NativeGuestEngine {
             probeLog("server-error", ["client": probeClient, "correlated": event["requestId"] != nil])
             if event["requestId"] == nil { throw GuestEngineError.admissionDenied }
         default:
-            meetingFeatures.receive(event, capture: onCapturedMessages); emitMeetingChange()
+            if let captured = meetingFeatures.receive(event) {
+                onCapturedMessages?([captured.message], captured.transcript)
+            }
+            emitMeetingChange()
             if ["participant-joined", "participant-left"].contains(kind) {
                 probeLog(kind, ["client": probeClient, "participantToken": (payload["participantId"] as? String).map { String($0.hashValue) } ?? "absent"])
             }
@@ -1792,7 +1795,9 @@ extension NativeGuestEngine {
             throw GuestEngineError.malformed
         }
         guard epoch == meetingFeatures.epoch else { throw GuestHistoryError.stale }
-        try meetingFeatures.acceptHistory(payload, transcript: transcript, epoch: epoch, capture: onCapturedMessages)
+        // Capture observers can synchronously read meetingFeatures through the session.
+        let captured = try meetingFeatures.acceptHistory(payload, transcript: transcript, epoch: epoch)
+        if !captured.isEmpty { onCapturedMessages?(captured, transcript) }
         emitMeetingChange()
     }
 

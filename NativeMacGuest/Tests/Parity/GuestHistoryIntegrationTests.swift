@@ -55,6 +55,26 @@ import XCTest
         await finish(native, adapter)
     }
 
+    func testTranscriptCaptureObserverCanReadMeetingState() async throws {
+        let (native, adapter) = try await setup()
+        var capturedIDs: [String] = []
+        adapter.onCapturedMessages = { [weak native] messages, transcript in
+            XCTAssertTrue(transcript)
+            XCTAssertEqual(native?.participationRoomScope?.room, "fixture-room")
+            XCTAssertEqual(native?.participationRoomScope?.group, "fixture-group")
+            capturedIDs.append(contentsOf: messages.map(\.id))
+        }
+        native.featureRequestForTesting = { kind, _, _ in self.response(kind, id: "history") }
+        try await native.processEventForTesting(joined())
+        try await spin { adapter.guestSnapshot.transcriptHistoryLoaded }
+        try await native.processEventForTesting([
+            "event": "transcription-message", "roomId": "fixture-room", "groupId": "fixture-group",
+            "payload": ["message": ["id": "live", "participantId": "remote", "text": "fixture"]]
+        ])
+        XCTAssertEqual(capturedIDs, ["history", "live"])
+        await finish(native, adapter)
+    }
+
     func testRevocationAndRegrantDrainsCancelledRequestBeforeReplacement() async throws {
         let (native, adapter) = try await setup(); let gate = HistoryGate(); var calls = 0
         native.featureRequestForTesting = { kind, _, _ in

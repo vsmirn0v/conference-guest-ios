@@ -254,20 +254,21 @@ final class MeetingWorkspaceJournalTests: XCTestCase {
                  "createdAt": 1_725_000_000 + index]
             }
         }
-        try features.acceptHistory(["messages": page(25..<1025, title: "speech")],
-            transcript: true, epoch: features.epoch, capture: capture)
-        try features.acceptHistory(["messages": page(0..<25, title: "speech")],
-            transcript: true, epoch: features.epoch, capture: capture)
-        try features.acceptHistory(["messages": page(25..<250, title: "chat")],
-            transcript: false, epoch: features.epoch, capture: capture)
-        try features.acceptHistory(["messages": page(0..<25, title: "chat")],
-            transcript: false, epoch: features.epoch, capture: capture)
+        capture(try features.acceptHistory(["messages": page(25..<1025, title: "speech")],
+            transcript: true, epoch: features.epoch), true)
+        capture(try features.acceptHistory(["messages": page(0..<25, title: "speech")],
+            transcript: true, epoch: features.epoch), true)
+        capture(try features.acceptHistory(["messages": page(25..<250, title: "chat")],
+            transcript: false, epoch: features.epoch), false)
+        capture(try features.acceptHistory(["messages": page(0..<25, title: "chat")],
+            transcript: false, epoch: features.epoch), false)
         XCTAssertEqual(features.snapshot.transcript.count, 1000)
         XCTAssertEqual(features.snapshot.messages.count, 200)
         journal.end(sessionID: sessionID)
-        features.receive(["event": "transcription-message", "payload": ["message": [
+        let correctedMessage = try XCTUnwrap(features.receive(["event": "transcription-message", "payload": ["message": [
             "id": "speech-0", "participantId": "speaker", "participantName": "Speaker", "text": "Corrected"
-        ]]], capture: capture)
+        ]]]))
+        capture([correctedMessage.message], correctedMessage.transcript)
         journal.close()
 
         let reopened = MeetingWorkspaceJournal(root: root)
