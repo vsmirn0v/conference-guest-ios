@@ -1,0 +1,116 @@
+--- a/Sources/LiveKit/Types/Options/RoomOptions.swift
++++ b/Sources/LiveKit/Types/Options/RoomOptions.swift
+@@ -64,6 +64,9 @@
+ 
+     public let reportRemoteTrackStatistics: Bool
+ 
++    /// Start remote audio receivers at zero gain until the app sets their playback volume.
++    public let startRemoteAudioMuted: Bool
++
+     /// Use a single peer connection for both publishing and subscribing.
+     ///
+     /// - Note: Requires LiveKit Cloud or LiveKit OSS >= 1.9.2.
+@@ -84,6 +87,7 @@
+         e2eeOptions = nil
+         encryptionOptions = nil
+         reportRemoteTrackStatistics = false
++        startRemoteAudioMuted = false
+         singlePeerConnection = false
+     }
+ 
+@@ -101,7 +105,8 @@
+                 e2eeOptions: E2EEOptions? = nil,
+                 encryptionOptions: EncryptionOptions? = nil,
+                 reportRemoteTrackStatistics: Bool = false,
+-                singlePeerConnection: Bool = false)
++                singlePeerConnection: Bool = false,
++                startRemoteAudioMuted: Bool = false)
+     {
+         self.defaultCameraCaptureOptions = defaultCameraCaptureOptions
+         self.defaultScreenShareCaptureOptions = defaultScreenShareCaptureOptions
+@@ -117,6 +122,7 @@
+         self.e2eeOptions = e2eeOptions
+         self.encryptionOptions = encryptionOptions
+         self.reportRemoteTrackStatistics = reportRemoteTrackStatistics
++        self.startRemoteAudioMuted = startRemoteAudioMuted
+         self.singlePeerConnection = singlePeerConnection
+ 
+         super.init()
+@@ -177,6 +183,7 @@
+             suspendLocalVideoTracksInBackground == other.suspendLocalVideoTracksInBackground &&
+             e2eeOptions == other.e2eeOptions &&
+             encryptionOptions == other.encryptionOptions &&
++            startRemoteAudioMuted == other.startRemoteAudioMuted &&
+             reportRemoteTrackStatistics == other.reportRemoteTrackStatistics &&
+             singlePeerConnection == other.singlePeerConnection
+     }
+@@ -196,6 +203,7 @@
+         hasher.combine(suspendLocalVideoTracksInBackground)
+         hasher.combine(e2eeOptions)
+         hasher.combine(encryptionOptions)
++        hasher.combine(startRemoteAudioMuted)
+         hasher.combine(reportRemoteTrackStatistics)
+         hasher.combine(singlePeerConnection)
+         return hasher.finalize()
+--- a/Sources/LiveKit/Core/RoomDependencies.swift
++++ b/Sources/LiveKit/Core/RoomDependencies.swift
+@@ -141,6 +141,7 @@
+                                             target: .publisher,
+                                             primary: true,
+                                             singlePCMode: true,
++                                            startRemoteAudioMuted: room._state.roomOptions.startRemoteAudioMuted,
+                                             delegate: room)
+ 
+         // Created before the offer so its `m=application` section is negotiated by the JOIN
+@@ -266,6 +267,7 @@
+                                             target: .publisher,
+                                             primary: isSinglePC || !isSubscriberPrimary,
+                                             singlePCMode: isSinglePC,
++                                            startRemoteAudioMuted: room._state.roomOptions.startRemoteAudioMuted,
+                                             delegate: room)
+             dataChannels = await PublisherDataChannels.make(on: publisher)
+         }
+@@ -285,6 +287,7 @@
+             try await Transport(config: rtcConfiguration,
+                                 target: .subscriber,
+                                 primary: isSubscriberPrimary,
++                                startRemoteAudioMuted: room._state.roomOptions.startRemoteAudioMuted,
+                                 delegate: room)
+         }
+ 
+--- a/Sources/LiveKit/Core/Transport.swift
++++ b/Sources/LiveKit/Core/Transport.swift
+@@ -31,6 +31,7 @@
+     nonisolated let target: Livekit_SignalTarget
+     nonisolated let isPrimary: Bool
+     nonisolated let singlePCMode: Bool
++    private nonisolated let startRemoteAudioMuted: Bool
+ 
+     var connectionState: LKRTCPeerConnectionState {
+         _pc.connectionState
+@@ -111,6 +112,7 @@
+          target: Livekit_SignalTarget,
+          primary: Bool,
+          singlePCMode: Bool = false,
++         startRemoteAudioMuted: Bool = false,
+          delegate: TransportDelegate) throws
+     {
+         // try create peerConnection
+@@ -122,6 +124,7 @@
+         self.target = target
+         isPrimary = primary
+         self.singlePCMode = singlePCMode
++        self.startRemoteAudioMuted = startRemoteAudioMuted
+         _pcBox = RTCBox(pc)
+ 
+         super.init()
+@@ -686,6 +689,9 @@
+         }
+ 
+         log("type: \(type(of: track)), track.id: \(track.trackId), streams: \(streams.map { "Stream(hash: \($0.hash), id: \($0.streamId), videoTracks: \($0.videoTracks.count), audioTracks: \($0.audioTracks.count))" })")
++        if startRemoteAudioMuted, let audio = track as? LKRTCAudioTrack {
++            audio.source.volume = 0
++        }
+         let receiver = RTCReceiver(rtpReceiver)
+         let mediaTrack = RTCMediaTrack(track)
+         // Only the ids travel on: the streams' blocking proxy destructors run here, on the

@@ -10,13 +10,22 @@ final class CallWorkspaceControls: ObservableObject {
     @Published var cameraOn = false
     @Published var onHold = false
     @Published var speakerOn = true
+    @Published var usesBuiltInOutput = false
     @Published var routeName = L("Audio output")
+    @Published var meetingSoundEnabled = true
+    @Published var canSetMeetingSound = false
+    @Published var meetingVolume = 1.0
+    @Published var assistantMode: IOSMeetingAssistantMode = .off
+    @Published var assistantPaused = false
 
     var invitationURL: URL?
     var roomIdentifier: String?
     var toggleMicrophone: (() -> Void)?
     var toggleCamera: (() -> Void)?
     var toggleSpeaker: (() -> Void)?
+    var willChooseAudioOutput: (() -> Void)?
+    var setMeetingSound: ((Bool) -> Void)?
+    var setMeetingVolume: ((Double) -> Void)?
     var leave: (() -> Void)?
     var openReactions: ((UIView, @escaping (Bool) -> Void) -> Void)?
     var openVoiceReply: (() -> Void)?

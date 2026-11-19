@@ -471,13 +471,14 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
         #endif
     }
 
-    func testMeetingTranscriberLoadsGigaAMOffMainThreadAndEnqueuesAudioWithoutBlockingMainActor() async throws {
-        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent("TranscriberOffMain-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
-        let suiteName = "TranscriberOffMainTests.\(UUID().uuidString)"
+    private func installedGigaAMStore() throws -> IOSListenModelStore {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent("Transcriber-\(UUID().uuidString)")
+        let suiteName = "TranscriberTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: tempRoot)
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
 
         let store = IOSListenModelStore(modelsDirectory: tempRoot, preferences: defaults)
         for spec in IOSListenModelStore.gigaamFiles {
@@ -488,6 +489,66 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
         store.refreshInstallState()
         store.selectedModel = .gigaamV3CoreML
         XCTAssertNotNil(store.installedGigaAMDirectoryIfReady())
+        return store
+    }
+
+    func testStoppedTranscriptionStartupCannotRequestSpeechOrReplaceRestartedRun() async throws {
+        let store = try installedGigaAMStore()
+        let loads = AsyncStream<CheckedContinuation<CoreMLGigaAMRecognizer, Error>>.makeStream()
+        var pendingLoads = loads.stream.makeAsyncIterator()
+        let permissions = AsyncStream<CheckedContinuation<Bool, Never>>.makeStream()
+        var pendingPermissions = permissions.stream.makeAsyncIterator()
+        var permissionRequests = 0
+        var outputDemands: [Bool] = []
+        let transcriber = IOSMeetingTranscriber(
+            modelStore: store, localDisplayName: { "" }, participantNameLookup: { _ in nil },
+            setOutputDemand: { outputDemands.append($0); return true },
+            gigaamLoader: { _ in
+                try await withCheckedThrowingContinuation { loads.continuation.yield($0) }
+            },
+            speechAuthorization: {
+                permissionRequests += 1
+                guard store.selectedModel == .appleSpeech else { return false }
+                return await withCheckedContinuation { permissions.continuation.yield($0) }
+            }
+        )
+        let first = Task { await transcriber.start() }
+        let firstLoad = await pendingLoads.next()
+        await transcriber.stop()
+        let second = Task { await transcriber.start() }
+        let secondLoad = await pendingLoads.next()
+        firstLoad?.resume(throwing: CancellationError())
+        let firstStarted = await first.value
+        XCTAssertFalse(firstStarted)
+        XCTAssertEqual(transcriber.state, .starting)
+
+        await transcriber.stop()
+        secondLoad?.resume(throwing: URLError(.cannotDecodeContentData))
+        let secondStarted = await second.value
+        XCTAssertFalse(secondStarted)
+        XCTAssertEqual(permissionRequests, 0)
+        XCTAssertEqual(transcriber.state, .off)
+
+        store.selectedModel = .appleSpeech
+        let apple = Task { await transcriber.start() }
+        let permission = await pendingPermissions.next()
+        await transcriber.stop()
+        store.selectedModel = .gigaamV3CoreML
+        let restarted = Task { await transcriber.start() }
+        let restartedLoad = await pendingLoads.next()
+        permission?.resume(returning: false)
+        let appleStarted = await apple.value
+        XCTAssertFalse(appleStarted)
+        XCTAssertEqual(transcriber.state, .starting)
+        restartedLoad?.resume(throwing: CancellationError())
+        let restartedSuccessfully = await restarted.value
+        XCTAssertFalse(restartedSuccessfully)
+        XCTAssertEqual(transcriber.state, .off)
+        XCTAssertFalse(outputDemands.contains(true))
+    }
+
+    func testMeetingTranscriberLoadsGigaAMOffMainThreadAndEnqueuesAudioWithoutBlockingMainActor() async throws {
+        let store = try installedGigaAMStore()
 
         var loaderRanOffMainThread = false
         var mainTicksWhileLoading = 0

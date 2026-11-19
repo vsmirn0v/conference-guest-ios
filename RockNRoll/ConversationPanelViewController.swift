@@ -27,7 +27,7 @@ private struct LiveTranscriptPresentation: Equatable {
 }
 
 @MainActor
-final class ConversationPanelViewController: UIViewController, UITextViewDelegate, UIAdaptivePresentationControllerDelegate {
+final class ConversationPanelViewController: UIViewController, UITextViewDelegate, UIAdaptivePresentationControllerDelegate, AVRoutePickerViewDelegate {
     private let catchUp: CatchUpStore
     private let chat: ChatStore
     private let activityFilterButton = UIButton(type: .system)
@@ -653,6 +653,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         speakerButton.addAction(UIAction { _ in call.toggleSpeaker?() }, for: .touchUpInside)
         speakerButton.isHidden = call.toggleSpeaker == nil
         let picker = AVRoutePickerView()
+        picker.delegate = self
         picker.tintColor = accent
         picker.activeTintColor = accent
         picker.accessibilityLabel = L("Audio route")
@@ -690,6 +691,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         compactClose.isHidden = true
         callStrip.addArrangedSubview(compactClose)
         compactClose.tag = 29
+    }
+
+    func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) {
+        call?.willChooseAudioOutput?()
     }
 
     private func addControlBackground(to container: UIView, cornerRadius: CGFloat, fallbackColor: UIColor) {

@@ -186,10 +186,12 @@ import LiveKitWebRTC
     private var registeredSenderTrackIDs: [ObjectIdentifier] = []
 
     private var transcriptionRequested = false
+    private var transcriptionOutputDemand = false
     private var transcriptionHandler: (([MeetingAudioSource]) -> Void)?
     private var transcriptionSourceIDs: [String]?
     private var meetingVolume = 1.0
     private var participantVolumes: [String: Double] = [:]
+    private let playbackGainQueue = DispatchQueue(label: "rock.remote-audio.gain")
     private let subscriptions = MediaConfigurationCoordinator<ObjectIdentifier, NativeRockTrackDemand>()
     private var subscriptionFailure: Error?
     private var visibleParticipantIDs: Set<String>?
@@ -375,7 +377,8 @@ import LiveKitWebRTC
             }
             let room = Room(delegate: self, roomOptions: RoomOptions(defaultAudioCaptureOptions: NativeRockAudioPolicy.captureOptions(audioProfile),
                 adaptiveStream: false, dynacast: true,
-                suspendLocalVideoTracksInBackground: false, reportRemoteTrackStatistics: collectStatistics))
+                suspendLocalVideoTracksInBackground: false, reportRemoteTrackStatistics: collectStatistics,
+                startRemoteAudioMuted: true))
             self.room = room
             try await room.connect(url: admitted.server, token: admitted.token,
                 connectOptions: ConnectOptions(autoSubscribe: false, enableMicrophone: false))
@@ -470,7 +473,9 @@ import LiveKitWebRTC
             _ = await attached.detach()
             throw NativeDesktopRockError.cleanupFailed
         }
+        attached.setMeetingVolume(meetingVolume)
         _ = await attached.setSound(!quiet)
+        if transcriptionOutputDemand { _ = await attached.setTranscriptionOutput(true) }
         if inputPermitted, sharedAudio.talkMeetingID == nil {
             if await attached.assumeTalk() {
                 authorizedTalkEpoch = attached.talkEpoch
@@ -683,13 +688,19 @@ import LiveKitWebRTC
         if !enabled { voicePlayback?.cancel(); chatServiceImpl.cancelApprovedOutputs() }
         playoutIntent = enabled
         do {
-            if let attachment { _ = await attachment.setSound(enabled) }
             await applyVolume(room)
+            if let attachment, !(await attachment.setSound(enabled)) {
+                throw MeetingSessionError.unavailable(L("Audio device unavailable"))
+            }
             try await subscribe(room)
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             refresh(room)
         } catch {
-            if revision == token { playoutIntent = previous }
+            if revision == token, self.room === room, playoutIntent == enabled {
+                playoutIntent = previous
+                await applyVolume(room)
+                _ = await attachment?.setSound(previous)
+            }
             throw error
         }
     }
@@ -711,6 +722,7 @@ import LiveKitWebRTC
     }
 
     func setTranscriptionOutput(_ keep: Bool) async -> Bool {
+        transcriptionOutputDemand = keep
         setTranscriptionRequested(keep)
         return await attachment?.setTranscriptionOutput(keep) ?? true
     }
@@ -882,6 +894,7 @@ import LiveKitWebRTC
 
     func setPlayoutVolume(_ volume: Double) async {
         meetingVolume = volume
+        attachment?.setMeetingVolume(volume)
         if let room { await applyVolume(room) }
     }
 
@@ -898,13 +911,23 @@ import LiveKitWebRTC
     }
 
     private func applyVolume(_ room: Room) async {
+        var updates: [(RemoteAudioTrack, Double)] = []
         for participant in room.remoteParticipants.values {
             let id = identifier(participant)
+            let volume = playoutIntent ? meetingVolume * (participantVolumes[id] ?? 1) : 0
             for publication in participant.audioTracks {
-                let volume = playoutIntent ? meetingVolume * (participantVolumes[id] ?? 1) : 0
                 if let track = publication.track as? RemoteAudioTrack {
-                    await Task.detached { track.volume = volume }.value
+                    updates.append((track, volume))
                 }
+            }
+        }
+        guard !updates.isEmpty else { return }
+        // WebRTC blocks the caller while setting gain. Keep rapid slider, mute and
+        // subscription updates in issue order, without blocking the main actor.
+        await withCheckedContinuation { continuation in
+            playbackGainQueue.async { [updates] in
+                for (track, volume) in updates { track.volume = volume }
+                continuation.resume()
             }
         }
     }

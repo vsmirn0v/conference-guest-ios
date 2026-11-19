@@ -61,7 +61,7 @@ struct AudioDevicesControls: View {
             HStack {
                 Text(L("Change output"))
                 Spacer()
-                AudioOutputPicker().frame(width: 44, height: 44)
+                AudioOutputPicker(onChoose: studio.willChooseAudioOutput).frame(width: 44, height: 44)
             }
             Button { studio.releasePrivateMicrophone(); speaker.play(standalone: studio.enableMicrophone == nil) } label: {
                 Label(speaker.playing ? L("Playing test sound…") : L("Test speaker"), systemImage: "speaker.wave.2")
@@ -92,12 +92,86 @@ struct AudioDevicesControls: View {
     }
 }
 
+struct MeetingPlaybackControls: View {
+    @ObservedObject var workspace: CallWorkspaceControls
+    let meetingTitle: String
+    let onOpenAssistant: (() -> Void)?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(meetingTitle) {
+                    Toggle(isOn: Binding(
+                        get: { workspace.meetingSoundEnabled },
+                        set: { workspace.setMeetingSound?($0) }
+                    )) {
+                        Text(L("Meeting sound")).frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture { workspace.setMeetingSound?(!workspace.meetingSoundEnabled) }
+                    }
+                    .disabled(!workspace.canSetMeetingSound)
+                    .accessibilityIdentifier("meeting.sound")
+                    VStack(alignment: .leading) {
+                        LabeledContent(L("Meeting volume"), value: workspace.meetingVolume.formatted(.percent))
+                        Slider(value: Binding(
+                            get: { workspace.meetingVolume },
+                            set: { workspace.setMeetingVolume?($0) }
+                        ), in: 0...1, step: 0.01)
+                        .accessibilityLabel(L("Meeting volume"))
+                        .accessibilityValue(workspace.meetingVolume.formatted(.percent))
+                        .accessibilityIdentifier("meeting.volume")
+                    }
+                    .disabled(workspace.setMeetingVolume == nil)
+                    if !workspace.meetingSoundEnabled, let onOpenAssistant {
+                        Button(action: onOpenAssistant) {
+                            LabeledContent(L("Assistant mode")) {
+                                Text(workspace.assistantMode.title)
+                                if workspace.assistantPaused { Image(systemName: "pause.fill").accessibilityLabel(L("Paused")) }
+                                Image(systemName: "chevron.right").font(.caption).accessibilityHidden(true)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Section(L("Audio output")) {
+                    HStack {
+                        Text(workspace.routeName)
+                        Spacer()
+                        AudioOutputPicker(onChoose: workspace.willChooseAudioOutput).frame(width: 44, height: 44)
+                    }
+                    if UIDevice.current.userInterfaceIdiom == .phone, workspace.usesBuiltInOutput,
+                       let toggleSpeaker = workspace.toggleSpeaker {
+                        Button(workspace.speakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker"),
+                               action: toggleSpeaker)
+                            .disabled(workspace.onHold)
+                    }
+                }
+            }
+            .navigationTitle(L("Audio"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button(L("Done")) { dismiss() } }
+            }
+        }
+    }
+}
+
 private struct AudioOutputPicker: UIViewRepresentable {
+    var onChoose: (() -> Void)? = nil
+
+    final class Coordinator: NSObject, AVRoutePickerViewDelegate {
+        var onChoose: (() -> Void)?
+        func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) { onChoose?() }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView(); view.tintColor = .systemOrange
+        view.delegate = context.coordinator
         view.accessibilityLabel = L("Choose audio output"); return view
     }
-    func updateUIView(_ view: AVRoutePickerView, context: Context) {}
+    func updateUIView(_ view: AVRoutePickerView, context: Context) { context.coordinator.onChoose = onChoose }
 }
 
 /// A brief generated sound; never captures microphone or stores media.

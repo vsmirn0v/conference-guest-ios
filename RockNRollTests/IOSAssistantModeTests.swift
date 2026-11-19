@@ -100,6 +100,71 @@ final class IOSAssistantModeTests: XCTestCase {
         )
     }
 
+    func testMutedSoundChoosesSavedModeUnlessMeetingHasAnExplicitOverride() async {
+        let id = UUID(), other = UUID(), suite = SuiteBox()
+        var meeting = bridge(for: id)
+        meeting.isForeground = true
+        var listening = 0
+        var released = 0
+        meeting.ensureTranscription = { listening += 1 }
+        meeting.releaseTranscription = { released += 1 }
+        let otherMeeting = bridge(for: other)
+        let coordinator = IOSAssistantCoordinator(
+            workspace: nil, preferences: suite.defaults, evaluator: MockEvaluator(),
+            resolveBridge: { $0 == id ? meeting : otherMeeting }, scheduleNotification: { _ in }
+        )
+        coordinator.activePresentationChanged(foregroundControllerID: id)
+        XCTAssertEqual(coordinator.resolvedMode(for: id), .off)
+        meeting.isMeetingSoundEnabled = false
+        coordinator.refreshMode(for: id)
+        await Task.yield()
+        XCTAssertEqual(coordinator.resolvedMode(for: id), .follow)
+        XCTAssertEqual(listening, 1)
+        XCTAssertEqual(coordinator.resolvedMode(for: other), .off)
+
+        meeting.isForeground = false
+        coordinator.defaultSilencedMode = .mentions
+        XCTAssertEqual(coordinator.resolvedMode(for: id), .mentions)
+        let reopened = IOSAssistantCoordinator(workspace: nil, preferences: suite.defaults, resolveBridge: { _ in meeting })
+        XCTAssertEqual(reopened.defaultSilencedMode, .mentions)
+        meeting.isMeetingSoundEnabled = true
+        coordinator.refreshMode(for: id)
+        await Task.yield()
+        XCTAssertEqual(coordinator.resolvedMode(for: id), .off)
+        XCTAssertEqual(released, 1)
+        coordinator.setMode(.off, for: id)
+        meeting.isMeetingSoundEnabled = false
+        coordinator.refreshMode(for: id)
+        XCTAssertEqual(coordinator.resolvedMode(for: id), .off)
+    }
+
+    func testSilencedParticipationPausesForOpenMicAndKeepsAutomaticReplyPrivate() async {
+        let id = UUID(), suite = SuiteBox(), evaluator = MockEvaluator()
+        var meeting = bridge(for: id)
+        meeting.isMicUnmuted = true
+        meeting.isMeetingSoundEnabled = false
+        meeting.canDeliverAutomaticReplies = false
+        meeting.sendChat = { _ in XCTFail("A silenced meeting must keep the draft private") }
+        meeting.speakVoice = { _ in XCTFail("A silenced meeting must keep the draft private") }
+        let coordinator = IOSAssistantCoordinator(
+            workspace: nil, preferences: suite.defaults, evaluator: evaluator, modelAvailable: { true },
+            resolveBridge: { _ in meeting }, scheduleNotification: { _ in }
+        )
+        coordinator.defaultSilencedMode = .participating
+        coordinator.setParticipationOptions(for: id, askBeforeSending: false, output: .voiceAndChat, goal: "")
+        coordinator.refreshMode(for: id)
+        XCTAssertTrue(coordinator.isPausedForMicrophone(controllerID: id))
+        meeting.isMicUnmuted = false
+        coordinator.handleMicrophoneChange(controllerID: id, unmuted: false)
+        await evaluator.setVerdict(.init(needsUser: true, urgency: .now, reason: "Asked", suggestedReply: "Confirmed.", confidence: 1))
+        coordinator.observeEvents([makeEvent(id: "q", speaker: "Tim", text: "Will you join?")], for: id)
+        await coordinator.evaluateNow(controllerID: id)
+        XCTAssertEqual(coordinator.alertCards.first?.suggestedReply, "Confirmed.")
+        XCTAssertEqual(coordinator.alertCards.first?.deliveryNote, L("Private text · not sent"))
+        XCTAssertEqual(coordinator.alertCards.first?.deliveredAutomatically, false)
+        XCTAssertEqual(coordinator.alertCards.first?.deliveryFailed, false)
+    }
+
     func testMentionAtEndOfFinalTranscriptNotifiesOnceWithoutCallingModel() async {
         let id = UUID(), suite = SuiteBox(), evaluator = MockEvaluator()
         let meeting = bridge(for: id)

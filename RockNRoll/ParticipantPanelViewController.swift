@@ -12,10 +12,16 @@ struct ParticipantStatus: Equatable {
     let shareKey: String?
 }
 
+struct ParticipantVolumeControls {
+    var level: (String) -> Double
+    var setLevel: (Double, String) -> Void
+}
+
 final class ParticipantPanelViewController: UIViewController {
     var onDismiss: (() -> Void)?
     var onPin: ((String?) -> Void)?
     var onMoreControls: (() -> Void)?
+    var volumeControls: ParticipantVolumeControls?
     private let list = UIStackView()
     private var statuses: [ParticipantStatus] = []
     private var pinnedKey: String?
@@ -63,6 +69,7 @@ final class ParticipantPanelViewController: UIViewController {
         let canUpdateInPlace = self.pinnedKey == pinnedKey &&
             self.statuses.map(\.id) == statuses.map(\.id) &&
             zip(self.statuses, statuses).allSatisfy {
+                $0.0.name == $0.1.name && $0.0.isLocal == $0.1.isLocal &&
                 $0.0.videoKey == $0.1.videoKey && $0.0.shareKey == $0.1.shareKey
             }
         self.statuses = statuses
@@ -135,6 +142,9 @@ final class ParticipantPanelViewController: UIViewController {
             card.addArrangedSubview(media)
             labels[status.id] = (name, media, speaking)
             updateLabels(status)
+            if !status.isLocal, let volumeControls {
+                card.addArrangedSubview(volumeRow(for: status, controls: volumeControls))
+            }
             if let onPin {
                 let actions = UIStackView()
                 actions.axis = traitCollection.preferredContentSizeCategory.isAccessibilityCategory ?
@@ -175,6 +185,50 @@ final class ParticipantPanelViewController: UIViewController {
         cell.speaking.isHidden = !ParticipantAudioState(microphoneOn: status.microphoneOn, speaking: status.isSpeaking).speaking
         cell.media.text = L("Mic %@ · Video %@", status.microphoneOn ? L("on") : L("off"), status.cameraOn ? L("on") : L("off")) +
             (status.screenShareOn ? L(" · Sharing screen") : "")
+    }
+
+    private func volumeRow(for status: ParticipantStatus, controls: ParticipantVolumeControls) -> UIView {
+        let slider = UISlider()
+        slider.minimumValue = 0
+        slider.maximumValue = 2
+        slider.accessibilityLabel = L("Volume for %@", status.name)
+        slider.accessibilityIdentifier = "participant.volume." + status.id
+        let mute = UIButton(type: .system)
+        mute.accessibilityIdentifier = "participant.mute." + status.id
+        let percent = UILabel()
+        percent.font = .preferredFont(forTextStyle: .caption1)
+        percent.adjustsFontForContentSizeCategory = true
+        percent.textColor = .secondaryLabel
+        percent.isAccessibilityElement = false
+        percent.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let display: (Double) -> Void = { [weak slider, weak mute, weak percent] value in
+            if let slider, !slider.isTracking { slider.value = Float(value) }
+            let text = value.formatted(.percent.precision(.fractionLength(0)))
+            percent?.text = text
+            slider?.accessibilityValue = text
+            mute?.setImage(UIImage(systemName: value == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill"), for: .normal)
+            mute?.accessibilityLabel = value == 0 ? L("Unmute for me") : L("Mute for me")
+        }
+        display(controls.level(status.id))
+        slider.addAction(UIAction { [weak slider] _ in
+            guard let slider else { return }
+            let value = (Double(slider.value) * 20).rounded() / 20
+            controls.setLevel(value, status.id)
+            display(controls.level(status.id))
+        }, for: .valueChanged)
+        mute.addAction(UIAction { _ in
+            controls.setLevel(controls.level(status.id) == 0 ? 1 : 0, status.id)
+            display(controls.level(status.id))
+        }, for: .touchUpInside)
+        let row = UIStackView(arrangedSubviews: [mute, slider, percent])
+        row.spacing = 8
+        row.alignment = .center
+        NSLayoutConstraint.activate([
+            mute.widthAnchor.constraint(equalToConstant: 44),
+            mute.heightAnchor.constraint(equalToConstant: 44),
+            slider.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        ])
+        return row
     }
 
     private func pinButton(_ title: String, key: String, action: @escaping (String?) -> Void) -> UIButton {

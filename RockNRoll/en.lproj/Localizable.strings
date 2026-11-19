@@ -1333,6 +1333,7 @@
 
 "Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view." = "Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.";
 "Show" = "Show";
+"Meeting sound" = "Meeting sound";
 "Meeting volume" = "Meeting volume";
 "Only this meeting. Your Mac volume doesn’t change." = "Only this meeting. Your Mac volume doesn’t change.";
 "Meeting sound on or off. Use the arrow for meeting volume." = "Meeting sound on or off. Use the arrow for meeting volume.";
@@ -3301,6 +3302,7 @@
 "Check conversation now" = "Check conversation now";
 "Current" = "Current";
 "Default mode in active meeting" = "Default mode in active meeting";
+"When meeting sound is off" = "When meeting sound is off";
 "Default mode in background meetings" = "Default mode in background meetings";
 "Default participation goal (optional)" = "Default participation goal (optional)";
 "Delivered via %@" = "Delivered via %@";

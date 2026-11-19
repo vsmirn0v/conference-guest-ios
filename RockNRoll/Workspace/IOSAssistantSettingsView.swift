@@ -27,6 +27,11 @@ struct IOSAssistantSettingsView: View {
                         Label(mode.title, systemImage: mode.symbol).tag(mode)
                     }
                 }
+                Picker(L("When meeting sound is off"), selection: $assistant.defaultSilencedMode) {
+                    ForEach(IOSMeetingAssistantMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
+                }
                 Picker(L("Participation reply channel"), selection: $assistant.participationConfig.defaultOutput) {
                     ForEach(IOSParticipationOutput.allCases) { channel in
                         Label(channel.title, systemImage: channel.symbol).tag(channel)

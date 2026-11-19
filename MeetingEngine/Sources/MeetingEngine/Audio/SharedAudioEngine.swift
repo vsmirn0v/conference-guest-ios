@@ -799,7 +799,10 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
         setVolume(effectiveVolume(participantVolume))
     }
     public func removeReceived(id: String) { received[id] = nil }
-    public func removeAllReceived() { received.removeAll() }
+    public func removeAllReceived() {
+        silenceReceived()
+        received.removeAll()
+    }
     public func setParticipantVolume(_ volume: Double, id: String) {
         guard var entry = received[id] else { return }
         entry.participant = Self.clamp(volume); received[id] = entry

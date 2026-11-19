@@ -34,6 +34,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     var onJoinAnotherMeeting: (() -> Void)?
     var onOpenAssistant: (() -> Void)?
     var onMicrophoneStateChanged: ((UUID, Bool) -> Void)?
+    var onMeetingSoundChanged: ((UUID) -> Void)?
     var voiceReplyTargetsProvider: (() -> [VoiceReplyTargetRoom])?
     var onSpeakVoiceReplyInRoom: ((UUID, String) async throws -> Void)?
     var onCancelVoiceReplyInRoom: ((UUID) -> Void)?
@@ -49,10 +50,23 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     private var lastAssistantBadge: (mode: IOSMeetingAssistantMode, isPaused: Bool, alertCount: Int) = (.off, false, 0)
     @Published private(set) var isTalkRoom = false
     @Published private(set) var isHeld = false
+    @Published private(set) var isMeetingSoundEnabled = true
+    private var requestedMeetingSound: Bool?
+    var canSetMeetingSound: Bool {
+        phase == .connected && !leaving && !isHeld && requestedMeetingSound == nil
+    }
+    var isMeetingSoundAudible: Bool {
+        isMeetingSoundEnabled && requestedMeetingSound != false && meetingVolume > 0 && !isHeld && !quiet
+    }
     @Published private(set) var isMicrophoneOn = false
     @Published private(set) var isCameraOn = false
     @Published private(set) var isSharingScreen = false
     @Published private(set) var isSpeakingVoiceReply = false
+    @Published private(set) var meetingVolume: Double
+    @Published private(set) var participantVolumes: [String: Double] = [:]
+    var supportsParticipantVolume: Bool { session.supportsParticipantVolume }
+    private let volumePreferences: UserDefaults
+    private let meetingVolumeKey: String
     @Published private(set) var lastDemand: MeetingEngine.MeetingVideoDemand?
 
     var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> {
@@ -101,6 +115,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     private var providerTranscriptActive = false
     private var providerCanManageTranscript = false
     private var didAutoStartLocalTranscription = false
+    private var assistantStartedLocalTranscription = false
     private var voiceReplyTask: Task<Void, Error>?
     private var micActiveStart: Date?
     private var micActiveIntervals: [DateInterval] = []
@@ -110,13 +125,18 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
          chat: ChatStore,
          catchUp: CatchUpStore,
          workspaceAudio: IOSWorkspaceAudioCoordinator,
-         initialTitle: String?) {
+         initialTitle: String?,
+         preferences: UserDefaults = .standard) {
         self.id = session.id
         self.destination = destination
         self.session = session
         self.chat = chat
         self.catchUp = catchUp
         self.workspaceAudio = workspaceAudio
+        volumePreferences = preferences
+        meetingVolumeKey = "ios.meetingVolume." + destination.engineKind.rawValue
+        let savedVolume = preferences.object(forKey: meetingVolumeKey) as? Double ?? 1
+        meetingVolume = Self.clampedGain(savedVolume, maximum: 1)
         let cleanTitle = initialTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.title = (cleanTitle?.isEmpty == false ? cleanTitle! : nil)
             ?? L("Jam %@", destination.roomIdentifier)
@@ -208,6 +228,15 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         view.onJoinAnotherMeeting = { [weak self] in self?.onJoinAnotherMeeting?() }
         view.onOpenAssistant = { [weak self] in self?.onOpenAssistant?() }
         view.onLeave = { [weak self] in self?.leave() }
+        view.workspace.setMeetingSound = { [weak self] enabled in self?.setMeetingSoundEnabled(enabled) }
+        view.workspace.setMeetingVolume = { [weak self] level in self?.setMeetingVolume(level) }
+        $meetingVolume.assign(to: &view.workspace.$meetingVolume)
+        if supportsParticipantVolume {
+            view.participantVolumeControls = ParticipantVolumeControls(
+                level: { [weak self] id in self?.participantVolume(id) ?? 1 },
+                setLevel: { [weak self] level, id in self?.setParticipantVolume(level, participantID: id) }
+            )
+        }
         view.onMicrophone = { [weak self] enabled in self?.setMicrophone(enabled) }
         view.onToggleMicrophone = { [weak self] in self?.toggleMicrophone() }
         view.onCamera = { [weak self] enabled in self?.setCamera(enabled) }
@@ -241,12 +270,13 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             self?.videoDemand.setFloatingRecovery(needed)
         }
         view.loadViewIfNeeded()
+        view.setMeetingSound(enabled: isMeetingSoundEnabled, available: canSetMeetingSound)
         view.updateAssistantBadge(
             mode: lastAssistantBadge.mode,
             isPaused: lastAssistantBadge.isPaused,
             alertCount: lastAssistantBadge.alertCount
         )
-        view.setAudioRouteName(workspaceAudio?.audio.outputName ?? L("Audio output"))
+        if let output = workspaceAudio?.audio.output { view.setAudioOutput(output) }
         view.workspace.openVoiceReply = { [weak self] in self?.presentVoiceReplySheet() }
         view.workspace.openTranscriptionSettings = { [weak self] in self?.presentTranscriptionSettingsSheet() }
         view.workspace.openNotes = { [weak self] in self?.onOpenNotes?() }
@@ -285,6 +315,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         guard !joinStarted, !leaving else { return }
         self.displayName = displayName
         self.quiet = quiet
+        isMeetingSoundEnabled = !quiet
         joinStarted = true
 
         _ = prepareCallView()
@@ -305,7 +336,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         bindTranscriptCallbacks()
         updateSwitcherItems(items: callView?.activeMeetingsForSwitcher ?? [])
 
-        workspaceAudio?.registerSession(session, title: title, backgroundJoin: backgroundJoin)
+        workspaceAudio?.registerSession(session, title: title, backgroundJoin: backgroundJoin,
+                                        soundEnabled: !quiet, hasAudibleVolume: meetingVolume > 0)
         isTalkRoom = workspaceAudio?.isTalkSession(id) ?? true
         updateBroadcastObservation()
         videoDemand.beginJoin(inBackground: backgroundJoin)
@@ -321,6 +353,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                     try await workspaceAudio.waitUntilAudioReady(for: self.id)
                 }
                 guard !self.leaving, !Task.isCancelled else { return }
+                await self.session.setPlayoutVolume(self.meetingVolume)
+                guard !self.leaving, !Task.isCancelled else { return }
                 try await self.session.connect(invitation: url, name: displayName, quiet: quiet)
             } catch is CancellationError {
                 return
@@ -329,6 +363,41 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                 self.reportMediaStatus(error.localizedDescription)
                 await self.finish(event: .failed)
             }
+        }
+    }
+
+    private static func clampedGain(_ value: Double, maximum: Double) -> Double {
+        value.isFinite ? min(maximum, max(0, value)) : 1
+    }
+
+    func setMeetingVolume(_ value: Double, persist: Bool = true) {
+        guard !leaving else { return }
+        let volume = Self.clampedGain(value, maximum: 1)
+        if volume != meetingVolume {
+            meetingVolume = volume
+            workspaceAudio?.setHasAudibleVolume(volume > 0, for: id)
+            if volume == 0 { cancelVoiceReply() }
+            Task { @MainActor [weak self] in
+                guard let self, !leaving, meetingVolume == volume else { return }
+                await session.setPlayoutVolume(volume)
+            }
+        }
+        if persist { volumePreferences.set(volume, forKey: meetingVolumeKey) }
+    }
+
+    func participantVolume(_ participantID: String) -> Double {
+        participantVolumes[participantID] ?? 1
+    }
+
+    func setParticipantVolume(_ value: Double, participantID: String) {
+        guard !leaving, supportsParticipantVolume,
+              session.sessionSnapshot.participants.contains(where: { $0.id == participantID && !$0.isLocal }) else { return }
+        let volume = Self.clampedGain(value, maximum: 2)
+        guard volume != participantVolume(participantID) else { return }
+        participantVolumes[participantID] = volume == 1 ? nil : volume
+        Task { @MainActor [weak self] in
+            guard let self, !leaving, participantVolume(participantID) == volume else { return }
+            await session.setParticipantVolume(volume, participantID: participantID)
         }
     }
 
@@ -367,6 +436,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
 
     func setSystemHeld(_ held: Bool) {
         isHeld = held
+        refreshMeetingSoundControl()
         studio.held = held || quiet
         callView?.setHeld(held || quiet)
         callView?.sharingAvailable = phase == .connected && !held && !quiet
@@ -389,6 +459,37 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         callView?.setRoomTitle(clean)
         workspaceAudio?.updateSessionTitle(id: id, title: clean)
         onTitleChanged?(clean)
+    }
+
+    func setMeetingSoundEnabled(_ enabled: Bool) {
+        guard canSetMeetingSound, enabled != isMeetingSoundEnabled, let workspaceAudio else { return }
+        requestedMeetingSound = enabled
+        if !enabled { cancelVoiceReply() }
+        refreshMeetingSoundControl()
+        Task { @MainActor [weak self] in
+            guard let self, !leaving else { return }
+            defer {
+                requestedMeetingSound = nil
+                refreshMeetingSoundControl()
+            }
+            do {
+                try await workspaceAudio.setMeetingSoundEnabled(enabled, for: id)
+                guard !leaving else { return }
+                isMeetingSoundEnabled = enabled
+                if enabled && quiet {
+                    quiet = false
+                    setSystemHeld(isHeld)
+                }
+                onMeetingSoundChanged?(id)
+            } catch is CancellationError {
+            } catch {
+                reportMediaStatus(error.localizedDescription)
+            }
+        }
+    }
+
+    private func refreshMeetingSoundControl() {
+        callView?.setMeetingSound(enabled: isMeetingSoundEnabled, available: canSetMeetingSound)
     }
 
     func toggleMicrophone() {
@@ -644,11 +745,10 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             }
             .store(in: &audioSubscriptions)
 
-        workspaceAudio.$audioRouteName
+        workspaceAudio.$audioOutput
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] route in
-                guard !route.isEmpty else { return }
-                self?.callView?.setAudioRouteName(route)
+            .sink { [weak self] output in
+                self?.callView?.setAudioOutput(output)
             }
             .store(in: &audioSubscriptions)
     }
@@ -716,6 +816,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         if !(snapshot.phase == .idle && joinStarted) && !(snapshot.phase == .failed && connectTask != nil) {
             phase = snapshot.phase
         }
+        refreshMeetingSoundControl()
 
         callView?.supportsChat = snapshot.capabilities.supportsChatRead || snapshot.capabilities.supportsChatSend
         isCameraOn = snapshot.effective.cameraOn
@@ -778,6 +879,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                     didAutoStartLocalTranscription = true
                     Task { @MainActor [weak self] in
                         guard let self, self.phase == .connected, !self.leaving else { return }
+                        self.assistantStartedLocalTranscription = false
                         _ = await self.localTranscriber.start()
                         self.refreshLocalAudioSink()
                         self.syncCatchUpTranscript()
@@ -971,6 +1073,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self, !self.leaving else { return }
+                self.assistantStartedLocalTranscription = false
                 if enabled {
                     _ = await self.localTranscriber.start()
                     self.refreshLocalAudioSink()
@@ -1009,7 +1112,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             AppDiagnostics.log("voice-reply-unavailable", ["reason": "hold"])
             throw MeetingSessionError.unavailable(L("Cannot send a voice reply while the call is on hold."))
         }
-        guard !quiet else {
+        guard isMeetingSoundAudible else {
             AppDiagnostics.log("voice-reply-unavailable", ["reason": "soundOff"])
             throw MeetingSessionError.unavailable(L("Unmute meeting sound before sending a voice reply."))
         }
@@ -1071,7 +1174,16 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         guard !leaving, phase == .connected else { return }
         guard !(providerTranscriptActive && providerCanViewTranscript == true),
               !localTranscriber.state.isRunning else { return }
+        assistantStartedLocalTranscription = true
         _ = await localTranscriber.start()
+        refreshLocalAudioSink()
+        syncCatchUpTranscript()
+    }
+
+    func releaseAssistantTranscription() async {
+        guard assistantStartedLocalTranscription, !leaving else { return }
+        assistantStartedLocalTranscription = false
+        await localTranscriber.stop()
         refreshLocalAudioSink()
         syncCatchUpTranscript()
     }
@@ -1278,6 +1390,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         }
         studio.enableCamera = { [weak self] in self?.setCamera(true) }
         studio.enableMicrophone = { [weak self] in self?.setMicrophone(true) }
+        studio.willChooseAudioOutput = { [weak self] in self?.workspaceAudio?.audio.userWillSelectOutput() }
         studio.selectLiveCamera = { [weak self] device in
             UserDefaults.standard.set(device.uniqueID, forKey: "nativeDesktop.cameraID")
             try await IOSCameraCapture.current?.selectDevice(uniqueID: device.uniqueID, position: device.position)

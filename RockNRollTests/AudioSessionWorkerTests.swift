@@ -301,20 +301,49 @@ final class AudioSessionWorkerTests: XCTestCase {
         do { try await route.value; XCTFail("Superseded route was admitted") } catch is CancellationError { }
         audio.endSession()
     }
-    func testUIViewRoutePickerObservationDoesNotConsumeTouches() {
-        let picker = UIView()
-        var choices = 0
-        let observer = AudioRouteInteractionObserver { choices += 1 }
-        picker.addGestureRecognizer(observer)
-        observer.touchesBegan([], with: UIEvent())
-        XCTAssertEqual(choices, 1)
-        XCTAssertEqual(observer.view, picker)
-        // UIKit may immediately reset .failed to .possible outside a real touch
-        // sequence. Observation must never recognize a competing gesture.
-        XCTAssertNotEqual(observer.state, .recognized)
-        XCTAssertFalse(observer.cancelsTouchesInView)
-        XCTAssertFalse(observer.delaysTouchesBegan)
-        XCTAssertFalse(observer.delaysTouchesEnded)
+    func testRaisingAndLoweringPhoneRestoresOnlyAutomaticReceiverSelection() {
+        var routing = ProximityOutputPolicy()
+        XCTAssertNil(routing.requestedSpeaker(isNear: false, currentSpeaker: true))
+        XCTAssertEqual(routing.requestedSpeaker(isNear: true, currentSpeaker: true), false)
+        XCTAssertNil(routing.requestedSpeaker(isNear: true, currentSpeaker: false))
+        XCTAssertEqual(routing.requestedSpeaker(isNear: false, currentSpeaker: false), true)
+        XCTAssertNil(routing.requestedSpeaker(isNear: false, currentSpeaker: true))
+        XCTAssertNil(routing.requestedSpeaker(isNear: true, currentSpeaker: false), "An existing receiver choice is manual")
+        XCTAssertNil(routing.requestedSpeaker(isNear: false, currentSpeaker: false))
+    }
+
+    func testExplicitSelectionAtEarWinsUntilTheNextApproach() {
+        var routing = ProximityOutputPolicy()
+        XCTAssertEqual(routing.requestedSpeaker(isNear: true, currentSpeaker: true), false)
+        routing.userWillSelectOutput(isNear: true)
+        XCTAssertNil(routing.requestedSpeaker(isNear: true, currentSpeaker: true))
+        XCTAssertNil(routing.requestedSpeaker(isNear: false, currentSpeaker: false))
+        XCTAssertEqual(routing.requestedSpeaker(isNear: true, currentSpeaker: true), false)
+    }
+
+    func testProximityRoutingRequiresEntirelyBuiltInAudio() {
+        XCTAssertEqual(ProximityOutputPolicy.route(inputs: [.builtInMic], outputs: [.builtInReceiver]), .builtIn)
+        XCTAssertEqual(ProximityOutputPolicy.route(inputs: [], outputs: [.builtInSpeaker]), .builtIn)
+        for output: AVAudioSession.Port in [.headphones, .bluetoothHFP, .bluetoothA2DP, .usbAudio, .airPlay, .carAudio] {
+            XCTAssertEqual(ProximityOutputPolicy.route(inputs: [.builtInMic], outputs: [output]), .accessory)
+        }
+        XCTAssertEqual(ProximityOutputPolicy.route(inputs: [.usbAudio], outputs: [.builtInSpeaker]), .accessory)
+        XCTAssertEqual(ProximityOutputPolicy.route(inputs: [], outputs: [.builtInSpeaker, .headphones]), .accessory)
+        XCTAssertEqual(ProximityOutputPolicy.route(inputs: [], outputs: []), .unavailable)
+    }
+
+    func testRapidLowerThenRaiseAndInterruptedSpeakerRestore() {
+        var routing = ProximityOutputPolicy()
+        XCTAssertEqual(routing.requestedSpeaker(isNear: true, currentSpeaker: true), false)
+        XCTAssertEqual(routing.requestedSpeaker(isNear: false, currentSpeaker: true, pendingSpeaker: false), true)
+        XCTAssertEqual(routing.requestedSpeaker(isNear: true, currentSpeaker: false, pendingSpeaker: true), false)
+        XCTAssertEqual(routing.requestedSpeaker(isNear: false, currentSpeaker: false), true)
+        XCTAssertNil(routing.requestedSpeaker(isNear: false, currentSpeaker: false, pendingSpeaker: true))
+        // The queued speaker restore was retired by a hold. On activation the
+        // sensor still reads far, and the SDK has left the phone on receiver.
+        XCTAssertEqual(routing.requestedSpeaker(isNear: false, currentSpeaker: false), true)
+        XCTAssertNil(routing.requestedSpeaker(isNear: false, currentSpeaker: true))
+        XCTAssertFalse(routing.returnToSpeaker)
     }
     func testDismissedSpeakerCheckCannotStartQueuedPlayback() async throws {
         let queue = DispatchQueue(label: "test.audio-session.speaker-dismiss"), worker = AudioSessionWorker(queue: queue, activate: {}, deactivate: {})

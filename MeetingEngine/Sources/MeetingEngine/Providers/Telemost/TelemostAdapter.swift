@@ -651,10 +651,17 @@ extension TelemostTransport: TelemostSignalingTransport {}
 
     static func telemostHello(_ value: TelemostBootstrap, name: String, quiet: Bool) -> [String: Any] {
         let meta: [String: Any] = ["name": name, "role": "SPEAKER", "sendAudio": false, "sendVideo": false]
+#if os(iOS)
+        // iPhone sound and transcription can change after joining or recovering.
+        // Telemost negotiates the audio receiver only in hello. Local gain controls audibility.
+        let disableSubscriberAudio = false
+#else
+        let disableSubscriberAudio = quiet
+#endif
         return ["participantMeta": meta, "participantAttributes": ["name": name, "role": "SPEAKER"],
             "participantId": value.participantID, "roomId": value.roomID, "serviceName": value.serviceName,
             "credentials": value.credentials, "sendAudio": false, "sendVideo": false, "sendSharing": false,
-            "disablePublisher": false, "disableSubscriber": false, "disableSubscriberAudio": quiet,
+            "disablePublisher": false, "disableSubscriber": false, "disableSubscriberAudio": disableSubscriberAudio,
             "sdkInitializationId": UUID().uuidString,
             "sdkInfo": ["implementation": "native", "version": "1", "userAgent": "RockNRoll", "hwConcurrency": ProcessInfo.processInfo.processorCount],
             "capabilitiesOffer": ["offerAnswerMode": ["SEPARATE"], "initialSubscriberOffer": ["ON_HELLO"],
@@ -714,7 +721,8 @@ extension TelemostTransport: TelemostSignalingTransport {}
 
     private func makePeer(target: String, ice: [[String: Any]], attempt: UUID) async throws -> NativeDesktopRTCPeer {
         guard let factory else { throw NativeDesktopRTCError.closed }
-        let peer = try await NativeDesktopRTCPeer(target: target, factory: factory, ice: ice, topology: .split, audioProfile: audioProfile)
+        let peer = try await NativeDesktopRTCPeer(target: target, factory: factory, ice: ice, topology: .split,
+                                                  audioProfile: audioProfile, startReceivedAudioMuted: sharedMeeting != nil)
         guard supervisor.generation == attempt, self.factory === factory else {
             _ = await peer.close(); throw CancellationError()
         }
@@ -740,10 +748,11 @@ extension TelemostTransport: TelemostSignalingTransport {}
             tracks[mid] = track; refresh()
         }
         peer.onAudioTrack = { [weak self] mid, track in
-            guard let self, supervisor.generation == attempt, remoteAudioTracks[mid] !== track else { return }
+            guard let self, supervisor.generation == attempt else { return }
+            sharedMeeting?.addReceivedTrack(track, id: mid)
+            guard remoteAudioTracks[mid] !== track else { return }
             remoteAudioTracks[mid] = track
             transcriptionHandler?(audioSources)
-            sharedMeeting?.addReceivedTrack(track, id: mid)
         }
         peer.onLocalCamera = { [weak self] track in
             guard let self, supervisor.generation == attempt else { return }
@@ -986,8 +995,8 @@ extension TelemostTransport: TelemostSignalingTransport {}
             tx?.setMicrophone(false)
             descriptions = [:]; slots = []; tracks = [:]; speaking = []; localID = ""; roomID = ""
             incomingVideo = []; onVideo?([]); onLocalCamera?(nil)
-            if !remoteAudioTracks.isEmpty { remoteAudioTracks = [:]; transcriptionHandler?([]) }
             sharedMeeting?.retireTracks()
+            if !remoteAudioTracks.isEmpty { remoteAudioTracks = [:]; transcriptionHandler?([]) }
             let txClean = await tx?.close() ?? true
             let rxClean = await rx?.close() ?? true
             await tm?.close()

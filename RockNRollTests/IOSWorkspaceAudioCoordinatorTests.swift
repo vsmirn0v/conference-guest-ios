@@ -10,10 +10,15 @@ final class IOSWorkspaceAudioCoordinatorTests: XCTestCase {
     private final class MockSession: WorkspaceAudioControllableSession {
         let id = UUID()
         var micOn = false
-        var playoutOn = true
+        var playoutOn = true {
+            didSet { if oldValue != playoutOn { onPlayoutChanged?(playoutOn) } }
+        }
+        var onPlayoutChanged: ((Bool) -> Void)?
         var inputPermitted = true
         var events: [String] = []
         var failNextUnmute = false
+        var failNextPlayout = false
+        var beforePlayout: (() async -> Void)?
 
         var appliedAudioState: (microphoneOn: Bool, playoutOn: Bool) {
             (micOn, playoutOn)
@@ -30,6 +35,11 @@ final class IOSWorkspaceAudioCoordinatorTests: XCTestCase {
 
         func setPlayout(_ enabled: Bool) async throws {
             events.append("playout:\(enabled)")
+            if failNextPlayout {
+                failNextPlayout = false
+                throw MeetingSessionError.unavailable("Playout rejected")
+            }
+            await beforePlayout?()
             playoutOn = enabled
         }
 
@@ -71,11 +81,13 @@ final class IOSWorkspaceAudioCoordinatorTests: XCTestCase {
         var prepareLocalMuteCalls: [(Bool?, Bool?)] = []
         var suppressOutgoingMediaCalls = 0
         var micOn = false
+        var beforeUnmute: (() async -> Void)?
 
         func connect(invitation: URL, name: String, quiet: Bool, sessionID: MeetingSessionID) async throws {}
         func reconnect() async throws {}
         func leave() async -> Bool { true }
         func setMicrophone(_ enabled: Bool) async throws {
+            if enabled { await beforeUnmute?() }
             micOn = enabled
             sessionSnapshot.effective.microphoneOn = enabled
         }
@@ -281,7 +293,6 @@ final class IOSWorkspaceAudioCoordinatorTests: XCTestCase {
         defer { h.provider.invalidate(); h.coordinator.systemCall.markEnded(reason: .remoteEnded) }
 
         let s1 = MockSession(), s2 = MockSession()
-        s2.playoutOn = false // Explicitly muted audio output on room 2 should remain off after hold.
         h.coordinator.registerSession(s1, title: "Talk Room")
         await h.coordinator.waitForAggregateLeaseForTesting()
         let callID = try XCTUnwrap(h.coordinator.systemCall.callID)
@@ -290,15 +301,22 @@ final class IOSWorkspaceAudioCoordinatorTests: XCTestCase {
 
         h.coordinator.registerSession(s2, title: "Listen Room")
         try await h.coordinator.setTalkMicrophone(true)
+        try await h.coordinator.setMeetingSoundEnabled(false, for: s2.id)
+        XCTAssertTrue(s1.playoutOn)
+        XCTAssertFalse(s2.playoutOn)
         XCTAssertTrue(s1.micOn)
         XCTAssertEqual(LKRTCApplicationCaptureMuted(), 0)
 
+        let stopped = expectation(description: "Talk room playout stopped")
+        let resumed = expectation(description: "Talk room playout resumed")
+        s1.onPlayoutChanged = { enabled in
+            if enabled { resumed.fulfill() } else { stopped.fulfill() }
+        }
         h.setObservedCalls([.init(id: callID, connected: true, held: true)])
         let holdAction = FakeHoldAction(call: callID, onHold: true)
         h.coordinator.systemCall.provider(h.provider, perform: holdAction)
         h.coordinator.systemCall.provider(h.provider, didDeactivate: .sharedInstance())
-        await Task.yield()
-        await Task.yield()
+        await fulfillment(of: [stopped], timeout: 2)
 
         XCTAssertTrue(h.coordinator.isHeld)
         XCTAssertTrue(h.coordinator.isMuted)
@@ -311,13 +329,58 @@ final class IOSWorkspaceAudioCoordinatorTests: XCTestCase {
         let unholdAction = FakeHoldAction(call: callID, onHold: false)
         h.coordinator.systemCall.provider(h.provider, perform: unholdAction)
         h.coordinator.systemCall.provider(h.provider, didActivate: .sharedInstance())
-        for _ in 0..<20 where !s1.playoutOn { await Task.yield() }
+        await fulfillment(of: [resumed], timeout: 2)
 
         XCTAssertFalse(h.coordinator.isHeld)
         XCTAssertTrue(s1.playoutOn, "Unhold restores playout on active session")
         XCTAssertFalse(s2.playoutOn, "Unhold respects session that had playout off before hold")
         XCTAssertFalse(s1.micOn, "Microphones remain safely muted after hold/interruption")
         XCTAssertTrue(h.coordinator.isMuted)
+    }
+
+    func testFailedSoundChangeRestoresPreviousIntentAndCanRetry() async throws {
+        let h = makeHarness()
+        defer { h.provider.invalidate(); h.coordinator.systemCall.markEnded(reason: .remoteEnded) }
+        let room = MockSession()
+        h.coordinator.registerSession(room, title: "Room")
+        await h.coordinator.waitForAggregateLeaseForTesting()
+        room.failNextPlayout = true
+        do {
+            try await h.coordinator.setMeetingSoundEnabled(false, for: room.id)
+            XCTFail("Rejected sound change succeeded")
+        } catch {
+            XCTAssertTrue(room.playoutOn)
+        }
+        try await h.coordinator.setMeetingSoundEnabled(false, for: room.id)
+        XCTAssertFalse(room.playoutOn)
+        try await h.coordinator.setMeetingSoundEnabled(true, for: room.id)
+        XCTAssertTrue(room.playoutOn)
+    }
+
+    func testResumingFromHoldWaitsForInFlightPlayoutBeforeApplyingUserIntent() async throws {
+        let h = makeHarness()
+        defer { h.provider.invalidate(); h.coordinator.systemCall.markEnded(reason: .remoteEnded) }
+        let room = MockSession()
+        h.coordinator.registerSession(room, title: "Room")
+        await h.coordinator.waitForAggregateLeaseForTesting()
+        let callID = try XCTUnwrap(h.coordinator.systemCall.callID)
+        h.coordinator.markSessionConnected(id: room.id)
+        h.setObservedCalls([.init(id: callID, connected: true, held: true)])
+        let started = expectation(description: "Hold is applying playout")
+        var resume: CheckedContinuation<Void, Never>?
+        room.beforePlayout = {
+            room.beforePlayout = nil
+            await withCheckedContinuation { resume = $0; started.fulfill() }
+        }
+        h.coordinator.systemCall.provider(h.provider, perform: FakeHoldAction(call: callID, onHold: true))
+        await fulfillment(of: [started], timeout: 2)
+        h.setObservedCalls([.init(id: callID, connected: true, held: false)])
+        h.coordinator.systemCall.provider(h.provider, perform: FakeHoldAction(call: callID, onHold: false))
+        h.coordinator.systemCall.provider(h.provider, didActivate: .sharedInstance())
+        resume?.resume()
+        for _ in 0..<100 where !room.events.contains("playout:true") { await Task.yield() }
+        XCTAssertEqual(room.events.filter { $0.hasPrefix("playout:") }, ["playout:false", "playout:true"])
+        XCTAssertTrue(room.playoutOn)
     }
 
     func testSessionJoinWaitsForCallKitAudioActivationReusesActiveLeaseAndPropagatesStartFailure() async throws {
@@ -359,6 +422,20 @@ final class IOSWorkspaceAudioCoordinatorTests: XCTestCase {
             XCTAssertEqual(error.domain, expectedError.domain)
             XCTAssertEqual(error.code, expectedError.code)
         }
+    }
+
+    func testTurningOffMeetingSoundDuringMicrophoneEnableKeepsTheRequestedMicrophone() async throws {
+        let spy = SpyProviderAdapter()
+        let session = MeetingSession(kind: .guest, adapter: spy)
+        let started = expectation(description: "Microphone enable started")
+        var resume: CheckedContinuation<Void, Never>?
+        spy.beforeUnmute = { await withCheckedContinuation { resume = $0; started.fulfill() } }
+        let unmute = Task { try await session.setMicrophone(true) }
+        await fulfillment(of: [started], timeout: 2)
+        try await session.setPlayout(false)
+        resume?.resume()
+        try await unmute.value
+        XCTAssertTrue(spy.micOn)
     }
 
     func testMuteUsesPrepareLocalAudioMuteIntentInsteadOfSuppressOutgoingMedia() async throws {

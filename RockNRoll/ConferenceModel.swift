@@ -709,8 +709,13 @@ final class ConferenceModel: ObservableObject {
             canSendChat: controller.canSendAssistantChat,
             isMicUnmuted: controller.isLocalMicrophoneUnmuted,
             isForeground: !isCallMinimized && foregroundSessionID == controller.id,
+            isMeetingSoundEnabled: controller.isMeetingSoundEnabled,
+            canDeliverAutomaticReplies: controller.isMeetingSoundAudible,
             ensureTranscription: { [weak controller] in
                 await controller?.ensureTranscriptionRunningForAssistant()
+            },
+            releaseTranscription: { [weak controller] in
+                await controller?.releaseAssistantTranscription()
             },
             sendChat: { [weak controller] text in
                 guard let controller else { throw MeetingSessionError.notConnected }
@@ -1181,7 +1186,8 @@ final class ConferenceModel: ObservableObject {
                     chat: sessionChat,
                     catchUp: sessionCatchUp,
                     workspaceAudio: workspaceAudio,
-                    initialTitle: initialTitle
+                    initialTitle: initialTitle,
+                    preferences: preferences
                 )
                 let controllerID = controller.id
                 let reminderTarget = calendarReminderTarget
@@ -1216,6 +1222,13 @@ final class ConferenceModel: ObservableObject {
                 }
                 controller.onMicrophoneStateChanged = { [weak self] id, unmuted in
                     self?.assistant.handleMicrophoneChange(controllerID: id, unmuted: unmuted)
+                }
+                controller.onMeetingSoundChanged = { [weak self, weak controller] id in
+                    guard let self else { return }
+                    assistant.refreshMode(for: id)
+                    if companionAudioPaused, liveSessionID == id, controller?.isMeetingSoundEnabled == true {
+                        didEnableCompanionAudio()
+                    }
                 }
                 controller.workspaceDeviceID = sync.deviceID
                 controller.onOpenNotes = { [weak self, weak controller] in
@@ -1399,7 +1412,7 @@ final class ConferenceModel: ObservableObject {
             synchronizeScheduledMeeting()
             syncSwitcherItems()
             assistant.activePresentationChanged(foregroundControllerID: isCallMinimized ? nil : foregroundSessionID)
-            syncAssistantBadge(for: id)
+            assistant.refreshMode(for: id, ensureTranscription: true)
             refreshReminders()
             objectWillChange.send()
 
@@ -1966,6 +1979,14 @@ final class ConferenceModel: ObservableObject {
     }
 
     func enableCompanionAudio() {
+        if let target = sessions.first(where: { $0.id == liveSessionID }) {
+            target.setMeetingSoundEnabled(true)
+            return
+        }
+        didEnableCompanionAudio()
+    }
+
+    private func didEnableCompanionAudio() {
         companionAudioPaused = false
         continuationBanner.show(nil, in: nil)
         continuation.updateCurrent(continuationSnapshot())

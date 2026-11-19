@@ -256,13 +256,15 @@ final class IOSMeetingTranscriber: ObservableObject {
     private let participantNameLookup: (String) -> String?
     private let setOutputDemand: (Bool) async -> Bool
     private let gigaamLoader: @Sendable (URL) async throws -> CoreMLGigaAMRecognizer
+    private let speechAuthorization: @MainActor () async -> Bool
 
     private var remoteSources: [MeetingAudioSource] = []
     private var taps: [String: (source: MeetingAudioSource, sink: MeetingAudioSink)] = [:]
     nonisolated private let router = AudioIngressRouter()
     private var currentBackend: IOSListenModel?
     private var gigaamRecognizer: CoreMLGigaAMRecognizer?
-    private var running = false
+    private var activeRun: UUID?
+    private var running: Bool { activeRun != nil }
     private var segmentOrder = 0
     private var activeUtteranceByStream: [String: TranscriptSegment] = [:]
     var partialSegmentIDs: [String] { activeUtteranceByStream.values.map(\.id) }
@@ -273,12 +275,14 @@ final class IOSMeetingTranscriber: ObservableObject {
         localDisplayName: @escaping () -> String,
         participantNameLookup: @escaping (String) -> String?,
         setOutputDemand: @escaping (Bool) async -> Bool,
-        gigaamLoader: (@Sendable (URL) async throws -> CoreMLGigaAMRecognizer)? = nil
+        gigaamLoader: (@Sendable (URL) async throws -> CoreMLGigaAMRecognizer)? = nil,
+        speechAuthorization: (@MainActor () async -> Bool)? = nil
     ) {
         self.modelStore = modelStore
         self.localDisplayName = localDisplayName
         self.participantNameLookup = participantNameLookup
         self.setOutputDemand = setOutputDemand
+        self.speechAuthorization = speechAuthorization ?? Self.requestSpeechAuthorization
         self.gigaamLoader = gigaamLoader ?? { dir in
             try await CoreMLGigaAMRecognizer.shared(directory: dir)
         }
@@ -316,7 +320,8 @@ final class IOSMeetingTranscriber: ObservableObject {
 
     func start() async -> Bool {
         guard !running else { return true }
-        running = true
+        let run = UUID()
+        activeRun = run
         state = .starting
         let startedAt = ProcessInfo.processInfo.systemUptime
         let backend = modelStore.effectiveBackend()
@@ -325,50 +330,53 @@ final class IOSMeetingTranscriber: ObservableObject {
         if backend == .gigaamV3CoreML, let dir = modelStore.installedGigaAMDirectoryIfReady() {
             do {
                 let recognizer = try await gigaamLoader(dir)
-                guard running else { return false }
+                guard activeRun == run else { return false }
                 self.gigaamRecognizer = recognizer
                 self.currentBackend = .gigaamV3CoreML
                 state = .active(.gigaamV3CoreML)
                 let ms = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
                 AppDiagnostics.log("local-transcription-ready", ["backend": IOSListenModel.gigaamV3CoreML.rawValue, "ms": ms])
             } catch is CancellationError {
+                guard activeRun == run else { return false }
                 self.gigaamRecognizer = nil
-                self.running = false
+                activeRun = nil
                 if case .starting = state { state = .off }
                 return false
             } catch {
+                guard activeRun == run else { return false }
                 AppDiagnostics.log("local-transcription-fallback", [
                     "from": IOSListenModel.gigaamV3CoreML.rawValue,
                     "to": IOSListenModel.appleSpeech.rawValue
                 ])
                 self.gigaamRecognizer = nil
-                guard await startAppleSpeech() else { return false }
+                guard await startAppleSpeech(for: run) else { return false }
                 let ms = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
                 AppDiagnostics.log("local-transcription-ready", ["backend": IOSListenModel.appleSpeech.rawValue, "ms": ms])
             }
         } else {
-            guard await startAppleSpeech() else { return false }
+            guard await startAppleSpeech(for: run) else { return false }
             let ms = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
             AppDiagnostics.log("local-transcription-ready", ["backend": IOSListenModel.appleSpeech.rawValue, "ms": ms])
         }
 
+        guard activeRun == run else { return false }
         pushRouterMetadata()
         _ = await setOutputDemand(true)
-        guard running else { return false }
+        guard activeRun == run else { return false }
         syncTaps()
-        return running
+        return true
     }
 
     func stop() async {
         guard running || state != .off else { return }
-        running = false
+        activeRun = nil
         detachAllTaps()
-        _ = await setOutputDemand(false)
         router.stopAll(resetTimeline: false)
         activeUtteranceByStream.removeAll()
         currentBackend = nil
         gigaamRecognizer = nil
         state = .off
+        _ = await setOutputDemand(false)
     }
 
     func reset() async {
@@ -399,16 +407,17 @@ final class IOSMeetingTranscriber: ObservableObject {
         )
     }
 
-    private func startAppleSpeech() async -> Bool {
-        let authorized = await Self.requestSpeechAuthorization()
-        guard running else { return false }
+    private func startAppleSpeech(for run: UUID) async -> Bool {
+        guard activeRun == run else { return false }
+        let authorized = await speechAuthorization()
+        guard activeRun == run else { return false }
         guard authorized else {
-            running = false
+            activeRun = nil
             state = .unavailable(L("Allow Speech Recognition in Settings to transcribe speech on this iPhone."))
             return false
         }
         guard let recognizer = SFSpeechRecognizer(locale: modelStore.language.locale), recognizer.isAvailable else {
-            running = false
+            activeRun = nil
             state = .unavailable(L("Apple Speech Recognition is unavailable for %@ right now.", modelStore.language.title))
             return false
         }

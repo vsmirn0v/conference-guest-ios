@@ -1,6 +1,68 @@
 import XCTest
 
 final class MeetingPresentationUITests: XCTestCase {
+    func testMeetingSoundAndRemoteParticipantVolumeControls() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "meeting-gallery"
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-automaticallyHideMeetingControls", "NO"]
+        app.launch()
+        defer { app.terminate() }
+
+        let audio = app.buttons["call.output"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 10))
+        audio.tap()
+        let sound = app.switches["meeting.sound"]
+        XCTAssertTrue(sound.waitForExistence(timeout: 5))
+        XCTAssertTrue(sound.isEnabled)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            app.buttons["Use iPhone receiver"].tap()
+            XCTAssertTrue(app.buttons["Use iPhone speaker"].exists)
+        }
+        sound.tap()
+        XCTAssertEqual(sound.value as? String, "0")
+        let volume = app.sliders["meeting.volume"]
+        volume.adjust(toNormalizedSliderPosition: 0.4)
+        let level = try XCTUnwrap(volume.value as? String)
+        let percent = try XCTUnwrap(Int(level.replacingOccurrences(of: "%", with: "")))
+        XCTAssertTrue((30...50).contains(percent))
+        XCTAssertEqual(sound.value as? String, "0")
+        let playback = XCTAttachment(screenshot: app.screenshot())
+        playback.name = "Muted meeting playback"
+        playback.lifetime = .keepAlways
+        add(playback)
+        app.buttons["Done"].tap()
+        XCTAssertEqual(audio.value as? String, "Meeting sound off")
+        audio.tap()
+        XCTAssertEqual(volume.value as? String, level)
+        sound.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        app.buttons["Done"].tap()
+        XCTAssertEqual(audio.value as? String, "Meeting sound on")
+
+        tapHeaderAction(app, "Musicians, 12")
+        let first = app.sliders["participant.volume.person-0"]
+        let second = app.sliders["participant.volume.person-1"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        let thumb = first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let target = first.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5))
+        thumb.press(forDuration: 0.1, thenDragTo: target)
+        let boosted = try XCTUnwrap(first.value as? String)
+        let participantPercent = try XCTUnwrap(Int(boosted.replacingOccurrences(of: "%", with: "")))
+        XCTAssertTrue((135...165).contains(participantPercent), "Dragging the participant slider displayed \(boosted)")
+        XCTAssertEqual(second.value as? String, "100%")
+        app.buttons["participant.mute.person-0"].tap()
+        XCTAssertEqual(first.value as? String, "0%")
+        XCTAssertFalse(app.sliders["participant.volume.person-3"].exists)
+        let people = XCTAttachment(screenshot: app.screenshot())
+        people.name = "Participant volumes"
+        people.lifetime = .keepAlways
+        add(people)
+        app.buttons["Done"].tap()
+        tapHeaderAction(app, "Musicians, 12")
+        XCTAssertEqual(first.value as? String, "0%")
+    }
+
     func testLiveGuestButtonsRespondBeforeFirstRotationAndAfterReturningToPortrait() throws {
         guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
             throw XCTSkip("Opt-in live SDK interaction check")

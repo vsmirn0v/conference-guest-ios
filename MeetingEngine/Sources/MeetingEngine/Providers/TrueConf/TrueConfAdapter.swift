@@ -696,7 +696,8 @@ extension TrueConfTransport: TrueConfSignalingTransport {}
 
     private func makePeer(ice: [[String: Any]], attempt: UUID) async throws -> NativeDesktopRTCPeer {
         guard let factory else { throw NativeDesktopRTCError.closed }
-        let peer = try await NativeDesktopRTCPeer(target: "COMPOSITE", factory: factory, ice: ice, topology: .composite, audioProfile: audioProfile)
+        let peer = try await NativeDesktopRTCPeer(target: "COMPOSITE", factory: factory, ice: ice, topology: .composite,
+                                                  audioProfile: audioProfile, startReceivedAudioMuted: sharedMeeting != nil)
         guard supervisor.generation == attempt, self.factory === factory else {
             _ = await peer.close(); throw CancellationError()
         }
@@ -724,10 +725,11 @@ extension TrueConfTransport: TrueConfSignalingTransport {}
             self.tracks[mid] = track; self.refresh()
         }
         peer.onAudioTrack = { [weak self] mid, track in
-            guard let self, self.supervisor.generation == attempt, self.remoteAudioTracks[mid] !== track else { return }
+            guard let self, self.supervisor.generation == attempt else { return }
+            self.sharedMeeting?.addReceivedTrack(track, id: mid)
+            guard self.remoteAudioTracks[mid] !== track else { return }
             self.remoteAudioTracks[mid] = track
             self.transcriptionHandler?(self.audioSources)
-            self.sharedMeeting?.addReceivedTrack(track, id: mid)
         }
         peer.onLocalCamera = { [weak self] track in
             guard let self, self.supervisor.generation == attempt else { return }
@@ -967,8 +969,8 @@ extension TrueConfTransport: TrueConfSignalingTransport {}
             roster = TrueConfRoster(); regions = [:]; tracks = [:]
             cid = ""; streamID = ""; localID = ""; roomID = ""
             incomingVideo = []; onVideo?([]); onLocalCamera?(nil)
-            if !remoteAudioTracks.isEmpty { remoteAudioTracks = [:]; transcriptionHandler?([]) }
             sharedMeeting?.retireTracks()
+            if !remoteAudioTracks.isEmpty { remoteAudioTracks = [:]; transcriptionHandler?([]) }
             let txClean = await tx?.close() ?? true
             await tc?.close(room: retiringRoom)
             await media?.value

@@ -75,6 +75,10 @@ final class IOSMultiMeetingTests: XCTestCase {
         var microphoneCallCount = 0
         var concurrentMicrophoneCalls = 0
         var maxConcurrentMicrophoneCalls = 0
+        var meetingVolumes: [Double] = []
+        var volumeAtConnect: Double?
+        var participantGains: [String: Double] = [:]
+        var supportsParticipantVolume: Bool { capabilities.supportsParticipantVolume }
 
         init(kind: MeetingEngineKind, startInLobby: Bool = false, canViewTranscript: Bool = false) {
             self.kind = kind
@@ -91,6 +95,7 @@ final class IOSMultiMeetingTests: XCTestCase {
 
         func connect(invitation: URL, name: String, quiet: Bool, sessionID: MeetingSessionID) async throws {
             lastQuietConnect = quiet
+            volumeAtConnect = meetingVolumes.last
             connectionIdentity = MeetingConnectionIdentity(sessionID: sessionID, provider: kind, generation: UUID())
             let initialPhase: NativeDesktopMeetingPhase = startInLobby ? .lobby : .connected
             snapshot.phase = initialPhase
@@ -166,8 +171,8 @@ final class IOSMultiMeetingTests: XCTestCase {
             onSessionSnapshot?(sessionSnapshot)
         }
 
-        func setPlayoutVolume(_ volume: Double) async {}
-        func setParticipantVolume(_ volume: Double, participantID: String) async {}
+        func setPlayoutVolume(_ volume: Double) async { meetingVolumes.append(volume) }
+        func setParticipantVolume(_ volume: Double, participantID: String) async { participantGains[participantID] = volume }
         func configureConcurrentAudio(_ concurrent: Bool) {}
         func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
             physicalInputPermitted = permitted
@@ -193,7 +198,7 @@ final class IOSMultiMeetingTests: XCTestCase {
         func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { false }
     }
 
-    private func makeModel(lobbyForGuest: Bool = false) -> (
+    private func makeModel(lobbyForGuest: Bool = false, preferences: UserDefaults = UserDefaults(suiteName: UUID().uuidString)!) -> (
         model: ConferenceModel,
         adapters: () -> [MockMultiAdapter],
         startActions: () -> [CXStartCallAction],
@@ -236,7 +241,6 @@ final class IOSMultiMeetingTests: XCTestCase {
 
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockGuestDetectorProtocol.self]
-        let preferences = UserDefaults(suiteName: "MultiMeetingTests-" + UUID().uuidString)!
         preferences.set("Alex", forKey: "savedDisplayName")
         let detector = MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config))
         let reminders = CalendarReminderCoordinator(
@@ -370,6 +374,93 @@ final class IOSMultiMeetingTests: XCTestCase {
         XCTAssertEqual(Set(archivedEvents.filter { $0.kind == "transcript" }.map(\.providerMessageID)),
                        [historyLine.id, liveLine.id, ownLine.id])
         XCTAssertEqual(Set(archivedEvents.filter(\.isOwn).map(\.id)), [ownLine.id])
+    }
+
+    func testMeetingVolumeIsRestoredBeforeConnectAndActiveRoomsRemainIndependent() async throws {
+        let preferences = UserDefaults(suiteName: UUID().uuidString)!
+        let key = "ios.meetingVolume." + MeetingEngineKind.guest.rawValue
+        preferences.set(0.65, forKey: key)
+        let h = makeModel(preferences: preferences)
+        defer {
+            h.model.workspaceAudio.systemCall.markEnded(reason: .remoteEnded)
+            withExtendedLifetime(h.container) {}
+        }
+        h.model.receive(url: URL(string: "https://meeting.example.test/calls/room-one?psw=secret123")!)
+        h.model.join()
+        try await waitUntil { h.model.sessions.first?.phase == .connected }
+        let first = try XCTUnwrap(h.model.sessions.first)
+        let firstAdapter = try XCTUnwrap(h.adapters().first)
+        XCTAssertEqual(firstAdapter.volumeAtConnect, 0.65)
+        first.setMeetingVolume(0.4, persist: false)
+        XCTAssertEqual(preferences.double(forKey: key), 0.65)
+        first.setMeetingVolume(0.4)
+
+        h.model.minimizeActiveCall()
+        h.model.receive(url: URL(string: "https://meeting.example.test/calls/room-two?psw=secret123")!)
+        h.model.joinAlongsidePending()
+        try await waitUntil { h.model.sessions.count == 2 && h.model.sessions.last?.phase == .connected }
+        let second = try XCTUnwrap(h.model.sessions.last)
+        let secondAdapter = try XCTUnwrap(h.adapters().last)
+        XCTAssertEqual(secondAdapter.volumeAtConnect, 0.4)
+        first.setMeetingVolume(-1)
+        try await waitUntil { firstAdapter.meetingVolumes.last == 0 }
+        XCTAssertEqual(firstAdapter.meetingVolumes.last, 0)
+        XCTAssertTrue(firstAdapter.snapshot.playoutOn)
+        XCTAssertEqual(second.meetingVolume, 0.4)
+        XCTAssertEqual(secondAdapter.meetingVolumes.last, 0.4)
+        first.setMeetingVolume(.nan)
+        try await waitUntil { firstAdapter.meetingVolumes.last == 1 }
+        XCTAssertEqual(firstAdapter.meetingVolumes.last, 1)
+        XCTAssertEqual(preferences.double(forKey: key), 1)
+    }
+
+    func testParticipantVolumeTargetsRemoteIdentitiesOnlyOnSupportedServices() async throws {
+        let workspaceAudio = IOSWorkspaceAudioCoordinator(sharedAudio: nil, configureLiveKit: false)
+        let invitations: [(MeetingEngineKind, String)] = [
+            (.guest, "https://meeting.example.test/calls/room-guest?psw=secret123"),
+            (.community, "https://rock.glowsoft.ru/jams/test"),
+            (.telemost, "https://telemost.yandex.ru/j/1234567890"),
+            (.trueconf, "https://trueconf.example.com/c/trueconf-room")
+        ]
+        for (kind, raw) in invitations {
+            let destination = try JoinDestination.verified(XCTUnwrap(URL(string: raw)), engine: kind)
+            let adapter = MockMultiAdapter(kind: destination.engineKind)
+            let controller = IOSMeetingSessionController(
+                destination: destination, session: MeetingSession(kind: destination.engineKind, adapter: adapter),
+                chat: ChatStore(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+                workspaceAudio: workspaceAudio, initialTitle: nil, preferences: UserDefaults(suiteName: UUID().uuidString)!
+            )
+            adapter.pushRemoteState(participants: [.init(id: "me", name: "Me", isLocal: true),
+                .init(id: "a", name: "Alex", isLocal: false), .init(id: "b", name: "Alex", isLocal: false)], videos: [])
+            controller.setParticipantVolume(0, participantID: "me")
+            controller.setParticipantVolume(0, participantID: "unknown")
+            controller.setParticipantVolume(3, participantID: "a")
+            controller.setParticipantVolume(-1, participantID: "b")
+            let supported = [.guest, .community].contains(destination.engineKind)
+            XCTAssertEqual(controller.supportsParticipantVolume, supported)
+            if supported {
+                try await waitUntil { adapter.participantGains.count == 2 }
+                XCTAssertEqual(adapter.participantGains, ["a": 2, "b": 0])
+                controller.setParticipantVolume(.nan, participantID: "a")
+                try await waitUntil { adapter.participantGains["a"] == 1 }
+                XCTAssertEqual(adapter.participantGains["a"], 1)
+                XCTAssertEqual(controller.participantVolumes, ["b": 0])
+            } else {
+                XCTAssertTrue(controller.participantVolumes.isEmpty)
+                XCTAssertTrue(adapter.participantGains.isEmpty)
+            }
+            XCTAssertEqual(controller.meetingVolume, 1)
+            XCTAssertTrue(adapter.meetingVolumes.isEmpty)
+        }
+    }
+
+    func testTelemostQuietReconnectKeepsReceiverForLaterSoundAndTranscription() {
+        let bootstrap = TelemostBootstrap(roomID: "room", participantID: "self", credentials: "fixture",
+                                          serverURL: URL(string: "wss://example.invalid")!, serviceName: "fixture",
+                                          iceServers: [], chatAllowed: true)
+        let hello = TelemostAdapter.telemostHello(bootstrap, name: "Listener", quiet: true)
+        XCTAssertEqual(hello["disableSubscriberAudio"] as? Bool, false)
+        XCTAssertEqual(hello["sendAudio"] as? Bool, false)
     }
 
     func testFourSimultaneousSessionsAcrossAllProvidersAndFifthRoomPromptReplacement() async throws {
@@ -828,6 +919,24 @@ final class IOSMultiMeetingTests: XCTestCase {
                 "tracks": [["sid": remoteTrack, "type": "AUDIO", "source": "MICROPHONE", "muted": false]]
             ]]]
         ]])
+        // Inspect the negotiated receiver, including its tap while local playout is muted.
+        let received = try XCTUnwrap(subscriber.incomingAudioTracks.first?.track)
+        audio.onLevelChange = { [weak listener] in listener?.reconcilePlaybackLevels() }
+        listener.setParticipantVolumes(["late-publisher": 0])
+        XCTAssertEqual(received.source.volume, 0)
+        listener.setParticipantVolumes(["late-publisher": 2])
+        XCTAssertEqual(received.source.volume, 0.04, accuracy: 0.0001)
+        let keepDecoding = await audio.setTranscriptionOutput(true)
+        XCTAssertTrue(keepDecoding)
+        try await listener.setPlayoutEnabled(false)
+        _ = audio.setMeetingVolume(0.25)
+        XCTAssertEqual(received.source.volume, 0)
+        let decodedBefore = subscriber.pcmMeter.snapshot.nonSilentCallbacks
+        try await waitUntil { subscriber.pcmMeter.snapshot.nonSilentCallbacks > decodedBefore }
+        XCTAssertGreaterThan(subscriber.pcmMeter.snapshot.nonSilentCallbacks, decodedBefore)
+        try await listener.setPlayoutEnabled(true)
+        try await waitUntil { received.source.volume > 0 }
+        XCTAssertEqual(received.source.volume, 0.5, accuracy: 0.0001)
         func isReceptionSample(_ line: String) -> Bool {
             line.contains("\"event\":\"guest-audio-reception\"") && line.contains(subscriber.diagnosticID)
                 && line.contains("\"packetsReceived\":") && line.contains("\"decodedNonSilentCallbacks\":")

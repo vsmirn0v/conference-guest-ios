@@ -49,7 +49,10 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
         let session: any WorkspaceAudioControllableSession
         var title: String
         var connected: Bool
-        var resumePlayoutAfterHold: Bool
+        var soundEnabled: Bool
+        var hasAudibleVolume: Bool
+        var playoutTask: Task<Void, Error>?
+        var playoutRequestID: UUID?
     }
 
     private static var configuredLiveKitAudio = false
@@ -68,7 +71,7 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
     @Published private(set) var activeSessionCount = 0
     @Published private(set) var isHeld = false
     @Published private(set) var isMuted = true
-    @Published private(set) var audioRouteName = ""
+    @Published private(set) var audioOutput: AudioCoordinator.Output
 
     let systemCall: SystemCallCoordinator
     let audio: AudioCoordinator
@@ -114,7 +117,7 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
         self.notifyEngineRouteChanged = {
             if let sharedAudio { _ = sharedAudio.engineChanged(.started) }
         }
-        self.audioRouteName = self.audio.outputName
+        self.audioOutput = self.audio.output
         installHandlers()
     }
 
@@ -129,7 +132,8 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
         preferredForegroundSessionID = id
     }
 
-    func registerSession(_ session: any WorkspaceAudioControllableSession, title: String, backgroundJoin: Bool = false) {
+    func registerSession(_ session: any WorkspaceAudioControllableSession, title: String, backgroundJoin: Bool = false,
+                         soundEnabled: Bool? = nil, hasAudibleVolume: Bool = true) {
         let cleanTitle = Self.sanitizedTitle(title)
         if var existing = entries[session.id] {
             existing.title = cleanTitle
@@ -140,9 +144,11 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
         guard sessionOrder.count < Self.maxConcurrentSessions else { return }
         let wasEmpty = sessionOrder.isEmpty
         entries[session.id] = SessionEntry(session: session, title: cleanTitle, connected: false,
-                                           resumePlayoutAfterHold: session.appliedAudioState.playoutOn)
+                                           soundEnabled: soundEnabled ?? session.appliedAudioState.playoutOn,
+                                           hasAudibleVolume: hasAudibleVolume)
         sessionOrder.append(session.id)
         activeSessionCount = sessionOrder.count
+        updateProximityRouting()
 
         if wasEmpty {
             talkSessionID = session.id
@@ -211,7 +217,9 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
 
     func unregisterSession(id: UUID) {
         cancelActivationWaiters(for: id)
-        guard entries.removeValue(forKey: id) != nil else { return }
+        guard let removed = entries.removeValue(forKey: id) else { return }
+        removed.playoutTask?.cancel()
+        updateProximityRouting()
         sessionOrder.removeAll { $0 == id }
         activeSessionCount = sessionOrder.count
 
@@ -412,7 +420,7 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
         }
         audio.onRouteChanged = { [weak self] in
             guard let self else { return }
-            self.audioRouteName = self.audio.outputName
+            self.audioOutput = self.audio.output
             if self.activeSessionCount > 0 { self.notifyEngineRouteChanged() }
         }
         audio.onInterruptionChanged = { [weak self] interrupted in
@@ -448,7 +456,7 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
             self.isAudioActivated = true
             self.initialLeaseError = nil
             self.audio.callAudioDidActivate()
-            self.audioRouteName = self.audio.outputName
+            self.audioOutput = self.audio.output
             self.notifyEngineRouteChanged()
             if !self.isHeld {
                 self.resumeAllActivationWaiters(with: .success(()))
@@ -523,26 +531,69 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
         }
     }
 
+    func setMeetingSoundEnabled(_ enabled: Bool, for id: UUID) async throws {
+        guard let entry = entries[id], !pausedAllAudioForHoldOrYield else { throw CancellationError() }
+        entries[id]?.soundEnabled = enabled
+        do {
+            try await queuePlayout(for: id)?.value
+            guard entries[id] != nil else { throw CancellationError() }
+            updateProximityRouting()
+        } catch {
+            if entries[id]?.soundEnabled == enabled {
+                entries[id]?.soundEnabled = entry.soundEnabled
+                // Some providers update reconnect intent before acknowledging the hardware change.
+                _ = try? await queuePlayout(for: id)?.value
+                updateProximityRouting()
+            }
+            throw error
+        }
+    }
+
+    /// Serialize app and CallKit writes for each meeting so a late restore cannot reopen muted audio.
+    private func queuePlayout(for id: UUID) -> Task<Void, Error>? {
+        guard var entry = entries[id] else { return nil }
+        let previous = entry.playoutTask
+        let requestID = UUID()
+        entry.playoutRequestID = requestID
+        let sound = entry.soundEnabled && !pausedAllAudioForHoldOrYield
+        let task = Task { @MainActor [weak self, session = entry.session] in
+            _ = await previous?.result
+            guard let self, entries[id]?.playoutRequestID == requestID else { return }
+            defer {
+                if entries[id]?.playoutRequestID == requestID { entries[id]?.playoutTask = nil }
+            }
+            try await session.setPlayout(sound)
+        }
+        entry.playoutTask = task
+        entries[id] = entry
+        return task
+    }
+
+    func setHasAudibleVolume(_ audible: Bool, for id: UUID) {
+        guard let entry = entries[id], entry.hasAudibleVolume != audible else { return }
+        entries[id]?.hasAudibleVolume = audible
+        updateProximityRouting()
+    }
+
+    private func updateProximityRouting() {
+        let audible = entries.values.contains { $0.soundEnabled && $0.hasAudibleVolume }
+        audio.setProximityRoutingNeeded(!pausedAllAudioForHoldOrYield && audible)
+    }
+
     private func pauseAllSessionsForHoldOrYield() {
         captureGate.setMuted(true)
         isMuted = true
         systemCall.setMuted(true)
-        if !pausedAllAudioForHoldOrYield {
-            for id in sessionOrder {
-                guard var entry = entries[id] else { continue }
-                entry.resumePlayoutAfterHold = entry.session.appliedAudioState.playoutOn
-                entries[id] = entry
-            }
-            pausedAllAudioForHoldOrYield = true
-        }
+        pausedAllAudioForHoldOrYield = true
+        updateProximityRouting()
         let snapshot = sessionOrder.compactMap { entries[$0]?.session }
         for session in snapshot {
             session.prepareAudioMuteIntent()
+            _ = queuePlayout(for: session.id)
         }
         Task { [snapshot] in
             for session in snapshot {
                 try? await session.setMicrophone(false)
-                try? await session.setPlayout(false)
             }
         }
     }
@@ -554,18 +605,11 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
         let shouldRestore = pausedAllAudioForHoldOrYield
         pausedAllAudioForHoldOrYield = false
         guard shouldRestore else { return }
-        let toRestore: [any WorkspaceAudioControllableSession] = sessionOrder.compactMap { id in
-            guard let entry = entries[id], entry.resumePlayoutAfterHold else { return nil }
-            return entry.session
-        }
-        if !toRestore.isEmpty {
-            Task { [toRestore] in
-                for session in toRestore {
-                    try? await session.setPlayout(true)
-                }
-                self.onAudioInterruptedOrHeld?(false)
-            }
-        } else {
+        updateProximityRouting()
+        let restored = sessionOrder.compactMap { queuePlayout(for: $0) }
+        Task { @MainActor [weak self] in
+            for task in restored { _ = await task.result }
+            guard let self, !pausedAllAudioForHoldOrYield else { return }
             onAudioInterruptedOrHeld?(false)
         }
     }

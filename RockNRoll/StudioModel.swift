@@ -66,6 +66,7 @@ final class StudioModel: ObservableObject {
     var applyProfile: ((StudioAudioProfile) async throws -> Void)?
     var enableCamera: (() -> Void)?
     var enableMicrophone: (() -> Void)?
+    var willChooseAudioOutput: (() -> Void)?
     /// Device selection is shared by private preview and the next publication.
     var selectLiveCamera: ((AVCaptureDevice) async throws -> Void)?
     var onCameraSelectionChanged: ((AVCaptureDevice?) -> Void)? {
@@ -436,6 +437,7 @@ final class StudioModel: ObservableObject {
         presenter.end()
         change?.cancel(); change = nil
         applying = false
+        willChooseAudioOutput = nil
         applyProfile = nil
         enableCamera = nil; enableMicrophone = nil; selectLiveCamera = nil; onCameraSelectionChanged = nil; makeLivePreview = nil; liveCaptureDevice = nil
         close()

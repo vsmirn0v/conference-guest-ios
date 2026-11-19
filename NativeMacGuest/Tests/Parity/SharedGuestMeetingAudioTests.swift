@@ -178,7 +178,7 @@ import XCTest
         telemost.retireTracks()
         XCTAssertFalse(microphone.isEnabled)
         XCTAssertTrue(telemost.setMeetingVolume(1))
-        XCTAssertEqual(anna, 0.5, accuracy: 1e-6, "A retired generation's track is no longer managed")
+        XCTAssertEqual(anna, 0, "A retired receiver stays silent until its peer finishes closing")
         ok(await telemost.shutdown()); ok(await trueconf.shutdown())
     }
 

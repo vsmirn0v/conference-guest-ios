@@ -156,7 +156,7 @@ import LiveKitWebRTC
 
     public func setPlayout(_ enabled: Bool) async throws {
         guard !leaving else { throw CancellationError() }
-        _ = commandRevision.advance()
+        // Changing what the user hears must not cancel an in-flight camera or microphone enable.
         try await adapter.setPlayout(enabled)
     }
 

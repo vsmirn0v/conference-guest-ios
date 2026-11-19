@@ -27,6 +27,7 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     let topology: Topology
     let factory: LKRTCPeerConnectionFactory
     let native: GuestNativeCalls
+    private nonisolated let startReceivedAudioMuted: Bool
     private let audioProfile: GuestAudioProfile
     private(set) var connection: LKRTCPeerConnection!
     var onCandidate: (([String: Any]) -> Void)?
@@ -74,8 +75,9 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     private var remoteCandidates: [LKRTCIceCandidate] = []
 
     init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]], topology: Topology = .split,
-         audioProfile: GuestAudioProfile = .speech) async throws {
+         audioProfile: GuestAudioProfile = .speech, startReceivedAudioMuted: Bool = false) async throws {
         self.target = target; self.factory = factory; self.topology = topology; self.audioProfile = audioProfile
+        self.startReceivedAudioMuted = startReceivedAudioMuted
         sequence = target == "PUBLISHER" ? 1 : 0
         native = GuestNativeCalls(label: "external-\(target.lowercased())")
         super.init()
@@ -524,6 +526,9 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didOpen dataChannel: LKRTCDataChannel) {}
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd receiver: LKRTCRtpReceiver, streams: [LKRTCMediaStream]) {
         // Delegate callbacks run on WebRTC's signaling thread: native reads happen here.
+        if startReceivedAudioMuted, let track = receiver.track as? LKRTCAudioTrack {
+            track.source.volume = 0
+        }
         let id = receiver.receiverId
         let reports = pc.transceivers.filter { $0.receiver.receiverId == id }.compactMap(Self.trackReport)
         Task { @MainActor [weak self] in

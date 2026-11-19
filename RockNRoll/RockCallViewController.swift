@@ -4,6 +4,7 @@ import Combine
 import LiveKit
 import MeetingEngine
 import ReplayKit
+import SwiftUI
 import UIKit
 
 @MainActor
@@ -33,6 +34,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var onToggleCamera: (() -> Void)?
     var onSpeaker: ((Bool) -> Void)?
     var onChooseAudioOutput: (() -> Void)?
+    var participantVolumeControls: ParticipantVolumeControls?
     var onShare: ((Bool) -> Void)?
     var onVideoDemandChanged: (() -> Void)?
     var onFloatingChanged: ((Bool) -> Void)?
@@ -108,6 +110,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let camera = AlignedCallButton(frame: .zero)
     private let flipCamera = UIButton(type: .system)
     private let speaker = UIButton(type: .system)
+    private let audioControl = AlignedCallButton(frame: .zero)
     private let share = AlignedCallButton(frame: .zero)
     private let sharePicker = RPSystemBroadcastPickerView()
     private let shareTitle = UILabel()
@@ -119,8 +122,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let switcherButton = UIButton(type: .system)
     private let talkHereButton = UIButton(type: .system)
     private let compactTalkHereButton = UIButton(type: .system)
-    private var currentAssistantMode: IOSMeetingAssistantMode = .off
-    private var currentAssistantPaused = false
+    private var currentAssistantMode: IOSMeetingAssistantMode { workspace.assistantMode }
+    private var currentAssistantPaused: Bool { workspace.assistantPaused }
     private var currentAssistantAlertCount = 0
     private var assistantBannerView: UIView?
     private var assistantBannerDismissTask: Task<Void, Never>?
@@ -919,14 +922,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         #else
         participantsButton.isEnabled = false
         #endif
-        let routePicker = AVRoutePickerView()
-        routePicker.tintColor = accent
-        routePicker.activeTintColor = accent
-        routePicker.accessibilityLabel = L("Choose audio output")
-        MeetingChromeSurface.hidePickerArtwork(in: routePicker)
-        routePicker.addGestureRecognizer(AudioRouteInteractionObserver { [weak self] in
-            self?.onChooseAudioOutput?()
-        })
         let leave = AlignedCallButton(frame: .zero)
         configure(leave, symbol: "phone.down.fill", label: L("Leave"), title: L("Leave"))
         leave.configuration?.baseForegroundColor = .systemRed
@@ -972,10 +967,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         flipCamera.addAction(UIAction { [weak self] _ in self?.studio?.flipCamera() }, for: .touchUpInside)
         speaker.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            self.isSpeakerOn.toggle()
-            self.workspace.speakerOn = self.isSpeakerOn
-            self.onSpeaker?(self.isSpeakerOn)
-            self.speaker.accessibilityLabel = self.isSpeakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker")
+            self.onSpeaker?(!self.isSpeakerOn)
         }, for: .touchUpInside)
         conversationButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -990,6 +982,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             let statuses = snapshot.participants.map(\.status)
             #endif
             let panel = ParticipantPanelViewController()
+            panel.volumeControls = self.participantVolumeControls
             panel.onDismiss = { [weak self] in self?.reminderHost.changed() }
             panel.onPin = { [weak self] key in
                 guard let self else { return }
@@ -998,8 +991,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.participantsPanel = panel
             panel.update(statuses, pinnedKey: self.pinnedStreamKey)
             let navigation = UINavigationController(rootViewController: panel)
-            navigation.sheetPresentationController?.detents = [.medium(), .large()]
-            self.present(navigation, animated: true)
+            self.presentCallSheet(navigation)
         }, for: .touchUpInside)
         leave.addAction(UIAction { [weak self] _ in self?.onLeave?() }, for: .touchUpInside)
         workspace.openReactions = { [weak self] anchor, visibility in
@@ -1017,39 +1009,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         workspace.toggleMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
         workspace.toggleCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
         workspace.toggleSpeaker = { [weak self] in self?.speaker.sendActions(for: .touchUpInside) }
+        workspace.willChooseAudioOutput = { [weak self] in self?.onChooseAudioOutput?() }
         workspace.leave = { [weak self] in leave.sendActions(for: .touchUpInside); self?.workspace.onHold = false }
 
-        let audioControl = UIView()
+        configure(audioControl, symbol: "speaker.wave.2.fill", label: L("Audio"), title: L("Audio"))
         audioControl.accessibilityIdentifier = "call.output"
-        routePicker.translatesAutoresizingMaskIntoConstraints = false
-        audioControl.addSubview(routePicker)
-        let audioTitle = UILabel()
-        audioTitle.text = nil
-        audioTitle.font = .preferredFont(forTextStyle: .caption2)
-        audioTitle.textColor = .white
-        audioTitle.translatesAutoresizingMaskIntoConstraints = false
-        audioControl.addSubview(audioTitle)
-        NSLayoutConstraint.activate([
-            routePicker.centerXAnchor.constraint(equalTo: audioControl.centerXAnchor),
-            routePicker.centerYAnchor.constraint(equalTo: audioControl.centerYAnchor, constant: -7),
-            routePicker.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            routePicker.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            audioTitle.centerXAnchor.constraint(equalTo: audioControl.centerXAnchor),
-            audioTitle.bottomAnchor.constraint(equalTo: audioControl.bottomAnchor, constant: -4)
-        ])
-        let audioAppearance = AlignedCallButton(frame: .zero)
-        configure(audioAppearance, symbol: "speaker.wave.2.fill", label: L("Audio output"), title: L("Audio"))
-        audioAppearance.isUserInteractionEnabled = false
-        audioAppearance.accessibilityElementsHidden = true
-        audioAppearance.translatesAutoresizingMaskIntoConstraints = false
-        audioControl.addSubview(audioAppearance)
-        NSLayoutConstraint.activate([
-            audioAppearance.leadingAnchor.constraint(equalTo: audioControl.leadingAnchor),
-            audioAppearance.trailingAnchor.constraint(equalTo: audioControl.trailingAnchor),
-            audioAppearance.topAnchor.constraint(equalTo: audioControl.topAnchor),
-            audioAppearance.bottomAnchor.constraint(equalTo: audioControl.bottomAnchor)
-        ])
-        audioControl.accessibilityLabel = L("Audio output")
+        audioControl.addAction(UIAction { [weak self] _ in self?.openPlaybackControls() }, for: .touchUpInside)
         if let studio { StudioShortcut.install(on: audioControl, pane: .sound, model: studio, devices: true) }
         let shareControl = UIView()
         for item in [share, sharePicker, shareTitle] {
@@ -1866,10 +1831,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         cameraSound.append(UIAction(title: isSpeakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker"),
             image: UIImage(systemName: "speaker.wave.2")) { [weak self] _ in
                 guard let self else { return }
-                self.isSpeakerOn.toggle()
-                self.workspace.speakerOn = self.isSpeakerOn
-                self.onSpeaker?(self.isSpeakerOn)
-                self.configureMoreMenu()
+                self.onSpeaker?(!self.isSpeakerOn)
             })
         if workspace.invitationURL != nil {
             invite = [UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
@@ -1941,6 +1903,35 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             // exactly as tapping the broadcast control in the dock does.
             (sharePicker.subviews.compactMap { $0 as? UIButton }.first)?.sendActions(for: .touchUpInside)
         }
+    }
+
+    private func openPlaybackControls() {
+        guard presentedViewController == nil else { return }
+        let controls = MeetingPlaybackControls(workspace: workspace, meetingTitle: titleLabel.text ?? "",
+                                              onOpenAssistant: onOpenAssistant)
+        presentCallSheet(UIHostingController(rootView: controls))
+    }
+
+    private func presentCallSheet(_ sheet: UIViewController) {
+        sheet.overrideUserInterfaceStyle = .dark
+        let detents: [UISheetPresentationController.Detent] = [.medium(), .large()]
+        if #available(iOS 26.1, *) {
+            for detent in detents { detent.backgroundEffect = UIBlurEffect(style: .systemThickMaterialDark) }
+        }
+        sheet.sheetPresentationController?.detents = detents
+        sheet.sheetPresentationController?.prefersGrabberVisible = true
+        present(sheet, animated: true)
+    }
+
+    func setMeetingSound(enabled: Bool, available: Bool) {
+        if workspace.meetingSoundEnabled != enabled { workspace.meetingSoundEnabled = enabled }
+        if workspace.canSetMeetingSound != available { workspace.canSetMeetingSound = available }
+        let label = enabled ? L("Meeting sound on") : L("Meeting sound off")
+        guard audioControl.accessibilityValue != label else { return }
+        let icon = UIImage(systemName: enabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+        audioControl.configuration?.image = icon
+        audioControl.largeContentImage = icon
+        audioControl.accessibilityValue = label
     }
 
     func setSharing(_ enabled: Bool) {
@@ -2143,9 +2134,16 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         updateStatus()
     }
 
-    func setAudioRouteName(_ name: String) {
-        routeLabel.text = L("Audio · %@", name)
-        workspace.routeName = name
+    func setAudioOutput(_ output: AudioCoordinator.Output) {
+        routeLabel.text = L("Audio · %@", output.name)
+        workspace.routeName = output.name
+        workspace.usesBuiltInOutput = output.builtInSpeaker != nil
+        let speakerOn = output.builtInSpeaker == true
+        speaker.accessibilityLabel = speakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker")
+        guard speakerOn != isSpeakerOn else { return }
+        isSpeakerOn = speakerOn
+        workspace.speakerOn = isSpeakerOn
+        configureMoreMenu()
     }
 
     private func updateStatus() {
@@ -2242,8 +2240,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     func updateAssistantBadge(mode: IOSMeetingAssistantMode, isPaused: Bool, alertCount: Int) {
-        currentAssistantMode = mode
-        currentAssistantPaused = isPaused
+        if workspace.assistantMode != mode { workspace.assistantMode = mode }
+        if workspace.assistantPaused != isPaused { workspace.assistantPaused = isPaused }
         currentAssistantAlertCount = alertCount
         guard isViewLoaded else { return }
         let symbol = mode == .off ? "sparkles" : mode.symbol

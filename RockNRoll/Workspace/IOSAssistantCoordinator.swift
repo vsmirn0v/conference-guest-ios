@@ -189,7 +189,10 @@ struct IOSAssistantSessionBridge {
     var canSendChat: Bool
     var isMicUnmuted: Bool
     var isForeground: Bool
+    var isMeetingSoundEnabled = true
+    var canDeliverAutomaticReplies = true
     var ensureTranscription: @MainActor () async -> Void
+    var releaseTranscription: @MainActor () async -> Void = {}
     var sendChat: @MainActor (String) async throws -> Void
     var speakVoice: @MainActor (String) async throws -> Void
 }
@@ -351,15 +354,28 @@ final class IOSAssistantCoordinator: ObservableObject {
     private enum Keys {
         static let foregroundDefault = "ios.assistant.defaultForegroundMode"
         static let backgroundDefault = "ios.assistant.defaultBackgroundMode"
+        static let silencedDefault = "ios.assistant.defaultSilencedMode"
         static let roomModes = "ios.assistant.roomModes"
         static let participation = "ios.assistant.participationConfig"
     }
 
     @Published var defaultForegroundMode: IOSMeetingAssistantMode {
-        didSet { preferences.set(defaultForegroundMode.rawValue, forKey: Keys.foregroundDefault) }
+        didSet {
+            preferences.set(defaultForegroundMode.rawValue, forKey: Keys.foregroundDefault)
+            refreshDefaultModes()
+        }
     }
     @Published var defaultBackgroundMode: IOSMeetingAssistantMode {
-        didSet { preferences.set(defaultBackgroundMode.rawValue, forKey: Keys.backgroundDefault) }
+        didSet {
+            preferences.set(defaultBackgroundMode.rawValue, forKey: Keys.backgroundDefault)
+            refreshDefaultModes()
+        }
+    }
+    @Published var defaultSilencedMode: IOSMeetingAssistantMode {
+        didSet {
+            preferences.set(defaultSilencedMode.rawValue, forKey: Keys.silencedDefault)
+            refreshDefaultModes()
+        }
     }
     @Published var participationConfig: IOSParticipationConfig {
         didSet { persistParticipationConfig() }
@@ -402,6 +418,7 @@ final class IOSAssistantCoordinator: ObservableObject {
     private var pendingEvaluations: [UUID: PendingEvaluation] = [:]
     private var evaluationTasks: [UUID: Task<Void, Never>] = [:]
     private var foregroundControllerID: UUID?
+    private var activeModes: [UUID: IOSMeetingAssistantMode] = [:]
     private var requestedNotificationPermission = false
 
     init(
@@ -465,6 +482,8 @@ final class IOSAssistantCoordinator: ObservableObject {
             .flatMap(IOSMeetingAssistantMode.init(rawValue:)) ?? .off
         self.defaultBackgroundMode = preferences.string(forKey: Keys.backgroundDefault)
             .flatMap(IOSMeetingAssistantMode.init(rawValue:)) ?? .off
+        self.defaultSilencedMode = preferences.string(forKey: Keys.silencedDefault)
+            .flatMap(IOSMeetingAssistantMode.init(rawValue:)) ?? .follow
 
         if let data = preferences.data(forKey: Keys.participation),
            let decoded = try? JSONDecoder().decode(IOSParticipationConfig.self, from: data) {
@@ -506,6 +525,7 @@ final class IOSAssistantCoordinator: ObservableObject {
                let mapped = IOSMeetingAssistantMode(syncedRawValue: syncedAll) {
                 return mapped
             }
+            if !bridge.isMeetingSoundEnabled { return defaultSilencedMode }
             return bridge.isForeground ? defaultForegroundMode : defaultBackgroundMode
         }
         return controllerID == foregroundControllerID ? defaultForegroundMode : defaultBackgroundMode
@@ -533,12 +553,6 @@ final class IOSAssistantCoordinator: ObservableObject {
     }
 
     func setMode(_ mode: IOSMeetingAssistantMode, for controllerID: UUID, rememberForRoom: Bool = false) {
-        if mode != resolvedMode(for: controllerID) {
-            cancelEvaluation(for: controllerID)
-            evaluationErrors.removeValue(forKey: controllerID)
-            lastEvaluatedAt.removeValue(forKey: controllerID)
-            lastMentionTriggerAt.removeValue(forKey: controllerID)
-        }
         sessionModeOverrides[controllerID] = mode
         if let bridge = resolveBridge(controllerID) {
             if rememberForRoom, !bridge.roomKey.isEmpty {
@@ -556,21 +570,9 @@ final class IOSAssistantCoordinator: ObservableObject {
                     }
                 }
             }
-            if mode == .participating && bridge.isMicUnmuted {
-                pausedParticipatingSessions.insert(controllerID)
-                lastStatusNoteBySession[controllerID] = L("Paused while your microphone is unmuted.")
-            } else {
-                pausedParticipatingSessions.remove(controllerID)
-                lastStatusNoteBySession[controllerID] = mode != .off && eventBuffers[controllerID]?.contains(where: { !$0.isOwn }) != true
-                    ? L("Waiting for meeting speech or chat.") : nil
-            }
-            if mode != .off {
-                requestNotificationPermissionIfNeeded()
-                Task { await bridge.ensureTranscription() }
-            }
         }
+        refreshMode(for: controllerID, ensureTranscription: true)
         AppDiagnostics.log("assistant-mode", ["mode": mode.rawValue, "micPaused": isPausedForMicrophone(controllerID: controllerID)])
-        onSessionModeChanged?(controllerID, mode, isPausedForMicrophone(controllerID: controllerID))
     }
 
     func setParticipationOptions(
@@ -588,14 +590,43 @@ final class IOSAssistantCoordinator: ObservableObject {
         let previous = self.foregroundControllerID
         self.foregroundControllerID = foregroundControllerID
         for id in Set([previous, foregroundControllerID].compactMap { $0 }) {
-            guard let bridge = resolveBridge(id) else { continue }
-            let mode = resolvedMode(for: id)
-            onSessionModeChanged?(id, mode, isPausedForMicrophone(controllerID: id))
-            if mode != .off {
-                requestNotificationPermissionIfNeeded()
-                Task { await bridge.ensureTranscription() }
+            refreshMode(for: id)
+        }
+    }
+
+    private func refreshDefaultModes() {
+        for id in Array(activeModes.keys) { refreshMode(for: id) }
+    }
+
+    func refreshMode(for id: UUID, ensureTranscription: Bool = false) {
+        guard let bridge = resolveBridge(id) else { return }
+        let mode = resolvedMode(for: id)
+        let previous = activeModes.updateValue(mode, forKey: id)
+        let changed = previous != mode
+        if changed {
+            cancelEvaluation(for: id)
+            evaluationErrors.removeValue(forKey: id)
+            lastEvaluatedAt.removeValue(forKey: id)
+            lastMentionTriggerAt.removeValue(forKey: id)
+            if mode == .participating && bridge.isMicUnmuted {
+                pausedParticipatingSessions.insert(id)
+                lastStatusNoteBySession[id] = L("Paused while your microphone is unmuted.")
+            } else {
+                pausedParticipatingSessions.remove(id)
+                lastStatusNoteBySession[id] = mode != .off && eventBuffers[id]?.contains(where: { !$0.isOwn }) != true
+                    ? L("Waiting for meeting speech or chat.") : nil
             }
         }
+        let updateTranscription = mode == .off ? (changed && previous != nil) : (changed || ensureTranscription)
+        if updateTranscription {
+            if mode != .off { requestNotificationPermissionIfNeeded() }
+            Task { @MainActor [weak self] in
+                guard let self, activeModes[id] == mode else { return }
+                if mode == .off { await bridge.releaseTranscription() }
+                else { await bridge.ensureTranscription() }
+            }
+        }
+        onSessionModeChanged?(id, mode, isPausedForMicrophone(controllerID: id))
     }
 
     func handleMicrophoneChange(controllerID: UUID, unmuted: Bool) {
@@ -614,6 +645,7 @@ final class IOSAssistantCoordinator: ObservableObject {
 
     func sessionEnded(controllerID: UUID) {
         cancelEvaluation(for: controllerID)
+        activeModes.removeValue(forKey: controllerID)
         evaluationErrors.removeValue(forKey: controllerID)
         eventBuffers.removeValue(forKey: controllerID)
         seenEventIDs.removeValue(forKey: controllerID)
@@ -842,7 +874,8 @@ final class IOSAssistantCoordinator: ObservableObject {
         let askFirst = effectiveAskBeforeSending(for: controllerID)
         var sentChannels: [String] = []
         var failures: [String] = []
-        if mode == .participating, !askFirst, !replyText.isEmpty, let bridge, !bridge.isMicUnmuted {
+        if mode == .participating, !askFirst, !replyText.isEmpty, let bridge,
+           bridge.canDeliverAutomaticReplies, !bridge.isMicUnmuted {
             if output != .voice {
                 do {
                     guard bridge.canSendChat else {
@@ -856,7 +889,7 @@ final class IOSAssistantCoordinator: ObservableObject {
             }
             guard !Task.isCancelled else { return }
             if output != .chat, let current = resolveBridge(controllerID),
-               resolvedMode(for: controllerID) == .participating, !current.isMicUnmuted,
+               resolvedMode(for: controllerID) == .participating, current.canDeliverAutomaticReplies, !current.isMicUnmuted,
                !effectiveAskBeforeSending(for: controllerID), effectiveParticipationOutput(for: controllerID) == output {
                 do {
                     try await current.speakVoice(replyText)
@@ -869,6 +902,9 @@ final class IOSAssistantCoordinator: ObservableObject {
         guard !Task.isCancelled else { return }
         let deliveredAutomatically = !sentChannels.isEmpty
         var notes: [String] = []
+        if mode == .participating, !replyText.isEmpty, bridge?.canDeliverAutomaticReplies == false {
+            notes.append(L("Private text · not sent"))
+        }
         if deliveredAutomatically {
             let channels = sentChannels.joined(separator: " + ")
             notes.append(L("Delivered via %@", channels))
