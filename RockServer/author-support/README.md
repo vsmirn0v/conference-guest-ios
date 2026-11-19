@@ -1,5 +1,11 @@
 # Author support claims
 
+The direct Mac app opens its bundled signed catalog immediately, then checks the primary site and the GitHub mirror. To rotate a payment route, edit `catalog-source.json`, increment its revision, give the new destination its own ID and add every removed ID to `retired`. Use only the intended recipient's verified provider URL and update provider currency quotes with their observation date. Sign the catalog on the maintainer’s Mac, publish that same envelope to both origins, and verify the public bytes against the newly signed file.
+
+```sh
+python3 RockServer/author-support/sign_catalog.py RockServer/author-support/catalog-source.json NativeMacGuest/AuthorSupport/SupportDestinations.json --sparkle-bin .build/native-dmg/Sparkle/bin
+```
+
 The registry requires system Python `cryptography` with Ed25519 support and verifies every signature before consuming or updating a claim. Paid-through dates are capped at 32 days from issuance. The standalone loopback registry stores only an anonymous device public-key hash, a random nonce, claim status, and the signed receipt. It has no provider credentials or signing key. Requests are limited globally and per in-memory client IP; IP addresses are not logged or persisted. Unclaimed registrations expire after 30 minutes. The database has a 50,000-record and 32 MiB limit; signed receipts are retained for refresh. Monitor capacity and do not delete issued grants without an explicit retention decision.
 
 After independently authenticating the Boosty membership, run locally:
