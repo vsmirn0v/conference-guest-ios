@@ -177,6 +177,7 @@ struct GuestICETransportSample {
         let kind: MediaKind
         let track: String
         let progress: Double
+        let receivedPackets: Double?
         let loss: Double?
         let feedbackTime: Double?
         let fractionLost: Double?
@@ -245,7 +246,7 @@ struct GuestICETransportSample {
                     $0["transportId"] as? String == transportID && $0["kind"] as? String == kind.rawValue
             } : nil
             reportedTracks.insert(track)
-            streams[id] = Stream(kind: kind, track: track, progress: progress,
+            streams[id] = Stream(kind: kind, track: track, progress: progress, receivedPackets: Self.count(row["packetsReceived"]),
                                  loss: Self.count(outbound ? feedback?["packetsLost"] : row["packetsLost"]),
                                  feedbackTime: Self.count(feedback?["nativeTimestampUS"]),
                                  fractionLost: Self.count(feedback?["fractionLost"]))
@@ -289,6 +290,10 @@ struct GuestICETransportSample {
               nativeTime > previous.nativeTime, !streams.isEmpty,
               Set(streams.keys) == Set(previous.streams.keys) else { return delta }
         let missedProbes = Self.increased(requests, since: previous.requests) && responses != nil && responses == previous.responses
+        let subscriberReceiving = target == .subscriber && streams.contains { id, stream in
+            guard let old = previous.streams[id], old.track == stream.track, old.kind == stream.kind else { return false }
+            return Self.increased(stream.receivedPackets, since: old.receivedPackets)
+        }
         for (id, current) in streams {
             guard let old = previous.streams[id], current.kind == old.kind, current.track == old.track else { continue }
             let freshFeedback = current.feedbackTime.map {
@@ -302,9 +307,12 @@ struct GuestICETransportSample {
             }
             // Outbound RTP counters alone measure local sends. Only a fresh
             // receiver report on that stream can show downstream packet loss.
+            // A quiet Opus stream may send no packets during DTX. Another stream
+            // advancing on this path outweighs an unanswered probe for that case.
+            let probeEvidence = missedProbes && !(current.kind == .audio && subscriberReceiving)
             if old.progress > 0, current.progress >= old.progress,
                severeLoss || (current.progress == old.progress &&
-                    (missedProbes || (target == .subscriber && Self.increased(current.loss, since: old.loss)))) {
+                    (probeEvidence || (target == .subscriber && Self.increased(current.loss, since: old.loss)))) {
                 delta.stalledStreams.insert(id)
             }
         }

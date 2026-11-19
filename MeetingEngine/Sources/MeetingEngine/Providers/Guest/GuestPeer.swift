@@ -633,7 +633,8 @@ public final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             "transportId", "mediaSourceId", "trackIdentifier", "localId", "state", "requestsSent", "responsesReceived",
             "packetsLost", "jitter", "framesDropped", "totalDecodeTime", "freezeCount", "totalFreezesDuration",
             "retransmittedPacketsSent", "retransmittedPacketsReceived",
-            "audioLevel", "totalSamplesDuration", "totalSamplesReceived", "framesPerSecond", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder"]
+            "audioLevel", "totalSamplesDuration", "totalSamplesReceived", "concealedSamples", "concealmentEvents",
+            "framesPerSecond", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder"]
 #if DEBUG
         // RTCP report progress distinguishes a fresh downstream observation from
         // an old cumulative loss value. Unsupported fields remain absent.

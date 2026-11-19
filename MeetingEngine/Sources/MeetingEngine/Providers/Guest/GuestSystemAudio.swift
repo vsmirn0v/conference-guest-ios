@@ -53,8 +53,7 @@ final class GuestPCMMeter: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
             }
         }
         locked {
-            callback = .init(count: UInt64(bufferCount + 1), frames: Int(pcmBuffer.frameLength),
-                format: deliveredFormat, uptime: receivedUptime)
+            callback.recordDelivery(frames: Int(pcmBuffer.frameLength), format: deliveredFormat, at: receivedUptime)
             measured.record(samples: samples, energy: energy, at: receivedUptime); bufferCount += 1
             lastLevel = samples > 0 ? Float(sqrt(energy / Double(samples))) : nil
             lastSampleTime = ProcessInfo.processInfo.systemUptime
@@ -494,6 +493,9 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
     private var cached: [String: Any]
     // The following fields are confined to audioQueue.
     private var playoutEnabled: Bool
+#if os(iOS)
+    private var meetingPlayoutReserved = false
+#endif
     private var closed = false
     private var mediaContext: LKRTCPeerConnection?
     // Simultaneous meetings: only the talk meeting may hold physical input. A
@@ -1304,8 +1306,43 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
         var availability = LKRTCAudioEngineAvailability()
         availability.isInputAvailable = ObjCBool(physical.input)
         availability.isOutputAvailable = ObjCBool(physical.output || manualRenderingMode)
-        return nativeCall("set-engine-availability", { module.setEngineAvailability(availability) }) == 0
+        guard nativeCall("set-engine-availability", { module.setEngineAvailability(availability) }) == 0 else { return false }
+#if os(iOS)
+        // Availability permits output. An empty room has no WebRTC receiver to start it.
+        // The shared meeting owner already has a registered audio transport on its media context.
+        if wantsMeetingPlayout {
+            meetingPlayoutReserved = true
+            return ensureMeetingPlayout(module)
+        }
+        if meetingPlayoutReserved {
+            guard nativeCall("release-meeting-playout", { module.stopPlayout() }) == 0 else { return false }
+            meetingPlayoutReserved = false
+        }
+#endif
+        return true
     }
+
+#if os(iOS)
+    private var wantsMeetingPlayout: Bool { mediaContext != nil && (playoutEnabled || transcriptionOutput) }
+
+    private func ensureMeetingPlayout(_ module: LKRTCAudioDeviceModule) -> Bool {
+        guard module.isPlayoutInitialized || nativeCall("init-meeting-playout", { module.initPlayout() }) == 0 else { return false }
+        return module.isPlaying || nativeCall("start-meeting-playout", { module.startPlayout() }) == 0
+    }
+
+    // WebRTC may withdraw playout when its last receiver leaves. Wait for the native
+    // callback to return, then check the current room intent and the committed ADM state.
+    private func restoreMeetingPlayoutIfNeeded() {
+        audioQueue.async {
+            guard !self.closed, self.meetingPlayoutReserved, self.wantsMeetingPlayout, let module = self.currentModule,
+                  !module.isPlayoutInitialized || !module.isPlaying else { return }
+            let restored = GuestAudioEngineGate.shared.run(for: ObjectIdentifier(self)) {
+                self.ensureMeetingPlayout(module)
+            }
+            self.update(["meetingPlayoutRestored": restored])
+        }
+    }
+#endif
 
     private func readSnapshot(_ module: LKRTCAudioDeviceModule) {
         operationTrace.beginNativeCall("read-native-snapshot")
@@ -1412,7 +1449,11 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
             isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
         locked { cached["engineStops"] = (cached["engineStops"] as? Int ?? 0) + 1 }
         logLifecycle("engine-stop", ["playout": isPlayoutEnabled, "recording": isRecordingEnabled])
-        reportSpontaneous(.stopped); return forwarded
+        reportSpontaneous(.stopped)
+#if os(iOS)
+        if isPlayoutEnabled { restoreMeetingPlayoutIfNeeded() }
+#endif
+        return forwarded
     }
     private func interruptVoiceReply(on engine: AVAudioEngine) {
         let graph = locked { voiceReply }
@@ -1421,6 +1462,9 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
     public func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didDisableEngine engine: AVAudioEngine,
                                   isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int {
         if !isRecordingEnabled { locked { _ = forwardedInputRoutes.remove(ObjectIdentifier(engine)) } }
+#if os(iOS)
+        if !isPlayoutEnabled { restoreMeetingPlayoutIfNeeded() }
+#endif
         return forwardObserver(for: engine)?.audioDeviceModule(audioDeviceModule, didDisableEngine: engine,
             isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
     }

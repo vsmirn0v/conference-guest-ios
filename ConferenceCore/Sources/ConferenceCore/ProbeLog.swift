@@ -10,10 +10,12 @@ private let historyCapacity = 400
 private let historySkipped: Set<String> = ["rtc-pong"]
 /// Receives each kept line in order, under the output lock (the app's saved log).
 nonisolated(unsafe) private var sink: ((String) -> Void)?
+nonisolated(unsafe) private var sinkEvents: Set<String>?
 
-public func setProbeLogSink(_ value: ((String) -> Void)?) {
+public func setProbeLogSink(events: Set<String>? = nil, _ value: ((String) -> Void)?) {
     outputLock.lock(); defer { outputLock.unlock() }
     sink = value
+    sinkEvents = events
 }
 
 /// Diagnostic allowlisted fields only. Callers must never pass SDP, ICE or credentials.
@@ -30,7 +32,7 @@ public func probeLog(_ event: String, _ fields: [String: Any] = [:]) {
     if !historySkipped.contains(event) {
         history.append(line)
         if history.count > historyCapacity { history.removeFirst(history.count - historyCapacity) }
-        sink?(line)
+        if sinkEvents?.contains(event) != false { sink?(line) }
     }
     FileHandle.standardOutput.write(data)
     FileHandle.standardOutput.write(Data([10]))

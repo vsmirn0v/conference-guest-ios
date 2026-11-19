@@ -277,6 +277,8 @@ public final class NativeGuestEngine {
         self.publisher = publisher
         if scheduleTCPRelay != nil || icePolicy == .tcpRelay {
             peerTransportObservers = [observeTransport(subscriber), observeTransport(publisher)]
+        } else if systemAudio != nil {
+            peerTransportObservers = [observeTransport(subscriber)]
         }
         reader = Task { [weak self] in
             for await event in transport.events {
@@ -870,7 +872,7 @@ public final class NativeGuestEngine {
         }
         let audio = audioEnabled ? peer.incomingAudioTracks.compactMap { item -> String? in
             guard let publication = knownPublication(item.source, type: "AUDIO"), audible(publication) else { return nil }
-            return item.track.trackId
+            return item.source.trackID
         } : []
         let video = peer.receivedVideo.compactMap { item -> (publication: String, track: String)? in
             let references = Set(item.streamIDs.compactMap(GuestRemotePublication.init(streamID:)))
@@ -894,11 +896,32 @@ public final class NativeGuestEngine {
         return (requiresVideo && verifiedDemand != demand) || !evidence.allowsRecovery(requiresVideo: requiresVideo)
     }
 
+    private func logAudioReception(_ monitor: inout GuestAudioReceptionDiagnostics, peer: GuestPeer,
+                                   audio: any GuestMeetingAudio, demand: TransportDemand, rows: [[String: Any]]?) {
+        let speakers = Set(meetingSnapshot.participants.filter { !$0.isLocal && $0.isSpeaking }.map(\.id))
+        let speakingTracks = peer.receivedAudioSources.compactMap { source -> String? in
+            guard let publication = knownPublication(source, type: "AUDIO"),
+                  let member = remoteParticipantIdentities[publication.participant], speakers.contains(member) else { return nil }
+            return source.trackID
+        }
+        if var fields = monitor.observe(at: ProcessInfo.processInfo.systemUptime, rows: rows,
+            audibleTracks: demand.tracks.subtracting(demand.videoTracks), connected: peer.iceConnected && peer.transportConnected,
+            soundOn: startupPlaybackGain?.soundEnabled != false && audio.meetingLevel > 0,
+            gateOpen: startupPlaybackGain?.isOpen == true && audio.sharedPlayoutIsOpen(expected: startupPlayoutEpoch),
+            expectsAudio: demand.kinds.contains(.audio), speakingTracks: Set(speakingTracks),
+            decoded: peer.pcmMeter.snapshot, output: audio.startupAudioObservation.outputCallback,
+            outputNonSilent: audio.playoutMeterEvidence["nonSilentCallbacks"] as? Int) {
+            fields["attempt"] = peer.diagnosticID
+            probeLog("guest-audio-reception", fields)
+        }
+    }
+
     private func observeTransport(_ peer: GuestPeer) -> Task<Void, Never> {
         Task { @MainActor [weak self, weak peer] in
             var previous: GuestICETransportSample?
             var priorDemand: TransportDemand?
             var stalledStreams: Set<String> = []
+            var reception = GuestAudioReceptionDiagnostics()
             while !Task.isCancelled {
                 let fastVerify = self.map { engine in
                     peer.map { p in
@@ -908,15 +931,26 @@ public final class NativeGuestEngine {
                 } ?? false
                 do { try await Task.sleep(for: fastVerify ? .milliseconds(250) : .seconds(2)) } catch { return }
                 guard let self, let peer, owns(peer), failure == nil else { return }
-                guard peer.iceConnected, peer.transportConnected else {
+                let connected = peer.iceConnected && peer.transportConnected
+                let now = ProcessInfo.processInfo.systemUptime
+                let sampleAudio = peer.target == .subscriber && rtcJoined && systemAudio != nil && reception.due(at: now)
+                let checkRelay = (scheduleTCPRelay != nil || icePolicy == .tcpRelay || tcpRelayTargets.contains(peer.target)) &&
+                    (peer.icePolicy == .tcpRelay || peer.advertisesTCPRelay)
+                let demandBeforeStats = connected && checkRelay ? transportDemand(peer) : nil
+                let rows = connected && (sampleAudio || checkRelay) ? await peer.stats() : nil
+                guard !Task.isCancelled, owns(peer), failure == nil else { return }
+                let demand = transportDemand(peer)
+                if sampleAudio, let systemAudio {
+                    logAudioReception(&reception, peer: peer, audio: systemAudio, demand: demand,
+                                      rows: connected && peer.iceConnected && peer.transportConnected ? rows : nil)
+                }
+                guard connected, peer.iceConnected, peer.transportConnected else {
                     previous = nil; priorDemand = nil; stalledStreams.removeAll()
                     tcpRelayEvidence[peer.target] = nil
                     continue
                 }
-                let demand = transportDemand(peer)
-                guard peer.icePolicy == .tcpRelay || peer.advertisesTCPRelay else { continue }
-                guard let rows = await peer.stats(), !Task.isCancelled, owns(peer), failure == nil,
-                      peer.iceConnected, peer.transportConnected, demand == transportDemand(peer),
+                guard checkRelay else { continue }
+                guard let rows, demand == demandBeforeStats,
                       let sample = GuestICETransportSample(rows, target: peer.target, demandedTracks: demand.tracks) else {
                     previous = nil; priorDemand = nil; stalledStreams.removeAll()
                     tcpRelayEvidence[peer.target] = nil

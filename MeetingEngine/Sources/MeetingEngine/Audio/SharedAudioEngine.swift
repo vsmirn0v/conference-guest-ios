@@ -119,6 +119,7 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
     public private(set) var privateCheckActive = false
     public private(set) var playoutOn = false
     public private(set) var transcriptionOutputOn = false
+    private var outputNeedsRetry = false
     /// A failed release quarantines the engine: no new meeting may attach.
     public private(set) var cleanupFailed = false
     /// Keep the device and voice processing running when the talk role leaves (warm move).
@@ -702,7 +703,8 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
         foregroundPrepared = false
         let stopped = await module.shutdown(timeout: timeouts.shutdown)
         self.module = nil
-        playoutOn = false; transcriptionOutputOn = false; moduleMuted = true; muteConfirmed = false; privateCheckActive = false
+        playoutOn = false; transcriptionOutputOn = false; outputNeedsRetry = false
+        moduleMuted = true; muteConfirmed = false; privateCheckActive = false
         if stopped { rebuilding = false } else { quarantine() }
         return stopped
     }
@@ -723,14 +725,16 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
         for attachment in attachments.values { attachment.applyReceivedVolumes() }
         guard let module else { return true }
         var success = true
-        if transcription != transcriptionOutputOn {
+        if transcription != transcriptionOutputOn || outputNeedsRetry {
             success = await module.setTranscriptionOutput(transcription, timeout: timeouts.playout) && success
             transcriptionOutputOn = transcription
         }
-        if sound != playoutOn {
+        if sound != playoutOn || outputNeedsRetry {
             success = await module.setPlayoutEnabled(sound, timeout: timeouts.playout, expectedEpoch: nil) && success
             playoutOn = sound
         }
+        // A native start or stop can partially apply before it fails. Reconcile even an unchanged intent.
+        outputNeedsRetry = !success
         return success
     }
 

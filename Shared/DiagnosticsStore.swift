@@ -112,6 +112,28 @@ enum NativeDiagnosticsArchive {
             try manager.createDirectory(at: target, withIntermediateDirectories: true)
             for url in sources { try manager.copyItem(at: url, to: target.appendingPathComponent(url.lastPathComponent)) }
         }
+        // Read the copies staged for this archive so the timeline and raw logs agree.
+        let logCopies = logs.sorted { $0.lastPathComponent < $1.lastPathComponent }.map {
+            folder.appendingPathComponent("Logs").appendingPathComponent($0.lastPathComponent)
+        }
+        let windows = logCopies.flatMap { url -> [Substring] in
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+            return text.split(separator: "\n").filter { $0.contains("\"event\":\"guest-audio-reception\"") }
+        }
+        if !windows.isEmpty {
+            let guide = """
+            Guest meeting audio reception (UTC). Each line ends one sample window. The attempt ID changes on reconnect.
+            packetsLostIncrease counts new RTP loss. concealedSamples counts audio samples supplied by the decoder to cover missing audio.
+            speakingStreamsWithoutPackets counts streams marked speaking at both observations that delivered zero packets. Quiet senders can pause RTP.
+            streamDetails lists up to eight affected receivers. Compare the stream numbers within one attempt to spot repeated gaps on the same receiver.
+            decodedNonSilentCallbacks measures incoming audio with nonzero energy. outputNonSilentCallbacks measures the shared device output mix.
+            callback-stale means the output tap is overdue. callback-gap records a pause that ended between observations.
+            Compare timestamps with audio-device-route, audio-engine-lifecycle and session-recovery in Logs/. Missing counters were unavailable.
+
+            """
+            try (guide + windows.joined(separator: "\n") + "\n").write(
+                to: folder.appendingPathComponent("audio-reception.log"), atomically: true, encoding: .utf8)
+        }
         try Data(report.utf8).write(to: folder.appendingPathComponent("report.txt"))
         var coordination: NSError?, failure: Error?
         NSFileCoordinator().coordinate(readingItemAt: folder, options: .forUploading, error: &coordination) { zip in

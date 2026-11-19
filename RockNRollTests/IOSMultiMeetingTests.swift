@@ -625,6 +625,140 @@ final class IOSMultiMeetingTests: XCTestCase {
         }
     }
 
+    func testEmptyGuestMeetingRunsOutputUntilLastListeningRoomLeaves() async throws {
+        let shared = SharedAudioEngine.live()
+        let guest = try await SharedGuestMeetingAudio.attach(to: shared)
+        let other = try await SharedGuestMeetingAudio.attach(to: shared)
+        let owner = try XCTUnwrap(shared.guestOwner)
+        let module = owner.factory.audioDeviceModule
+        shared.pinForProcess() // Production keeps this factory when the last room leaves.
+        addTeardownBlock {
+            _ = await guest.shutdown()
+            _ = await other.shutdown()
+            _ = await owner.shutdown()
+        }
+
+        let quiet = await other.beginAttempt(sound: false)
+        XCTAssertTrue(quiet)
+        XCTAssertFalse(module.isPlaying)
+        let listening = await guest.beginAttempt(sound: true)
+        XCTAssertTrue(listening)
+        XCTAssertTrue(module.isEngineRunning)
+        XCTAssertFalse(module.isRecording)
+        func buffers() -> Int { owner.playoutMeterEvidence["buffers"] as? Int ?? 0 }
+        try await waitUntil { buffers() > 0 }
+        XCTAssertGreaterThan(buffers(), 0, "An empty room should already be pulling conference output")
+
+        // WebRTC withdraws its own playout request when the last receive stream ends.
+        let stopped = await Task.detached { module.stopPlayout() }.value
+        XCTAssertEqual(stopped, 0)
+        let atStop = buffers()
+        try await waitUntil { module.isPlaying && buffers() > atStop }
+        XCTAssertTrue(module.isPlaying)
+        XCTAssertGreaterThan(buffers(), atStop)
+        XCTAssertFalse(module.isRecording)
+
+        let otherListening = await other.setPlayoutEnabled(true)
+        XCTAssertTrue(otherListening)
+        let left = await guest.shutdown()
+        XCTAssertTrue(left)
+        XCTAssertTrue(module.isPlaying)
+        let silenced = await other.setPlayoutEnabled(false)
+        XCTAssertTrue(silenced)
+        XCTAssertFalse(module.isEngineRunning)
+        let resumed = await other.setPlayoutEnabled(true)
+        XCTAssertTrue(resumed)
+        XCTAssertTrue(module.isPlaying)
+        let lastLeft = await other.shutdown()
+        XCTAssertTrue(lastLeft)
+        XCTAssertFalse(module.isPlaying)
+        XCTAssertFalse(module.isEngineRunning)
+    }
+
+    func testLateGuestPublisherReachesListeningOutputWithVideoOff() async throws {
+        let shared = SharedAudioEngine.live()
+        let audio = try await SharedGuestMeetingAudio.attach(to: shared)
+        let listener = NativeGuestEngine(label: "Listener", systemAudio: audio)
+        let lateGuest = NativeGuestEngine(label: "Late publisher") // Uses a synthetic microphone.
+        addTeardownBlock {
+            _ = await lateGuest.leave(sendLeave: false)
+            _ = await listener.leave(sendLeave: false)
+        }
+
+        let listening = await audio.beginAttempt(sound: true)
+        XCTAssertTrue(listening)
+        _ = audio.setMeetingVolume(0.02)
+        listener.configureStartupPlayback(sound: true)
+        let subscriber = try await listener.prepareSubscriberForTesting()
+        _ = try await listener.prepareJoinForTesting(microphone: false, camera: false)
+        listener.startTransportObservationForTesting()
+        try await listener.setVisibleParticipantIDs([], cameras: false)
+        try await listener.waitForStartupAudio()
+        XCTAssertTrue(listener.releaseStartupAudio())
+        XCTAssertEqual(listener.startupAudioReport["decision"] as? String, "noDemand")
+
+        let backgroundRun = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_BACKGROUND_LATE_GUEST"] == "1"
+        if backgroundRun {
+            print("BACKGROUND_LATE_GUEST_READY")
+            try await waitUntil(timeout: 30) { UIApplication.shared.applicationState == .background }
+            XCTAssertEqual(UIApplication.shared.applicationState, .background)
+            let initialBuffers = audio.playoutMeterEvidence["buffers"] as? Int ?? 0
+            try await Task.sleep(for: .seconds(35))
+            XCTAssertGreaterThan(audio.playoutMeterEvidence["buffers"] as? Int ?? 0, initialBuffers)
+        }
+
+        let publisher = try await lateGuest.prepareJoinForTesting()
+        for peer in [publisher, subscriber] {
+            let config = peer.connection.configuration
+            config.iceTransportPolicy = .all // Local peers only. The fixtures have no ICE servers.
+            XCTAssertTrue(peer.connection.setConfiguration(config))
+        }
+        publisher.sendCandidate = { [weak subscriber] candidate in
+            try await subscriber?.addCandidates([candidate.merging(["target": GuestPeerTarget.subscriber.rawValue]) { _, new in new }])
+        }
+        subscriber.sendCandidate = { [weak publisher] candidate in
+            try await publisher?.addCandidates([candidate.merging(["target": GuestPeerTarget.publisher.rawValue]) { _, new in new }])
+        }
+        let track = try await publisher.prepareAudio(cid: "late-audio")
+        try await publisher.attach(track, codec: "opus")
+        let offer = try await publisher.makeOffer()
+        let answer = try await subscriber.answer(offer)
+        try await publisher.acceptAnswer(answer)
+        try await subscriber.didSendDescription()
+        try await publisher.didSendDescription()
+        let beforeUnmute = audio.playoutMeterEvidence["nonSilentCallbacks"] as? Int ?? 0
+        try await publisher.setMuted(false, video: false)
+        try await waitUntil(timeout: 10) { (audio.playoutMeterEvidence["nonSilentCallbacks"] as? Int ?? 0) > beforeUnmute }
+        XCTAssertGreaterThan(audio.playoutMeterEvidence["nonSilentCallbacks"] as? Int ?? 0, beforeUnmute)
+        XCTAssertEqual(listener.startupAudioReport["decision"] as? String, "active")
+        XCTAssertFalse(audio.factory.audioDeviceModule.isRecording)
+        if backgroundRun { XCTAssertEqual(UIApplication.shared.applicationState, .background) }
+
+        // The same subscriber observer runs in Release. Check its own sample survives the iOS export.
+        let remoteTrack = try XCTUnwrap(subscriber.receivedAudioSources.first?.trackID)
+        listener.mediaNotifyForTesting = { _ in }
+        try await listener.processEventForTesting(["event": "media-out", "payload": [
+            "method": "rtc:participants:update", "update": ["participants": [[
+                "sid": "PA_late", "identity": "late-publisher", "state": "ACTIVE",
+                "tracks": [["sid": remoteTrack, "type": "AUDIO", "source": "MICROPHONE", "muted": false]]
+            ]]]
+        ]])
+        func isReceptionSample(_ line: String) -> Bool {
+            line.contains("\"event\":\"guest-audio-reception\"") && line.contains(subscriber.diagnosticID)
+                && line.contains("\"packetsReceived\":") && line.contains("\"decodedNonSilentCallbacks\":")
+        }
+        try await waitUntil(timeout: 10) { probeLogHistory().contains(where: isReceptionSample) }
+        let archive = try AppDiagnostics.makeArchive()
+        defer { try? FileManager.default.removeItem(at: archive.deletingLastPathComponent()) }
+        let saved = try NativeDiagnosticsLog.shared.files.map { try String(contentsOf: $0, encoding: .utf8) }
+        XCTAssertTrue(saved.contains { $0.components(separatedBy: "\n").contains(where: isReceptionSample) })
+        XCTAssertNotNil(try Data(contentsOf: archive).range(of: Data("audio-reception.log".utf8)))
+        let attachment = XCTAttachment(contentsOfFile: archive)
+        attachment.name = "Guest audio diagnostics.zip"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testReplacementGuestConnectionKeepsAudioOnlyDemand() async throws {
         let adapter = GuestAdapter()
         let original = NativeGuestEngine(label: "Original")

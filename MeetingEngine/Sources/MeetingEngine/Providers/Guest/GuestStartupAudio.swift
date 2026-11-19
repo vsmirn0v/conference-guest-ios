@@ -199,6 +199,9 @@ public struct GuestStartupAudioCallback {
     public var frames = 0
     public var format: Format?
     public var uptime: TimeInterval = 0
+    // Last interruption observed between two callbacks, even if output resumed before polling.
+    var lastGapEnd: TimeInterval = 0
+    var lastGapSeconds: TimeInterval = 0
     public init(count: UInt64 = 0, frames: Int = 0, format: Format? = nil, uptime: TimeInterval = 0) {
         self.count = count; self.frames = frames; self.format = format; self.uptime = uptime
     }
@@ -207,6 +210,16 @@ public struct GuestStartupAudioCallback {
         return Double(frames) / rate
     }
     var freshness: TimeInterval { min(0.35, max(0.15, duration + 0.1)) }
+    mutating func recordDelivery(frames: Int, format: Format, at now: TimeInterval) {
+        if uptime > 0, now - uptime > freshness {
+            lastGapEnd = now
+            lastGapSeconds = now - uptime
+        }
+        count += 1
+        self.frames = frames
+        self.format = format
+        uptime = now
+    }
     var supportedCadence: Bool {
         guard let format else { return count == 0 }
         return frames > 0 && format.rate.isFinite && format.rate > 0 && format.id > 0 &&

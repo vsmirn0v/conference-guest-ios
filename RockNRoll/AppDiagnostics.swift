@@ -1,4 +1,5 @@
 import AVFoundation
+import ConferenceCore
 import Foundation
 import Network
 import SwiftUI
@@ -42,6 +43,12 @@ enum AppDiagnostics {
         guard !started else { return }
         started = true
         NativeDiagnosticsLog.shared.start()
+        setProbeLogSink(events: [
+            "guest-audio-reception", "audio-device-route", "audio-engine-lifecycle",
+            "ice-state", "peer-transport-state", "ice-selected-route", "ice-incoming-demand",
+            "ice-timeout", "ice-failed-checklist", "ice-tcp-relay-fallback", "ice-relay-media-verified",
+            "session-control-failure", "session-recovery"
+        ]) { NativeDiagnosticsLog.shared.append($0) }
         NativeDiagnosticReports.shared.onSaved = { log("diagnostic-reports-saved", ["count": $0]) }
         NativeDiagnosticReports.shared.start()
         log("app-launch", ["version": appVersion, "system": UIDevice.current.systemVersion, "device": deviceModel])
