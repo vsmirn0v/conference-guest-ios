@@ -1,0 +1,18 @@
+[Unit]
+Description=Rock author support claim registry
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/rock-author-support/service.py serve
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rock-author-support
+RestrictAddressFamilies=AF_UNIX AF_INET
+
+[Install]
+WantedBy=multi-user.target
