@@ -69,9 +69,12 @@ final class AuthorSupportService: ObservableObject {
         var code: String?
         var expires: Int?
         var sent = false
+        var submissionStarted: Bool?
+        var reviewUntil: Int?
         var receipt: Data?
     }
     private struct CodeResponse: Decodable { let code: String; let expires: Int }
+    private struct SubmissionResponse: Decodable { let reviewUntil: Int }
     private let keys = AttentionKeychain(service: "dev.vsmirn0v.rocknroll.author-support", account: "device-v1")
     private let enrollment = AttentionKeychain(service: "dev.vsmirn0v.rocknroll.author-support", account: "registration-v1")
     private let enrolledFlag = "author-support.enrolled.v1"
@@ -164,9 +167,14 @@ final class AuthorSupportService: ObservableObject {
         currentReceipt = registration.receipt.flatMap { try? SupportReceipt.validate($0, device: device, nonce: registration.nonce, now: now) }
         if let r = currentReceipt, hasActiveSubscription(at: now) {
             claim = .active(through: Date(timeIntervalSince1970: Double(r.through)))
-        } else if currentReceipt == nil, let expires = registration.expires, let code = registration.code, Double(expires) > now.timeIntervalSince1970 {
-            claim = registration.sent ? .pending : .code(code, expires: Date(timeIntervalSince1970: Double(expires)))
+        } else if currentReceipt == nil, let expires = registration.expires, let code = registration.code {
+            claim = Self.unverifiedState(code: code, expires: expires, reviewUntil: registration.reviewUntil, at: now)
         } else { claim = .none }
+    }
+    static func unverifiedState(code: String, expires: Int, reviewUntil: Int?, at now: Date) -> AuthorSupportClaimState {
+        if let reviewUntil, Double(reviewUntil) > now.timeIntervalSince1970 { return .pending }
+        if Double(expires) > now.timeIntervalSince1970 { return .code(code, expires: Date(timeIntervalSince1970: Double(expires))) }
+        return .none
     }
 
     func startClaim() async throws {
@@ -205,15 +213,45 @@ final class AuthorSupportService: ObservableObject {
     }
     func markClaimSent() async throws {
         guard var registration = try readRegistration(), let expires = registration.expires,
-              Double(expires) > Date().timeIntervalSince1970 else { throw SupportIssue.unavailable }
-        registration.sent = true
+              Double(expires) > Date().timeIntervalSince1970 || registration.submissionStarted == true
+        else { throw SupportIssue.unavailable }
+        let device = try deviceID(create: false)
+        registration.submissionStarted = true
         try store(registration)
-        display(registration, device: try deviceID(create: false))
+        try await submit(registration, device: device)
+    }
+    private func submit(_ registration: Registration, device: String) async throws {
+        var req = URLRequest(url: Self.base.appendingPathComponent("claims/sent"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(["device":device,"nonce":registration.nonce])
+        let (status, data) = try await Self.request(req)
+        guard var current = try readRegistration(), current.nonce == registration.nonce else { return }
+        guard status == 200 else {
+            if [400,404,409,410].contains(status) {
+                current.submissionStarted = false
+                try store(current)
+                display(current, device: device)
+            }
+            throw SupportIssue.unavailable
+        }
+        let until = try JSONDecoder().decode(SubmissionResponse.self, from: data).reviewUntil
+        let now = Int(Date().timeIntervalSince1970)
+        guard until > now, until <= now + 7 * 86_400 + 300 else { throw SupportIssue.invalidData }
+        current.sent = true
+        current.submissionStarted = false
+        current.reviewUntil = until
+        try store(current)
+        display(current, device: device)
     }
     func refreshClaim() async throws {
         guard defaults.bool(forKey: enrolledFlag), let registration = try readRegistration() else { return }
         let device = try deviceID(create: false)
         display(registration, device: device)
+        // If the acknowledgement was lost, replay the idempotent submission with the original nonce.
+        if registration.submissionStarted == true && registration.reviewUntil == nil {
+            try? await submit(registration, device: device)
+        }
         guard registration.sent || registration.receipt != nil || registration.code != nil else { return }
         let url = Self.base.appendingPathComponent("receipts").appendingPathComponent(device).appendingPathComponent(registration.nonce)
         let (status, data) = try await Self.request(URLRequest(url: url))

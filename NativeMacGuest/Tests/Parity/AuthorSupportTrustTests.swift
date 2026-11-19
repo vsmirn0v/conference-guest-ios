@@ -7,6 +7,13 @@ final class AuthorSupportTrustTests: XCTestCase {
     let key = Curve25519.Signing.PrivateKey()
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    @MainActor func testSubmittedCodeCanAwaitReviewAfterItsDisplayExpiry() {
+        let t = Int(now.timeIntervalSince1970)
+        XCTAssertEqual(AuthorSupportService.unverifiedState(code:"TEST", expires:t - 1, reviewUntil:nil, at:now), .none)
+        XCTAssertEqual(AuthorSupportService.unverifiedState(code:"TEST", expires:t - 1, reviewUntil:t + 86_400, at:now), .pending)
+        XCTAssertEqual(AuthorSupportService.unverifiedState(code:"TEST", expires:t - 1, reviewUntil:t - 1, at:now), .none)
+    }
+
     private func signed(_ object: [String:Any]) throws -> Data {
         let bytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return try JSONEncoder().encode(SupportEnvelope(payload: bytes, signature: key.signature(for: bytes)))
