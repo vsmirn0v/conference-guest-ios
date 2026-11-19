@@ -868,6 +868,7 @@ import UniformTypeIdentifiers
     private var floatingSpeakerTask: Task<Void, Never>?
     private var demandKey: String?
     private var demandTask: Task<Void, Never>?
+    private var visibleSpeakerTileIDs: Set<String> = []
     private var heldState: (microphone: Bool, camera: Bool, playout: Bool)?
     @Published private var requestedMicrophone: Bool?
     @Published private var requestedCamera: Bool?
@@ -1995,6 +1996,11 @@ import UniformTypeIdentifiers
         guard mediaPresentation != presentation else { return }
         mediaPresentation = presentation; updateDemand()
     }
+    func setVisibleSpeakerTileIDs(_ ids: Set<String>) {
+        guard visibleSpeakerTileIDs != ids else { return }
+        visibleSpeakerTileIDs = ids
+        updateDemand()
+    }
     /// Move the floating anchor toward whatever deserves the PiP: a live screen
     /// share immediately, otherwise the active speaker after `floatingHold`.
     /// The restore fallback in `updateDemand` re-anchors when the anchored
@@ -2052,7 +2058,16 @@ import UniformTypeIdentifiers
             }
         }
         let focused = receivesVideo && singleVideo ? (showsFocus ? focusedParticipantID : floatingParticipantID) : nil
-        let shown = singleVideo ? [focused].compactMap { $0 } : galleryParticipants.map(\.id)
+        var shown = singleVideo ? [focused].compactMap { $0 } : galleryParticipants.map(\.id)
+        if let focused, mediaPresentation == .meeting, receivesCameras,
+           focusAffinity?.source == .screen || focusedVideo?.source == .screen {
+            // The Guest subscriber can receive six videos. Leave room for the
+            // focused share and request cameras for the visible speaker tiles.
+            let cameraTiles = railParticipants.filter {
+                $0.id != focused && !$0.isLocal && $0.cameraOn != false && visibleSpeakerTileIDs.contains($0.id)
+            }
+            shown += cameraTiles.prefix(5).map(\.id)
+        }
         // Visible tiles stay; video is requested only for the ones this mode receives.
         let receivable = Set(videoParticipants.map(\.id))
         let ids = !receivesVideo ? Set<String>() : Set(shown.filter { display == .all || receivable.contains($0) })
@@ -2061,9 +2076,14 @@ import UniformTypeIdentifiers
         let cameras = receivesCameras
         let key = ids.sorted().joined(separator: "|") + "#" + (focused ?? "") + "#" + (preferredScreen ?? "") + "#" + (cameras ? "cameras" : "screens")
         guard demandKey != key, connected else { return }
-        demandKey = key; demandTask?.cancel()
+        let previous = demandTask
+        previous?.cancel()
+        demandKey = key
         demandTask = Task { [weak self] in
-            guard let self else { return }
+            // A subscription request already sent to the provider can finish
+            // after cancellation. Apply the newest viewport after it settles.
+            await previous?.value
+            guard let self, !Task.isCancelled, connected, !closed else { return }
             do {
                 if let session = engine as? MeetingSession {
                     try await session.setVideoDemand(.init(visibleParticipantIDs: ids, focusedParticipantID: focused,

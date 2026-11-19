@@ -428,8 +428,10 @@ struct NativeGuestApplication {
             let report = await NativeDesktopDiagnostics.reportWithMediaObservations(
                 route: route, meetings: workspace?.meetings ?? [], companion: controller)
             do {
-                try NativeDiagnosticsArchive.make(report: report, logs: NativeDiagnosticsLog.shared.files,
-                    reports: NativeDiagnosticReports.shared.files, destination: url)
+                try await Task.detached {
+                    try NativeDiagnosticsArchive.make(report: report, logs: NativeDiagnosticsLog.shared.files,
+                        reports: NativeDiagnosticReports.shared.files, destination: url)
+                }.value
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } catch {
                 let alert = NSAlert(); alert.messageText = L("Unable to export diagnostics")

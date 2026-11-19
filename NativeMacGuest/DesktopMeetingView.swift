@@ -200,6 +200,7 @@ struct NativeDesktopMeetingView: View {
     var presentsErrors = true
     @State private var reactionsOpen = false
     @State private var railCollapsed = false
+    @Namespace private var speakerViewport
     @State private var chromeVisible = true
     @State private var chromeTask: Task<Void, Never>?
     @State private var immersiveHint = false
@@ -554,6 +555,12 @@ struct NativeDesktopMeetingView: View {
         case .screenShares: model.videoParticipants.isEmpty ? L("No screen share is live. Audio continues.") : nil
         }
     }
+    private struct VisibleSpeakerTiles: PreferenceKey {
+        static var defaultValue: Set<String> { [] }
+        static func reduce(value: inout Set<String>, nextValue: () -> Set<String>) {
+            value.formUnion(nextValue())
+        }
+    }
     /// The participants panel already lists everyone; the rail would repeat it.
     private var showsRail: Bool { !model.immersive && !railCollapsed && model.panel != .participants && model.participants.count > 1 }
     /// Beside a focused share or person: who is here, who is talking, one click to focus them.
@@ -566,15 +573,27 @@ struct NativeDesktopMeetingView: View {
                     Button { railCollapsed = true } label: { Image(systemName: "sidebar.right") }
                         .buttonStyle(.plain).foregroundStyle(.secondary).help(L("Hide speakers")).accessibilityLabel(L("Hide speakers"))
                 }
-                ScrollView {
-                    VStack(spacing: 8) {
-                        ForEach(model.railParticipants) { person in
-                            Button { model.focus(participantID: person.id, source: person.sharing == true && person.cameraOn != true ? .screen : .camera) } label: {
-                                participantTile(person, compact: true).frame(height: 112)
-                            }.buttonStyle(.plain).help(L("Focus %@", person.name))
+                GeometryReader { viewport in
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            ForEach(model.railParticipants) { person in
+                                Button { model.focus(participantID: person.id, source: person.sharing == true && person.cameraOn != true ? .screen : .camera) } label: {
+                                    participantTile(person, compact: true).frame(height: 112)
+                                }.buttonStyle(.plain).help(L("Focus %@", person.name))
+                                    .background {
+                                        GeometryReader { tile in
+                                            let bounds = tile.frame(in: .named(speakerViewport))
+                                            let visible = bounds.maxY > 0 && bounds.minY < viewport.size.height
+                                            Color.clear.preference(key: VisibleSpeakerTiles.self, value: visible ? [person.id] : [])
+                                        }
+                                    }
+                            }
                         }
+                        .onPreferenceChange(VisibleSpeakerTiles.self) { model.setVisibleSpeakerTileIDs($0) }
                     }
+                    .coordinateSpace(name: speakerViewport)
                 }
+                .onDisappear { model.setVisibleSpeakerTileIDs([]) }
             }.frame(width: 200)
         }
     }
@@ -601,24 +620,21 @@ struct NativeDesktopMeetingView: View {
         }
     }
     @ViewBuilder private var mediaContent: some View {
-        if model.showsFocus, let focused = model.focusedVideo {
+        if model.showsFocus, let focusedID = model.focusedParticipantID {
             HStack(spacing: 10) {
-                NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport,
-                    textFrame: textFrame, selectText: focused.source == .screen ? selectSharedText : nil,
-                    immersive: model.immersive, onImmersive: { model.immersive.toggle() },
-                    bottomOverlayInset: model.immersive && showsFooter ? Self.footerHeight : 0)
-                    .overlay(alignment: .topLeading) { speakerChip }
-                    .overlay(alignment: .topTrailing) { railRestoreButton }
-                speakerRail
-            }
-        } else if model.showsFocus, let focusedID = model.focusedParticipantID,
-                  let person = model.participants.first(where: { $0.id == focusedID }), !model.focusedVideoExpected {
-            // No video is expected here: keep the person, mic and speaking state in focus.
-            HStack(spacing: 10) { participantTile(person, compact: false); speakerRail }
-        } else if model.showsFocus, let focusedID = model.focusedParticipantID {
-            HStack(spacing: 10) {
-                VStack(spacing: 16) { ProgressView(); Text(L("Waiting for stream…")); Text(name(focusedID)).foregroundStyle(.secondary) }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let focused = model.focusedVideo {
+                    NativeDesktopZoomVideo(video: focused, name: name(focusedID), viewport: focusedViewport,
+                        textFrame: textFrame, selectText: focused.source == .screen ? selectSharedText : nil,
+                        immersive: model.immersive, onImmersive: { model.immersive.toggle() },
+                        bottomOverlayInset: model.immersive && showsFooter ? Self.footerHeight : 0)
+                        .overlay(alignment: .topLeading) { speakerChip }
+                        .overlay(alignment: .topTrailing) { railRestoreButton }
+                } else if let person = model.participants.first(where: { $0.id == focusedID }), !model.focusedVideoExpected {
+                    participantTile(person, compact: false)
+                } else {
+                    VStack(spacing: 16) { ProgressView(); Text(L("Waiting for stream…")); Text(name(focusedID)).foregroundStyle(.secondary) }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 speakerRail
             }
         } else if !model.participants.isEmpty {

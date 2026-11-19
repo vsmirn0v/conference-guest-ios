@@ -1614,16 +1614,25 @@ private final class DesktopActivitySpy: NSUserActivity {
     func testDiagnosticsArchiveIsAZipWithReportLogsAndReports() throws {
         let directory = try diagnosticsDirectory()
         let log = NativeDiagnosticsLog(directory: directory.appendingPathComponent("Logs"))
-        log.start(); log.append("{\"event\":\"archived\"}"); log.flush()
+        log.start(); log.append("{\"event\":\"guest-audio-reception\",\"outputTap\":\"callback-gap\"}"); log.flush()
         let reports = NativeDiagnosticReports(directory: directory.appendingPathComponent("Reports"))
         reports.save([Data("{\"crash\":true}".utf8)])
         let destination = directory.appendingPathComponent("out.zip")
         try NativeDiagnosticsArchive.make(report: "report body", logs: log.files, reports: reports.files, destination: destination)
         let zip = try Data(contentsOf: destination)
         XCTAssertEqual(zip.prefix(2), Data("PK".utf8))
-        for name in ["report.txt", "Logs/" + log.files[0].lastPathComponent, "Reports/" + reports.files[0].lastPathComponent] {
+        for name in ["report.txt", "audio-reception.log", "Logs/" + log.files[0].lastPathComponent, "Reports/" + reports.files[0].lastPathComponent] {
             XCTAssertNotNil(zip.range(of: Data(name.utf8)), name)
         }
+        let unzip = Process(), output = Pipe()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        unzip.arguments = ["-p", destination.path, "*/audio-reception.log"]
+        unzip.standardOutput = output
+        try unzip.run()
+        let timeline = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        unzip.waitUntilExit()
+        XCTAssertEqual(unzip.terminationStatus, 0)
+        XCTAssertTrue(timeline.contains("\"event\":\"guest-audio-reception\",\"outputTap\":\"callback-gap\""))
         log.stop()
     }
 

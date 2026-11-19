@@ -144,6 +144,9 @@ import XCTest
         let presenter = try XCTUnwrap(model.participants.first { $0.sharing == true })
         model.focus(participantID: presenter.id, source: .screen)
         try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(model.focusedVideo?.source, .screen)
+        XCTAssertTrue(model.visibleVideos.contains { $0.source == .camera && $0.participantID != presenter.id },
+                      "Visible speaker tiles receive camera tracks beside the focused share")
         let focusedShare = try frame(XCTUnwrap(item("share.control")))
         XCTAssertEqual(focusedShare.midX, galleryShare.midX, accuracy: 1)
         XCTAssertEqual(focusedShare.midY, galleryShare.midY, accuracy: 1)
@@ -153,6 +156,11 @@ import XCTest
         XCTAssertEqual(AXUIElementPerformAction(text, kAXPressAction as CFString), .success)
         try await Task.sleep(for: .milliseconds(150))
         XCTAssertNotNil(item("Shared text capture"))
+        model.immersive = true
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(model.focusedVideo?.source, .screen)
+        XCTAssertFalse(model.visibleVideos.contains { $0.source == .camera && $0.participantID != presenter.id },
+                       "Hiding the speaker rail releases its camera subscriptions")
     }
     private func guide(title: String, nativeWindow: NSWindow, hold: Double) -> [String: Any] {
         let content = nativeWindow.contentView?.bounds.size ?? nativeWindow.frame.size

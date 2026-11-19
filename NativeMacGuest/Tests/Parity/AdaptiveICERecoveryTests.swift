@@ -1,9 +1,129 @@
+import AVFoundation
+import ConferenceCore
 import LiveKitWebRTC
 import XCTest
 @testable import MeetingEngine
 @testable import RockNativeDesktop
 
 final class AdaptiveICERecoveryTests: XCTestCase {
+    func testOutputCallbackRetainsRecoveredPauseAcrossSubsequentBuffers() throws {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        var callback = GuestStartupAudioCallback()
+        for time in [1.0, 1.1, 1.8, 1.9] {
+            callback.recordDelivery(frames: 4800, format: .init(format.streamDescription.pointee), at: time)
+        }
+        XCTAssertEqual(callback.count, 4)
+        XCTAssertEqual(callback.lastGapEnd, 1.8)
+        XCTAssertEqual(callback.lastGapSeconds, 0.7, accuracy: 0.001)
+    }
+
+    @MainActor func testConnectedSubscriberLogsReceptionWithoutARelayCandidate() async throws {
+        let shared = SharedAudioEngine.live(manualRenderingForTesting: true)
+        let audio = try await SharedGuestMeetingAudio.attach(to: shared)
+        let engine = NativeGuestEngine(label: "offline observation", systemAudio: audio)
+        engine.configureStartupPlayback(sound: true)
+        _ = try await engine.prepareJoinForTesting()
+        let sub = try await engine.prepareSubscriberForTesting()
+        var polls = 0
+        sub.statsOverrideForTesting = { polls += 1; return [] }
+        sub.peerConnection(sub.connection, didChange: LKRTCIceConnectionState.connected)
+        sub.peerConnection(sub.connection, didChange: LKRTCPeerConnectionState.connected)
+        engine.startTransportObservationForTesting()
+        let deadline = ProcessInfo.processInfo.systemUptime + 6
+        func reception() -> String? {
+            probeLogHistory().last { $0.contains("\"event\":\"guest-audio-reception\"") && $0.contains(sub.diagnosticID) }
+        }
+        while reception() == nil && ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let line = reception()
+        let clean = await engine.leave(sendLeave: false)
+        XCTAssertTrue(clean)
+        XCTAssertGreaterThan(polls, 0)
+        XCTAssertTrue(try XCTUnwrap(line).contains("\"transportConnected\":true"))
+    }
+
+    func testQuietMicrophoneWithAnotherReceivingStreamDoesNotTripRelayFallback() throws {
+        let quiet = inbound("quiet", track: "remote-audio", kind: "audio", progress: 100)
+        func window(_ time: Int, otherPackets: Int, lost: Int = 0) throws -> GuestICETransportSample {
+            var first = quiet
+            first["packetsLost"] = lost
+            var rows = report(time: time, relayProtocol: "udp", streams: [
+                first, inbound("other", track: "other-audio", kind: "audio", progress: otherPackets)])
+            rows[1]["requestsSent"] = time
+            return try sample(rows, tracks: ["remote-audio", "other-audio"])
+        }
+        let old = try window(10, otherPackets: 100)
+        let next = try window(12, otherPackets: 120)
+        XCTAssertTrue(next.mediaDelta(since: old).stalledStreams.isEmpty)
+        XCTAssertTrue(try window(14, otherPackets: 140).mediaDelta(since: next).stalledStreams.isEmpty)
+        XCTAssertEqual(try window(14, otherPackets: 140, lost: 3).mediaDelta(since: next).stalledStreams, ["quiet"])
+        XCTAssertEqual(try window(14, otherPackets: 120).mediaDelta(since: next).stalledStreams, ["quiet", "other"])
+
+        func videoWindow(_ time: Int, packets: Int) throws -> GuestICETransportSample {
+            var video = inbound("camera", track: "remote-video", kind: "video", progress: time)
+            video["packetsReceived"] = packets
+            var rows = report(time: time, relayProtocol: "udp", streams: [quiet, video])
+            rows[1]["requestsSent"] = time
+            return try sample(rows)
+        }
+        let camera = try videoWindow(10, packets: 50)
+        XCTAssertTrue(try videoWindow(12, packets: 60).mediaDelta(since: camera).stalledStreams.isEmpty)
+        XCTAssertEqual(try videoWindow(12, packets: 50).mediaDelta(since: camera).stalledStreams, ["quiet"],
+                       "Decoding buffered video frames provides no new evidence that packets are arriving")
+    }
+
+    func testAudioReceptionSeparatesLocalCallbackGapsFromPerStreamLoss() throws {
+        var monitor = GuestAudioReceptionDiagnostics()
+        func observe(_ time: Int, packets: Int, lost: Int, unhealthy: Bool = false) throws -> [String: Any] {
+            var row = inbound("private-id", track: "private-track", kind: "audio", progress: packets, lost: lost)
+            row["nativeTimestampUS"] = time * 1_000_000
+            row["concealedSamples"] = lost * 480
+            var output = GuestStartupAudioCallback(count: UInt64(time), uptime: Double(time))
+            if unhealthy { output.lastGapEnd = Double(time) - 0.1; output.lastGapSeconds = 0.7 }
+            let fields = try XCTUnwrap(monitor.observe(at: Double(time), rows: [row], audibleTracks: ["private-track"],
+                connected: true, soundOn: true, gateOpen: true, expectsAudio: true, speakingTracks: ["private-track"],
+                decoded: .init(callbacks: time, nonSilentCallbacks: time), output: output, outputNonSilent: time))
+            XCTAssertFalse(String(describing: fields).contains("private-"))
+            XCTAssertTrue(JSONSerialization.isValidJSONObject(fields))
+            return fields
+        }
+        XCTAssertEqual(try observe(10, packets: 200, lost: 9)["rtp"] as? String, "baseline")
+        let impaired = try observe(12, packets: 230, lost: 12)
+        XCTAssertEqual(impaired["packetsLostIncrease"] as? Int64, 3)
+        XCTAssertEqual(impaired["concealedSamples"] as? Int64, 1440)
+        XCTAssertEqual(impaired["outputTap"] as? String, "callbacks-current")
+        let stalled = try observe(14, packets: 260, lost: 12, unhealthy: true)
+        XCTAssertEqual(stalled["rtp"] as? String, "receiving")
+        XCTAssertEqual(stalled["outputTap"] as? String, "callback-gap")
+        let quiet = try observe(16, packets: 260, lost: 12)
+        XCTAssertEqual(quiet["rtp"] as? String, "no-packet-progress")
+        XCTAssertEqual(quiet["speakingStreamsWithoutPackets"] as? Int, 1)
+        let lossDetail = try XCTUnwrap((impaired["streamDetails"] as? [[String: Int64]])?.first)
+        let quietDetail = try XCTUnwrap((quiet["streamDetails"] as? [[String: Int64]])?.first)
+        XCTAssertEqual(lossDetail["packetsLostIncrease"], 3)
+        XCTAssertEqual(quietDetail["stream"], lossDetail["stream"])
+        let reset = try observe(18, packets: 2, lost: 0)
+        XCTAssertNil(reset["packetsLostIncrease"])
+    }
+
+    func testUnavailableStatsAndIntentionalSilenceStayDistinct() throws {
+        var monitor = GuestAudioReceptionDiagnostics()
+        func observe(_ time: Double, rows: [[String: Any]]?, sound: Bool = true, expected: Bool = true) -> [String: Any]? {
+            monitor.observe(at: time, rows: rows, audibleTracks: [], connected: true, soundOn: sound,
+                gateOpen: true, expectsAudio: expected, speakingTracks: [], decoded: .init(),
+                output: .init(count: 10, uptime: time - 1), outputNonSilent: nil)
+        }
+        let missing = try XCTUnwrap(observe(10, rows: nil))
+        XCTAssertEqual(missing["rtp"] as? String, "stats-unavailable")
+        XCTAssertEqual(missing["outputTap"] as? String, "callback-stale")
+        XCTAssertNil(missing["packetsReceived"])
+        XCTAssertEqual(observe(12, rows: [], sound: false)?["rtp"] as? String, "sound-off")
+        XCTAssertEqual(observe(14, rows: [], expected: false)?["rtp"] as? String, "no-audible-publication")
+        XCTAssertNil(observe(16, rows: [], expected: false))
+        XCTAssertNotNil(observe(46, rows: [], expected: false))
+    }
+
     func testTCPTrialIsBoundedPerPeerAndOnlyVerifiedTrialsPersist() {
         var recovery = GuestRelayRecovery()
         XCTAssertTrue(recovery.beginAttempt().isEmpty)
