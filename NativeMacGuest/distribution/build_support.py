@@ -124,6 +124,7 @@ def configure_distribution(root, spec_dir, spec, distribution):
     spec = spec.replace('Tests, __pycache__, NativeGuest.entitlements',
                         'Tests, distribution, __pycache__, NativeGuest.entitlements')
     if distribution == 'app-store':
+        spec = spec.replace('Tests, distribution,', 'Tests, distribution, AuthorSupport,')
         return spec, None, []
     bundle, evidence = pinned_sparkle(root)
     info = plistlib.loads((root / 'NativeMacGuest/Info.plist').read_bytes())
@@ -151,6 +152,8 @@ def configure_distribution(root, spec_dir, spec, distribution):
     if sum(spec.count(anchor) for anchor in resource_anchors) != 1:
         raise ValueError('Expected one NativeGuest source resource anchor')
     resource_anchor = next(anchor for anchor in resource_anchors if anchor in spec)
+    language_bundle = root / 'NativeMacGuest/AuthorSupport/SupportLanguage.bundle'
+    spec = spec.replace(resource_anchor, f'      - path: {language_bundle}\n        type: folder\n        buildPhase: resources\n' + resource_anchor, 1)
     spec = spec.replace(resource_anchor, '      - path: ' + str(root / 'NativeMacGuest/distribution/Sparkle-LICENSE.txt') + '\n        buildPhase: resources\n' + resource_anchor, 1)
     test_anchor = '      - target: RockNRollNativeGuest\n'
     spec = spec.replace(test_anchor, test_anchor + f'      - framework: {bundle}\n        embed: false\n')

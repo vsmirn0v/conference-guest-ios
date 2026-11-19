@@ -82,3 +82,45 @@ final class LocalizationTests: XCTestCase {
         }
     }
 }
+
+extension LocalizationTests {
+    func testAllNineLanguagesShipAppAndExtensionCopy() throws {
+        let en = try language("en")
+        let source = try XCTUnwrap(catalog(en, "strings") as? [String: String])
+        let basePluralKeys = Set(try catalog(en, "stringsdict").keys)
+        let formats = try NSRegularExpression(pattern: #"%([1-9]\d*\$)?([-+0#]?\d*(?:\.\d+)?(?:ll|l|h|z)?[@diuoxXfFeEgGsc%])"#)
+        func types(_ format: String) -> [Int: String] {
+            let text = format as NSString
+            var result: [Int: String] = [:]
+            var next = 1
+            for match in formats.matches(in: format, range: NSRange(location: 0, length: text.length)) {
+                let type = text.substring(with: match.range(at: 2))
+                if type == "%" { continue }
+                let field = match.range(at: 1)
+                let index = field.location == NSNotFound ? next : Int(text.substring(with: field).dropLast()) ?? -1
+                result[index] = type
+                next += 1
+            }
+            return result
+        }
+        let signatures = source.mapValues(types)
+        for code in ["en", "ru", "es", "ar", "hi", "fr", "de", "zh-Hans", "id"] {
+            let bundle = try language(code)
+            let values = try XCTUnwrap(catalog(bundle, "strings") as? [String: String])
+            XCTAssertEqual(Set(source.keys), Set(values.keys), code)
+            XCTAssertEqual(Set(try catalog(bundle, "stringsdict").keys), basePluralKeys, code)
+            for (key, value) in values {
+                XCTAssertEqual(types(value), signatures[key], "\(code), \(key)")
+            }
+            let mic = bundle.localizedString(forKey: "NSMicrophoneUsageDescription", value: "__missing__", table: "InfoPlist")
+            XCTAssertNotEqual(mic, "__missing__", code)
+            if code != "en" { XCTAssertNotEqual(mic, en.localizedString(forKey: "NSMicrophoneUsageDescription", value: nil, table: "InfoPlist")) }
+            for (target, key, table) in [("RockBroadcast", "CFBundleDisplayName", "InfoPlist"),
+                                         ("MeetingActivity", "Meeting in progress", "Localizable")] {
+                let url = try XCTUnwrap(Bundle.main.url(forResource: target, withExtension: "appex", subdirectory: "PlugIns"))
+                let localized = try XCTUnwrap(Bundle(url: url.appendingPathComponent(code + ".lproj")), "\(target), \(code)")
+                XCTAssertNotEqual(localized.localizedString(forKey: key, value: "__missing__", table: table), "__missing__", "\(target), \(code)")
+            }
+        }
+    }
+}

@@ -232,7 +232,7 @@ public enum PortableOutcomePrompt {
         language: String,
         maxCharacters: Int = 60_000
     ) -> [[String: String]] {
-        let lang = language.hasPrefix("ru") ? "Russian" : "English"
+        let lang = Localization.englishLanguageName(for: language)
         let clock = ISO8601DateFormatter()
         let lines = events.filter {
             ($0.kind == "transcript" || $0.kind == "chat") &&

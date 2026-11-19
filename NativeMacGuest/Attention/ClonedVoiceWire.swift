@@ -131,13 +131,13 @@ enum ClonedVoiceWorkerError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .busy: "The cloned voice worker is busy. Try again after the current request finishes."
-        case .stopped: "The cloned voice worker stopped."
-        case .timeout: "The cloned voice worker reached its time limit. Try Again in Voice settings."
-        case .protocolFailure: "The cloned voice worker returned an incomplete or invalid response."
-        case .unavailable: "The cloned voice worker could not start."
+        case .busy: NSLocalizedString("The cloned voice worker is busy. Try again after the current request finishes.", comment: "")
+        case .stopped: NSLocalizedString("The cloned voice worker stopped.", comment: "")
+        case .timeout: NSLocalizedString("The cloned voice worker reached its time limit. Try Again in Voice settings.", comment: "")
+        case .protocolFailure: NSLocalizedString("The cloned voice worker returned an incomplete or invalid response.", comment: "")
+        case .unavailable: NSLocalizedString("The cloned voice worker could not start.", comment: "")
         case .context(let message), .runtime(let message, _): message
-        case .diagnosed(let failure, _, _): failure.technicalDetails ?? "The cloned voice worker failed."
+        case .diagnosed(let failure, _, _): failure.technicalDetails ?? NSLocalizedString("The cloned voice worker failed.", comment: "")
         }
     }
 }

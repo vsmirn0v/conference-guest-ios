@@ -378,11 +378,13 @@
 		019359A3106165FAECA43BED /* AudioAcquisitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAcquisitionTests.swift; sourceTree = "<group>"; };
 		01F5E46FAF5658FA90A8DB1A /* LiveTranscriptTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptTimeline.swift; sourceTree = "<group>"; };
 		0223068B027DDDC76D88BA4F /* MeetingEngineRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEngineRoutingTests.swift; sourceTree = "<group>"; };
+		022559A72246BF73B1C80782 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = de; path = de.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
 		0355F0836C7386E8FEA1B407 /* NativeFocusCompanionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFocusCompanionTests.swift; sourceTree = "<group>"; };
 		04E30EEC66DD1D769AC38533 /* CameraOutputProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraOutputProcessor.swift; sourceTree = "<group>"; };
 		0541024059C20CE20308E021 /* MeetingContinuationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingContinuationCoordinatorTests.swift; sourceTree = "<group>"; };
 		05BBE962B794CA6D9B47C606 /* h264-color-signalling.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "h264-color-signalling.json"; sourceTree = "<group>"; };
 		05EC45C8ED174F1F333EAC98 /* ReactionSubmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactionSubmission.swift; sourceTree = "<group>"; };
+		064670693E72EA7E3BA6DD2E /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		069D40A31FAF91A90FB12157 /* CameraPreviewPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewPresentation.swift; sourceTree = "<group>"; };
 		0749D2146BB11184D76828DA /* RoomHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomHistoryStore.swift; sourceTree = "<group>"; };
 		076DE2327EB5A2B7D83B95D8 /* ReactionHistoryRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactionHistoryRowView.swift; sourceTree = "<group>"; };
@@ -405,9 +407,11 @@
 		1363FE9456FBA6EE359F88F8 /* TelemostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemostTests.swift; sourceTree = "<group>"; };
 		137E5631A28C4071CF574A68 /* CloudRoomTransportLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudRoomTransportLiveTests.swift; sourceTree = "<group>"; };
 		13EB09EA72CA09175CEEBB07 /* StudioPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioPanel.swift; sourceTree = "<group>"; };
+		13FFA3553D3D5824069EFB99 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
 		1567DFCAF9DFADA92D9DECFF /* FloatingVideoContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingVideoContentView.swift; sourceTree = "<group>"; };
 		1600A9E0BF3A6BF03758B6EB /* LiveTranscriptTimelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptTimelineTests.swift; sourceTree = "<group>"; };
 		1670DCC27A23A887BFBF0F8F /* ParticipantMediaBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParticipantMediaBadge.swift; sourceTree = "<group>"; };
+		16CF69016D71C84CFCD26C1C /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		170C8543C40BE24465CEA135 /* PresenterUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterUITests.swift; sourceTree = "<group>"; };
 		19BF0392450BD2006D941153 /* MeetingAccessUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAccessUITests.swift; sourceTree = "<group>"; };
 		1A5345E4BCE3205566821E30 /* NativeScreenSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeScreenSender.swift; sourceTree = "<group>"; };
@@ -416,6 +420,7 @@
 		1C23C1B2AAAA270F064932F8 /* MeetingActionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActionsTests.swift; sourceTree = "<group>"; };
 		1C3EF816FA21C7F5AC53DB40 /* SharedTextUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextUITests.swift; sourceTree = "<group>"; };
 		1C92B7DCA1D0DAE96D97B915 /* RoomMicrophoneProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMicrophoneProbe.swift; sourceTree = "<group>"; };
+		1C950761F2B7D923D76E5AF5 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		1CE7740CA4FFBA32B49D81D2 /* RockBroadcast.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = RockBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		1DE248EFE316E44378427F1C /* MeetingActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActivityTests.swift; sourceTree = "<group>"; };
 		1E7F1B33998E63A47F61AB6B /* ReceiveRoomVideoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiveRoomVideoTests.swift; sourceTree = "<group>"; };
@@ -439,10 +444,14 @@
 		28B848AF43C8959A56978188 /* CameraCapturePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCapturePreview.swift; sourceTree = "<group>"; };
 		28D9561EEFDD378F2CC9E939 /* TrueConfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrueConfTests.swift; sourceTree = "<group>"; };
 		29086C6A0CE55DDD89707C74 /* StudioTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioTests.swift; sourceTree = "<group>"; };
+		2A17D2931FD5B389167E32D7 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = hi; path = hi.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		2AA69CCF4314F9E29ADA2C47 /* AppDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnostics.swift; sourceTree = "<group>"; };
+		2AAB761E99DD3551595D518D /* id */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = id; path = id.lproj/Localizable.strings; sourceTree = "<group>"; };
 		2B85B36EC73686DEFC3D9B6C /* IOSWorkspaceAudioCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSWorkspaceAudioCoordinatorTests.swift; sourceTree = "<group>"; };
+		2CAACFDFC2279491A59E56DB /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
 		2E6B97EB6CB2C3AD85CFDFBB /* PresenterModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterModel.swift; sourceTree = "<group>"; };
 		2EBD5B5CF327FC6506710905 /* AppleCalendarReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCalendarReader.swift; sourceTree = "<group>"; };
+		2F3DF1D68EE169795D028918 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = hi; path = hi.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
 		2FEF63DF50B4DB95CA1BD86E /* MeetingAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAccessTests.swift; sourceTree = "<group>"; };
 		33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncCoordinatorTests.swift; sourceTree = "<group>"; };
 		3396CF5A570AAC1EABCB466D /* CallTileContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallTileContainer.swift; sourceTree = "<group>"; };
@@ -451,8 +460,10 @@
 		36335245A0855B2E5BC15592 /* ChatStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStoreTests.swift; sourceTree = "<group>"; };
 		368EFDA9C0FAB01925A5EB7C /* BackgroundAudioJoinPrototype.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundAudioJoinPrototype.swift; sourceTree = "<group>"; };
 		389755D4D0A5AB8BFDBD8443 /* MeetingReminderPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingReminderPresenterTests.swift; sourceTree = "<group>"; };
+		38E8ABE619BE13F6D6325D05 /* id */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = id; path = id.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		3A1C6C3431E458229243875D /* IOSVoiceSynthesis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSVoiceSynthesis.swift; sourceTree = "<group>"; };
 		3A29D29FA82ED3CFD5A370CA /* PresenterControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterControls.swift; sourceTree = "<group>"; };
+		3B4316A56CB029DF33C050B7 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		3BAB879FECA3D7A32E103C76 /* MeetingActivitySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActivitySession.swift; sourceTree = "<group>"; };
 		3DFFC554A92276626999FAA2 /* TelemostUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemostUITests.swift; sourceTree = "<group>"; };
 		3E0BE2FD5BD2E955E689DD5A /* MeetingContinuationUIFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingContinuationUIFixture.swift; sourceTree = "<group>"; };
@@ -486,10 +497,12 @@
 		51E69EB969FD513C7C9B24DB /* IOSMultiMeetingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSMultiMeetingTests.swift; sourceTree = "<group>"; };
 		51F5088AC6EEDBBCCC77A47D /* NativeGuestCompanionProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGuestCompanionProtocolTests.swift; sourceTree = "<group>"; };
 		52EBCE444018DE2553B34CA7 /* MeetingServiceProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingServiceProbe.swift; sourceTree = "<group>"; };
+		53F31D45A2A4B6839AD2CC06 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Localizable.strings; sourceTree = "<group>"; };
 		54AB06E7B00CA5AC1FCCC395 /* RockNRollUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RockNRollUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		54AEAC9A8CBF663384D79667 /* ConferenceMediaUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceMediaUITests.swift; sourceTree = "<group>"; };
 		5500E7632CE754D5ABF5A365 /* CameraUplinkStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraUplinkStatistics.swift; sourceTree = "<group>"; };
 		570F282C8158780FD4F2636F /* MeetingHeaderStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingHeaderStatus.swift; sourceTree = "<group>"; };
+		5806684B4E637E1403882217 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		59BFB58ACF4754A48761B301 /* SharedTextOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextOverlay.swift; sourceTree = "<group>"; };
 		5A5389C79CA11B6343CA2427 /* SessionOwnershipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionOwnershipTests.swift; sourceTree = "<group>"; };
 		5A544335BB02387649633464 /* vp9-lossless.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "vp9-lossless.json"; sourceTree = "<group>"; };
@@ -501,6 +514,7 @@
 		5E5DEC8BADD0F42444BF7763 /* TrueConfUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrueConfUITests.swift; sourceTree = "<group>"; };
 		5E621B2DC4BB3C4F3387886F /* EngineSwitchingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineSwitchingUITests.swift; sourceTree = "<group>"; };
 		5F89B9BC9E0527F4127A4F7A /* MeetingActivityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActivityViews.swift; sourceTree = "<group>"; };
+		607FD1CF83019507A4EF4100 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = hi; path = hi.lproj/Localizable.strings; sourceTree = "<group>"; };
 		60A6FB138DC969DF89E3C736 /* RoomSyncUIFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncUIFixture.swift; sourceTree = "<group>"; };
 		6107CBE9DA5BB425FB24BFCC /* ParticipantMediaBadgeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParticipantMediaBadgeUITests.swift; sourceTree = "<group>"; };
 		625AF83D1B2E1CB6F903074A /* CameraPublicationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPublicationCoordinator.swift; sourceTree = "<group>"; };
@@ -512,6 +526,8 @@
 		65CA6194A7D2942AB03BA4E8 /* SoundCheckControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundCheckControls.swift; sourceTree = "<group>"; };
 		65F648EC831C55B448DD9A37 /* RoomSyncUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncUITests.swift; sourceTree = "<group>"; };
 		6673913BECEEFC32B70FC769 /* CloudRoomTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudRoomTransport.swift; sourceTree = "<group>"; };
+		67472E3BDCC309F5DCCE54B4 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = fr; path = fr.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
+		67504AD0AF0630D4A62D1B30 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ar.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		67C8CFED088431AE29EF2F49 /* CalendarReminderUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarReminderUITests.swift; sourceTree = "<group>"; };
 		69ACA4E1CEA1AE4FAA89F7AA /* ReactionOverlayGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactionOverlayGeometryTests.swift; sourceTree = "<group>"; };
 		69E6C14CCF5CF5DA9B70EA94 /* CameraPreviewLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewLifecycleTests.swift; sourceTree = "<group>"; };
@@ -520,6 +536,7 @@
 		6C3703CE475F749011A139C3 /* MeetingEngineLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEngineLiveTests.swift; sourceTree = "<group>"; };
 		6CFF837F8305839CF363F81C /* IOSAssistantModeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAssistantModeViews.swift; sourceTree = "<group>"; };
 		6D09A8F8203F79CB9EC2ECC9 /* NativeGuestCompanionProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGuestCompanionProtocol.swift; sourceTree = "<group>"; };
+		6D662DAED058E38AE3A34AFE /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = es.lproj/Localizable.strings; sourceTree = "<group>"; };
 		6D74813F24B6D41F4DE4FD6C /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
 		6D9BCE384C727532AF9FEDD2 /* RoomSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncCoordinator.swift; sourceTree = "<group>"; };
 		6DA498995F3CE3C00B53CA1F /* PrivateSoundCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateSoundCheck.swift; sourceTree = "<group>"; };
@@ -531,8 +548,10 @@
 		6F26F9772780B3E0C65A1573 /* CalendarReminderViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarReminderViews.swift; sourceTree = "<group>"; };
 		6FA58FD9E590AC301B6DFF6C /* VP9HardwareDecoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VP9HardwareDecoderTests.swift; sourceTree = "<group>"; };
 		70E1D2B21C4871293EC9597C /* CatchUpStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpStoreTests.swift; sourceTree = "<group>"; };
+		72687C5F8457898A35A2C4C4 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Localizable.strings; sourceTree = "<group>"; };
 		72B9D422A6E0E4B14F957346 /* CameraBackgroundUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraBackgroundUITests.swift; sourceTree = "<group>"; };
 		7439693E547D5AA0ECE83022 /* ReceiveDelayDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiveDelayDiagnostics.swift; sourceTree = "<group>"; };
+		757B796D5BD0A11ADF5B0D1B /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = es.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		76BB1295740CB6DDF22128C7 /* MeetingChromeSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingChromeSurface.swift; sourceTree = "<group>"; };
 		76CCA593AC98F64897D0D892 /* ActiveSpeakerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveSpeakerTests.swift; sourceTree = "<group>"; };
 		78D15E09F9B40733B95666CD /* ConferenceModel+Continuation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConferenceModel+Continuation.swift"; sourceTree = "<group>"; };
@@ -551,6 +570,7 @@
 		8673A1476A9A30C9EE82E814 /* FloatingVideoController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingVideoController.swift; sourceTree = "<group>"; };
 		86A4407E202F9667E3FAD11D /* OutgoingMediaExperimentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingMediaExperimentTests.swift; sourceTree = "<group>"; };
 		882E2BE18A7D5330F7FF6663 /* ActiveSpeaker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveSpeaker.swift; sourceTree = "<group>"; };
+		882F17399F3AE2A5FFD61BCD /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		89C04A164F37F1A963CFA1B7 /* NativeVideoPixelBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeVideoPixelBufferTests.swift; sourceTree = "<group>"; };
 		8A78D100BDCD856ACC8731C9 /* CalendarReminderRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarReminderRepository.swift; sourceTree = "<group>"; };
 		8ABF3D1959D288FA94E88311 /* ContinuationBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuationBanner.swift; sourceTree = "<group>"; };
@@ -569,9 +589,12 @@
 		95635E9D486B37EDF5A04411 /* SampleBufferImageRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleBufferImageRenderer.swift; sourceTree = "<group>"; };
 		968035B1EDE3157660C75FC5 /* HomeLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLayoutUITests.swift; sourceTree = "<group>"; };
 		96F23CBBFE171B7447F0F77E /* CalendarUIFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarUIFixture.swift; sourceTree = "<group>"; };
+		98168701C7967FE21EB92749 /* id */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = id; path = id.lproj/Localizable.strings; sourceTree = "<group>"; };
 		985A2B360B50E4A8700B3ED2 /* IOSCaptureBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSCaptureBridgeTests.swift; sourceTree = "<group>"; };
 		992A6F8EC68A63D6E82AF992 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		999FCECB28582EE4D0E8211D /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = es.lproj/Localizable.strings; sourceTree = "<group>"; };
 		9AF15419B7DC2047D8E652FE /* IOSListenModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSListenModelStore.swift; sourceTree = "<group>"; };
+		9B31ADE4D3FA105BCBBD5713 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = hi; path = hi.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		9B805E9C274C97A1D955E99D /* FixtureSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureSupport.swift; sourceTree = "<group>"; };
 		9B966C1B0154B0A50F606CCB /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		9BA718FA2B251FAF59981266 /* CameraPublicationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPublicationCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -579,8 +602,10 @@
 		9D480771A01CE4752084642A /* VideoPreviewPacingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPreviewPacingTests.swift; sourceTree = "<group>"; };
 		9D6C275330645F1949AAD3A9 /* PreviewCadenceExperiment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewCadenceExperiment.swift; sourceTree = "<group>"; };
 		9DFBCFFFF0467A7FB265789F /* MeetingReactionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingReactionsTests.swift; sourceTree = "<group>"; };
+		A182DE8E0AF97EEFB31CC00E /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = es.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		A1AD2EC5120D62DAFB52BA47 /* MediaServicesResetUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaServicesResetUITests.swift; sourceTree = "<group>"; };
 		A1AF3D4380043F072BC60262 /* IOSWorkspaceAudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSWorkspaceAudioCoordinator.swift; sourceTree = "<group>"; };
+		A32290BD0026534AF037D317 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = ar; path = ar.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
 		A3D56ADB9C4C008AF8FFBAB9 /* SampleHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
 		A4173C407195C3F116F3EC5D /* RoomFloatingVideoSink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomFloatingVideoSink.swift; sourceTree = "<group>"; };
 		A447AAD83CAB2DE79FB5FDAA /* StreamViewport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamViewport.swift; sourceTree = "<group>"; };
@@ -630,6 +655,7 @@
 		C4262C6D2F0644094F1F6D2A /* CallKeyboardCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKeyboardCommands.swift; sourceTree = "<group>"; };
 		C45AF8A30698BEF5C1DFA4F3 /* PreviewExperimentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewExperimentTests.swift; sourceTree = "<group>"; };
 		C4BEDD7AA77A4C63BB0D8443 /* MeetingActivityUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActivityUITests.swift; sourceTree = "<group>"; };
+		C52C8E54E54D8460A7ACA0B7 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = es; path = es.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
 		C5691273D94C8770D950071A /* IOSWorkspaceSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSWorkspaceSyncTests.swift; sourceTree = "<group>"; };
 		C69D117BCD386DF22D1F0CF6 /* CameraPixelScaler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPixelScaler.swift; sourceTree = "<group>"; };
 		C710C8CE58602175B80A21A3 /* MLXAudioVoice */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MLXAudioVoice; path = Dependencies/MLXAudioVoice; sourceTree = SOURCE_ROOT; };
@@ -640,6 +666,7 @@
 		CC20A3D362E49D6BF89AB441 /* IOSScreenShareCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSScreenShareCapture.swift; sourceTree = "<group>"; };
 		CC42FB720B95DDCB4C47E645 /* RockNRoll.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RockNRoll.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CC88E9E453A5EA13BE6235C0 /* LocalSharePreviewTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSharePreviewTransportTests.swift; sourceTree = "<group>"; };
+		CDA880516B715F6C02739BD7 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		CFE277883989A4677747996B /* MeetingActivityState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActivityState.swift; sourceTree = "<group>"; };
 		D008424282D8DDC9909648AF /* PreviewCadenceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewCadenceUITests.swift; sourceTree = "<group>"; };
 		D038E6F267254FD6855BF371 /* CallWorkspaceControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallWorkspaceControls.swift; sourceTree = "<group>"; };
@@ -648,8 +675,10 @@
 		D2A523C484ABDF0D04514A05 /* IOSCameraCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSCameraCapture.swift; sourceTree = "<group>"; };
 		D3398AA0F6FDB72AD43F46CB /* ConferenceCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ConferenceCore; path = ConferenceCore; sourceTree = SOURCE_ROOT; };
 		D353B40533B1DDB10C100095 /* MeetingContainerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingContainerViewController.swift; sourceTree = "<group>"; };
+		D369ED8721FF72D4A442A3D2 /* id */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = id; path = id.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
 		D3D60B9BDC597842566C6109 /* AudioPipelineDeviceExperimentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPipelineDeviceExperimentTests.swift; sourceTree = "<group>"; };
 		D60B8C9FAF4E5D62CF6C5DB7 /* CalendarInvitationContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarInvitationContext.swift; sourceTree = "<group>"; };
+		D6598E8EA0DD8CAE8CD3F81C /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ar.lproj/Localizable.strings; sourceTree = "<group>"; };
 		D6DC2AC14F2642D10138665A /* HandoffReadOnlyDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandoffReadOnlyDeviceTests.swift; sourceTree = "<group>"; };
 		D7776515DA40EAAC1FC3D971 /* PresenterCompanionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterCompanionView.swift; sourceTree = "<group>"; };
 		D7F62EA093D3CDBB70BFD1C0 /* MeetingReminderPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingReminderPresenter.swift; sourceTree = "<group>"; };
@@ -658,6 +687,7 @@
 		D8A6B19669D2C6E73ECC7BFA /* RoomRowPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomRowPresentationTests.swift; sourceTree = "<group>"; };
 		DC22448823F9B3C0741DDC1D /* CallMediaSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallMediaSnapshot.swift; sourceTree = "<group>"; };
 		DCD95F34D084D7B376C1CF5F /* webrtc-xcframework */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "webrtc-xcframework"; path = ".build/unified-sdk-dependencies/webrtc-xcframework"; sourceTree = SOURCE_ROOT; };
+		DD06F0A1723D3D1722A7C856 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ar.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		DD573672F58CD87BE5C3118D /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = ru; path = ru.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
 		DE3A8FC38C4EF599DFDB0C07 /* StudioModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioModel.swift; sourceTree = "<group>"; };
 		DF4664C8EDD10271333CE560 /* ReactionHistoryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactionHistoryUITests.swift; sourceTree = "<group>"; };
@@ -666,13 +696,16 @@
 		DFC5FF27962DB299A6203745 /* PiPMicrophoneFixtureViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPMicrophoneFixtureViewController.swift; sourceTree = "<group>"; };
 		DFFFE5408FE87945860DDB8F /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		E178AB7DB956D0DFD7D75D31 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		E3F649AE084EABB7738D38E2 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = hi; path = hi.lproj/Localizable.strings; sourceTree = "<group>"; };
 		E612024D52E158968B09FA80 /* ParticipantBadgeFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParticipantBadgeFixture.swift; sourceTree = "<group>"; };
+		E6203B714AAB313232A478BB /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.stringsdict"; sourceTree = "<group>"; };
 		E6BECE9295285CD0B510CC19 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		E83F66E8F6424896D3C9C11C /* MeetingSetupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSetupCoordinator.swift; sourceTree = "<group>"; };
 		E9DFE8B0E848E55A2E4746ED /* ReactionSubmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactionSubmissionTests.swift; sourceTree = "<group>"; };
 		EAD93F37E38E73613C0647D1 /* SampleBufferFrameDelivery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleBufferFrameDelivery.swift; sourceTree = "<group>"; };
 		ECC280B2FC6D3D46100D4670 /* MeetingChromeSurfaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingChromeSurfaceTests.swift; sourceTree = "<group>"; };
 		EDD67DAAA5517113232B1A49 /* StudioShortcut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioShortcut.swift; sourceTree = "<group>"; };
+		EE29CA719FE5E9B1363E5595 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		EE480DD0A0D1B8E60EE1A8BF /* FloatingVideoPreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingVideoPreference.swift; sourceTree = "<group>"; };
 		F1612C6050EE021175A9DF82 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F1CF0CE62B480A76D0A18827 /* MeetingSetupUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSetupUITests.swift; sourceTree = "<group>"; };
@@ -692,8 +725,10 @@
 		F8385FAD74595A7534CA62F1 /* MeetingSetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSetupTests.swift; sourceTree = "<group>"; };
 		F89AD9F16128DA81E2810A61 /* IOSVoiceAndTranscriptionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSVoiceAndTranscriptionViews.swift; sourceTree = "<group>"; };
 		FA168A3D03A334A948E4FFCB /* LiveTranscriptPanelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptPanelTests.swift; sourceTree = "<group>"; };
+		FB62782BA36D1670D013B9AE /* id */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = id; path = id.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		FE377E3F013CC98891447FFA /* StudioAudioPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioAudioPolicy.swift; sourceTree = "<group>"; };
 		FE3CCAD5DAEC3B948515641C /* BroadcastLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BroadcastLifecycleTests.swift; sourceTree = "<group>"; };
+		FFF3FA62D4A10B20FBA17732 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ar.lproj/Localizable.strings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1388,8 +1423,15 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				Base,
+				ar,
+				de,
 				en,
+				es,
+				fr,
+				hi,
+				id,
 				ru,
+				"zh-Hans",
 			);
 			mainGroup = 338D4E44E4BA43D7DA8F21F9;
 			minimizedProjectReferenceProxies = 1;
@@ -1813,8 +1855,15 @@
 		0A756D49891A8E2ED12B8981 /* Localizable.strings */ = {
 			isa = PBXVariantGroup;
 			children = (
+				D6598E8EA0DD8CAE8CD3F81C /* ar */,
+				72687C5F8457898A35A2C4C4 /* de */,
 				992A6F8EC68A63D6E82AF992 /* en */,
+				999FCECB28582EE4D0E8211D /* es */,
+				13FFA3553D3D5824069EFB99 /* fr */,
+				607FD1CF83019507A4EF4100 /* hi */,
+				2AAB761E99DD3551595D518D /* id */,
 				6A07D2CD43FC526C13ED2236 /* ru */,
+				1C950761F2B7D923D76E5AF5 /* zh-Hans */,
 			);
 			name = Localizable.strings;
 			sourceTree = "<group>";
@@ -1822,8 +1871,15 @@
 		7BCD34E88A44968F63E4DFD1 /* InfoPlist.strings */ = {
 			isa = PBXVariantGroup;
 			children = (
+				DD06F0A1723D3D1722A7C856 /* ar */,
+				5806684B4E637E1403882217 /* de */,
 				E178AB7DB956D0DFD7D75D31 /* en */,
+				757B796D5BD0A11ADF5B0D1B /* es */,
+				16CF69016D71C84CFCD26C1C /* fr */,
+				2A17D2931FD5B389167E32D7 /* hi */,
+				38E8ABE619BE13F6D6325D05 /* id */,
 				1EDD989FDAE55ECAD8F48D9E /* ru */,
+				CDA880516B715F6C02739BD7 /* zh-Hans */,
 			);
 			name = InfoPlist.strings;
 			sourceTree = "<group>";
@@ -1831,8 +1887,15 @@
 		86346ACDCB5DD9F32BC51401 /* InfoPlist.strings */ = {
 			isa = PBXVariantGroup;
 			children = (
+				67504AD0AF0630D4A62D1B30 /* ar */,
+				882F17399F3AE2A5FFD61BCD /* de */,
 				9B966C1B0154B0A50F606CCB /* en */,
+				A182DE8E0AF97EEFB31CC00E /* es */,
+				EE29CA719FE5E9B1363E5595 /* fr */,
+				9B31ADE4D3FA105BCBBD5713 /* hi */,
+				FB62782BA36D1670D013B9AE /* id */,
 				E6BECE9295285CD0B510CC19 /* ru */,
+				064670693E72EA7E3BA6DD2E /* zh-Hans */,
 			);
 			name = InfoPlist.strings;
 			sourceTree = "<group>";
@@ -1840,8 +1903,15 @@
 		93AAC86B2D4D8F6CE7FA6694 /* Localizable.strings */ = {
 			isa = PBXVariantGroup;
 			children = (
+				FFF3FA62D4A10B20FBA17732 /* ar */,
+				53F31D45A2A4B6839AD2CC06 /* de */,
 				DFFFE5408FE87945860DDB8F /* en */,
+				6D662DAED058E38AE3A34AFE /* es */,
+				2CAACFDFC2279491A59E56DB /* fr */,
+				E3F649AE084EABB7738D38E2 /* hi */,
+				98168701C7967FE21EB92749 /* id */,
 				BB9F78F51F928A3AE8E2561B /* ru */,
+				3B4316A56CB029DF33C050B7 /* zh-Hans */,
 			);
 			name = Localizable.strings;
 			sourceTree = "<group>";
@@ -1849,8 +1919,15 @@
 		D75611CBD0EC5F3C490CFE82 /* Localizable.stringsdict */ = {
 			isa = PBXVariantGroup;
 			children = (
+				A32290BD0026534AF037D317 /* ar */,
+				022559A72246BF73B1C80782 /* de */,
 				01871A6BA563D6B33F8F1592 /* en */,
+				C52C8E54E54D8460A7ACA0B7 /* es */,
+				67472E3BDCC309F5DCCE54B4 /* fr */,
+				2F3DF1D68EE169795D028918 /* hi */,
+				D369ED8721FF72D4A442A3D2 /* id */,
 				DD573672F58CD87BE5C3118D /* ru */,
+				E6203B714AAB313232A478BB /* zh-Hans */,
 			);
 			name = Localizable.stringsdict;
 			sourceTree = "<group>";

@@ -1,0 +1,16 @@
+"Meeting in progress" = "اجتماع قيد التنفيذ";
+"Microphone status unavailable" = "حالة الميكروفون غير متوفرة";
+"Mic off" = "الميكروفون متوقف";
+"Mic on" = "الميكروفون قيد التشغيل";
+"Mic paused" = "توقف الميكروفون مؤقتًا";
+"Open to check meeting" = "افتح للتحقق من الاجتماع";
+"Connected" = "متصل";
+"Reconnecting…" = "جارٍ إعادة الاتصال…";
+"Meeting paused" = "توقف الاجتماع مؤقتاً";
+"Paused for another call" = "وقفة لطلب مكالمة أخرى";
+"Open meeting" = "اجتماع مفتوح";
+"Meeting status outside the app" = "حالة الاجتماع خارج التطبيق";
+"Show meeting name" = "إظهار اسم الاجتماع";
+"Meeting status" = "حالة الاجتماع";
+"Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "اعرض الميكروفون وحالة الاتصال على شاشة القفل وDynamic Island عند إيقاف تشغيل عناصر التحكم في مكالمات النظام. يتم إخفاء أسماء الاجتماعات افتراضيًا.";
+"Unknown" = "غير معروف";

@@ -224,7 +224,7 @@ struct IOSWorkspaceHubView: View {
                     .foregroundStyle(.secondary)
                 if let endedAt = session.endedAt, endedAt > session.startedAt {
                     let minutes = max(1, Int((endedAt.timeIntervalSince(session.startedAt) / 60).rounded()))
-                    Text("· \(minutes)m")
+                    Text(L("· %ld min", minutes))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

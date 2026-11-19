@@ -1,7 +1,7 @@
 name: RockNativeGuest
 options:
   developmentLanguage: en
-  knownRegions: [en, ru]
+  knownRegions: [en, ru, es, ar, hi, fr, de, zh-Hans, id]
   deploymentTarget:
     macOS: '13.0'
 packages:
@@ -28,7 +28,7 @@ targets:
         # These diagnostic harnesses target experiment-only test hooks and helper
         # types that have not landed. Exclude them until their dependencies are tracked;
         # no production code references either harness.
-        excludes: ['*.yml', '*.py', '*.md', '*.sh', Tests, __pycache__, NativeGuest.entitlements, Info.plist',
+        excludes: ['*.yml', '*.py', '*.md', '*.sh', Tests, __pycache__, NativeGuest.entitlements, Info.plist, AuthorSupport/SupportLanguage.bundle,
                    MicrophoneActivationExperiment.swift, AcousticValidationExperiment.swift,
                    StartupCaptureReceiver.swift, VoiceWorker, VoiceGPUWorker, ThirdPartyNotices]
       - path: ThirdPartyNotices
@@ -54,11 +54,8 @@ targets:
       - path: ../RockNRoll/MeetingContinuationCoordinator.swift
       - path: ../RockNRoll/MeetingSetupCoordinator.swift
       - path: ../RockNRoll/HomeMeetingCard.swift
-      - path: ../RockNRoll/en.lproj
-        type: folder
-        buildPhase: resources
-      - path: ../RockNRoll/ru.lproj
-        type: folder
+      - path: ../RockNRoll
+        includes: ['**/Localizable.strings', '**/Localizable.stringsdict']
         buildPhase: resources
     dependencies:
       - package: ConferenceCore

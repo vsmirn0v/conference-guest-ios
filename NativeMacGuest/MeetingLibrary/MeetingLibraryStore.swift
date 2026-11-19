@@ -236,7 +236,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
             if try opened.one("SELECT 1 FROM sqlite_master WHERE name='schema_migrations'") != nil {
                 let previous = try opened.one("SELECT MAX(version) FROM schema_migrations")?.integer(0) ?? 0
                 guard previous <= MeetingLibrarySchema.currentVersion else {
-                    throw MeetingLibraryError.unavailable("database requires a newer version of Rock’n’Roll")
+                    throw MeetingLibraryError.unavailable(NSLocalizedString("database requires a newer version of Rock’n’Roll", comment: ""))
                 }
                 if previous > 0, previous < MeetingLibrarySchema.currentVersion {
                     let backup = root.appendingPathComponent("meetings.before-v\(MeetingLibrarySchema.currentVersion).sqlite3")
@@ -300,7 +300,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
 
     func db() throws -> MeetingSQLiteConnection {
         guard let connection = connectionBox.current() else {
-            throw MeetingLibraryError.unavailable("database is closed")
+            throw MeetingLibraryError.unavailable(NSLocalizedString("database is closed", comment: ""))
         }
         return connection
     }
@@ -1440,7 +1440,7 @@ extension MeetingLibraryStore {
                 try Self.bindText($0, taskID.uuidString, at: 1)
             }), case .blob(let data)? = row[0],
                   currentProfile.owns(try JSONDecoder.attention.decode(MeetingOutcomeTask.self, from: data)) else {
-                throw MeetingLibraryError.unavailable("task is no longer assigned to this profile")
+                throw MeetingLibraryError.unavailable(NSLocalizedString("task is no longer assigned to this profile", comment: ""))
             }
             if archived {
                 let date = Date()

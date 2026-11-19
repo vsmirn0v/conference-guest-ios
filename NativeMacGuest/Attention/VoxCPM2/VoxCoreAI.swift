@@ -15,7 +15,7 @@ struct VoxAssetFailure: LocalizedError {
 
     var errorDescription: String? {
         let underlying = cause as NSError
-        return "The Neural Engine could not run \(asset) (\(underlying.domain) \(underlying.code))."
+        return String(format: NSLocalizedString("The Neural Engine could not run %@ (%@ %ld).", comment: ""), asset, underlying.domain, underlying.code)
     }
 
     var missingSpecialization: Bool {
@@ -44,9 +44,9 @@ struct VoxVerificationFailure: LocalizedError {
     var errorDescription: String? {
         let underlying = cause as NSError
         if let first = staleAssets.first {
-            return "The Neural Engine could not run \(first) (\(underlying.domain) \(underlying.code))."
+            return String(format: NSLocalizedString("The Neural Engine could not run %@ (%@ %ld).", comment: ""), first, underlying.domain, underlying.code)
         }
-        return "The Neural Engine voice specialization cache is incomplete and needs preparation."
+        return NSLocalizedString("The Neural Engine voice specialization cache is incomplete and needs preparation.", comment: "")
     }
 }
 

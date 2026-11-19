@@ -13,13 +13,13 @@ import LiveKitWebRTC
     private let onFinish: ((NativeGuestMeetingCompletion) -> Void)?
     private let window: NSWindow
     private let titleLabel = NSTextField(labelWithString: "")
-    private let stateLabel = NSTextField(labelWithString: "Connecting with microphone and camera off…")
-    private let emptyLabel = NSTextField(labelWithString: "Waiting for video")
+    private let stateLabel = NSTextField(labelWithString: NSLocalizedString("Connecting with microphone and camera off…", comment: ""))
+    private let emptyLabel = NSTextField(labelWithString: NSLocalizedString("Waiting for video", comment: ""))
     private let videos = NSStackView()
-    private let microphone = NSButton(title: "Unmute", target: nil, action: nil)
-    private let camera = NSButton(title: "Camera On", target: nil, action: nil)
-    private let sound = NSButton(title: "Sound On", target: nil, action: nil)
-    private let leave = NSButton(title: "Leave", target: nil, action: nil)
+    private let microphone = NSButton(title: NSLocalizedString("Unmute", comment: ""), target: nil, action: nil)
+    private let camera = NSButton(title: NSLocalizedString("Camera On", comment: ""), target: nil, action: nil)
+    private let sound = NSButton(title: NSLocalizedString("Sound On", comment: ""), target: nil, action: nil)
+    private let leave = NSButton(title: NSLocalizedString("Leave", comment: ""), target: nil, action: nil)
     private var tiles: [String: CompanionVideoTile] = [:]
     private var videoOrder: [String] = []
     private var localTile: CompanionVideoTile?
@@ -105,10 +105,10 @@ import LiveKitWebRTC
         window.minSize = NSSize(width: 800, height: 540); window.center(); window.delegate = self
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading
         stack.spacing = 12; stack.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.stringValue = roomTitle ?? "Guest meeting"
+        titleLabel.stringValue = roomTitle ?? NSLocalizedString("Guest meeting", comment: "")
         titleLabel.font = .systemFont(ofSize: 20, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
-        let badge = NSTextField(labelWithString: "Native guest · Beta")
+        let badge = NSTextField(labelWithString: NSLocalizedString("Native guest · Beta", comment: ""))
         badge.textColor = .secondaryLabelColor
         stateLabel.textColor = .secondaryLabelColor; stateLabel.lineBreakMode = .byTruncatingTail
         videos.orientation = .vertical; videos.distribution = .fillEqually; videos.spacing = 8
@@ -285,12 +285,12 @@ import LiveKitWebRTC
     private func updateExternalVideo(_ available: [NativeDesktopExternalVideo]) {
         let names = Dictionary(uniqueKeysWithValues: (meetingSession?.sessionSnapshot.participants ?? []).map { ($0.id, $0.name) })
         let items = available.map { (id: $0.id, isScreenShare: $0.source == .screen, track: $0.track,
-                                     title: names[$0.participantID] ?? "Participant") }
+                                     title: names[$0.participantID] ?? NSLocalizedString("Participant", comment: "")) }
         applyVideoTiles(items)
     }
     private func updateVideo(_ available: [GuestRemoteVideo]) {
         let items = available.map { (id: $0.id, isScreenShare: CompanionMediaPolicy.isScreenShare($0.source),
-                                     track: $0.track, title: $0.participantName ?? "Participant") }
+                                     track: $0.track, title: $0.participantName ?? NSLocalizedString("Participant", comment: "")) }
         applyVideoTiles(items)
     }
     private func applyVideoTiles(_ available: [(id: String, isScreenShare: Bool, track: LKRTCVideoTrack, title: String)]) {
@@ -463,16 +463,16 @@ import LiveKitWebRTC
         camera.isEnabled = active && permissions.canShareCamera
         sound.isEnabled = active
         leave.isEnabled = !finishing
-        microphone.title = desiredMedia.microphoneOn ? "Mute" : "Unmute"
-        camera.title = desiredMedia.cameraOn ? "Camera Off" : "Camera On"
-        sound.title = desiredMedia.outputOn ? "Sound Off" : "Sound On"
-        if finishing { stateLabel.stringValue = "Leaving…" }
-        else if terminalError == .permissionDenied { stateLabel.stringValue = "Media permission was denied. You can keep listening." }
-        else if terminalError == .commandFailed { stateLabel.stringValue = "The media change could not be completed." }
-        else if isSessionConnected { stateLabel.stringValue = "Connected · Microphone and camera are under your control" }
-        else if isSessionRecovering { stateLabel.stringValue = "Reconnecting…" }
-        else if isSessionFailed { stateLabel.stringValue = "Could not connect" }
-        else { stateLabel.stringValue = "Connecting with microphone and camera off…" }
+        microphone.title = desiredMedia.microphoneOn ? NSLocalizedString("Mute", comment: "") : NSLocalizedString("Unmute", comment: "")
+        camera.title = desiredMedia.cameraOn ? NSLocalizedString("Camera Off", comment: "") : NSLocalizedString("Camera On", comment: "")
+        sound.title = desiredMedia.outputOn ? NSLocalizedString("Sound Off", comment: "") : NSLocalizedString("Sound On", comment: "")
+        if finishing { stateLabel.stringValue = NSLocalizedString("Leaving…", comment: "") }
+        else if terminalError == .permissionDenied { stateLabel.stringValue = NSLocalizedString("Media permission was denied. You can keep listening.", comment: "") }
+        else if terminalError == .commandFailed { stateLabel.stringValue = NSLocalizedString("The media change could not be completed.", comment: "") }
+        else if isSessionConnected { stateLabel.stringValue = NSLocalizedString("Connected · Microphone and camera are under your control", comment: "") }
+        else if isSessionRecovering { stateLabel.stringValue = NSLocalizedString("Reconnecting…", comment: "") }
+        else if isSessionFailed { stateLabel.stringValue = NSLocalizedString("Could not connect", comment: "") }
+        else { stateLabel.stringValue = NSLocalizedString("Connecting with microphone and camera off…", comment: "") }
     }
     private func publishStatus(state override: NativeGuestState? = nil) async {
         guard let files, let metadata else { return }

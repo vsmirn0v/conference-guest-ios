@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%ld approved notes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld स्वीकृत नोट</string>
+			<key>other</key>
+			<string>%ld स्वीकृत नोट</string>
+		</dict>
+	</dict>
+	<key>%ld characters over the limit</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>सीमा से %ld अक्षर ज़्यादा</string>
+			<key>other</key>
+			<string>सीमा से %ld अक्षर ज़्यादा</string>
+		</dict>
+	</dict>
+	<key>%ld musicians</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld संगीतकार</string>
+			<key>other</key>
+			<string>%ld संगीतकार</string>
+		</dict>
+	</dict>
+	<key>%ld new reactions, available in Chat</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>चैट में %ld नई प्रतिक्रिया उपलब्ध है</string>
+			<key>other</key>
+			<string>चैट में %ld नई प्रतिक्रियाएँ उपलब्ध हैं</string>
+		</dict>
+	</dict>
+	<key>%ld participants</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld प्रतिभागी</string>
+			<key>other</key>
+			<string>%ld प्रतिभागी</string>
+		</dict>
+	</dict>
+	<key>%ld reactions</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld प्रतिक्रिया</string>
+			<key>other</key>
+			<string>%ld प्रतिक्रियाएँ</string>
+		</dict>
+	</dict>
+	<key>Catch up, %ld missed sections</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>छूटा हुआ %ld भाग देखें</string>
+			<key>other</key>
+			<string>छूटे हुए %ld भाग देखें</string>
+		</dict>
+	</dict>
+	<key>Chat, %ld unread</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>चैट, %ld अपठित संदेश</string>
+			<key>other</key>
+			<string>चैट, %ld अपठित संदेश</string>
+		</dict>
+	</dict>
+	<key>See all %ld recent jams</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>हाल का %ld सत्र देखें</string>
+			<key>other</key>
+			<string>हाल के सभी %ld सत्र देखें</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

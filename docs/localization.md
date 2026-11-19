@@ -1,10 +1,10 @@
 # App localization
 
-Rock’n’Roll supports English and Russian through the standard iOS app-language
-preference. Without an override it follows the preferred supported device
-language; English is the development-language fallback. No account, server request
-or in-app language setting is required. The existing guest SDK already includes
-English and Russian resources.
+Rock’n’Roll follows the app language selected in macOS or iOS. The app includes English,
+Russian, Spanish, Arabic, Hindi, French, German, Simplified Chinese (Mandarin) and
+Indonesian. English is the development-language fallback. The direct Mac builds also
+include translated donation options in all nine app languages. Providers control the
+languages available on their own checkout screens.
 
 Own interface copy includes joining, saved rooms, profile/settings, chat and
 transcript controls, missed sections, participants, video modes, sharing previews,
@@ -19,20 +19,28 @@ provider-supplied content retain their own language.
 - Use `L("English source key")` for app and guest broadcast copy. Shared
   `Localization.swift` resolves the current process's main bundle. ConferenceCore
   errors use `CoreL` with its package resource bundle.
-- Add matching entries in `en.lproj` and `ru.lproj`; do not translate identifiers,
+- Add matching entries for all nine app languages. Preserve identifiers,
   protocol fields, enum raw values or stored user data. Local screen-source enums
   keep their raw values and expose a separate localized presentation title.
 - Pass strings as `%@` arguments and integers as `%ld`. User content must be a
   format argument rather than part of a format string.
 - Use `Localizable.stringsdict` for participant, musician, unread-message,
   missed-section, recent-room and over-limit character counts. Russian needs
-  one/few/many/other variants. Formatters use the app language for grammar and
+  one/few/many/other forms. Arabic also has zero and two forms, while Chinese and Indonesian use other. Formatters use the app language for grammar and
   preserve the device's region for formatting.
 - Visible call/preview captions are short. VoiceOver retains full action labels.
   Accessibility identifiers stay stable across languages.
 - Regenerate the project with XcodeGen when adding localization resources.
 
 ## Validation
+
+`NativeInterfaceLocalizationTests` reads the installed Mac app bundle, compares every
+language’s complete key set, checks printf argument positions and types, and verifies
+permission prompts and interpolation with mixed-script names. ConferenceCore tests check
+the localized package errors, language-to-prompt mapping and preservation of the Chinese
+script with a different device region.
+
+The checks below record earlier English and Russian qualification runs.
 
 Resource tests check English/Russian key and argument parity, integer plural
 forms (including 0, 11, 21, 22 and 111), mixed-language names, fallback strings,

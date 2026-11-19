@@ -1,0 +1,4 @@
+"NSCalendarsUsageDescription" = "Buscar invitaciones a reuniones en los calendarios que elijas y avisarte cuando empiecen.";
+"NSCalendarsFullAccessUsageDescription" = "Buscar invitaciones a reuniones en los calendarios que elijas y mostrar las próximas reuniones.";
+"NSCameraUsageDescription" = "Compartir la imagen de la cámara cuando actives el vídeo en la vista previa de invitado de la app.";
+"NSMicrophoneUsageDescription" = "Compartir el audio del micrófono cuando lo actives en la vista previa de invitado de la app.";

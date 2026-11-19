@@ -1,0 +1,11 @@
+"Enter a complete HTTPS meeting invitation link." = "मीटिंग के आमंत्रण का पूरा HTTPS लिंक दर्ज करें।";
+"Enter a complete jam invitation link." = "सत्र के आमंत्रण का पूरा लिंक दर्ज करें।";
+"Enter a valid Rock’n’Roll jam link." = "Rock’n’Roll सत्र का मान्य लिंक दर्ज करें।";
+"This jam did not provide a secure HTTPS connection." = "इस सत्र से सुरक्षित HTTPS कनेक्शन नहीं मिला।";
+"This jam link did not provide a valid connection endpoint." = "इस सत्र के लिंक से कनेक्शन का मान्य पता नहीं मिला।";
+"This jam redirected to another website. Use an invitation for that website instead." = "इस सत्र ने दूसरी वेबसाइट पर भेज दिया। उस वेबसाइट का आमंत्रण इस्तेमाल करें।";
+"This jam returned an unexpectedly large response. Try again later." = "सत्र से अपेक्षा से अधिक बड़ा जवाब मिला। बाद में दोबारा प्रयास करें।";
+"This message is too long to send. Shorten it and try again." = "यह संदेश भेजने के लिए बहुत लंबा है। इसे छोटा करके फिर से भेजें।";
+"Hardware" = "हार्डवेयर";
+"Software" = "सॉफ़्टवेयर";
+"Sending %@" = "%@ भेजा जा रहा है";

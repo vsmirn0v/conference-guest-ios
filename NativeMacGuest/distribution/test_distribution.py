@@ -29,6 +29,7 @@ class DistributionConfigurationTests(unittest.TestCase):
             self.assertEqual(entitlements['com.apple.security.temporary-exception.mach-lookup.global-name'],
                              [support.BUNDLE_ID + '-spks', support.BUNDLE_ID + '-spki'])
             self.assertIn('NATIVE_DIRECT_UPDATES', spec)
+            self.assertIn(str(ROOT / 'NativeMacGuest/AuthorSupport/SupportLanguage.bundle'), spec)
             self.assertIn('embed: true\n        codeSign: true', spec)
         self.assertEqual(info_path.read_bytes(), original_info)
         self.assertEqual(entitlement_path.read_bytes(), original_entitlements)
@@ -40,6 +41,8 @@ class DistributionConfigurationTests(unittest.TestCase):
             pin.assert_not_called()
             self.assertNotIn('Sparkle.framework', spec)
             self.assertNotIn('NATIVE_DIRECT_UPDATES', spec)
+            self.assertNotIn(str(ROOT / 'NativeMacGuest/AuthorSupport/SupportLanguage.bundle'), spec)
+            self.assertIn('Tests, distribution, AuthorSupport,', spec)
             self.assertNotIn('Info-Direct.plist', spec)
             self.assertNotIn('NativeGuest-Direct.entitlements', spec)
             self.assertIsNone(evidence)

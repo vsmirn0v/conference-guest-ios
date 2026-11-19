@@ -1,0 +1,11 @@
+"Enter a complete HTTPS meeting invitation link." = "请输入完整的 HTTPS 会议邀请链接。";
+"Enter a complete jam invitation link." = "请输入完整的会话邀请链接。";
+"Enter a valid Rock’n’Roll jam link." = "请输入有效的 Rock’n’Roll 会话链接。";
+"This jam did not provide a secure HTTPS connection." = "此会话未提供安全的 HTTPS 连接。";
+"This jam link did not provide a valid connection endpoint." = "此会话链接未提供有效的连接地址。";
+"This jam redirected to another website. Use an invitation for that website instead." = "此会话已重定向到其他网站。请改用该网站的邀请链接。";
+"This jam returned an unexpectedly large response. Try again later." = "此会话返回的响应过大。请稍后再试。";
+"This message is too long to send. Shorten it and try again." = "消息太长，无法发送。请缩短内容后重试。";
+"Hardware" = "硬件";
+"Software" = "软件";
+"Sending %@" = "正在发送 %@";

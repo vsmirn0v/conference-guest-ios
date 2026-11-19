@@ -123,7 +123,7 @@ final class NativeDesktopShareCapture: GuestCameraCapture, @unchecked Sendable {
                     try await MainActor.run {
                         guard self.isActive(token), !Task.isCancelled else { throw CancellationError() }
                         guard MacScreenCaptureBridge.isSupported() else {
-                            throw NativeDesktopError.unavailable("Screen and window selection requires macOS 14 or newer.")
+                            throw NativeDesktopError.unavailable(NSLocalizedString("Screen and window selection requires macOS 14 or newer.", comment: ""))
                         }
                         let bridge = MacScreenCaptureBridge(); bridge.preserveDetail = true
                         bridge.selectionMode = self.locked { self.selectionMode }; self.bridge = bridge

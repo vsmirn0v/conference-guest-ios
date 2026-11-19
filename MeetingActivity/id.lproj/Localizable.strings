@@ -1,0 +1,16 @@
+"Meeting in progress" = "Sedang berlangsung pertemuan";
+"Microphone status unavailable" = "Status microphone tidak tersedia";
+"Mic off" = "Mikrofon nonaktif";
+"Mic on" = "Mikrofon aktif";
+"Mic paused" = "Mik berhenti";
+"Open to check meeting" = "Buka untuk memeriksa pertemuan";
+"Connected" = "Terhubung";
+"Reconnecting…" = "Menghubungkan kembali…";
+"Meeting paused" = "Pertemuan terhenti";
+"Paused for another call" = "Istirahat untuk panggilan lain";
+"Open meeting" = "Buka pertemuan";
+"Meeting status outside the app" = "Status pertemuan di luar aplikasi";
+"Show meeting name" = "Tampilkan nama pertemuan";
+"Meeting status" = "Status rapat";
+"Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "Tampilkan status mikrofon dan koneksi pada Pulau Lock Screen dan Dynamic ketika kendali panggilan sistem dimatikan. Nama pertemuan disembunyikan secara baku.";
+"Unknown" = "Tidak diketahui";

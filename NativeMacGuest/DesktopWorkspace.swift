@@ -21,6 +21,22 @@ import UserNotifications
     var busyForUpdate: Bool { preparing || !meetings.isEmpty || leaveTask != nil || !meetingLeaves.isEmpty || shutdownBlocked }
     #if NATIVE_DIRECT_UPDATES
     var updates: NativeDesktopUpdates?
+    @Published private(set) var supportHomeVisit: UUID?
+    var focusHomeAfterSupport = false
+    var supportVisitIsSafe: Bool {
+        !busyForUpdate && pendingScheduled == nil && selectedMeetingID == nil && selection == .home &&
+        error == nil && notice == nil && !library.setup.isPresented && !library.continuation.moving &&
+        library.persistenceWarning == nil && updates?.safety.installationReserved != true &&
+        updates?.busy() != true && updates?.safety.recoveryTargetBuild == nil &&
+        invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !(window?.firstResponder is NSTextView)
+    }
+    private func startSupportHomeVisit() {
+        supportHomeVisit = nil
+        guard supportVisitIsSafe else { return }
+        SupportReminder.shared.recordForegroundUse()
+        supportHomeVisit = UUID()
+    }
     #endif
     /// The local MCP server that lets AI clients work with meetings; set once it starts.
     var mcpService: NativeDesktopMCPService?
@@ -41,10 +57,25 @@ import UserNotifications
         archiveStore: transcriptArchive
     )
     /// A library section is shown unless a meeting is selected in the sidebar.
-    @Published var selection: Section = .home { didSet { if selectedMeetingID != nil { selectedMeetingID = nil } } }
+    @Published var selection: Section = .home {
+        didSet {
+            if selectedMeetingID != nil { selectedMeetingID = nil }
+            #if NATIVE_DIRECT_UPDATES
+            if oldValue != selection {
+                focusHomeAfterSupport = selection == .home && oldValue == .settings && settingsTab == SupportCopy.settingsTab
+            }
+            if selection != .home && supportHomeVisit != nil { supportHomeVisit = nil }
+            #endif
+        }
+    }
     /// The meeting shown in the main window's detail column.
     @Published private(set) var selectedMeetingID: UUID? {
-        didSet { if oldValue != selectedMeetingID { synchronizeMeetingPresentation() } }
+        didSet {
+            if oldValue != selectedMeetingID { synchronizeMeetingPresentation() }
+            #if NATIVE_DIRECT_UPDATES
+            if selectedMeetingID != nil && supportHomeVisit != nil { supportHomeVisit = nil }
+            #endif
+        }
     }
     @Published var invitation = ""
     @Published var settingsTab = 0
@@ -53,7 +84,14 @@ import UserNotifications
     /// An informational alert, such as a meeting the organizer ended.
     @Published var notice: (title: String, message: String)?
     /// A join is in flight (setting up or connecting), or every meeting is being left.
-    @Published private(set) var preparing = false { didSet { onUpdateActivityChanged() } }
+    @Published private(set) var preparing = false {
+        didSet {
+            onUpdateActivityChanged()
+            #if NATIVE_DIRECT_UPDATES
+            if preparing && supportHomeVisit != nil { supportHomeVisit = nil }
+            #endif
+        }
+    }
     /// A join is detecting its service or asking about it; the next join waits for
     /// this short step only. Connecting does not hold up another join.
     @Published private(set) var joinSettingUp = false
@@ -260,6 +298,10 @@ import UserNotifications
         library.setup.finishLaunch(hasMeetingIntent: preparing || !meetings.isEmpty)
         library.foregrounded(allowAutomaticJoin: selection == .home)
         library.setup.offerIfAppropriate(selection == .home && meetings.isEmpty)
+        #if NATIVE_DIRECT_UPDATES
+        SupportReminder.shared.beginRecordingUse()
+        if selection == .home { startSupportHomeVisit() }
+        #endif
     }
     /// The one main window holds the library and every embedded meeting.
     private func presentMainWindow() {
@@ -996,7 +1038,11 @@ import UserNotifications
             // republishing an unchanged value would re-render it in a loop.
             guard newValue != sidebarSelection else { return }
             switch newValue {
-            case .section(let section)?: selection = section
+            case .section(let section)?:
+                selection = section
+                #if NATIVE_DIRECT_UPDATES
+                if section == .home { startSupportHomeVisit() }
+                #endif
             case .meeting(let id)?:
                 guard let model = meetings.first(where: { $0.sessionID == id }) else { return }
                 selectedMeetingID = id
@@ -1318,8 +1364,8 @@ enum NativeDesktopError: LocalizedError {
     case cleanupFailed, ambiguousEngine, unavailable(String)
     var errorDescription: String? {
         switch self {
-        case .cleanupFailed: "Media could not stop cleanly. Quit and reopen Rock'N'Roll for Mac before joining another meeting."
-        case .ambiguousEngine: "The meeting engine could not be identified. Choose its engine before joining."
+        case .cleanupFailed: NSLocalizedString("Media could not stop cleanly. Quit and reopen Rock'N'Roll for Mac before joining another meeting.", comment: "")
+        case .ambiguousEngine: NSLocalizedString("The meeting engine could not be identified. Choose its engine before joining.", comment: "")
         case .unavailable(let message): message
         }
     }

@@ -110,7 +110,7 @@ enum MeetingOutcomePrompt {
     """
 
     static func messages(_ request: MeetingOutcomeRequest) -> [[String: String]] {
-        let language = request.language.hasPrefix("ru") ? "Russian" : "English"
+        let language = Localization.englishLanguageName(for: request.language)
         let clock = ISO8601DateFormatter()
         let lines = request.window.lines.map { line -> String in
             if line.source == .note { return line.text }

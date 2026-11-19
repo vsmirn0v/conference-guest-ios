@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%ld approved notes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>لا توجد ملاحظات معتمدة</string>
+			<key>one</key>
+			<string>ملاحظة معتمدة واحدة</string>
+			<key>two</key>
+			<string>ملاحظتان معتمدتان</string>
+			<key>few</key>
+			<string>%ld ملاحظات معتمدة</string>
+			<key>many</key>
+			<string>%ld ملاحظة معتمدة</string>
+			<key>other</key>
+			<string>%ld ملاحظة معتمدة</string>
+		</dict>
+	</dict>
+	<key>%ld characters over the limit</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>لم يتم تجاوز الحد</string>
+			<key>one</key>
+			<string>حرف واحد فوق الحد</string>
+			<key>two</key>
+			<string>حرفان فوق الحد</string>
+			<key>few</key>
+			<string>%ld أحرف فوق الحد</string>
+			<key>many</key>
+			<string>%ld حرفًا فوق الحد</string>
+			<key>other</key>
+			<string>%ld حرف فوق الحد</string>
+		</dict>
+	</dict>
+	<key>%ld musicians</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>لا يوجد موسيقيون</string>
+			<key>one</key>
+			<string>موسيقي واحد</string>
+			<key>two</key>
+			<string>موسيقيان</string>
+			<key>few</key>
+			<string>%ld موسيقيين</string>
+			<key>many</key>
+			<string>%ld موسيقيًا</string>
+			<key>other</key>
+			<string>%ld موسيقي</string>
+		</dict>
+	</dict>
+	<key>%ld new reactions, available in Chat</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>لا توجد تفاعلات جديدة في الدردشة</string>
+			<key>one</key>
+			<string>تفاعل جديد متاح في الدردشة</string>
+			<key>two</key>
+			<string>تفاعلان جديدان متاحان في الدردشة</string>
+			<key>few</key>
+			<string>%ld تفاعلات جديدة متاحة في الدردشة</string>
+			<key>many</key>
+			<string>%ld تفاعلًا جديدًا متاحًا في الدردشة</string>
+			<key>other</key>
+			<string>%ld تفاعل جديد متاح في الدردشة</string>
+		</dict>
+	</dict>
+	<key>%ld participants</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>لا يوجد مشاركون</string>
+			<key>one</key>
+			<string>مشارك واحد</string>
+			<key>two</key>
+			<string>مشاركان</string>
+			<key>few</key>
+			<string>%ld مشاركين</string>
+			<key>many</key>
+			<string>%ld مشاركًا</string>
+			<key>other</key>
+			<string>%ld مشارك</string>
+		</dict>
+	</dict>
+	<key>%ld reactions</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>لا توجد تفاعلات</string>
+			<key>one</key>
+			<string>تفاعل واحد</string>
+			<key>two</key>
+			<string>تفاعلان</string>
+			<key>few</key>
+			<string>%ld تفاعلات</string>
+			<key>many</key>
+			<string>%ld تفاعلًا</string>
+			<key>other</key>
+			<string>%ld تفاعل</string>
+		</dict>
+	</dict>
+	<key>Catch up, %ld missed sections</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>لم تفُتك أي مقاطع</string>
+			<key>one</key>
+			<string>استدرك مقطعًا واحدًا فاتك</string>
+			<key>two</key>
+			<string>استدرك مقطعين فاتاَك</string>
+			<key>few</key>
+			<string>استدرك %ld مقاطع فاتتك</string>
+			<key>many</key>
+			<string>استدرك %ld مقطعًا فاتك</string>
+			<key>other</key>
+			<string>استدرك %ld مقطع فاتك</string>
+		</dict>
+	</dict>
+	<key>Chat, %ld unread</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>الدردشة، لا رسائل غير مقروءة</string>
+			<key>one</key>
+			<string>الدردشة، رسالة واحدة غير مقروءة</string>
+			<key>two</key>
+			<string>الدردشة، رسالتان غير مقروءتين</string>
+			<key>few</key>
+			<string>الدردشة، %ld رسائل غير مقروءة</string>
+			<key>many</key>
+			<string>الدردشة، %ld رسالة غير مقروءة</string>
+			<key>other</key>
+			<string>الدردشة، %ld رسالة غير مقروءة</string>
+		</dict>
+	</dict>
+	<key>See all %ld recent jams</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>zero</key>
+			<string>لا توجد جلسات حديثة</string>
+			<key>one</key>
+			<string>عرض الجلسة الأخيرة</string>
+			<key>two</key>
+			<string>عرض الجلستين الأخيرتين</string>
+			<key>few</key>
+			<string>عرض الجلسات الـ %ld الأخيرة</string>
+			<key>many</key>
+			<string>عرض الجلسات الـ %ld الأخيرة</string>
+			<key>other</key>
+			<string>عرض الجلسات الـ %ld الأخيرة</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -166,8 +166,14 @@ sources += [ROOT/'Shared/NativeGuestCompanionProtocol.swift']
 for source in re.findall(r'(?m)^      - path: (\.\./.+)$', (ROOT/'NativeMacGuest/project.yml').read_text()):
     path = (ROOT/'NativeMacGuest'/source).resolve()
     if path.is_file(): sources.append(path)
+    elif path == ROOT/'RockNRoll':
+        # The native target selects only the shared Localizable tables from the iOS source directory.
+        for filename in ('Localizable.strings', 'Localizable.stringsdict'):
+            sources += sorted(path.glob('*.lproj/' + filename))
     elif path.is_dir(): sources += sorted(x for x in path.rglob('*') if x.is_file() and '__pycache__' not in x.parts)
 sources += sorted((ROOT/'ConferenceCore/Sources').rglob('*.swift'))+[ROOT/'ConferenceCore/Package.swift']
+for resource_root in (ROOT/'NativeMacGuest/Resources', ROOT/'ConferenceCore/Sources/ConferenceCore/Resources'):
+    sources += sorted(resource_root.glob('*.lproj/*.strings'))
 sources = sorted(set(sources))
 sources += [ROOT/'NativeMacGuest/VoiceWorker/Worker.entitlements', ROOT/'NativeMacGuest/Package.resolved']
 sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/PrivacyInfo.xcprivacy',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
@@ -175,6 +181,8 @@ sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-liv
 sources += sorted((ROOT/'Dependencies/native-macos/livekit-patches').glob('*.patch'))
 sources += [ROOT/'NativeMacGuest/native_dependencies.py', ROOT/'Dependencies/native-macos/sdk.unified.lock.json']
 if a.distribution == 'direct':
+    sources += sorted(path for path in (ROOT/'NativeMacGuest/AuthorSupport').rglob('*')
+                      if path.is_file() and path.suffix != '.swift' and not path.name.startswith('.'))
     sources += audio_route_recovery_lock_paths(ROOT)
     sources += [ROOT/'Experiments/WebRTCM157'/(name+'.patch') for name in AUDIO_ROUTE_RECOVERY_PATCHES]
 sources += [ROOT/'NativeMacGuest/prepare-sherpa.py', ROOT/'Dependencies/native-macos/sherpa-onnx.lock.json']

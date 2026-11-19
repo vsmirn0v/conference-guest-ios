@@ -1,0 +1,11 @@
+"Enter a complete HTTPS meeting invitation link." = "Gib einen vollständigen HTTPS-Einladungslink zum Meeting ein.";
+"Enter a complete jam invitation link." = "Gib einen vollständigen Einladungslink zur Session ein.";
+"Enter a valid Rock’n’Roll jam link." = "Gib einen gültigen Link zu einer Rock’n’Roll-Session ein.";
+"This jam did not provide a secure HTTPS connection." = "Diese Session hat keine sichere HTTPS-Verbindung bereitgestellt.";
+"This jam link did not provide a valid connection endpoint." = "Dieser Session-Link hat keine gültige Verbindungsadresse bereitgestellt.";
+"This jam redirected to another website. Use an invitation for that website instead." = "Diese Session hat auf eine andere Website weitergeleitet. Verwende eine Einladung von dieser Website.";
+"This jam returned an unexpectedly large response. Try again later." = "Die Antwort der Session war unerwartet groß. Versuche es später erneut.";
+"This message is too long to send. Shorten it and try again." = "Diese Nachricht ist zu lang zum Senden. Kürze sie und versuche es erneut.";
+"Hardware" = "Hardware";
+"Software" = "Software";
+"Sending %@" = "%@ wird gesendet";

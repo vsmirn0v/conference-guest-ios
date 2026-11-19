@@ -1,0 +1,16 @@
+"Meeting in progress" = "Réunion en cours";
+"Microphone status unavailable" = "État du microphone non disponible";
+"Mic off" = "Micro coupé";
+"Mic on" = "Micro activé";
+"Mic paused" = "Mic s'arrête";
+"Open to check meeting" = "Ouvert pour vérifier la réunion";
+"Connected" = "Connecté";
+"Reconnecting…" = "Reconnexion…";
+"Meeting paused" = "Réunion suspendue";
+"Paused for another call" = "Paused pour un autre appel";
+"Open meeting" = "Séance publique";
+"Meeting status outside the app" = "État de la réunion en dehors de l'application";
+"Show meeting name" = "Afficher le nom de la réunion";
+"Meeting status" = "État d ' avancement de la réunion";
+"Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "Afficher l'état du microphone et de la connexion sur l'écran de verrouillage et l'île dynamique lorsque les commandes d'appel système sont désactivées.";
+"Unknown" = "Inconnu";

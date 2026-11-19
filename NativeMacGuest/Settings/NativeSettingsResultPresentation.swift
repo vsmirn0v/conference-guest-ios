@@ -47,7 +47,10 @@ enum NativeSettingsResultPresentation {
     }()
 
     static func descriptionKey(for entry: NativeSettingsSearchCatalog.Entry) -> String {
-        descriptions[entry.id] ?? "Review this setting."
+        #if NATIVE_DIRECT_UPDATES
+        if entry.tab == SupportCopy.settingsTab { return SupportCopy.text("Monthly or one-time support for the developer.") }
+        #endif
+        return descriptions[entry.id] ?? "Review this setting."
     }
 
     static func description(for entry: NativeSettingsSearchCatalog.Entry) -> String {

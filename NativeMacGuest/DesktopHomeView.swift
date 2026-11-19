@@ -51,6 +51,10 @@ struct NativeDesktopHomeView: View {
     @State private var bindingLink = ""
     @State private var bindingSeries = true
     @FocusState private var editingName: Bool
+    #if NATIVE_DIRECT_UPDATES
+    @FocusState private var homeHeadingFocused: Bool
+    @AccessibilityFocusState private var homeHeadingSpoken: Bool
+    #endif
     private var blocksScheduledJoining: Bool {
         editingName || addingFavorite || editRoom != nil || library.calendar.choosingMeeting != nil ||
         library.calendar.reminders.editing != nil || library.setup.isPresented
@@ -368,6 +372,12 @@ struct NativeDesktopHomeView: View {
                     ForEach(library.recent.prefix(4)) { room in roomRow(room) }
                 }
                 Button(L("Open meeting history")) { workspace.openMeetingHistory() }.font(.callout)
+                #if NATIVE_DIRECT_UPDATES
+                SupportInvitation(visit: workspace.supportHomeVisit, safe: workspace.supportVisitIsSafe && !blocksScheduledJoining) {
+                    workspace.settingsTab = SupportCopy.settingsTab
+                    workspace.show(section: .settings)
+                }
+                #endif
             }.padding(28).frame(maxWidth: 1100, alignment: .leading).frame(maxWidth: .infinity)
         }.navigationTitle(L("Home"))
     }
@@ -398,6 +408,17 @@ struct NativeDesktopHomeView: View {
     private var joinForm: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L("Join a meeting")).font(.headline)
+                #if NATIVE_DIRECT_UPDATES
+                .accessibilityAddTraits(.isHeader)
+                .focusable().focused($homeHeadingFocused).accessibilityFocused($homeHeadingSpoken)
+                .onAppear {
+                    if workspace.focusHomeAfterSupport {
+                        workspace.focusHomeAfterSupport = false
+                        homeHeadingFocused = true
+                        homeHeadingSpoken = true
+                    }
+                }
+                #endif
             HStack {
                 TextField(L("Invitation link"), text: $workspace.invitation).textFieldStyle(.roundedBorder).onSubmit { workspace.joinInput() }.accessibilityIdentifier("nativeGuest.invitation")
                 Button(L("Paste")) { workspace.invitation = NSPasteboard.general.string(forType: .string) ?? "" }
@@ -566,6 +587,7 @@ struct NativeDesktopSettingsView: View {
         if obsidian != nil { items.append(.init(tab: 8, title: "Integrations", symbol: "arrow.triangle.branch", group: "Connections")) }
         #if NATIVE_DIRECT_UPDATES
         if updates != nil { items.append(.init(tab: 4, title: "Updates", symbol: "arrow.down.circle", group: "App")) }
+        items.append(.init(tab: SupportCopy.settingsTab, title: SupportCopy.text("Support the author"), symbol: "heart", group: "App"))
         #endif
         return items
     }
@@ -641,8 +663,14 @@ struct NativeDesktopSettingsView: View {
                 }
                 VStack(alignment: .leading, spacing: 0) {
                     if let item = destinations.first(where: { $0.id == selectedDestination }) {
-                        Text(L(item.title)).font(.title2.weight(.semibold))
-                            .padding(.horizontal, 24).padding(.top, 20)
+                        Group {
+                            #if NATIVE_DIRECT_UPDATES
+                            if tab == SupportCopy.settingsTab { AuthorSupportHeading(title: item.title) }
+                            else { Text(L(item.title)) }
+                            #else
+                            Text(L(item.title))
+                            #endif
+                        }.font(.title2.weight(.semibold)).padding(.horizontal, 24).padding(.top, 20)
                     }
                     if let revealTarget, revealTarget.requestID == revealID, let message = revealTarget.availabilityMessage {
                         Text(message)
@@ -825,6 +853,8 @@ struct NativeDesktopSettingsView: View {
         #if NATIVE_DIRECT_UPDATES
         case 4:
             if let updates { NativeDesktopUpdatesView(updates: updates) }
+        case SupportCopy.settingsTab:
+            AuthorSupportView()
         #endif
         default:
             Text(L("Choose a settings section.")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)

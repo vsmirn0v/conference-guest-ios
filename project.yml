@@ -1,7 +1,7 @@
 name: RockNRoll
 options:
   developmentLanguage: en
-  knownRegions: [en, ru]
+  knownRegions: [en, ru, es, ar, hi, fr, de, zh-Hans, id]
   bundleIdPrefix: dev.vsmirn0v
   deploymentTarget:
     iOS: "17.0"

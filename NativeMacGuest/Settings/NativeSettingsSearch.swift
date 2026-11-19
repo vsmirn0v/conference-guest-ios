@@ -149,7 +149,15 @@ enum NativeSettingsSearchCatalog {
         .init("obsidian-updates", "Automatically export updates to Obsidian", 8, "Integrations"),
         .init("obsidian-layout", "Format and placement…", 8, "Integrations"),
         .init("obsidian-vault", "Choose Vault…", 8, "Integrations")
-    ] + AttentionSituation.allCases.map { .init($0.settingsSearchID, $0.titleKey, 6, "Attention by situation", .attention) }
+    ] + AttentionSituation.allCases.map { .init($0.settingsSearchID, $0.titleKey, 6, "Attention by situation", .attention) } + supportEntries
+
+    private static var supportEntries: [Entry] {
+        #if NATIVE_DIRECT_UPDATES
+        return [.init("author-support", SupportCopy.text("Support the author"), SupportCopy.settingsTab, "App")]
+        #else
+        return []
+        #endif
+    }
 
     static func search(query: String, availableTabs: Set<Int>) -> [Entry] {
         func fold(_ text: String) -> String {
@@ -164,7 +172,10 @@ enum NativeSettingsSearchCatalog {
             let titles = [fold(L(entry.title)), fold(entry.title)]
             let description = NativeSettingsResultPresentation.descriptionKey(for: entry)
             let area = entry.assistantArea.map { fold($0.title) } ?? ""
-            let corpus = (titles + [fold(L(entry.section)), fold(entry.section), area, fold(L(description)), fold(description)]).joined(separator: " ")
+            var corpus = (titles + [fold(L(entry.section)), fold(entry.section), area, fold(L(description)), fold(description)]).joined(separator: " ")
+            #if NATIVE_DIRECT_UPDATES
+            if entry.tab == SupportCopy.settingsTab { corpus += " " + fold(SupportCopy.text("donate donation gift tip subscription")) }
+            #endif
             guard tokens.allSatisfy({ corpus.contains($0) }) else { return nil }
             let score = titles.map { title in
                 (title == normalized ? 100 : 0) + (title.hasPrefix(normalized) ? 30 : 0)

@@ -1,0 +1,11 @@
+"Enter a complete HTTPS meeting invitation link." = "Masukkan tautan undangan rapat HTTPS yang lengkap.";
+"Enter a complete jam invitation link." = "Masukkan tautan undangan sesi yang lengkap.";
+"Enter a valid Rock’n’Roll jam link." = "Masukkan tautan sesi Rock’n’Roll yang valid.";
+"This jam did not provide a secure HTTPS connection." = "Sesi ini tidak menyediakan koneksi HTTPS yang aman.";
+"This jam link did not provide a valid connection endpoint." = "Tautan sesi ini tidak menyediakan alamat koneksi yang valid.";
+"This jam redirected to another website. Use an invitation for that website instead." = "Sesi ini mengalihkan Anda ke situs web lain. Gunakan undangan dari situs tersebut.";
+"This jam returned an unexpectedly large response. Try again later." = "Sesi ini mengirim respons yang lebih besar dari perkiraan. Coba lagi nanti.";
+"This message is too long to send. Shorten it and try again." = "Pesan ini terlalu panjang untuk dikirim. Persingkat pesan, lalu coba lagi.";
+"Hardware" = "Perangkat keras";
+"Software" = "Perangkat lunak";
+"Sending %@" = "Mengirim %@";

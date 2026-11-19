@@ -10,11 +10,11 @@ enum VoxError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .format(let detail): "The voice model files are damaged or incomplete (\(detail))."
-        case .unsupported(let detail): "This voice model does not run on this Mac (\(detail))."
+        case .format(let detail): String(format: NSLocalizedString("The voice model files are damaged or incomplete (%@).", comment: ""), detail)
+        case .unsupported(let detail): String(format: NSLocalizedString("This voice model does not run on this Mac (%@).", comment: ""), detail)
         case .context(let detail): detail
-        case .audio(let detail): "The voice model produced unusable audio (\(detail))."
-        case .engine(let detail): "The Neural Engine could not run the voice model (\(detail))."
+        case .audio(let detail): String(format: NSLocalizedString("The voice model produced unusable audio (%@).", comment: ""), detail)
+        case .engine(let detail): String(format: NSLocalizedString("The Neural Engine could not run the voice model (%@).", comment: ""), detail)
         }
     }
 }

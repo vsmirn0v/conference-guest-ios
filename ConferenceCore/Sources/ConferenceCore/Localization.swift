@@ -15,10 +15,20 @@ public enum Localization {
         return String(format: format, locale: formattingLocale, arguments: arguments)
     }
 
+    /// The prompt language must be stable regardless of the device's display language.
+    public static func englishLanguageName(for identifier: String) -> String {
+        let language = Locale(identifier: identifier).language
+        guard let code = language.languageCode?.identifier else { return "English" }
+        if code == "zh" { return "Simplified Chinese" }
+        return Locale(identifier: "en").localizedString(forLanguageCode: code) ?? "English"
+    }
+
     /// App language governs grammatical rules; device region governs formatting.
     public static func formattingLocale(language: String, region: Locale = .current) -> Locale {
         var components = Locale.components(fromIdentifier: region.identifier)
-        components[NSLocale.Key.languageCode.rawValue] = language
+        let selected = Locale.components(fromIdentifier: language)
+        components[NSLocale.Key.languageCode.rawValue] = selected[NSLocale.Key.languageCode.rawValue]
+        components[NSLocale.Key.scriptCode.rawValue] = selected[NSLocale.Key.scriptCode.rawValue]
         return Locale(identifier: Locale.identifier(fromComponents: components))
     }
 }

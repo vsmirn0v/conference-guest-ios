@@ -1,0 +1,16 @@
+"Meeting in progress" = "会议进展";
+"Microphone status unavailable" = "无法获取麦克风状态";
+"Mic off" = "麦克风已关闭";
+"Mic on" = "麦克风已开启";
+"Mic paused" = "米克休息";
+"Open to check meeting" = "开放检查会议";
+"Connected" = "已连接";
+"Reconnecting…" = "正在重新连接…";
+"Meeting paused" = "会议休息";
+"Paused for another call" = "暂停再次通话";
+"Open meeting" = "开放会议";
+"Meeting status outside the app" = "应用程序外的会议状态";
+"Show meeting name" = "显示会议名称";
+"Meeting status" = "会议状态";
+"Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "当系统调用控制关闭时, 在锁定屏幕和动态岛屿上显示麦克风和连接状态。 默认情况下会名会隐藏。";
+"Unknown" = "未知";

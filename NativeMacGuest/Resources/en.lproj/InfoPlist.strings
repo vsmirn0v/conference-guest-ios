@@ -1,0 +1,4 @@
+"NSCalendarsUsageDescription" = "Find meeting invitations in calendars you choose and remind you when meetings start.";
+"NSCalendarsFullAccessUsageDescription" = "Find meeting invitations in calendars you choose and show upcoming meetings.";
+"NSCameraUsageDescription" = "Share your camera when you turn video on in the native guest preview.";
+"NSMicrophoneUsageDescription" = "Share your microphone when you unmute in the native guest preview.";

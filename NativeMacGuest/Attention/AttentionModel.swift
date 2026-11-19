@@ -682,7 +682,7 @@ enum AttentionPrompt {
         }
     }
 
-    private static func languageName(_ code: String) -> String { code.hasPrefix("ru") ? "Russian" : "English" }
+    private static func languageName(_ code: String) -> String { Localization.englishLanguageName(for: code) }
 
     /// Decodes and checks the model's JSON against the window it read. Refs
     /// become line ids; evidence must name lines that exist.

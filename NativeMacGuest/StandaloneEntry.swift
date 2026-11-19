@@ -25,9 +25,9 @@ enum NativeGuestEntryError: Error {
 
     var message: String {
         switch self {
-        case .invalidLaunch: return "The companion launch request is invalid. Join again from Rock’n’Roll."
-        case .invalidName: return "Enter a short display name on one line."
-        case .invalidInvitation: return "Enter a valid HTTPS guest invitation URL."
+        case .invalidLaunch: return NSLocalizedString("The companion launch request is invalid. Join again from Rock’n’Roll.", comment: "")
+        case .invalidName: return NSLocalizedString("Enter a short display name on one line.", comment: "")
+        case .invalidInvitation: return NSLocalizedString("Enter a valid HTTPS guest invitation URL.", comment: "")
         }
     }
 }
@@ -54,9 +54,9 @@ enum NativeGuestMeetingCompletion: Equatable {
     var permitsRejoin: Bool { self != .cleanupFailed }
     var message: String {
         switch self {
-        case .left: return "You left the meeting. Join again whenever you’re ready."
-        case .failed: return "Could not connect. Check the invitation and network, then try again."
-        case .cleanupFailed: return "Media could not stop cleanly. Quit and reopen Rock'N'Roll for Mac before joining again."
+        case .left: return NSLocalizedString("You left the meeting. Join again whenever you’re ready.", comment: "")
+        case .failed: return NSLocalizedString("Could not connect. Check the invitation and network, then try again.", comment: "")
+        case .cleanupFailed: return NSLocalizedString("Media could not stop cleanly. Quit and reopen Rock'N'Roll for Mac before joining again.", comment: "")
         }
     }
 }

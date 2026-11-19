@@ -4,8 +4,8 @@ import AppKit
     private let window: NSWindow
     private let invitation = NSTextField()
     private let name = NSTextField()
-    private let status = NSTextField(wrappingLabelWithString: "Microphone and camera stay off until you enable them in the meeting.")
-    private let join = NSButton(title: "Join meeting", target: nil, action: nil)
+    private let status = NSTextField(wrappingLabelWithString: NSLocalizedString("Microphone and camera stay off until you enable them in the meeting.", comment: ""))
+    private let join = NSButton(title: NSLocalizedString("Join meeting", comment: ""), target: nil, action: nil)
     var onJoin: ((NativeGuestJoinRequest) -> Void)?
 
     override init() {
@@ -17,22 +17,22 @@ import AppKit
         window.delegate = self
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading
         stack.spacing = 12; stack.translatesAutoresizingMaskIntoConstraints = false
-        let title = NSTextField(labelWithString: "Join a guest meeting")
+        let title = NSTextField(labelWithString: NSLocalizedString("Join a guest meeting", comment: ""))
         title.font = .systemFont(ofSize: 22, weight: .semibold)
-        invitation.placeholderString = "HTTPS invitation URL"
+        invitation.placeholderString = NSLocalizedString("HTTPS invitation URL", comment: "")
         invitation.identifier = NSUserInterfaceItemIdentifier("nativeGuest.invitation")
-        invitation.setAccessibilityLabel("Invitation URL")
-        name.placeholderString = "Your name"
+        invitation.setAccessibilityLabel(NSLocalizedString("Invitation URL", comment: ""))
+        name.placeholderString = NSLocalizedString("Your name", comment: "")
         name.stringValue = UserDefaults.standard.string(forKey: "nativeGuest.displayName") ?? NSFullUserName()
         name.identifier = NSUserInterfaceItemIdentifier("nativeGuest.displayName")
-        name.setAccessibilityLabel("Display name")
+        name.setAccessibilityLabel(NSLocalizedString("Display name", comment: ""))
         status.textColor = .secondaryLabelColor
         status.setContentCompressionResistancePriority(.required, for: .vertical)
         join.bezelStyle = .rounded; join.target = self; join.action = #selector(joinMeeting)
         join.keyEquivalent = "\r"
         join.identifier = NSUserInterfaceItemIdentifier("nativeGuest.join")
-        for view in [title, NSTextField(labelWithString: "Invitation URL"), invitation,
-                     NSTextField(labelWithString: "Display name"), name, status, join] {
+        for view in [title, NSTextField(labelWithString: NSLocalizedString("Invitation URL", comment: "")), invitation,
+                     NSTextField(labelWithString: NSLocalizedString("Display name", comment: "")), name, status, join] {
             stack.addArrangedSubview(view)
         }
         let content = window.contentView!; content.addSubview(stack)
@@ -64,10 +64,10 @@ import AppKit
         do {
             let request = try NativeGuestJoinRequest.parse(invitation: invitation.stringValue, displayName: name.stringValue)
             UserDefaults.standard.set(request.displayName, forKey: "nativeGuest.displayName")
-            status.stringValue = "Microphone and camera stay off until you enable them in the meeting."
+            status.stringValue = NSLocalizedString("Microphone and camera stay off until you enable them in the meeting.", comment: "")
             onJoin?(request)
         } catch {
-            status.stringValue = (error as? NativeGuestEntryError)?.message ?? "Could not read the invitation."
+            status.stringValue = (error as? NativeGuestEntryError)?.message ?? NSLocalizedString("Could not read the invitation.", comment: "")
         }
     }
 }
