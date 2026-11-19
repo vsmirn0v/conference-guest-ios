@@ -126,6 +126,8 @@ struct AssistantAgentToolDescriptor: Codable, Equatable, Identifiable, Sendable 
     /// External tools (MCP) accept arguments their schema-less listings cannot
     /// enumerate; the provider validates them at dispatch.
     var allowsArbitraryArguments = false
+    /// Provider-owned JSON Schema, also enforced by that provider at dispatch.
+    var inputSchema: AssistantJSON? = nil
     var id: String { name }
 }
 
@@ -324,6 +326,8 @@ final class AssistantAgentToolRegistry: @unchecked Sendable {
 
     func validate(_ call: AssistantAgentToolCall) throws -> AssistantAgentToolCall {
         guard let tool = tools[call.name] else { throw AssistantAgentError.unknownTool(call.name) }
+        // A provider-owned schema is enforced at dispatch so the model receives its exact error.
+        if tool.descriptor.inputSchema != nil { return call }
         guard case .object = call.arguments else { throw AssistantAgentError.invalidArguments(call.name, "object expected") }
         var validated = call
         // Native tools may canonicalize an exact selected-meeting alias before the generic

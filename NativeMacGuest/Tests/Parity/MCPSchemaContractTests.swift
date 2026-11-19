@@ -169,7 +169,7 @@ import XCTest
         // handler drifted — fix the code, not this table, after updating CONTRACTS.md.
         let expected: [String: (fields: Set<String>, required: Set<String>)] = [
             "rocknroll_status": ([], []),
-            "rocknroll_list_meetings": (["from", "to", "query", "kind", "limit", "cursor"], []),
+            "rocknroll_list_meetings": (["from", "to", "query", "kind", "date_field", "sort_by", "sort_order", "limit", "cursor"], []),
             "rocknroll_get_meeting": (["meeting_id"], ["meeting_id"]),
             "rocknroll_get_transcript": (["meeting_id", "from", "to", "limit", "cursor"], ["meeting_id"]),
             "rocknroll_get_outcome": (["outcome_id"], ["outcome_id"]),

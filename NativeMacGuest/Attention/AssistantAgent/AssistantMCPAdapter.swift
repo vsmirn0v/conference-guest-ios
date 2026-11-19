@@ -41,8 +41,9 @@ struct AssistantExternalTool: AssistantAgentTool {
             let json = try await provider.call(descriptor.name, arguments: arguments)
             return .init(callID: call.id, toolName: call.name, json: json,
                          summary: L("External tool %@ finished.", descriptor.name))
-        } catch let error as AssistantAgentError {
-            return .error(call, error.localizedDescription)
+        } catch let failure as MCPToolFailure {
+            return .init(callID: call.id, toolName: call.name, json: .object(["error": AssistantJSON.make(failure.envelope)]),
+                         summary: failure.message, isError: true)
         } catch {
             return .error(call, error.localizedDescription)
         }

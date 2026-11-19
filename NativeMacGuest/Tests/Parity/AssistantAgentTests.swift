@@ -109,11 +109,8 @@ final class AssistantAgentTests: XCTestCase {
             XCTAssertEqual(tool, "rocknroll_get_meeting")
         }
         // Wrong type for an existing argument.
-        XCTAssertThrowsError(try registry.validate(call("rocknroll_list_meetings",
-            .object(["limit": .string("ten")]))))
-        // Allowed-value violation.
-        XCTAssertThrowsError(try registry.validate(call("rocknroll_list_meetings",
-            .object(["kind": .string("bogus")]))))
+        XCTAssertThrowsError(try registry.validate(call("rocknroll_list_tasks",
+            .object(["done": .string("yes")]))))
         // Settings allowlist: keys outside the whitelist are rejected at execution.
         let settings = call("rocknroll_get_settings", .object(["keys": .array([.string("api_key")])]))
         let validatedSettings = try registry.validate(settings)
@@ -133,29 +130,6 @@ final class AssistantAgentTests: XCTestCase {
         XCTAssertFalse(result.evidence.isEmpty, "Search must carry evidence provenance")
         let matches = result.json["matches"]?.arrayValue ?? []
         XCTAssertTrue(matches.contains { $0["kind"]?.stringValue == "outcome" })
-    }
-
-    func testCalendarOccurrencesAreOrderedAndBounded() async throws {
-        let snapshot = fixture()
-        let registry = registry(snapshot: snapshot)
-        let after = ISO8601DateFormatter().string(from: snapshot.now)
-        let validated = try registry.validate(call("rocknroll_list_calendar_occurrences",
-            .object(["after": .string(after), "limit": .int(10)]), id: "cal1"))
-        let result = try await registry.tool(named: "rocknroll_list_calendar_occurrences")!
-            .execute(validated, arguments: validated.arguments)
-        let occurrences = result.json["occurrences"]?.arrayValue ?? []
-        XCTAssertEqual(occurrences.count, 2)
-        XCTAssertEqual(occurrences[0]["occurrence_id"]?.stringValue, "occ-1")
-        XCTAssertEqual(occurrences[0]["series_id"]?.stringValue, "daily-series")
-    }
-
-    func testListMeetingsDeduplicatesSeriesProjections() async throws {
-        let registry = registry(snapshot: fixture())
-        let validated = try registry.validate(call("rocknroll_list_meetings", .object(["kind": .string("all"), "limit": .int(20)])))
-        let result = try await registry.tool(named: "rocknroll_list_meetings")!.execute(validated, arguments: validated.arguments)
-        let meetings = result.json["meetings"]?.arrayValue ?? []
-        XCTAssertEqual(meetings.count, 4, "3 distinct outcomes + 1 active meeting")
-        XCTAssertTrue(meetings.contains { $0["active"]?.boolValue == true })
     }
 
     // MARK: Runtime budget and flow
@@ -353,10 +327,11 @@ final class AssistantAgentTests: XCTestCase {
     /// S1 + S5 shape: a read/synthesis turn never touches action tools or approvals.
     func testReadOnlyTurnsNeverProduceActionsOrApprovals() async throws {
         let snapshot = fixture()
-        let meetingID = snapshot.meetings[0].id
         let outcomeIDs = snapshot.outcomes.map { $0.id.uuidString }
+        let registry = registry(snapshot: snapshot)
+        await registry.registerMeetingMCPTools(AssistantMCPLoopbackProvider(backend: StubMCPBackend()), includeAdditionalReads: false)
         let script: [AssistantAgentModelStep] = [
-            .toolCalls([call("rocknroll_list_meetings", .object(["kind": .string("outcome"), "limit": .int(3)]), id: "m1")]),
+            .toolCalls([call("mcp__rocknroll_list_meetings", .object(["kind": .string("outcome"), "limit": .int(3)]), id: "m1")]),
             .toolCalls(outcomeIDs.map { call("rocknroll_get_outcome", .object(["outcome_id": .string($0)]), id: "o\($0)") }),
             .response("Three meetings: Planning 3, 2, 1 with dated summaries.", [.init(id: "e1", kind: "outcome", title: "Planning 3", at: nil)]),
         ]
@@ -364,8 +339,8 @@ final class AssistantAgentTests: XCTestCase {
         let runtime = AssistantRuntime()
         let coordinator = AssistantActionCoordinator()
         let result = await runtime.submit("latest three meetings summary please",
-                                          environment: environment(snapshot: snapshot, model: model,
-                                                                   coordinator: coordinator))
+                                          environment: .init(registry: registry, model: model, context: AssistantNativeToolProvider.context(snapshot: snapshot),
+                                                             approvalPolicy: { _, _ in .ask }, actionCoordinator: coordinator))
         guard case .success(.completed(let text, let sources, _)) = result else { return XCTFail("got \(result)") }
         XCTAssertTrue(text.contains("Planning"))
         XCTAssertFalse(sources.isEmpty)
@@ -695,7 +670,7 @@ final class AssistantAgentTests: XCTestCase {
             .subtracting(["rocknroll_run_assistant"])
         XCTAssertEqual(Set(descriptors.map { String($0.name.dropFirst("mcp__".count)) }), readOnlyNames)
         XCTAssertFalse(descriptors.contains { $0.name.contains("run_assistant") })
-        XCTAssertTrue(descriptors.allSatisfy { $0.name.hasPrefix("mcp__") && !$0.requiresApproval && $0.allowsArbitraryArguments })
+        XCTAssertTrue(descriptors.allSatisfy { $0.name.hasPrefix("mcp__") && !$0.requiresApproval && $0.inputSchema != nil })
         // Full policy round-trip: loopback passes its own server id and trust gates.
         let exposed = await AssistantExternalToolPolicy.exposedTools(
             provider, serverID: assistantMCPLoopbackServerID,
@@ -725,6 +700,205 @@ final class AssistantAgentTests: XCTestCase {
         await XCTAssertThrowsErrorAsync({ try await provider.call("mcp__rocknroll_run_assistant", arguments: .object([:])) })
         await XCTAssertThrowsErrorAsync({ try await provider.call("mcp__rocknroll_update_settings", arguments: .object([:])) })
         await XCTAssertThrowsErrorAsync({ try await provider.call("rocknroll_status", arguments: .object([:])) })
+    }
+
+    private struct MeetingHistory {
+        let snapshot: AssistantNativeSnapshot
+        let registry: AssistantAgentToolRegistry
+        let latestID: String
+        let dailyID: String
+        let outcomeID: String
+        let library: MeetingLibraryStore
+    }
+
+    private func meetingHistory() async throws -> MeetingHistory {
+        let name = "assistant-meeting-history-\(UUID())"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        let store = AttentionStore(root: root, defaults: defaults, keychain: .init(service: name))
+        let coordinator = AttentionCoordinator(store: store)
+        addTeardownBlock { @MainActor in
+            coordinator.stop()
+            store.meetingLibrary.workspaceJournal.close()
+            defaults.removePersistentDomain(forName: name)
+            try? FileManager.default.removeItem(at: root)
+        }
+        closeLibraryAtTeardown(store)
+        await store.waitForMeetingLibrary()
+        let library = store.meetingLibrary.store
+        let iso = ISO8601DateFormatter()
+        func time(_ dayAndTime: String) -> Date {
+            iso.date(from: "2026-11-\(dayAndTime):00+03:00")!
+        }
+        func session(_ title: String, _ start: String, series: String? = nil,
+                     state: MeetingSessionRecord.State = .ended) -> MeetingSessionRecord {
+            let date = time(start)
+            return MeetingSessionRecord(title: title, calendarSeriesID: series, startedAt: date,
+                                        endedAt: date + 900, state: state)
+        }
+        let daily = session("CTO Daily", "18T10:00", series: "cto-series")
+        let earlier = session("CTO Daily", "19T00:15", series: "cto-series")
+        let latest = session("Infrastructure Review", "19T13:00")
+        for record in [daily, earlier, latest, session("Budget Review", "18T15:00"),
+                       session("Planning", "19T11:00", state: .failed)] {
+            try await library.upsertSession(record)
+        }
+        let outcome = MeetingOutcome(meetingID: daily.id, meetingTitle: daily.title, endedAt: daily.endedAt!,
+                                     summary: "Обсудили запуск проекта «Кедр» и перенос проверки на пятницу.")
+        try await library.saveOutcome(outcome, state: .ready)
+        _ = try await library.saveNote(sessionID: earlier.id, markdown: "# Другая встреча серии")
+        let journal = store.meetingLibrary.workspaceJournal
+        journal.begin(sessionID: latest.id, title: latest.title, calendarSeriesID: nil, roomIdentity: nil, at: latest.startedAt)
+        journal.observe(sessionID: latest.id, events: [
+            .init(id: "speech:fixture", kind: .transcript, occurredAt: latest.startedAt,
+                  source: "local", author: "Анна", text: "Обсудили перенос сервиса «Маяк» в новый кластер."),
+            .init(id: "speech:private", kind: .transcript, occurredAt: latest.startedAt + 5,
+                  source: "local", author: "Анна", text: "Личная заметка", isPrivate: true),
+        ])
+        journal.end(sessionID: latest.id, at: latest.endedAt!)
+
+        var snapshot = fixture(now: time("19T15:56"))
+        snapshot.language = "ru"
+        snapshot.timeZoneIdentifier = "Europe/Moscow"
+        snapshot.contextMeetingID = nil
+        snapshot.meetings = []
+        snapshot.outcomes = []
+        snapshot.calendar = []
+        snapshot.actionTargets = []
+        let registry = registry(snapshot: snapshot)
+        let backend = NativeDesktopMCPBackend(defaults: defaults, attention: { coordinator })
+        await registry.registerMeetingMCPTools(AssistantMCPLoopbackProvider(backend: backend), includeAdditionalReads: false)
+        return MeetingHistory(snapshot: snapshot, registry: registry, latestID: mcpSessionID(latest.id),
+                              dailyID: mcpSessionID(earlier.id), outcomeID: mcpOutcomeID(outcome.id), library: library)
+    }
+
+    func testMeetingQueryCountsSessionsAndKeepsCursorAndEvidenceStable() async throws {
+        let history = try await meetingHistory()
+        XCTAssertEqual(history.registry.descriptors.filter { $0.name.contains("list_meetings") }.map(\.name),
+                       ["mcp__rocknroll_list_meetings"])
+        let definition = try XCTUnwrap(nativeMCPToolDefinitions().first { $0.name == "rocknroll_list_meetings" })
+        let descriptor = try XCTUnwrap(history.registry.tool(named: "mcp__rocknroll_list_meetings")).descriptor
+        XCTAssertEqual(AssistantJSON.make(OpenAIAssistantAgentModel.parameters(descriptor)), AssistantJSON.make(definition.schema.json))
+        func execute(_ name: String, _ args: [String: AssistantJSON]) async throws -> AssistantAgentToolResult {
+            let call = try history.registry.validate(self.call("mcp__rocknroll_" + name, .object(args)))
+            return try await XCTUnwrap(history.registry.tool(named: call.name)).execute(call, arguments: call.arguments)
+        }
+        var filters: [String: AssistantJSON] = [
+            "kind": .string("attended"), "from": .string("2026-11-19T00:00:00+03:00"),
+            "to": .string("2026-11-20T00:00:00+03:00"), "date_field": .string("started_at"),
+            "sort_by": .string("ended_at"), "sort_order": .string("desc"), "limit": .int(1),
+        ]
+        let first = try await execute("list_meetings", filters)
+        XCTAssertFalse(first.isError)
+        XCTAssertEqual(first.json["total_matches"]?.intValue, 2)
+        let latest = try XCTUnwrap(first.json["items"]?.arrayValue?.first)
+        XCTAssertEqual(latest["id"]?.stringValue, history.latestID)
+        XCTAssertEqual(latest["related"]?["transcript_meeting_id"]?.stringValue, history.latestID)
+        let content = AssistantAgentModelPrompt.messageObject(
+            .tool(first), timeZone: TimeZone(identifier: history.snapshot.timeZoneIdentifier))["content"] as? String
+        XCTAssertTrue(content?.contains(history.latestID) == true)
+        XCTAssertTrue(content?.contains("2026-11-19T13:00:00+03:00") == true)
+        let byDefaultDate = try await execute("list_meetings", [
+            "kind": .string("attended"), "from": .string("2026-11-19T00:00:00+03:00"),
+            "to": .string("2026-11-19T23:59:59+03:00"),
+        ])
+        XCTAssertEqual(byDefaultDate.json["total_matches"]?.intValue, 2)
+        filters["cursor"] = try XCTUnwrap(first.json["next_cursor"])
+        try await history.library.upsertSession(.init(title: "New arrival", startedAt: history.snapshot.now, state: .active))
+        let second = try await execute("list_meetings", filters)
+        XCTAssertEqual(second.json["total_matches"]?.intValue, 2)
+        XCTAssertEqual(second.json["items"]?.arrayValue?.first?["id"]?.stringValue, history.dailyID)
+        XCTAssertEqual(second.json["next_cursor"], .null)
+        let notes = try await execute("get_notes", ["meeting_id": .string(history.dailyID)])
+        XCTAssertEqual(notes.json["markdown"]?.stringValue, "# Другая встреча серии")
+        let transcript = try await execute("get_transcript", ["meeting_id": .string(history.latestID)])
+        XCTAssertEqual(transcript.json["items"]?.arrayValue?.count, 1)
+        let midnight = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T00:00:00+03:00"))
+        let overnight = MeetingSessionRecord(title: "Overnight maintenance", startedAt: midnight - 300,
+                                             endedAt: midnight + 300, state: .ended)
+        try await history.library.upsertSession(overnight)
+        let activity = try await execute("list_meetings", [
+            "kind": .string("active"), "from": .string("2026-11-19T00:00:00+03:00"),
+            "to": .string("2026-11-20T00:00:00+03:00"),
+        ])
+        XCTAssertEqual(activity.json["activity_overlap"]?.boolValue, true)
+        XCTAssertEqual(activity.json["total_matches"]?.intValue, 4)
+        XCTAssertTrue(activity.json["items"]?.arrayValue?.contains {
+            $0["id"]?.stringValue == mcpSessionID(overnight.id)
+        } == true)
+        let badSort = try await execute("list_meetings", ["sort_by": .string("unknown")])
+        XCTAssertTrue(badSort.isError)
+        XCTAssertEqual(badSort.json["error"]?["code"]?.stringValue, "INVALID_ARGUMENT")
+        XCTAssertEqual(badSort.json["error"]?["details"]?["field"]?.stringValue, "sort_by")
+    }
+
+    private final class RecordedModel: AssistantAgentModel {
+        let model: OpenAIAssistantAgentModel
+        var steps: [AssistantAgentModelStep] = []
+
+        init(_ model: OpenAIAssistantAgentModel) { self.model = model }
+
+        func next(_ request: AssistantAgentModelRequest) async throws -> AssistantAgentModelStep {
+            if case .tool(let result) = request.messages.last {
+                print("Russian meeting evaluation MCP result: \(result.toolName) \(result.json.jsonString)")
+            }
+            let step = try await model.next(request)
+            steps.append(step)
+            return step
+        }
+    }
+
+    /// Set TEST_RUNNER_ROCK_MEETING_MODEL to the model ID on a local OpenAI-compatible server.
+    func testRealModelAnswersRussianMeetingQuestions() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let modelID = env["ROCK_MEETING_MODEL"] ?? env["TEST_RUNNER_ROCK_MEETING_MODEL"] else {
+            throw XCTSkip("Set TEST_RUNNER_ROCK_MEETING_MODEL to run the local model evaluation")
+        }
+        let history = try await meetingHistory()
+        let url = env["ROCK_MEETING_MODEL_URL"] ?? "http://127.0.0.1:18081/v1"
+        let nativeToolCalling = env["ROCK_MEETING_MODEL_STRUCTURED"] != "1"
+        let model = RecordedModel(OpenAIAssistantAgentModel(
+            provider: .init(kind: .local, baseURL: url, model: modelID), key: nil, timeout: 180,
+            nativeToolCalling: nativeToolCalling))
+        let environment = AssistantAgentEnvironment(registry: history.registry, model: model,
+            context: AssistantNativeToolProvider.context(snapshot: history.snapshot),
+            approvalPolicy: { _, _ in .ask }, actionCoordinator: AssistantActionCoordinator())
+        let cases: [(question: String, expected: [String], tool: String, evidenceID: String?)] = [
+            ("сколько сегодня было активных встреч?", ["2", "две"], "list_meetings", nil),
+            ("сколько встреч было сегодня?", ["2", "две"], "list_meetings", nil),
+            ("о чем говорили на последней встрече?", ["маяк"], "get_transcript", history.latestID),
+            ("о чем говорили на вчерашнем дейлике?", ["кедр"], "get_outcome", history.outcomeID),
+        ]
+        for test in cases {
+            model.steps.removeAll()
+            let runtime = AssistantRuntime()
+            let result = await runtime.submit(test.question, environment: environment)
+            let tools = model.steps.flatMap { step -> [AssistantAgentToolCall] in
+                if case .toolCalls(let calls) = step { return calls }
+                return []
+            }
+            print("Russian meeting evaluation tools: \(tools)")
+            guard case .success(.completed(let answer, _, _)) = result else {
+                XCTFail("\(test.question) → \(result)")
+                continue
+            }
+            print("Russian meeting evaluation: \(test.question) → \(answer)")
+            let lower = answer.lowercased()
+            let words = lower.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            XCTAssertTrue(test.expected.contains { test.evidenceID == nil ? words.contains($0) : lower.contains($0) }, answer)
+            XCTAssertTrue(tools.contains { call in
+                guard call.name == "mcp__rocknroll_list_meetings" else { return false }
+                let kind = call.arguments["kind"]?.stringValue
+                return kind == "attended" || (kind == "active" && call.arguments["from"]?.stringValue != nil
+                                               && call.arguments["to"]?.stringValue != nil)
+            })
+            XCTAssertTrue(tools.contains {
+                $0.name == "mcp__rocknroll_" + test.tool &&
+                    (test.evidenceID == nil ||
+                     ($0.arguments["meeting_id"]?.stringValue ?? $0.arguments["outcome_id"]?.stringValue) == test.evidenceID)
+            })
+            XCTAssertNil(runtime.pendingApproval)
+        }
     }
 
     private func XCTAssertThrowsErrorAsync(_ expression: () async throws -> AssistantJSON,

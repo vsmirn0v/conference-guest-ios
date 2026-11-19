@@ -19,12 +19,22 @@
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "List active, favorite, recent, calendar and outcome meetings.",
+      "description": "List and count meetings. Use kind=attended for recorded sessions, calendar for scheduled occurrences, and active for meetings open now or overlapping a date range. total_matches counts all matches before pagination.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "cursor": {
             "description": "Opaque page cursor copied verbatim from a previous response's next_cursor. Reusing a cursor with changed filters fails with CURSOR_EXPIRED.",
+            "type": "string"
+          },
+          "date_field": {
+            "default": "date",
+            "description": "Date used for from/to. date uses the customary date, including start for attended sessions. With active and date bounds, date matches sessions overlapping the range.",
+            "enum": [
+              "date",
+              "started_at",
+              "ended_at"
+            ],
             "type": "string"
           },
           "from": {
@@ -33,8 +43,9 @@
             "type": "string"
           },
           "kind": {
-            "description": "Restrict results to one meeting kind.",
+            "description": "Choose a record type. Omitted returns the legacy mixed catalog; specify a kind for meaningful counts.",
             "enum": [
+              "attended",
               "active",
               "favorite",
               "recent",
@@ -51,7 +62,27 @@
             "type": "integer"
           },
           "query": {
-            "description": "Optional case-insensitive substring filter over titles and summaries; the value is trimmed and a whitespace-only filter is ignored.",
+            "description": "Optional literal case-insensitive substring over titles and summaries. Trimmed. Omit for semantic matching of informal names against date-scoped candidates.",
+            "type": "string"
+          },
+          "sort_by": {
+            "default": "date",
+            "description": "Sort field. date uses the record's customary date.",
+            "enum": [
+              "date",
+              "started_at",
+              "ended_at",
+              "title"
+            ],
+            "type": "string"
+          },
+          "sort_order": {
+            "default": "asc",
+            "description": "Sort direction. Defaults to oldest first for date fields.",
+            "enum": [
+              "asc",
+              "desc"
+            ],
             "type": "string"
           },
           "to": {
@@ -92,7 +123,7 @@
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Get the authoritative transcript available to the native meeting.",
+      "description": "Read an active session's transcript or a saved session's captured transcript. Historical captures can be partial.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -113,7 +144,7 @@
             "type": "integer"
           },
           "meeting_id": {
-            "description": "Opaque meeting identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title. Must identify an active session (id starts with session:).",
+            "description": "Opaque meeting identifier: the id of an item returned by rocknroll_list_meetings or rocknroll_search — never a meeting title. Must identify a session (id starts with session:).",
             "minLength": 1,
             "type": "string"
           },
@@ -140,7 +171,7 @@
         "additionalProperties": false,
         "properties": {
           "outcome_id": {
-            "description": "Opaque outcome identifier: the id of a kind:outcome item from rocknroll_list_meetings or rocknroll_search, or the meeting_id field of task items. This is not a meeting_id.",
+            "description": "Opaque outcome identifier: related.outcome_id of an attended item, the id of an outcome item, or the meeting_id field of a task item. Never pass a session ID here.",
             "minLength": 1,
             "type": "string"
           }

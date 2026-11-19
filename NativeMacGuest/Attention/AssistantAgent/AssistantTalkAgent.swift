@@ -87,13 +87,8 @@ extension AssistantTalkController {
                 return await self.attention?.store.meetingLibrary.note(sessionID: sessionID)
             })
         let registry = AssistantNativeToolProvider.registry(snapshot: snapshot, hooks: hooks)
-        // External MCP tools are read-only and gated by the persisted trust policy.
-        if attention.store.agentExternalToolsEnabled, let externalProvider = attention.externalToolProvider {
-            let trust = AssistantExternalToolTrust(disabled: false,
-                                                   enabledServers: [assistantMCPLoopbackServerID],
-                                                   readOnlyServers: [assistantMCPLoopbackServerID])
-            registry.register(externalTools: await AssistantExternalToolPolicy.exposedTools(
-                externalProvider, serverID: assistantMCPLoopbackServerID, trust: trust))
+        if let provider = attention.externalToolProvider {
+            await registry.registerMeetingMCPTools(provider, includeAdditionalReads: attention.store.agentExternalToolsEnabled)
         }
         let globalDefault = attention.store.agentMeetingSendDefault
         let overrides = sendPolicyOverrides

@@ -251,7 +251,7 @@ struct NativeGuestApplication {
                 let service = NativeDesktopMCPService(workspace: workspace)
                 mcpService = service
                 workspace.mcpService = service
-                // The assistant's optional MCP tools talk to the same backend in-process.
+                // The assistant and public MCP endpoint share this backend in-process.
                 workspace.attention.externalToolProvider = AssistantMCPLoopbackProvider(backend: service.toolBackend)
                 Task { await service.start() }
             }

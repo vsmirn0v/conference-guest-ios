@@ -123,7 +123,6 @@ private let meetingIDFromList = "Opaque meeting identifier: the id of an item re
 
 func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
     let meetingID = MCPToolProperty.string(meetingIDFromList, minLength: 1)
-    let sessionID = MCPToolProperty.string(meetingIDFromList + " Must identify an active session (id starts with session:).", minLength: 1)
     let sectionsRead = MCPToolProperty.array(
         "Settings sections to include. Defaults to all three.",
         items: .string("Section name.", enumValues: ["app", "attention", "meeting"]))
@@ -155,28 +154,32 @@ func nativeMCPToolDefinitions() -> [MCPToolDefinition] {
         .init(name: "rocknroll_status", description: "Report native backend, capabilities and app state.",
               readOnly: true, scope: "meetings:read",
               schema: .init()),
-        .init(name: "rocknroll_list_meetings", description: "List active, favorite, recent, calendar and outcome meetings.",
+        .init(name: "rocknroll_list_meetings",
+              description: "List and count meetings. Use kind=attended for recorded sessions, calendar for scheduled occurrences, and active for meetings open now or overlapping a date range. total_matches counts all matches before pagination.",
               readOnly: true, scope: "meetings:read",
               schema: .init(properties: [
-                "query": .string("Optional case-insensitive substring filter over titles and summaries; the value is trimmed and a whitespace-only filter is ignored."),
-                "kind": .string("Restrict results to one meeting kind.", enumValues: ["active", "favorite", "recent", "calendar", "outcome"]),
+                "query": .string("Optional literal case-insensitive substring over titles and summaries. Trimmed. Omit for semantic matching of informal names against date-scoped candidates."),
+                "kind": .string("Choose a record type. Omitted returns the legacy mixed catalog; specify a kind for meaningful counts.", enumValues: ["attended", "active", "favorite", "recent", "calendar", "outcome"]),
                 "from": timeRange["from"]!, "to": timeRange["to"]!,
+                "date_field": .string("Date used for from/to. date uses the customary date, including start for attended sessions. With active and date bounds, date matches sessions overlapping the range.", enumValues: ["date", "started_at", "ended_at"], default: "date"),
+                "sort_by": .string("Sort field. date uses the record's customary date.", enumValues: ["date", "started_at", "ended_at", "title"], default: "date"),
+                "sort_order": .string("Sort direction. Defaults to oldest first for date fields.", enumValues: ["asc", "desc"], default: "asc"),
                 "limit": pagination["limit"]!, "cursor": pagination["cursor"]!,
               ])),
         .init(name: "rocknroll_get_meeting", description: "Get one native meeting record.",
               readOnly: true, scope: "meetings:read",
               schema: .init(properties: ["meeting_id": meetingID], required: ["meeting_id"])),
-        .init(name: "rocknroll_get_transcript", description: "Get the authoritative transcript available to the native meeting.",
+        .init(name: "rocknroll_get_transcript", description: "Read an active session's transcript or a saved session's captured transcript. Historical captures can be partial.",
               readOnly: true, scope: "meetings:read",
               schema: .init(properties: [
-                "meeting_id": sessionID,
+                "meeting_id": .string(meetingIDFromList + " Must identify a session (id starts with session:).", minLength: 1),
                 "from": timeRange["from"]!, "to": timeRange["to"]!,
                 "limit": pagination["limit"]!, "cursor": pagination["cursor"]!,
               ], required: ["meeting_id"])),
         .init(name: "rocknroll_get_outcome", description: "Get one stored historical outcome by outcome ID. Task items include the current profile’s archived flag.",
               readOnly: true, scope: "meetings:read",
               schema: .init(properties: [
-                "outcome_id": .string("Opaque outcome identifier: the id of a kind:outcome item from rocknroll_list_meetings or rocknroll_search, or the meeting_id field of task items. This is not a meeting_id.", minLength: 1),
+                "outcome_id": .string("Opaque outcome identifier: related.outcome_id of an attended item, the id of an outcome item, or the meeting_id field of a task item. Never pass a session ID here.", minLength: 1),
               ], required: ["outcome_id"])),
         .init(name: "rocknroll_get_notes", description: "Get the raw Markdown note for one meeting by a persisted or active session ID. Notes are user-authored personal records; they are attributed separately from outcomes and transcripts. Never a write: this tool changes nothing.",
               readOnly: true, scope: "meetings:read",

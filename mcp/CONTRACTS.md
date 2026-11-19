@@ -22,27 +22,40 @@ assume UUID format (only `action_id` is a UUID).
 ### rocknroll_status — no arguments
 
 ### rocknroll_list_meetings
-Reads: active, favorite, recent, calendar and outcome meetings, sorted by date (undated
-cards last among equals, then by id).
+Reads recorded attendance, active meetings, favorite and recent rooms, calendar occurrences,
+and saved outcomes. Use `kind: "attended"` to count each recorded session once, including
+sessions without an outcome. Attended rows include `started_at`, `ended_at`, `state`,
+`series_id`, and any available session-specific evidence IDs in `related`.
 
 | Field | Type | Req | Default | Notes |
 |-|-|-|-|-|
-| `from` | string, `date-time` | | | lower bound on start/ended_at/last_joined_at |
+| `from` | string, `date-time` | | | inclusive lower bound on the selected date field |
 | `to` | string, `date-time` | | | exclusive upper bound |
 | `query` | string | | | trimmed; whitespace-only = no filter; case-insensitive substring over title + summary |
-| `kind` | string enum `active\|favorite\|recent\|calendar\|outcome` | | all kinds | |
+| `kind` | string enum `attended\|active\|favorite\|recent\|calendar\|outcome` | | legacy mixed catalog | specify a kind for comparable records |
+| `date_field` | string enum `date\|started_at\|ended_at` | | `date` | `date` uses the record's customary date, including start with end as a fallback for attendance |
+| `sort_by` | string enum `date\|started_at\|ended_at\|title` | | `date` | stable tie-break by ID |
+| `sort_order` | string enum `asc\|desc` | | `asc` | |
 | `limit` | integer 1…100 | | 20 | out-of-range values rejected (`reason: range`) |
 | `cursor` | string | | | see pagination conventions |
+
+Results include `total_matches` before pagination, `filters`, and `unknown_date_count`.
+When a date filter excludes records with no usable date, coverage is partial. Supply the
+same filters and sort with each cursor to read pages from the same query result.
+
+With `kind: "active"`, the default date field, and at least one date bound, the query
+returns recorded sessions whose activity overlaps the range, including sessions that
+started before it. The result sets `activity_overlap: true`. With no bounds or an
+explicit start/end field, `active` queries open meetings.
 
 ### rocknroll_get_meeting
 | Field | Type | Req | Notes |
 |-|-|-|
-| `meeting_id` | string, minLength 1 | * | opaque item `id` from `rocknroll_list_meetings` or `rocknroll_search`. Prefix selects the record: `session:` active meeting, `room:` favorite/recent room, `occurrence:` calendar event, `outcome:` stored outcome (with decisions, open questions, task ids). Other prefixes → `INVALID_ARGUMENT`. |
+| `meeting_id` | string, minLength 1 | * | opaque item `id` from `rocknroll_list_meetings` or `rocknroll_search`. Prefix selects the record: `session:` active or saved session, `room:` favorite/recent room, `occurrence:` calendar event, `outcome:` stored outcome (with decisions, open questions, task ids). Other prefixes → `INVALID_ARGUMENT`. |
 
 ### rocknroll_get_transcript
-Authoritative transcript of an **active session** (service transcript plus local
-transcription, de-duplicated, chronological). Coverage is reported per response
-(`complete` only when the service proves a full stream).
+Reads an active session's service and local transcripts, or the public lines
+captured by the app for a saved session. Saved transcript coverage is partial.
 
 | Field | Type | Req | Notes |
 |-|-|-|-|
@@ -53,7 +66,7 @@ transcription, de-duplicated, chronological). Coverage is reported per response
 ### rocknroll_get_outcome
 | Field | Type | Req | Notes |
 |-|-|-|
-| `outcome_id` | string, minLength 1 | * | the `id` of a `kind:"outcome"` item from `rocknroll_list_meetings` / `rocknroll_search`, or the `meeting_id` field of task items. **Not** a `meeting_id`. |
+| `outcome_id` | string, minLength 1 | * | `related.outcome_id` of an attended item, the `id` of an outcome item, or the `meeting_id` field of a task item |
 
 ### rocknroll_get_notes
 Raw Markdown of the user's personal note for one meeting. Notes are user-authored

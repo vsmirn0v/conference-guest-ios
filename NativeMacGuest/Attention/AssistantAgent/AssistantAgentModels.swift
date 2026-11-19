@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import CoreFoundation
 
 /// One bounded model step. The model may request calls, answer, or ask; it never executes
 /// or authorizes a native action itself.
@@ -20,27 +21,68 @@ struct AssistantAgentModelPrompt {
     UUID and the user refers to the current or selected meeting, use that exact UUID for meeting_id. \
     Include every required argument in every tool call; never use empty arguments for a tool with \
     required arguments. If evidence is missing or partial, say so. If multiple meetings or calendar \
-    series match, ask one targeted question instead of guessing by title.
+    series remain equally plausible after checking evidence, ask one targeted question.
     """
 
-    static func messages(_ request: AssistantAgentModelRequest) -> [[String: Any]] {
+    private static let meetingInstructions = """
+    For meeting counts and questions about past or scheduled meetings, first call \
+    mcp__rocknroll_list_meetings. Answer only after you have its results for the requested scope. \
+    Use kind=attended for recorded meetings and kind=calendar for scheduled occurrences. \
+    Use kind=active without date bounds for meetings open now, and with date bounds and \
+    date_field=date for sessions that were active at any point in that period. A question \
+    about a past period always needs its date bounds. \
+    Resolve relative dates in time_zone using current_time_iso, with \
+    local midnight bounds for calendar days. For counts, report total_matches, which counts \
+    all matching sessions regardless of how many items are in the page. \
+    For a title, nickname, translated title, or informal description, query the date range \
+    with limit=20 and no literal query filter. Compare the candidate titles and series by \
+    meaning in the user's language. A date alone does not identify the meeting. If there is \
+    no plausible match on this page and next_cursor is present, fetch the next page with the \
+    same filters and sort before opening any session. Reserve limit=1 for explicit requests \
+    for the first or last meeting by time. For the last completed meeting, filter by ended_at \
+    before current_time_iso and sort ended_at descending. \
+    A question about what was discussed already requests an evidence read. When one title is \
+    a stronger semantic match than the other candidates, select it and read the evidence in \
+    the same turn without asking the user to confirm or offering to read it later. Ask which \
+    meeting only when no candidate fits or multiple candidates fit equally well. \
+    Follow related.outcome_id with mcp__rocknroll_get_outcome, \
+    related.notes_meeting_id with mcp__rocknroll_get_notes, or related.transcript_meeting_id \
+    with mcp__rocknroll_get_transcript. Copy the ID verbatim. Meeting row timestamps are \
+    displayed in time_zone. Name the selected meeting and its date. Include the time of day \
+    only when relevant. If its evidence is unavailable, state that for the selected session. \
+    Keep read-only recovery within the turn \
+    when a tool result provides a correctable field or an alternative source for that session.
+    """
+
+    static func messages(_ request: AssistantAgentModelRequest, describeTools: Bool = true) -> [[String: Any]] {
         var system = Self.system + "\n\nEnvironment:\n" + request.context.sorted { $0.key < $1.key }
             .map { "\($0.key): \($0.value)" }.joined(separator: "\n")
-        system += "\n\nAvailable tools:\n" + request.tools.map { tool in
-            let arguments = tool.arguments.map { argument in
-                (argument.required ? "required " : "optional ") + argument.name + ": " +
-                (argument.description.isEmpty ? argument.type.rawValue : argument.description) +
-                (argument.allowedValues.isEmpty ? "" : " (\(argument.allowedValues.joined(separator: " | ")))")
-            }.joined(separator: "; ")
-            return "- \(tool.name): \(tool.description)\(arguments.isEmpty ? "" : " Arguments: " + arguments)"
-        }.joined(separator: "\n")
-        return [["role": "system", "content": system]] + request.messages.map(Self.messageObject)
+        if describeTools {
+            system += "\n\nAvailable tools:\n" + request.tools.map { tool in
+                if let schema = tool.inputSchema {
+                    return "- \(tool.name): \(tool.description) Arguments schema: \(schema.jsonString)"
+                }
+                let arguments = tool.arguments.map { argument in
+                    (argument.required ? "required " : "optional ") + argument.name + ": " +
+                    (argument.description.isEmpty ? argument.type.rawValue : argument.description) +
+                    (argument.allowedValues.isEmpty ? "" : " (\(argument.allowedValues.joined(separator: " | ")))")
+                }.joined(separator: "; ")
+                return "- \(tool.name): \(tool.description)\(arguments.isEmpty ? "" : " Arguments: " + arguments)"
+            }.joined(separator: "\n")
+        }
+        if request.tools.contains(where: { $0.name == "mcp__rocknroll_list_meetings" }) {
+            system += "\n\n" + Self.meetingInstructions
+        }
+        let timeZone = request.context["time_zone"].flatMap(TimeZone.init(identifier:))
+        return [["role": "system", "content": system]] + request.messages.map {
+            Self.messageObject($0, timeZone: timeZone)
+        }
     }
 
     /// Serialize one typed message. Tool results keep their structured JSON (bounded to a
     /// still-valid projection) instead of a flattened paraphrase, and assistant tool calls
     /// stay correlated with their results for native tool calling.
-    static func messageObject(_ message: AssistantAgentModelMessage) -> [String: Any] {
+    static func messageObject(_ message: AssistantAgentModelMessage, timeZone: TimeZone? = nil) -> [String: Any] {
         switch message {
         case .user(let text):
             return ["role": "user", "content": text]
@@ -53,19 +95,48 @@ struct AssistantAgentModelPrompt {
                 ] as [String: Any]] as [String: Any]
             }]
         case .tool(let result):
+            // Meeting pages carry identifiers that must be copied verbatim into follow-up calls.
+            var payload = result.toolName == "mcp__rocknroll_list_meetings" || result.isError
+                ? result.json : result.json.bounded(to: 3000)
+            if let timeZone, !result.isError, result.toolName.hasPrefix("mcp__rocknroll_") {
+                payload = localMeetingDates(in: payload, timeZone: timeZone)
+            }
             return ["role": "tool", "tool_call_id": result.callID, "name": result.toolName,
-                    "content": result.json.bounded(to: 3000).compactDescription]
+                    "content": payload.jsonString]
         }
+    }
+
+    private static func localMeetingDates(in payload: AssistantJSON, timeZone: TimeZone) -> AssistantJSON {
+        guard var object = payload.objectValue else { return payload }
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = timeZone
+        let fields = ["started_at", "ended_at", "start", "end", "last_joined_at", "at", "updated_at"]
+        func localize(_ row: [String: AssistantJSON]) -> [String: AssistantJSON] {
+            var row = row
+            for field in fields {
+                if let value = row[field]?.stringValue, let date = formatter.date(from: value) {
+                    row[field] = .string(formatter.string(from: date))
+                }
+            }
+            return row
+        }
+        if let items = object["items"]?.arrayValue {
+            object["items"] = .array(items.map { item in
+                item.objectValue.map { .object(localize($0)) } ?? item
+            })
+        }
+        return .object(localize(object))
     }
 
     static let structuredHint = """
 
-    Return only JSON matching this schema: {"text":"a grounded answer or empty", \
-    "question":"a targeted clarification or empty", "sources":[{"id":"source-id", \
-    "kind":"outcome|transcript|chat|calendar|memory|meeting", "title":"short title", \
-    "at":"ISO date or empty"}], "calls":[{"id":"call-1", "name":"exact tool name", \
-    "arguments":{"argument":"value"}}]}. At most four calls. A question and calls must be empty \
-    when you answer. Call no write or outward action unless the user explicitly asked for it.
+    Return one JSON object. To use tools, set "calls" to an array of up to four objects with \
+    "id", "name", and "arguments". Use names and argument objects from the tools above. \
+    Omit "text" and "question" on a tool step. Make the call instead of describing what you \
+    would call. Once the tool results answer the request, return {"text": "your answer"} and \
+    optionally "sources" with evidence objects containing "id", "kind", "title" and "at". \
+    If a decision requires user input, return only {"question": "your question"}. \
+    Call no write or outward action unless the user explicitly asked for it.
     """
 }
 
@@ -76,9 +147,11 @@ struct OpenAIAssistantAgentModel: AssistantAgentModel {
     let key: String?
     var session: URLSession = .shared
     var timeout: TimeInterval = 25
+    var nativeToolCalling: Bool? = nil
 
     func next(_ request: AssistantAgentModelRequest) async throws -> AssistantAgentModelStep {
-        let message = try await completeMessage(Self.requestBody(request, provider: provider))
+        let message = try await completeMessage(Self.requestBody(request, provider: provider,
+                                                                  nativeToolCalling: nativeToolCalling))
         if let calls = try parseNativeToolCalls(message) { return .toolCalls(calls) }
         guard let content = message["content"] as? String, !content.trimmed.isEmpty else { throw AttentionJudgeError.emptyAnswer }
         return try Self.parseStepContent(content)
@@ -116,10 +189,12 @@ struct OpenAIAssistantAgentModel: AssistantAgentModel {
         }
     }
 
-    static func requestBody(_ request: AssistantAgentModelRequest, provider: AttentionProvider) -> [String: Any] {
-        var messages = AssistantAgentModelPrompt.messages(request)
+    static func requestBody(_ request: AssistantAgentModelRequest, provider: AttentionProvider,
+                            nativeToolCalling: Bool? = nil) -> [String: Any] {
+        let useNativeTools = nativeToolCalling ?? !provider.onThisMac
+        var messages = AssistantAgentModelPrompt.messages(request, describeTools: !useNativeTools)
         let model = provider.model.trimmed
-        guard provider.onThisMac else {
+        if useNativeTools {
             return ["model": model, "messages": messages, "temperature": 0,
                     "tools": request.tools.map { tool in
                         ["type": "function", "function": [
@@ -138,7 +213,8 @@ struct OpenAIAssistantAgentModel: AssistantAgentModel {
     }
 
     static func parameters(_ tool: AssistantAgentToolDescriptor) -> [String: Any] {
-        ["type": "object",
+        if let schema = tool.inputSchema?.foundationValue as? [String: Any] { return schema }
+        return ["type": "object",
          "additionalProperties": false,
          "required": tool.arguments.filter(\.required).map(\.name),
          "properties": Dictionary(uniqueKeysWithValues: tool.arguments.map { argument in
@@ -167,7 +243,7 @@ struct OpenAIAssistantAgentModel: AssistantAgentModel {
         if provider.needsKey && (key ?? "").isEmpty { throw AttentionJudgeError.missingKey }
         var urlRequest = URLRequest(url: endpoint, timeoutInterval: provider.onThisMac ? max(timeout, 60) : timeout)
         urlRequest.httpMethod = "POST"
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: object)
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let key, !key.isEmpty { urlRequest.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
         if provider.kind == .openRouter { urlRequest.setValue("Rock'N'Roll for Mac", forHTTPHeaderField: "X-Title") }
@@ -194,7 +270,7 @@ extension AssistantJSON {
     static func make(_ value: Any) -> AssistantJSON {
         switch value {
         case is NSNull: .null
-        case let value as Bool: .bool(value)
+        case let value as NSNumber where CFGetTypeID(value) == CFBooleanGetTypeID(): .bool(value.boolValue)
         case let value as Int: .int(value)
         case let value as Double: .double(value)
         case let value as String: .string(value)
@@ -219,8 +295,8 @@ extension AssistantJSON {
 
     /// Serialized JSON for a provider tool-call argument string.
     var jsonString: String {
-        guard JSONSerialization.isValidJSONObject(foundationValue),
-              let data = try? JSONSerialization.data(withJSONObject: foundationValue) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: foundationValue,
+                                                     options: [.fragmentsAllowed, .sortedKeys]) else {
             return "{}"
         }
         return String(decoding: data, as: UTF8.self)

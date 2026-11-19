@@ -10,7 +10,7 @@ import Foundation
     private let defaults: UserDefaults
     private var settingsRevision = UUID().uuidString
     private var favoriteRevision = UUID().uuidString
-    private var cursorValues: [String: (kind: String, filters: String, items: [MCPJSON], offset: Int, observedAt: String)] = [:]
+    private var cursorValues: [String: (kind: String, filters: String, items: [MCPJSON], offset: Int, observedAt: String, metadata: MCPJSON)] = [:]
     private let cursorSecret = UUID().uuidString
 
     init(workspace: @escaping () -> NativeDesktopWorkspace? = { nil }, defaults: UserDefaults = .standard, approval: (@escaping (String, MCPJSON) async -> Bool) = { _, _ in false }, attention attentionOverride: (() -> AttentionCoordinator?)? = nil) {
@@ -29,33 +29,39 @@ import Foundation
         return copy
     }
 
-    private func page(kind: String, filters: MCPJSON, args: MCPJSON, items: [MCPJSON]) throws -> MCPJSON {
+    private func page(kind: String, filters: MCPJSON, args: MCPJSON, items: [MCPJSON], metadata: MCPJSON = [:]) throws -> MCPJSON {
         let limit = try MCPValue.integer(args["limit"], key: "limit", default: 20, maximum: 100)
         let filterKey = canonical(filters)
         let offset: Int
         let observed: String
+        let rows: [MCPJSON]
+        var result: MCPJSON
         if let cursor = args["cursor"] as? String {
-            guard var stored = cursorValues[cursor], stored.kind == kind, stored.filters == filterKey else {
+            guard let stored = cursorValues[cursor], stored.kind == kind, stored.filters == filterKey else {
                 throw MCPToolFailure("CURSOR_EXPIRED", "The cursor no longer matches this query.", retryable: true)
             }
-            offset = stored.offset; observed = stored.observedAt; stored.items = items
-            cursorValues[cursor] = stored
+            offset = stored.offset; observed = stored.observedAt
+            rows = kind == "meetings" ? stored.items : items
+            result = stored.metadata
         } else {
-            offset = 0; observed = mcpNow()
+            offset = 0; observed = mcpNow(); rows = items; result = metadata
         }
-        let slice = Array(items.dropFirst(offset).prefix(limit))
+        let slice = Array(rows.dropFirst(offset).prefix(limit))
         let next = offset + slice.count
-        let nextCursor: String? = next < items.count ? makeCursor(kind: kind, filters: filterKey, items: items, offset: next, observedAt: observed) : nil
-        return [
-            "items": slice, "next_cursor": nextCursor ?? NSNull(), "observed_at": observed,
-            "coverage": "complete", "warnings": [],
-        ]
+        let nextCursor = next < rows.count
+            ? makeCursor(kind: kind, filters: filterKey, items: rows, offset: next, observedAt: observed, metadata: result) : nil
+        result["items"] = slice
+        result["next_cursor"] = nextCursor ?? NSNull()
+        result["observed_at"] = observed
+        if result["coverage"] == nil { result["coverage"] = "complete" }
+        if result["warnings"] == nil { result["warnings"] = [] as [String] }
+        return result
     }
 
-    private func makeCursor(kind: String, filters: String, items: [MCPJSON], offset: Int, observedAt: String) -> String {
-        let token = mcpSHA256(cursorSecret + kind + filters + String(offset) + observedAt)
-        cursorValues[token] = (kind, filters, items, offset, observedAt)
-        if cursorValues.count > 512 { cursorValues.removeAll() }
+    private func makeCursor(kind: String, filters: String, items: [MCPJSON], offset: Int, observedAt: String, metadata: MCPJSON) -> String {
+        let token = mcpSHA256(cursorSecret + UUID().uuidString)
+        if cursorValues.count >= 512 { cursorValues.removeAll() }
+        cursorValues[token] = (kind, filters, items, offset, observedAt, metadata)
         return token
     }
 
@@ -98,7 +104,7 @@ import Foundation
                 "active_meetings": app?.meetings.count ?? 0,
             ],
             "capabilities": [
-                "kinds": ["active", "favorite", "recent", "calendar", "outcome"],
+                "kinds": ["attended", "active", "favorite", "recent", "calendar", "outcome"],
                 "search_types": ["meeting", "outcome", "task", "transcript", "note"],
                 "controls": ["join", "leave", "microphone", "camera"],
                 "mutations": ["favorite", "task", "settings"],
@@ -114,14 +120,17 @@ import Foundation
 
     private func activeCard(_ model: NativeDesktopMeetingModel) -> MCPJSON {
         [
-            "id": mcpSessionID(model.sessionID), "kind": "active", "title": model.title,
+            "id": mcpSessionID(model.workspaceSessionID), "kind": "active", "title": model.title,
+            "started_at": mcpDate(model.connectedSince.flatMap { since in
+                model.segments.last(where: { $0.sessionID == model.workspaceSessionID })?.startedAt ?? since
+            }) ?? NSNull(),
             "engine": model.kind.rawValue, "connected": model.connected,
             "microphone_on": model.snapshot.microphoneOn, "camera_on": model.snapshot.cameraOn,
             "playout_on": model.snapshot.playoutOn, "owns_microphone": model.ownsMicrophone,
             "participant_count": model.participants.count,
             "related": ["room": mcpRoomID(model.invitation, engine: model.kind)],
             "supported_controls": ["leave", "microphone", "camera"],
-            "coverage": "complete", "provenance": ["type": "active_session", "record_id": model.sessionID.uuidString],
+            "coverage": "complete", "provenance": ["type": "active_session", "record_id": model.workspaceSessionID.uuidString],
         ]
     }
 
@@ -140,6 +149,7 @@ import Foundation
             "id": mcpOccurrenceID(meeting.id), "kind": "calendar", "title": meeting.title,
             "start": mcpDate(meeting.start) ?? "", "end": mcpDate(meeting.end) ?? "",
             "all_day": meeting.allDay, "tentative": meeting.tentative,
+            "series_id": meeting.seriesID,
             "resolved": meeting.hasResolvedInvitation,
             "related": meeting.roomIdentity.map { ["room": mcpOpaqueID("room", $0.origin + "|" + $0.room + "|" + $0.engine.rawValue)] } ?? [:],
             "coverage": "complete", "provenance": ["type": "calendar", "record_id": meeting.id],
@@ -166,6 +176,38 @@ import Foundation
         return items
     }
 
+    private func attendedMeetings() async throws -> [MCPJSON] {
+        guard let store = attention?.store else {
+            throw MCPToolFailure("APP_NOT_RUNNING", "The meeting library is unavailable.")
+        }
+        await store.waitForMeetingLibrary()
+        let catalog = store.meetingLibrary
+        let sessions = try await catalog.store.sessions()
+        let cards = Dictionary(uniqueKeysWithValues: try await catalog.store.cards().map { ($0.sessionID, $0) })
+        let journal = Dictionary(uniqueKeysWithValues: catalog.workspaceJournal.sessions.map { ($0.id, $0) })
+        let connecting = Set(app?.meetings.filter { $0.connectedSince == nil }.map(\.sessionID) ?? [])
+        return sessions.compactMap { session in
+            guard session.state != .joining, session.state != .failed, !connecting.contains(session.id) else { return nil }
+            return attendedCard(session, card: cards[session.id], capture: journal[session.id])
+        }
+    }
+
+    private func attendedCard(_ session: MeetingSessionRecord, card: MeetingLibraryCard?, capture: MeetingWorkspaceSession?) -> MCPJSON {
+        let outcomeID = card?.outcomeState == .ready ? card?.outcomeID.map(mcpOutcomeID) : nil
+        let id = mcpSessionID(session.id)
+        var related: MCPJSON = [:]
+        if let outcomeID { related["outcome_id"] = outcomeID }
+        if card?.hasNotes == true { related["notes_meeting_id"] = id }
+        if capture?.events.contains(where: Self.isTranscriptLine) == true { related["transcript_meeting_id"] = id }
+        return [
+            "id": id, "kind": "attended", "title": session.title,
+            "started_at": mcpDate(capture?.startedAt ?? session.recordedStart) ?? NSNull(),
+            "ended_at": mcpDate(session.knownEnd ?? capture?.endedAt) ?? NSNull(),
+            "series_id": session.calendarSeriesID ?? NSNull(),
+            "state": session.state.rawValue, "related": related,
+        ]
+    }
+
     func listMeetings(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
         let (from, to) = try timeFilter(args)
         try assertOrdered(from, to)
@@ -173,28 +215,85 @@ import Foundation
         let trimmed = try MCPValue.optionalString(args["query"], key: "query").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         let query = (trimmed?.isEmpty == true ? nil : trimmed)?.lowercased()
         let kind = try MCPValue.optionalString(args["kind"], key: "kind")
-        if let kind, !["active", "favorite", "recent", "calendar", "outcome"].contains(kind) {
+        if let kind, !["attended", "active", "favorite", "recent", "calendar", "outcome"].contains(kind) {
             throw MCPToolFailure("CAPABILITY_UNAVAILABLE", "Unknown meeting kind: \(kind)")
         }
-        let items = allMeetingItems().filter { item in
-            if let kind, item["kind"] as? String != kind { return false }
-            let date = Self.cardDate(item)
-            guard inRange(date, from: from, to: to) else { return false }
+        let dateField = args["date_field"] as? String ?? "date"
+        let sortBy = args["sort_by"] as? String ?? "date"
+        let sortOrder = args["sort_order"] as? String ?? "asc"
+        let activityRange = kind == "active" && dateField == "date" && (from != nil || to != nil)
+        let filters: MCPJSON = ["from": mcpDate(from) ?? "", "to": mcpDate(to) ?? "", "query": query ?? "",
+                                "kind": kind ?? "", "date_field": dateField, "sort_by": sortBy, "sort_order": sortOrder]
+        if args["cursor"] != nil { return try page(kind: "meetings", filters: filters, args: args, items: []) }
+
+        let source = kind == "attended" || activityRange ? try await attendedMeetings() : allMeetingItems()
+        let candidates = source.filter { item in
+            if !activityRange, let kind, item["kind"] as? String != kind { return false }
             if let query {
                 let title = item["title"] as? String ?? ""
                 let summary = item["summary"] as? String ?? ""
                 guard (title + " " + summary).lowercased().contains(query) else { return false }
             }
             return true
-        }.sorted { lhs, rhs in
-            let left = Self.cardDate(lhs) ?? .distantPast, right = Self.cardDate(rhs) ?? .distantPast
-            if left != right { return left < right }
-            return (lhs["id"] as? String ?? "") < (rhs["id"] as? String ?? "")
         }
-        // Dates are stringified for the cursor key: a boxed Date/Optional<Date> in
-        // this dictionary trips the Swift 6.3/6.4 miscompile (swiftlang/swift#87481)
-        // and aborts the host, and JSONSerialization cannot encode Date anyway.
-        return try page(kind: "meetings", filters: ["from": mcpDate(from) as Any, "to": mcpDate(to) as Any, "query": query as Any, "kind": kind as Any], args: args, items: items)
+        let now = Date()
+        let openSessionIDs = Set(app?.meetings.map { mcpSessionID($0.workspaceSessionID) } ?? [])
+        let formatter = ISO8601DateFormatter()
+        func date(_ item: MCPJSON, field: String) -> Date? {
+            if field == "date" {
+                if let start = item["started_at"] as? String, let parsed = formatter.date(from: start) { return parsed }
+                if item["kind"] as? String == "active" { return now }
+                return Self.cardDate(item)
+            }
+            let alternate = field == "started_at" ? "start" : "end"
+            return (item[field] as? String ?? item[alternate] as? String).flatMap(formatter.date(from:))
+        }
+        func matchesActivity(_ item: MCPJSON) -> Bool? {
+            let start = date(item, field: "started_at")
+            let isOpen = (item["id"] as? String).map(openSessionIDs.contains) ?? false
+            let end = date(item, field: "ended_at") ?? (isOpen ? now : nil)
+            if let start, let to, start >= to { return false }
+            if let end, let from, end <= from { return false }
+            if let start, inRange(start, from: from, to: to) { return true }
+            if let end, inRange(end, from: from, to: to) { return true }
+            return start != nil && end != nil ? true : nil
+        }
+        var misses = 0
+        let matches = candidates.compactMap { item -> (item: MCPJSON, sortDate: Date?)? in
+            let filterDate = date(item, field: dateField)
+            let match = activityRange ? matchesActivity(item)
+                : (from != nil || to != nil) && filterDate == nil ? nil : inRange(filterDate, from: from, to: to)
+            guard match == true else {
+                if match == nil { misses += 1 }
+                return nil
+            }
+            let sortDate = sortBy == dateField ? filterDate : sortBy == "title" ? nil : date(item, field: sortBy)
+            return (item, sortDate)
+        }
+        let missingDate: Date = sortBy != "date" && sortOrder == "asc" ? .distantFuture : .distantPast
+        let items = matches.sorted { left, right in
+            let lhs = left.item, rhs = right.item
+            if sortBy == "title" {
+                let order = (lhs["title"] as? String ?? "").localizedCaseInsensitiveCompare(rhs["title"] as? String ?? "")
+                if order != .orderedSame { return order == (sortOrder == "desc" ? .orderedDescending : .orderedAscending) }
+            } else {
+                let first = left.sortDate ?? missingDate, second = right.sortDate ?? missingDate
+                if first != second { return sortOrder == "desc" ? first > second : first < second }
+            }
+            return (lhs["id"] as? String ?? "") < (rhs["id"] as? String ?? "")
+        }.map(\.item)
+        var warnings = misses == 0 ? [] : ["Some records could not be dated using the requested field."]
+        if kind == "active", !activityRange {
+            warnings.append("This is a snapshot of meetings open now. To query attendance from a past period, supply date bounds.")
+        }
+        return try page(kind: "meetings", filters: filters, args: args, items: items, metadata: [
+            "total_matches": items.count,
+            "filters": filters,
+            "activity_overlap": activityRange,
+            "unknown_date_count": misses,
+            "coverage": misses == 0 ? "complete" : "partial",
+            "warnings": warnings,
+        ])
     }
 
     static func cardDate(_ item: MCPJSON) -> Date? {
@@ -206,7 +305,8 @@ import Foundation
     }
 
     private func activeMeeting(_ id: String) throws -> NativeDesktopMeetingModel {
-        guard let model = app?.meetings.first(where: { mcpSessionID($0.sessionID) == id }) else {
+        guard let model = app?.meetings.first(where: { mcpSessionID($0.workspaceSessionID) == id })
+            ?? app?.meetings.first(where: { mcpSessionID($0.sessionID) == id }) else {
             throw MCPToolFailure("MEETING_NOT_FOUND", "The requested active meeting is unavailable.")
         }
         return model
@@ -239,7 +339,15 @@ import Foundation
     func getMeeting(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
         let id = try MCPValue.string(args["meeting_id"], key: "meeting_id")
         if id.hasPrefix("session:") {
-            return envelope(activeCard(try activeMeeting(id)))
+            if let active = app?.meetings.first(where: { mcpSessionID($0.workspaceSessionID) == id }) {
+                return envelope(activeCard(active))
+            }
+            let (sessionID, _) = try await noteSession(id)
+            if let catalog = attention?.store.meetingLibrary, let session = try await catalog.store.session(sessionID) {
+                let card = try await catalog.store.cards().first { $0.sessionID == sessionID }
+                return envelope(attendedCard(session, card: card, capture: catalog.workspaceJournal.session(id: sessionID)))
+            }
+            throw MCPToolFailure("MEETING_NOT_FOUND", "The requested meeting is unavailable.")
         }
         if id.hasPrefix("room:") {
             let value = try room(id); let starred = value.isStarred
@@ -264,10 +372,11 @@ import Foundation
 
     func getTranscript(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
         let id = try MCPValue.string(args["meeting_id"], key: "meeting_id")
-        guard id.hasPrefix("session:") else { throw MCPToolFailure("TRANSCRIPT_UNAVAILABLE", "Only an active session has an authoritative native transcript.") }
-        let model = try activeMeeting(id)
+        guard id.hasPrefix("session:") else { throw MCPToolFailure("TRANSCRIPT_UNAVAILABLE", "A session ID is required.") }
         let (from, to) = try timeFilter(args)
         try assertOrdered(from, to)
+        let model = app?.meetings.first { mcpSessionID($0.workspaceSessionID) == id }
+        guard let model else { return try await historicalTranscript(id, args: args, from: from, to: to) }
         let service = model.transcript.map { message in
             [
                 "id": "utterance:native:\(message.id)", "speaker": message.participantName,
@@ -292,6 +401,33 @@ import Foundation
         var result = try page(kind: "transcript", filters: ["meeting_id": id, "from": mcpDate(from) as Any, "to": mcpDate(to) as Any], args: args, items: items)
         result["coverage"] = model.guestFeatures.transcriptionStatus == .active ? "unknown" : "partial"
         return result
+    }
+
+    private static func isTranscriptLine(_ event: MeetingWorkspaceEvent) -> Bool {
+        event.kind == .transcript && !event.isPrivate && event.text?.isEmpty == false
+    }
+
+    private func historicalTranscript(_ id: String, args: MCPJSON, from: Date?, to: Date?) async throws -> MCPJSON {
+        let (sessionID, title) = try await noteSession(id)
+        let session = attention?.store.meetingLibrary.workspaceJournal.session(id: sessionID)
+        let lines = (session?.events.filter(Self.isTranscriptLine) ?? [])
+        guard !lines.isEmpty else {
+            throw MCPToolFailure("TRANSCRIPT_UNAVAILABLE", "This session has no saved transcript.")
+        }
+        let items: [MCPJSON] = lines.filter { inRange($0.occurredAt, from: from, to: to) }.sorted {
+            ($0.occurredAt, $0.id) < ($1.occurredAt, $1.id)
+        }.map { event in
+            [
+                "id": event.id, "speaker": event.author ?? "", "text": event.text ?? "",
+                "at": mcpDate(event.occurredAt) ?? "",
+                "provenance": ["type": "workspace_transcript", "record_id": event.id],
+            ]
+        }
+        return try page(kind: "historical_transcript", filters: ["meeting_id": id, "from": mcpDate(from) ?? "", "to": mcpDate(to) ?? ""],
+                        args: args, items: items, metadata: [
+                            "meeting_id": id, "meeting_title": title, "coverage": "partial",
+                            "warnings": ["Only transcript lines captured by the app are available."],
+                        ])
     }
 
     static func spokenDate(_ message: GuestMeetingMessage) -> Date? {
@@ -327,7 +463,7 @@ import Foundation
     /// Resolves a persisted or active session to its (sessionUUID, title) pair.
     private func noteSession(_ id: String) async throws -> (UUID, String) {
         if id.hasPrefix("session:"), let model = app?.meetings.first(where: {
-            mcpSessionID($0.sessionID) == id || mcpSessionID($0.workspaceSessionID) == id
+            mcpSessionID($0.workspaceSessionID) == id
         }) {
             return (model.workspaceSessionID, model.title)
         }
@@ -354,7 +490,7 @@ import Foundation
         guard let library = attention?.store.meetingLibrary else {
             throw MCPToolFailure("APP_NOT_RUNNING", "The native workspace is unavailable.")
         }
-        guard let note = await library.note(sessionID: sessionID) else {
+        guard let note = try await library.store.note(sessionID) else {
             return [
                 "meeting_id": mcpSessionID(sessionID), "note": NSNull(), "has_notes": false,
                 "meeting_title": title,

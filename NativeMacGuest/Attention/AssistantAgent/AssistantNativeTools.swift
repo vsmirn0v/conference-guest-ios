@@ -246,13 +246,13 @@ enum AssistantNativeToolProvider {
         formatter.dateStyle = .full
         formatter.timeStyle = .short
         formatter.timeZone = TimeZone(identifier: snapshot.timeZoneIdentifier) ?? .current
+        let iso = ISO8601DateFormatter()
+        iso.timeZone = formatter.timeZone
         var context: [String: String] = [
             "current_time": formatter.string(from: snapshot.now),
+            "current_time_iso": iso.string(from: snapshot.now),
             "time_zone": snapshot.timeZoneIdentifier,
             "language": snapshot.language,
-            "active_meetings": String(snapshot.meetings.filter(\.active).count),
-            "outcome_meetings": String(snapshot.outcomes.count),
-            "calendar_occurrences": String(snapshot.calendar.count),
             "task_status": "Use rocknroll_list_tasks to verify current assignments before recommending action. Archived tasks and mentions in historical text do not establish active work.",
         ]
         if let id = snapshot.contextMeetingID, let meeting = snapshot.meetings.first(where: { $0.id == id }) {
@@ -274,30 +274,8 @@ enum AssistantNativeToolProvider {
                     "write_actions_available": .bool(true),
                 ]))
             },
-            closure(snapshot, name: "rocknroll_list_meetings", description: "List distinct active or outcome-backed meetings, newest first. Use for 'latest meetings' and disambiguation; IDs are typed meeting/outcome IDs, not titles.", arguments: [
-                .init(name: "kind", type: .string, description: "active, outcome or all", allowedValues: ["active", "outcome", "all"]),
-                .init(name: "query", type: .string, description: "Optional words to match in the title or summary."),
-                .init(name: "limit", type: .integer, description: "1...20"),
-            ]) { call, arguments in
-                let kind = arguments["kind"]?.stringValue ?? "all"
-                let query = arguments["query"]?.stringValue ?? ""
-                let limit = min(20, max(1, arguments["limit"]?.intValue ?? 10))
-                var records: [AssistantJSON] = []
-                if kind == "active" || kind == "all" {
-                    records += snapshot.meetings.filter(\.active).map(Self.meetingJSON)
-                }
-                if kind == "outcome" || kind == "all" {
-                    records += snapshot.outcomes.sorted { $0.endedAt > $1.endedAt }.map(Self.outcomeListJSON)
-                }
-                if !query.trimmed.isEmpty {
-                    records = records.filter { Self.matches(query, text: $0["title"]?.stringValue ?? "") ||
-                        Self.matches(query, text: $0["summary"]?.stringValue ?? "") }
-                }
-                records = Self.distinctMeetingRecords(Array(records.prefix(limit)))
-                return .success(call, "\(records.count) meeting(s) found.", json: .object(["meetings": .array(records)]))
-            },
             closure(snapshot, name: "rocknroll_get_meeting", description: "Read one active meeting by its typed meeting_id, including capabilities and participant names.", arguments: [
-                .init(name: "meeting_id", type: .string, required: true, description: "UUID from list_meetings"),
+                .init(name: "meeting_id", type: .string, required: true, description: "Bare UUID from selected_meeting"),
             ]) { call, arguments in
                 guard let id = arguments["meeting_id"]?.stringValue.flatMap(UUID.init(uuidString:)),
                       let meeting = snapshot.meetings.first(where: { $0.id == id && $0.active }) else {
@@ -312,7 +290,7 @@ enum AssistantNativeToolProvider {
                 ]), evidence: [.init(id: "meeting-" + meeting.id.uuidString, kind: "meeting", title: meeting.title, at: nil)])
             },
             closure(snapshot, name: "rocknroll_get_outcome", description: "Read the saved historical outcome by outcome_id. Its archived tasks are historical. Use the task list for active assignments.", arguments: [
-                .init(name: "outcome_id", type: .string, required: true, description: "UUID from list_meetings kind=outcome"),
+                .init(name: "outcome_id", type: .string, required: true, description: "Bare UUID of a saved outcome"),
             ]) { call, arguments in
                 guard let id = arguments["outcome_id"]?.stringValue.flatMap(UUID.init(uuidString:)),
                       let outcome = snapshot.outcomes.first(where: { $0.id == id }) else {
@@ -322,7 +300,7 @@ enum AssistantNativeToolProvider {
                                 evidence: [.init(id: "outcome-" + outcome.id.uuidString, kind: "outcome", title: outcome.title, at: outcome.endedAt)])
             },
             closure(snapshot, name: "rocknroll_get_notes", description: "Read the complete raw Markdown note for one meeting by meeting_id. Personal notes are user-authored claims, not participant agreements; attribute them separately from outcomes and transcripts.", arguments: [
-                .init(name: "meeting_id", type: .string, required: true, description: "UUID from list_meetings or notes metadata."),
+                .init(name: "meeting_id", type: .string, required: true, description: "Session UUID from notes metadata or selected_meeting."),
             ]) { call, arguments in
                 guard let id = arguments["meeting_id"]?.stringValue.flatMap(UUID.init(uuidString:)) else {
                     throw AssistantAgentError.missingArgument(call.name, "meeting_id")
@@ -480,25 +458,6 @@ enum AssistantNativeToolProvider {
                 }
                 return .success(call, "\(matches.count) memory excerpt(s).", json: .object(["matches": .array(matches)]))
             },
-            closure(snapshot, name: "rocknroll_list_calendar_occurrences", description: "Query future native calendar occurrences. Returns occurrence/series/calendar IDs and provenance; never join or edit an event.", arguments: [
-                .init(name: "after", type: .string, required: true, description: "ISO 8601 instant; normally the supplied current time."),
-                .init(name: "before", type: .string, description: "Optional ISO 8601 upper bound."),
-                .init(name: "query", type: .string, description: "Optional series or title words such as daily."),
-                .init(name: "limit", type: .integer, description: "1...20"),
-            ]) { call, arguments in
-                guard let afterText = arguments["after"]?.stringValue,
-                      let after = AssistantTime.parse(afterText) else { throw AssistantAgentError.missingArgument(call.name, "after") }
-                let before = arguments["before"]?.stringValue.flatMap(AssistantTime.parse) ?? after.addingTimeInterval(45 * 86400)
-                let query = arguments["query"]?.stringValue ?? ""
-                let limit = min(20, max(1, arguments["limit"]?.intValue ?? 10))
-                let matches = snapshot.calendar.filter { occurrence in
-                    occurrence.start >= after && occurrence.start <= before &&
-                    (query.trimmed.isEmpty || Self.matches(query, text: occurrence.title))
-                }.sorted { ($0.start, $0.id) < ($1.start, $1.id) }.prefix(limit).map(Self.calendarJSON)
-                let next = matches.first?["start"]?.stringValue ?? "none"
-                return .success(call, "\(matches.count) future occurrence(s); next starts \(next).",
-                                json: .object(["occurrences": .array(matches)]))
-            },
             closure(snapshot, name: "rocknroll_get_settings", description: "Read allowlisted effective Assistant settings when a question requires them. Keys and values only; no credentials.", arguments: [
                 .init(name: "keys", type: .array, required: true, description: "Allowlisted keys."),
             ]) { call, arguments in
@@ -635,12 +594,6 @@ private extension AssistantNativeToolProvider {
                 ("supports_voice_reply", .bool(meeting.supportsVoiceReply)), ("source", .string("active meeting")))
     }
 
-    static func outcomeListJSON(_ outcome: AssistantOutcomeRecord) -> AssistantJSON {
-        .object(("id", .string(outcome.id.uuidString)), ("meeting_id", AssistantJSON.optionalString(outcome.meetingID?.uuidString)),
-                ("title", .string(outcome.title)), ("active", .bool(false)), ("ended_at", .date(outcome.endedAt)),
-                ("summary", .string(String(outcome.summary.prefix(500)))), ("source", .string("meeting outcome")))
-    }
-
     static func outcomeJSON(_ outcome: AssistantOutcomeRecord) -> AssistantJSON {
         .object(("id", .string(outcome.id.uuidString)), ("meeting_id", AssistantJSON.optionalString(outcome.meetingID?.uuidString)),
                 ("title", .string(outcome.title)), ("ended_at", .date(outcome.endedAt)), ("summary", .string(outcome.summary)),
@@ -650,21 +603,5 @@ private extension AssistantNativeToolProvider {
                             ("due_at", AssistantJSON.optionalDate(task.dueAt)), ("due_day", AssistantJSON.optionalString(task.dueDay)),
                             ("done", .bool(task.done)), ("archived", .bool(task.archived == true)))
                 })))
-    }
-
-    static func calendarJSON(_ occurrence: AssistantCalendarOccurrence) -> AssistantJSON {
-        .object(["occurrence_id": .string(occurrence.id), "series_id": .string(occurrence.seriesID),
-                 "calendar_id": .string(occurrence.calendarID), "calendar": .string(occurrence.calendarTitle),
-                 "title": .string(occurrence.title), "start": .date(occurrence.start), "end": .date(occurrence.end),
-                 "all_day": .bool(occurrence.allDay), "room": .string(occurrence.roomIdentity)])
-    }
-
-    /// Remove duplicate projections while retaining separate occurrences of one series.
-    static func distinctMeetingRecords(_ records: [AssistantJSON]) -> [AssistantJSON] {
-        var seen: Set<String> = []
-        return records.filter { record in
-            let key = (record["title"]?.stringValue ?? "") + "|" + (record["ended_at"]?.stringValue ?? "")
-            return seen.insert(key).inserted
-        }
     }
 }

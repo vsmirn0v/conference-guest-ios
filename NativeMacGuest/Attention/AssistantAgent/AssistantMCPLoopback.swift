@@ -4,6 +4,18 @@ import Foundation
 /// Loopback tools are namespaced `mcp__<native name>`, so the id is `mcp`.
 let assistantMCPLoopbackServerID = "mcp"
 
+extension AssistantAgentToolRegistry {
+    func registerMeetingMCPTools(_ provider: any AssistantExternalToolProviding, includeAdditionalReads: Bool) async {
+        let trust = AssistantExternalToolTrust(disabled: false, enabledServers: [assistantMCPLoopbackServerID],
+                                               readOnlyServers: [assistantMCPLoopbackServerID])
+        let tools = await AssistantExternalToolPolicy.exposedTools(provider, serverID: assistantMCPLoopbackServerID,
+                                                                    trust: trust)
+        let meetingTools: Set = ["mcp__rocknroll_list_meetings", "mcp__rocknroll_get_meeting", "mcp__rocknroll_get_outcome",
+                                 "mcp__rocknroll_get_notes", "mcp__rocknroll_get_transcript"]
+        register(externalTools: tools.filter { includeAdditionalReads || meetingTools.contains($0.descriptor.name) })
+    }
+}
+
 /// Adapts the app's own MCP backend to the agent runtime's external-tool seam.
 /// This is a loopback: the assistant runs natively under the user's own approvals,
 /// so it receives an internal identity with read scopes. Outward MCP actions stay
@@ -27,8 +39,7 @@ let assistantMCPLoopbackServerID = "mcp"
         nativeMCPToolDefinitions().filter { $0.readOnly && $0.name != "rocknroll_run_assistant" }.map { definition in
             .init(name: "mcp__" + definition.name,
                   description: definition.description + " (via the app's MCP server)",
-                  arguments: [], requiresApproval: false,
-                  allowsArbitraryArguments: true)
+                  inputSchema: AssistantJSON.make(definition.schema.json))
         }
     }
 
@@ -37,7 +48,11 @@ let assistantMCPLoopbackServerID = "mcp"
               definition.readOnly, definition.name != "rocknroll_run_assistant" else {
             throw AssistantAgentError.unknownTool(name)
         }
-        let args = Self.mcpValue(arguments) as? MCPJSON ?? [:]
+        guard let args = arguments.foundationValue as? MCPJSON else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "arguments must be an object.",
+                                 details: ["field": "arguments", "reason": "type"])
+        }
+        try MCPSchemaValidator.validate(args, schema: definition.schema)
         let value: MCPJSON
         switch definition.name {
         case "rocknroll_status": value = try await backend.status()
@@ -51,34 +66,6 @@ let assistantMCPLoopbackServerID = "mcp"
         case "rocknroll_get_settings": value = try await backend.getSettings(args, client: client)
         default: throw AssistantAgentError.unknownTool(name)
         }
-        return .object(value.mapValues(Self.assistantValue))
-    }
-
-    /// Converts an MCP JSON tree back into the assistant's serializable value.
-    /// Types outside the JSON model (dates, data, …) degrade to their description.
-    static func assistantValue(_ value: Any) -> AssistantJSON {
-        switch value {
-        case is NSNull: return .null
-        case let value as Bool: return .bool(value)
-        case let value as Int: return .int(value)
-        case let value as Double: return .double(value)
-        case let value as String: return .string(value)
-        case let value as [Any]: return .array(value.map(assistantValue))
-        case let value as [String: Any]: return .object(value.mapValues(assistantValue))
-        default: return .string(String(describing: value))
-        }
-    }
-
-    /// Converts the serializable tool value to the MCP JSON tree.
-    static func mcpValue(_ json: AssistantJSON) -> Any {
-        switch json {
-        case .null: NSNull()
-        case .bool(let value): value
-        case .int(let value): value
-        case .double(let value): value
-        case .string(let value): value
-        case .array(let values): values.map(mcpValue)
-        case .object(let object): object.mapValues(mcpValue)
-        }
+        return AssistantJSON.make(value)
     }
 }
