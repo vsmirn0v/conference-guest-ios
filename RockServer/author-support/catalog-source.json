@@ -1,0 +1,64 @@
+{
+  "kind": "direct-mac-author-support",
+  "schema": 1,
+  "revision": 1,
+  "quotedAt": 1795119667,
+  "acceptUntil": 1810671667,
+  "tiers": [
+    {
+      "id": "boosty-4182754",
+      "amountRUB": 99,
+      "usd": 1.28,
+      "eur": 1.17,
+      "checkoutURL": "https://boosty.to/rwrt/purchase/4182754?ssource=DIRECT&share=subscription_link"
+    },
+    {
+      "id": "boosty-4182755",
+      "amountRUB": 199,
+      "usd": 2.57,
+      "eur": 2.34,
+      "checkoutURL": "https://boosty.to/rwrt/purchase/4182755?ssource=DIRECT&share=subscription_link"
+    },
+    {
+      "id": "boosty-4182682",
+      "amountRUB": 299,
+      "usd": 3.9,
+      "eur": 3.6,
+      "checkoutURL": "https://boosty.to/rwrt/purchase/4182682?ssource=DIRECT&share=subscription_link"
+    },
+    {
+      "id": "boosty-4182683",
+      "amountRUB": 499,
+      "usd": 6.5,
+      "eur": 5.9,
+      "checkoutURL": "https://boosty.to/rwrt/purchase/4182683?ssource=DIRECT&share=subscription_link"
+    },
+    {
+      "id": "boosty-4182685",
+      "amountRUB": 999,
+      "usd": 12.9,
+      "eur": 11.8,
+      "checkoutURL": "https://boosty.to/rwrt/purchase/4182685?ssource=DIRECT&share=subscription_link"
+    },
+    {
+      "id": "boosty-4182688",
+      "amountRUB": 1999,
+      "usd": 25.8,
+      "eur": 23.5,
+      "checkoutURL": "https://boosty.to/rwrt/purchase/4182688?ssource=DIRECT&share=subscription_link"
+    }
+  ],
+  "destinations": [
+    {
+      "id": "tbank-collection-1",
+      "method": "bank",
+      "url": "https://t.tb.ru/pm_short/6cgsSxNwt2m"
+    },
+    {
+      "id": "boosty-rwrt-gift-1",
+      "method": "boosty",
+      "url": "https://boosty.to/rwrt/donate"
+    }
+  ],
+  "retired": []
+}
