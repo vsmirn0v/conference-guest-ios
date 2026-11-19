@@ -12,11 +12,15 @@ import sqlite3
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 HEX = re.compile(r'^[0-9a-f]{64}$')
 CODE = re.compile(r'^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{5}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{5}$')
 ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 LIMIT = 50000
+MAX_PERIOD = 32 * 86400
+VERIFY_KEY = Ed25519PublicKey.from_public_bytes(base64.b64decode('SyVA6vPGDZnu7wKtv9iqQM9Cj+zWxg2BdhkUXSH+og0='))
 DB = '/var/lib/rock-author-support/claims.sqlite3'
 
 def connect(path):
@@ -74,8 +78,11 @@ def consume(db, code, envelope, now, update=False):
         if not isinstance(envelope,dict) or set(envelope)!={'payload','signature'}: raise ValueError('invalid envelope')
         raw=base64.b64decode(envelope['payload'],validate=True); signature=base64.b64decode(envelope['signature'],validate=True)
         if len(raw)>1024 or len(signature)!=64: raise ValueError('invalid envelope')
+        try: VERIFY_KEY.verify(signature, raw)
+        except InvalidSignature: raise ValueError('invalid signature')
         p=json.loads(raw)
         if set(p)!={'kind','schema','device','nonce','issued','through','revision'} or p['kind']!='membership' or p['schema']!=1 or p['device']!=claim['device'] or p['nonce']!=claim['nonce'] or any(type(p[k]) is not int or p[k]<0 for k in ('issued','through','revision')): raise ValueError('invalid payload')
+        if abs(p['issued'] - now) > 300 or p['through'] > p['issued'] + MAX_PERIOD: raise ValueError('invalid receipt period')
         if p['revision'] <= claim['revision']: raise ValueError('revision must increase')
         serialized=json.dumps(envelope,separators=(',',':'))
         db.execute('UPDATE claims SET envelope=? WHERE device=? AND nonce=?',(serialized,claim['device'],claim['nonce']))

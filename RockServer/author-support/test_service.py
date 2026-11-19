@@ -1,12 +1,14 @@
 import base64, importlib.util, json, pathlib, tempfile, unittest
 spec=importlib.util.spec_from_file_location('service',pathlib.Path(__file__).with_name('service.py')); s=importlib.util.module_from_spec(spec); spec.loader.exec_module(s)
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 class Claims(unittest.TestCase):
  def setUp(self):
-  self.tmp=tempfile.TemporaryDirectory(); self.db=s.connect(str(pathlib.Path(self.tmp.name)/'test.db')); s.init(self.db); self.d='a'*64; self.n='b'*64
+  self.key=Ed25519PrivateKey.generate(); s.VERIFY_KEY=self.key.public_key(); self.tmp=tempfile.TemporaryDirectory(); self.db=s.connect(str(pathlib.Path(self.tmp.name)/'test.db')); s.init(self.db); self.d='a'*64; self.n='b'*64
  def tearDown(self): self.db.close(); self.tmp.cleanup()
- def envelope(self,rev=1,through=10000,device=None):
-  p={'kind':'membership','schema':1,'device':device or self.d,'nonce':self.n,'issued':100,'through':through,'revision':rev}
-  return {'payload':base64.b64encode(json.dumps(p).encode()).decode(),'signature':base64.b64encode(b'x'*64).decode()}
+ def envelope(self,rev=1,through=10000,device=None,issued=100):
+  p={'kind':'membership','schema':1,'device':device or self.d,'nonce':self.n,'issued':issued,'through':through,'revision':rev}
+  raw=json.dumps(p).encode(); return {'payload':base64.b64encode(raw).decode(),'signature':base64.b64encode(self.key.sign(raw)).decode()}
  def test_idempotence_consume_and_refresh(self):
   a=s.register(self.db,self.d,self.n,100); self.assertEqual(a,s.register(self.db,self.d,self.n,101)); self.assertEqual(a['expires'],1900)
   self.assertEqual(s.lookup(self.db,a['code'],102)['device'],self.d); s.consume(self.db,a['code'],self.envelope(),103)
@@ -14,13 +16,18 @@ class Claims(unittest.TestCase):
   with self.assertRaises(ValueError): s.register(self.db,self.d,self.n,104)
   self.assertEqual(s.lookup(self.db,a['code'],2000,True)['revision'],1)
   with self.assertRaises(ValueError): s.consume(self.db,a['code'],self.envelope(),2000,True)
-  s.consume(self.db,a['code'],self.envelope(2,0),2000,True)
+  s.consume(self.db,a['code'],self.envelope(2,0,issued=2000),2000,True)
   row=self.db.execute('SELECT envelope FROM claims WHERE device=? AND nonce=?',(self.d,self.n)).fetchone()
   self.assertEqual(json.loads(base64.b64decode(json.loads(row[0])['payload']))['through'],0)
  def test_expired_and_payload_binding(self):
   a=s.register(self.db,self.d,self.n,100)
   with self.assertRaises(ValueError): s.lookup(self.db,a['code'],1900)
   with self.assertRaises(ValueError): s.consume(self.db,a['code'],self.envelope(device='c'*64),101)
+  self.assertIsNone(self.db.execute('SELECT envelope FROM claims').fetchone()[0])
+ def test_rejects_signature_and_long_period(self):
+  a=s.register(self.db,self.d,self.n,100); e=self.envelope(); e['signature']=base64.b64encode(b'x'*64).decode()
+  with self.assertRaises(ValueError): s.consume(self.db,a['code'],e,101)
+  with self.assertRaises(ValueError): s.consume(self.db,a['code'],self.envelope(through=100+32*86400+1),101)
   self.assertIsNone(self.db.execute('SELECT envelope FROM claims').fetchone()[0])
  def test_rejects_invalid_inputs(self):
   for value in ('A'*64,'a'*63,'x'*64,None):

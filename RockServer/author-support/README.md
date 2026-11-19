@@ -1,6 +1,6 @@
 # Author support claims
 
-The standalone loopback registry stores only an anonymous device public-key hash, a random nonce, claim status, and the signed receipt. It has no provider credentials or signing key. Requests are limited globally and per in-memory client IP; IP addresses are not logged or persisted. Unclaimed registrations expire after 30 minutes. The database has a 50,000-record and 32 MiB limit; signed receipts are retained for refresh. Monitor capacity and do not delete issued grants without an explicit retention decision.
+The registry requires system Python `cryptography` with Ed25519 support and verifies every signature before consuming or updating a claim. Paid-through dates are capped at 32 days from issuance. The standalone loopback registry stores only an anonymous device public-key hash, a random nonce, claim status, and the signed receipt. It has no provider credentials or signing key. Requests are limited globally and per in-memory client IP; IP addresses are not logged or persisted. Unclaimed registrations expire after 30 minutes. The database has a 50,000-record and 32 MiB limit; signed receipts are retained for refresh. Monitor capacity and do not delete issued grants without an explicit retention decision.
 
 After independently authenticating the Boosty membership, run locally:
 

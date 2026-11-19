@@ -8,7 +8,7 @@ p.add_argument('--host',default='root@kachat.app'); p.add_argument('--sign-tool'
 a=p.parse_args()
 if a.code is None: a.code=getpass.getpass('Private enrollment reference: ').strip()
 if not re.fullmatch(r'[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{5}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{5}',a.code): p.error('invalid code')
-if a.action != 'revoke' and (a.through is None or a.through<=int(time.time())): p.error('--through must be a future Unix timestamp')
+if a.action != 'revoke' and (a.through is None or not int(time.time()) < a.through <= int(time.time()) + 32*86400): p.error('--through must be within the next 32 days')
 if a.action == 'revoke' and a.through is not None: p.error('revocation sets through=0')
 def remote(command,data):
     result=subprocess.run(['ssh','-o','BatchMode=yes',a.host,'/usr/bin/python3','/opt/rock-author-support/service.py',command], input=json.dumps(data),text=True,capture_output=True,check=True)
