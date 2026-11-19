@@ -118,6 +118,7 @@ public struct ObsidianSyncReceipt: Codable, Equatable, Sendable {
     public var exportedRevision: Int
     public var updatedAt: Date
     public var errorMessage: String?
+    public var transcriptIncluded: Bool?
 
     public init(
         exporterDeviceID: String,
@@ -125,7 +126,8 @@ public struct ObsidianSyncReceipt: Codable, Equatable, Sendable {
         relativePath: String? = nil,
         exportedRevision: Int = 0,
         updatedAt: Date = Date(),
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        transcriptIncluded: Bool? = nil
     ) {
         self.exporterDeviceID = exporterDeviceID
         self.state = state
@@ -133,6 +135,7 @@ public struct ObsidianSyncReceipt: Codable, Equatable, Sendable {
         self.exportedRevision = exportedRevision
         self.updatedAt = updatedAt
         self.errorMessage = errorMessage
+        self.transcriptIncluded = transcriptIncluded
     }
 }
 

@@ -25,7 +25,8 @@ import UserNotifications
     /// The local MCP server that lets AI clients work with meetings; set once it starts.
     var mcpService: NativeDesktopMCPService?
     /// Obsidian one-way export coordinator, created with the meeting library.
-    lazy var obsidian = ObsidianExportCoordinator(library: attention.store.meetingLibrary)
+    lazy var obsidian = ObsidianExportCoordinator(library: attention.store.meetingLibrary, archive: transcriptArchive)
+    private lazy var transcriptArchive = TranscriptArchiveStore()
     /// CloudKit workspace, transcript, task, context-settings and calendar schedule sync coordinator.
     lazy var workspaceSync = MacWorkspaceSyncCoordinator(
         storageRoot: attention.store.root,
@@ -36,7 +37,8 @@ import UserNotifications
         journalProvider: { [weak self] _ in self?.attention.store.meetingLibrary.workspaceJournal },
         obsidianExportNow: { [weak self] in await self?.obsidian.exportPendingNow() },
         calendar: library.calendar,
-        syncPreferences: library.sync
+        syncPreferences: library.sync,
+        archiveStore: transcriptArchive
     )
     /// A library section is shown unless a meeting is selected in the sidebar.
     @Published var selection: Section = .home { didSet { if selectedMeetingID != nil { selectedMeetingID = nil } } }

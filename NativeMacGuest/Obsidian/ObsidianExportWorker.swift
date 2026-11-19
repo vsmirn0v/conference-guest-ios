@@ -10,6 +10,7 @@ actor ObsidianExportWorker {
     private let backupRoot: URL
     private let writer: ObsidianFileWriter
     private let vaultResolver: (Data) -> ObsidianVaultAccess.Resolution
+    private let transcriptProvider: @Sendable (MeetingSessionRecord) async -> String?
     private var running = false
     private var processing = false
     private var loopTask: Task<Void, Never>?
@@ -19,11 +20,13 @@ actor ObsidianExportWorker {
 
     init(store: MeetingLibraryStore, backupRoot: URL, writer: ObsidianFileWriter? = nil,
          vaultResolver: ((Data) -> ObsidianVaultAccess.Resolution)? = nil,
+         transcriptProvider: @escaping @Sendable (MeetingSessionRecord) async -> String? = { _ in nil },
          onLog: @escaping (String, [String: Any]) -> Void = { _, _ in }) {
         self.store = store
         self.backupRoot = backupRoot
         self.writer = writer ?? ObsidianFileWriter(backupRoot: backupRoot)
         self.vaultResolver = vaultResolver ?? { ObsidianVaultAccess.resolve($0) }
+        self.transcriptProvider = transcriptProvider
         self.onLog = onLog
     }
 
@@ -110,11 +113,21 @@ actor ObsidianExportWorker {
             guard let snapshot = row.snapshot, snapshot.session.exportRevision == row.desiredRevision else {
                 throw ObsidianExportError.staleRevision
             }
+            let transcript = destination.layout.sections.contains(.transcript) ? await transcriptProvider(snapshot.session) : nil
+            var transcriptRelativePath: String?
+            // Deliver the transcript before writing a link to it in the worklog.
+            if destination.mode == .worklog, transcript != nil {
+                component = .transcript
+                guard let receipt = try await exportComponent(component, row: row, destination: destination, vault: vault,
+                    snapshot: snapshot, meetingRelativePath: nil, transcriptBody: transcript, now: now) else { return }
+                transcriptRelativePath = receipt.relativePath
+            }
             var meetingRelativePath: String?
             for required in destination.mode.requiredComponents {
                 component = required
                 guard let receipt = try await exportComponent(required, row: row, destination: destination, vault: vault,
-                    snapshot: snapshot, meetingRelativePath: meetingRelativePath, now: now) else { return }
+                    snapshot: snapshot, meetingRelativePath: meetingRelativePath, transcriptBody: transcript,
+                    transcriptRelativePath: transcriptRelativePath, now: now) else { return }
                 if required == .meeting { meetingRelativePath = receipt.relativePath }
             }
             try await store.completeOutbox(destinationID: ids.0, sessionID: ids.1,
@@ -136,14 +149,21 @@ actor ObsidianExportWorker {
 
     private func exportComponent(_ component: ObsidianExportComponent, row: ObsidianOutboxRecord,
                                  destination: ObsidianDestinationRecord, vault: URL, snapshot: ObsidianExportSnapshot,
-                                 meetingRelativePath: String?, now: Date) async throws -> ObsidianExportBindingRecord? {
+                                 meetingRelativePath: String?, transcriptBody: String?,
+                                 transcriptRelativePath: String? = nil, now: Date) async throws -> ObsidianExportBindingRecord? {
         let session = snapshot.session
         let existing = try await store.binding(destinationID: destination.id, sessionID: session.id, component: component)
         var relativePath = existing?.relativePath ?? ObsidianComponentRenderer.relativePath(for: component,
             destination: destination, snapshot: snapshot)
-        if existing == nil, component == .meeting {
-            relativePath = try availableMeetingPath(relativePath, in: vault)
+        if existing == nil, component == .meeting || component == .transcript {
+            let reservedPath = component == .transcript
+                ? ObsidianComponentRenderer.relativePath(for: .worklog, destination: destination, snapshot: snapshot) : nil
+            relativePath = try availableIndividualPath(relativePath, in: vault, excluding: reservedPath)
         }
+        let section = ObsidianComponentRenderer.transcriptSection(component: component, layout: destination.layout,
+            path: relativePath, body: transcriptBody, transcriptPath: transcriptRelativePath)
+        let transcriptSignature = destination.layout.sections.contains(.transcript) && component != .index
+            ? (section.isEmpty ? "" : MarkdownFilePatcher.sha256(section)) : nil
         guard case .success(let target) = ObsidianVaultAccess.validate(relativePath: relativePath, in: vault),
               case .success(let fileTarget) = ObsidianVaultAccess.validateFileTarget(target) else {
             throw ObsidianExportError.pathEscapesVault(relativePath)
@@ -175,7 +195,8 @@ actor ObsidianExportWorker {
             binding = prepared
         }
         let approval = try await store.approvedObsidianConflict(row: row, component: component)
-        if approval == nil, binding.lastExportedRevision >= row.desiredRevision, binding.lastExportedRevision > 0 {
+        if approval == nil, binding.lastExportedRevision >= row.desiredRevision, binding.lastExportedRevision > 0,
+           binding.transcriptSignature == transcriptSignature {
             guard let nonce = binding.markerID,
                   MarkdownFilePatcher.managedBlockHash(in: existingText, sessionID: session.id,
                     nonce: nonce, component: component) == binding.lastBlockSHA256,
@@ -200,7 +221,11 @@ actor ObsidianExportWorker {
             }
         }
         let result = try ObsidianComponentRenderer.patch(existing: existingText, binding: binding,
-            destination: destination, snapshot: snapshot, meetingRelativePath: meetingRelativePath, fileExists: expected != nil)
+            destination: destination, snapshot: snapshot, meetingRelativePath: meetingRelativePath,
+            transcriptBody: transcriptBody, transcriptRelativePath: transcriptRelativePath, fileExists: expected != nil)
+        if let reviewed = approval?.proposedBlockHash, reviewed != result.blockSHA256 {
+            throw ObsidianExportError.managedBlockConflict
+        }
         var receipt = ObsidianExportBindingRecord(
             destinationID: destination.id, sessionID: session.id, component: component, relativePath: relativePath,
             markerID: binding.markerID, lastExportedRevision: session.exportRevision,
@@ -208,6 +233,7 @@ actor ObsidianExportWorker {
             state: .exported, errorCode: nil, updatedAt: now)
         receipt.lastMetadataSHA256 = result.metadataSHA256
         receipt.metadataOwnershipEvaluated = component == .meeting ? true : nil
+        receipt.transcriptSignature = transcriptSignature
         guard try await store.prepareExportWrite(row: row, binding: receipt) else { return nil }
         let outcome = try await writer.write(target: fileTarget, content: result.text, expectedIdentity: expected,
             vaultRoot: vault, relativePath: relativePath)
@@ -221,12 +247,13 @@ actor ObsidianExportWorker {
         return try ObsidianOwnedMetadata.hash(in: text) == expected
     }
 
-    private func availableMeetingPath(_ proposed: String, in vault: URL) throws -> String {
+    private func availableIndividualPath(_ proposed: String, in vault: URL, excluding reservedPath: String?) throws -> String {
         let path = proposed as NSString
         let base = path.deletingPathExtension
         let ext = path.pathExtension
         for attempt in 1...1000 {
             let candidate = attempt == 1 ? proposed : base + " (\(attempt))." + ext
+            if let reservedPath, candidate.caseInsensitiveCompare(reservedPath) == .orderedSame { continue }
             guard case .success(let url) = ObsidianVaultAccess.validate(relativePath: candidate, in: vault) else {
                 throw ObsidianExportError.pathEscapesVault(candidate)
             }
@@ -242,7 +269,8 @@ actor ObsidianExportWorker {
         let rows = try await store.outboxRows(destinationID: destination.id).filter(\.paused)
         var conflicts: [ObsidianConflict] = []
         for row in rows {
-            for component in destination.mode.requiredComponents {
+            let components = destination.mode == .worklog ? [.transcript, .worklog] : destination.mode.requiredComponents
+            for component in components {
                 if let binding = try await store.binding(destinationID: destination.id, sessionID: row.sessionID, component: component),
                    binding.state == .conflict {
                     conflicts.append(ObsidianConflict(row: row, binding: binding))
@@ -256,14 +284,19 @@ actor ObsidianExportWorker {
         let row = conflict.row, binding = conflict.binding
         guard let destination = try await store.destination(), destination.id == row.destinationID,
               let snapshot = row.snapshot else { throw ObsidianExportError.destinationChanged }
+        let transcript = destination.layout.sections.contains(.transcript) ? await transcriptProvider(snapshot.session) : nil
         let copy = MeetingMarkdownTemplate.managedContent(session: snapshot.session, note: snapshot.note,
             outcome: snapshot.outcome, outcomeState: snapshot.outcomeState)
+            + ObsidianComponentRenderer.transcriptSection(component: .meeting, layout: destination.layout,
+                path: binding.relativePath, body: transcript, transcriptPath: nil)
         guard let vault = await resolveVault(destination) else {
             return ObsidianConflictComparison(conflict: conflict, local: copy,
                 external: L("Waiting for vault access"), standaloneCopy: copy, observedBlockHash: nil)
         }
         let meetingPath = try await store.binding(destinationID: destination.id, sessionID: row.sessionID,
                                                   component: .meeting)?.relativePath
+        let transcriptPath = try await store.binding(destinationID: destination.id, sessionID: row.sessionID,
+                                                     component: .transcript)?.relativePath
         guard case .success(let url) = ObsidianVaultAccess.validate(relativePath: binding.relativePath, in: vault),
               case .success = ObsidianVaultAccess.validateFileTarget(url),
               let text = try? String(contentsOf: url, encoding: .utf8), let nonce = binding.markerID else {
@@ -278,7 +311,8 @@ actor ObsidianExportWorker {
         let currentMetadata = binding.lastMetadataSHA256 == nil ? nil : try? ObsidianOwnedMetadata.preview(in: text)
         if let currentMetadata { reviewed.lastMetadataSHA256 = MarkdownFilePatcher.sha256(currentMetadata) }
         let candidate = try? ObsidianComponentRenderer.patch(existing: text, binding: reviewed,
-            destination: destination, snapshot: snapshot, meetingRelativePath: meetingPath, fileExists: true)
+            destination: destination, snapshot: snapshot, meetingRelativePath: meetingPath,
+            transcriptBody: transcript, transcriptRelativePath: transcriptPath, fileExists: true)
         let local = candidate.flatMap {
             MarkdownFilePatcher.managedBlockContent(in: $0.text, sessionID: row.sessionID,
                 nonce: nonce, component: binding.component)
@@ -288,7 +322,8 @@ actor ObsidianExportWorker {
         return ObsidianConflictComparison(conflict: conflict, local: conflictText(body: local, metadata: nextMetadata),
             external: conflictText(body: external, metadata: currentMetadata), standaloneCopy: copy,
             observedBlockHash: candidate != nil && binding.lastExportedRevision > 0 ? hash : nil,
-            observedMetadataHash: currentMetadata.map(MarkdownFilePatcher.sha256))
+            observedMetadataHash: currentMetadata.map(MarkdownFilePatcher.sha256),
+            proposedBlockHash: candidate?.blockSHA256)
     }
 
     private func conflictText(body: String, metadata: String?) -> String {
@@ -300,7 +335,7 @@ actor ObsidianExportWorker {
         guard let hash = comparison.observedBlockHash else { throw ObsidianExportError.managedBlockConflict }
         try await store.approveObsidianConflictReplacement(row: comparison.conflict.row,
             component: comparison.conflict.binding.component, observedBlockHash: hash,
-            observedMetadataHash: comparison.observedMetadataHash)
+            observedMetadataHash: comparison.observedMetadataHash, proposedBlockHash: comparison.proposedBlockHash)
         await runOnce()
     }
 

@@ -92,7 +92,7 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
 
     // MARK: - Fixture Builder
 
-    private func makeFixture() async throws -> (
+    private func makeFixture(includeTranscript: Bool = false) async throws -> (
         library: MeetingLibraryController,
         notes: MeetingNotesController,
         assistant: AssistantDataStore,
@@ -129,11 +129,14 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         let library = MeetingLibraryController(root: root)
         await library.prepare()
         stores.append(library.store)
+        var layout = ObsidianExportLayout()
+        if includeTranscript { layout.sections.insert(.transcript) }
         try await library.store.saveDestination(
             ObsidianDestinationRecord(
                 enabled: true,
                 saveAfterMeeting: true,
                 syncChanges: true,
+                layout: layout,
                 configRevision: 1,
                 vaultBookmark: Data([1])
             )
@@ -144,7 +147,11 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         let worker = ObsidianExportWorker(
             store: library.store,
             backupRoot: backups,
-            vaultResolver: { _ in .granted(self.vault) }
+            vaultResolver: { _ in .granted(self.vault) },
+            transcriptProvider: { session in
+                let events = await library.workspaceJournal.exportSyncedEvents(sessionID: session.id, deviceID: "mac")
+                return MeetingMarkdownTemplate.transcriptBody(events: events, startedAt: session.recordedStart)
+            }
         )
 
         let libraryCloud = MockZoneTransport<MeetingLibrarySyncRecord>()
@@ -174,6 +181,42 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
     }
 
     // MARK: - Tests
+
+    func testPhoneSaveIncludesTranscriptFromSameCloudSyncPass() async throws {
+        let f = try await makeFixture(includeTranscript: true)
+        let sessionID = UUID()
+        let start = Date().addingTimeInterval(-600)
+        let now = Date()
+        let version = SyncVersion(counter: 1, device: "iphone-1")
+        let session = SyncedMeetingSession(id: sessionID, occurrenceKey: "room:phone-transcript",
+            title: SyncValue("iPhone Review", version: version), hasTitleOverride: SyncValue(false, version: version),
+            invitation: SyncValue(nil, version: version), roomIdentity: "https://meet.example.com/transcript",
+            startedAt: start, endedAt: SyncValue(now, version: version), timeZoneID: "UTC",
+            state: SyncValue("ended", version: version), manualObsidianSaveAt: SyncValue(now, version: version),
+            isDeleted: SyncValue(false, version: version), createdAt: start, updatedAt: now)
+        let chunk = SyncedTranscriptChunk(sessionID: sessionID, deviceID: "iphone-1", chunkIndex: 0,
+            sessionStartedAt: start, sessionEndedAt: now, events: [
+                SyncedTranscriptEvent(id: "speech", kind: "transcript", occurredAt: start.addingTimeInterval(38),
+                    speaker: "Alice", text: "Captured on iPhone", deviceID: "iphone-1"),
+                SyncedTranscriptEvent(id: "chat", kind: "chat", occurredAt: start.addingTimeInterval(39),
+                    speaker: "Alice", text: "Chat stays out", deviceID: "iphone-1")
+            ])
+        let record = MeetingTranscriptSyncRecord.chunk(chunk)
+        f.libraryCloud.records["session:" + sessionID.uuidString] = .session(session)
+        f.transcriptCloud.records[record.syncRecordID] = record
+
+        await f.sync.synchronizeNow()
+
+        guard case .session(let exported)? = f.libraryCloud.records["session:" + sessionID.uuidString] else {
+            return XCTFail("Expected the session receipt")
+        }
+        let receipt = try XCTUnwrap(exported.obsidianReceipt?.value)
+        XCTAssertEqual(receipt.state, "exported")
+        XCTAssertEqual(receipt.transcriptIncluded, true)
+        let content = try String(contentsOf: vault.appendingPathComponent(XCTUnwrap(receipt.relativePath)), encoding: .utf8)
+        XCTAssertTrue(content.contains("**00:00:38 Alice** — Captured on iPhone"))
+        XCTAssertFalse(content.contains("Chat stays out"))
+    }
 
     func testPhoneEndedSessionNotesAndEditsSyncToObsidianAndPublishReceipt() async throws {
         let f = try await makeFixture()

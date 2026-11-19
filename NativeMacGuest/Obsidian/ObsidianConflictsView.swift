@@ -16,6 +16,7 @@ struct ObsidianConflictComparison: Sendable {
     let standaloneCopy: String
     let observedBlockHash: String?
     var observedMetadataHash: String?
+    var proposedBlockHash: String?
 }
 
 struct ObsidianConflictsSection: View {

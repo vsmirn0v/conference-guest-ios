@@ -235,7 +235,7 @@ struct ObsidianDestinationRecord: Codable, Equatable, Identifiable, Sendable {
 }
 
 enum ObsidianExportComponent: String, Codable, Sendable {
-    case meeting, worklog, index
+    case meeting, worklog, index, transcript
 }
 
 enum ObsidianBindingState: String, Codable, Sendable {
@@ -256,6 +256,8 @@ struct ObsidianExportBindingRecord: Codable, Equatable, Sendable {
     var updatedAt: Date
     var lastMetadataSHA256: String?
     var metadataOwnershipEvaluated: Bool?
+    /// Nil when disabled, empty when enabled but unavailable, otherwise a content hash.
+    var transcriptSignature: String?
 }
 
 enum ObsidianExportIntent: String, Codable, Sendable {

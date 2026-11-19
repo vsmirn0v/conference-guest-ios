@@ -4,7 +4,18 @@ import XCTest
 @testable import RockNativeDesktop
 
 final class ObsidianSharedExportTests: XCTestCase {
+    private actor TranscriptFixture {
+        var events: [SyncedTranscriptEvent] = []
+
+        func set(_ events: [SyncedTranscriptEvent]) { self.events = events }
+
+        func render(_ session: MeetingSessionRecord) -> String? {
+            MeetingMarkdownTemplate.transcriptBody(events: events, startedAt: session.recordedStart)
+        }
+    }
+
     private func fixture(mode: ObsidianExportMode, layout: ObsidianExportLayout,
+                         transcript: @escaping @Sendable (MeetingSessionRecord) async -> String? = { _ in nil },
                          perform: (MeetingLibraryStore, ObsidianDestinationRecord, URL, ObsidianExportWorker, ObsidianFileWriter) async throws -> Void) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let vault = root.appendingPathComponent("vault", isDirectory: true)
@@ -18,13 +29,152 @@ final class ObsidianSharedExportTests: XCTestCase {
         try await store.saveDestination(destination)
         let writer = ObsidianFileWriter(backupRoot: backups)
         let worker = ObsidianExportWorker(store: store, backupRoot: backups, writer: writer,
-            vaultResolver: { _ in .granted(vault) })
+            vaultResolver: { _ in .granted(vault) }, transcriptProvider: transcript)
         do {
             try await perform(store, destination, vault, worker, writer)
             await store.close()
         } catch {
             await store.close()
             throw error
+        }
+    }
+
+    func testTranscriptOptInForSeparateFiles() async throws {
+        try await verifyTranscript(in: .separateFiles)
+    }
+
+    func testTranscriptOptInForWorklog() async throws {
+        try await verifyTranscript(in: .worklog)
+    }
+
+    func testTranscriptOptInForFilesAndIndex() async throws {
+        try await verifyTranscript(in: .filesAndIndex)
+    }
+
+    private func verifyTranscript(in mode: ObsidianExportMode) async throws {
+        let layout = ObsidianExportLayout(documentPath: "Work/Meetings.md", monthly: true, timeZoneID: "UTC")
+        let source = TranscriptFixture()
+        try await fixture(mode: mode, layout: layout, transcript: { await source.render($0) }) {
+            store, destination, vault, worker, _ in
+            let start = Date(timeIntervalSince1970: 1_750_000_000)
+            let session = MeetingSessionRecord(title: "Design Review", startedAt: start)
+            try await store.upsertSession(session)
+            _ = try await store.saveNote(sessionID: session.id, markdown: "Keep these notes")
+            func event(_ id: String, kind: String = "transcript", offset: Double, speaker: String? = nil,
+                       text: String) -> SyncedTranscriptEvent {
+                SyncedTranscriptEvent(id: id, kind: kind, occurredAt: start.addingTimeInterval(offset),
+                    speaker: speaker, text: text, deviceID: "fixture")
+            }
+            await source.set([
+                event("last", offset: 3861, text: "Second turn"),
+                event("chat", kind: "chat", offset: 6, text: "Never export chat"),
+                event("partial", kind: "partial", offset: 17, text: "Never export partials"),
+                event("first", offset: 12, speaker: "Alex", text: "First turn\ncontinues"),
+                event("empty", offset: 18, text: " ")
+            ])
+
+            let primary: ObsidianExportComponent = mode == .worklog ? .worklog : .meeting
+            func readBinding(_ component: ObsidianExportComponent) async throws -> ObsidianExportBindingRecord {
+                let binding = try await store.binding(destinationID: destination.id, sessionID: session.id, component: component)
+                return try XCTUnwrap(binding)
+            }
+            func readReceipt() async throws -> ObsidianSyncReceipt {
+                let receipt = try await store.obsidianSyncReceipt(for: session.id, exporterDeviceID: "mac")
+                return try XCTUnwrap(receipt)
+            }
+            func save() async throws {
+                try await store.saveInObsidian(session.id)
+                await worker.runOnce()
+            }
+
+            try await save()
+            let initial = try await readBinding(primary)
+            let primaryURL = vault.appendingPathComponent(initial.relativePath)
+            let original = try String(contentsOf: primaryURL, encoding: .utf8)
+            XCTAssertTrue(original.contains("Keep these notes"))
+            XCTAssertFalse(original.contains("First turn"))
+            let defaultReceipt = try await readReceipt()
+            XCTAssertNil(defaultReceipt.transcriptIncluded)
+
+            var optedIn = destination
+            optedIn.configRevision += 1
+            optedIn.layout.sections.insert(.transcript)
+            try await store.saveDestination(optedIn)
+            await worker.runOnce()
+            XCTAssertEqual(try String(contentsOf: primaryURL, encoding: .utf8), original)
+            try await save()
+
+            let current = try await readBinding(primary)
+            XCTAssertEqual(current.lastExportedRevision, initial.lastExportedRevision)
+            XCTAssertEqual(current.relativePath, initial.relativePath)
+            let primaryMarkdown = try String(contentsOf: primaryURL, encoding: .utf8)
+            let transcriptURL: URL
+            let transcriptComponent: ObsidianExportComponent
+            switch mode {
+            case .separateFiles:
+                transcriptURL = primaryURL
+                transcriptComponent = .meeting
+            case .filesAndIndex:
+                transcriptURL = primaryURL
+                transcriptComponent = .meeting
+                let index = try await readBinding(.index)
+                let markdown = try String(contentsOf: vault.appendingPathComponent(index.relativePath), encoding: .utf8)
+                XCTAssertTrue(markdown.contains("[Design Review](../Meetings/Design%20Review%20"))
+                XCTAssertFalse(markdown.contains("First turn"))
+            case .worklog:
+                transcriptComponent = .transcript
+                let transcript = try await readBinding(.transcript)
+                transcriptURL = vault.appendingPathComponent(transcript.relativePath)
+                XCTAssertEqual(transcriptURL.deletingLastPathComponent(), primaryURL.deletingLastPathComponent())
+                let link = transcriptURL.lastPathComponent.replacingOccurrences(of: " ", with: "%20")
+                XCTAssertTrue(primaryMarkdown.contains("](\(link))"))
+                XCTAssertFalse(primaryMarkdown.contains("First turn"))
+            }
+            let withTranscript = try String(contentsOf: transcriptURL, encoding: .utf8)
+            XCTAssertTrue(withTranscript.contains("## Transcript\n\n**00:00:12 Alex** — First turn continues\n\n**01:04:21** — Second turn"))
+            XCTAssertFalse(withTranscript.contains("Never export"))
+            let includedReceipt = try await readReceipt()
+            XCTAssertEqual(includedReceipt.transcriptIncluded, true)
+
+            try (withTranscript + "\nManual annotation\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+            await source.set([event("first", offset: 12, speaker: "Alex", text: "Revised turn")])
+            try await save()
+            let revised = try String(contentsOf: transcriptURL, encoding: .utf8)
+            XCTAssertTrue(revised.contains("Revised turn"))
+            XCTAssertTrue(revised.hasSuffix("\nManual annotation\n"))
+
+            let edited = revised.replacingOccurrences(of: "Revised turn", with: "Externally edited turn")
+            try edited.write(to: transcriptURL, atomically: true, encoding: .utf8)
+            await source.set([event("first", offset: 12, speaker: "Alex", text: "A later revision")])
+            try await save()
+            XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), edited)
+            let conflicts = try await worker.conflicts()
+            XCTAssertEqual(conflicts.first?.binding.component, transcriptComponent)
+            let comparison = try await worker.compare(XCTUnwrap(conflicts.first))
+            XCTAssertTrue(comparison.local.contains("A later revision"))
+            await source.set([event("first", offset: 12, speaker: "Alex", text: "Updated during review")])
+            try await worker.replaceConflictingBlock(comparison)
+            XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), edited)
+            let refreshedConflicts = try await worker.conflicts()
+            let refreshed = try await worker.compare(XCTUnwrap(refreshedConflicts.first))
+            XCTAssertTrue(refreshed.local.contains("Updated during review"))
+            try await worker.replaceConflictingBlock(refreshed)
+            let resolved = try String(contentsOf: transcriptURL, encoding: .utf8)
+            XCTAssertTrue(resolved.contains("Updated during review"))
+            XCTAssertTrue(resolved.hasSuffix("\nManual annotation\n"))
+
+            await source.set([event("chat", kind: "chat", offset: 6, text: "Only chat")])
+            let withoutSpeech = MeetingSessionRecord(title: "Without speech", startedAt: start)
+            try await store.upsertSession(withoutSpeech)
+            _ = try await store.saveNote(sessionID: withoutSpeech.id, markdown: "Still exported")
+            try await store.saveInObsidian(withoutSpeech.id)
+            await worker.runOnce()
+            let missing = try await store.obsidianSyncReceipt(for: withoutSpeech.id, exporterDeviceID: "mac")
+            XCTAssertEqual(missing?.state, "exported")
+            XCTAssertEqual(missing?.transcriptIncluded, false)
+            let withNotes = try String(contentsOf: vault.appendingPathComponent(XCTUnwrap(missing?.relativePath)), encoding: .utf8)
+            XCTAssertTrue(withNotes.contains("Still exported"))
+            XCTAssertFalse(withNotes.contains("Only chat"))
         }
     }
 

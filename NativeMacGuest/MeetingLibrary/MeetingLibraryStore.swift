@@ -1688,6 +1688,7 @@ extension MeetingLibraryStore {
     private struct BindingLayoutReceipt: Codable {
         let metadataSHA256: String?
         let metadataOwnershipEvaluated: Bool?
+        let transcriptSignature: String?
     }
 
     private static func writeBinding(_ binding: ObsidianExportBindingRecord, db: MeetingSQLiteConnection) throws {
@@ -1708,9 +1709,9 @@ extension MeetingLibraryStore {
             try Self.bindText($0, binding.relativePath, at: 4)
             try Self.bindText($0, binding.markerID, at: 5)
             let layout: Data?
-            if binding.lastMetadataSHA256 != nil || binding.metadataOwnershipEvaluated != nil {
+            if binding.lastMetadataSHA256 != nil || binding.metadataOwnershipEvaluated != nil || binding.transcriptSignature != nil {
                 layout = try JSONEncoder().encode(BindingLayoutReceipt(metadataSHA256: binding.lastMetadataSHA256,
-                    metadataOwnershipEvaluated: binding.metadataOwnershipEvaluated))
+                    metadataOwnershipEvaluated: binding.metadataOwnershipEvaluated, transcriptSignature: binding.transcriptSignature))
             } else {
                 layout = nil
             }
@@ -1746,6 +1747,7 @@ extension MeetingLibraryStore {
         let revision: Int
         let blockHash: String
         let metadataHash: String?
+        let proposedBlockHash: String?
     }
 
     func approvedObsidianConflict(row: ObsidianOutboxRecord, component: ObsidianExportComponent) throws -> ExportConflictApproval? {
@@ -1760,7 +1762,8 @@ extension MeetingLibraryStore {
     }
 
     func approveObsidianConflictReplacement(row: ObsidianOutboxRecord, component: ObsidianExportComponent,
-                                            observedBlockHash: String, observedMetadataHash: String?) throws {
+                                            observedBlockHash: String, observedMetadataHash: String?,
+                                            proposedBlockHash: String?) throws {
         let db = try db()
         try db.transaction {
             guard let destination = try Self.activeDestination(db), destination.id == row.destinationID,
@@ -1772,7 +1775,7 @@ extension MeetingLibraryStore {
                     try Self.bindText($0, component.rawValue, at: 3)
                   }) != nil else { throw ObsidianExportError.destinationChanged }
             let approval = ExportConflictApproval(revision: row.desiredRevision,
-                blockHash: observedBlockHash, metadataHash: observedMetadataHash)
+                blockHash: observedBlockHash, metadataHash: observedMetadataHash, proposedBlockHash: proposedBlockHash)
             try db.run("UPDATE export_bindings SET conflict_json=? WHERE destination_id=? AND session_id=? AND component=?") {
                 try Self.bindBlob($0, JSONEncoder.attention.encode(approval), at: 1)
                 try Self.bindText($0, row.destinationID.uuidString, at: 2)
@@ -2045,7 +2048,7 @@ extension MeetingLibraryStore {
         return Int(try db.one("SELECT COUNT(*) FROM export_outbox")?.integer(0) ?? 0)
     }
 
-    private static func binding(from row: MeetingSQLiteRow, destinationID: UUID) -> ObsidianExportBindingRecord? {
+    static func binding(from row: MeetingSQLiteRow, destinationID: UUID) -> ObsidianExportBindingRecord? {
         guard let sessionID = UUID(uuidString: row.text(1) ?? "") else { return nil }
         let layout: BindingLayoutReceipt?
         if case .blob(let bytes)? = row[7] { layout = try? JSONDecoder().decode(BindingLayoutReceipt.self, from: bytes) }
@@ -2059,7 +2062,8 @@ extension MeetingLibraryStore {
             state: ObsidianBindingState(rawValue: row.text(12) ?? "") ?? .idle,
             errorCode: row.text(13),
             updatedAt: Self.date(row.integer(16)) ?? .distantPast,
-            lastMetadataSHA256: layout?.metadataSHA256, metadataOwnershipEvaluated: layout?.metadataOwnershipEvaluated)
+            lastMetadataSHA256: layout?.metadataSHA256, metadataOwnershipEvaluated: layout?.metadataOwnershipEvaluated,
+            transcriptSignature: layout?.transcriptSignature)
     }
 
     private static func outboxRecord(from row: MeetingSQLiteRow) -> ObsidianOutboxRecord? {

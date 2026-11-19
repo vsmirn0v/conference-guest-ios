@@ -3263,6 +3263,12 @@
 "The outcome provider returned an error." = "The outcome provider returned an error.";
 "Title" = "Title";
 "Transcript" = "Transcript";
+"Full transcript" = "Full transcript";
+"Let’s review the next steps." = "Let’s review the next steps.";
+"I’ll update the plan." = "I’ll update the plan.";
+"Transcript included" = "Transcript included";
+"Transcript was unavailable on the Mac." = "Transcript was unavailable on the Mac.";
+"This transcript is stored locally on this iPhone. Obsidian export uses the transcript available on the Mac." = "This transcript is stored locally on this iPhone. Obsidian export uses the transcript available on the Mac.";
 "Transcript Backup & Archive" = "Transcript Backup & Archive";
 "Transcript backup folder" = "Transcript backup folder";
 "Unassigned" = "Unassigned";

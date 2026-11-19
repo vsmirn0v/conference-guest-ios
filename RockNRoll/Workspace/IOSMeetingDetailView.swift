@@ -422,6 +422,11 @@ struct IOSMeetingDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
+                        if let included = receipt.transcriptIncluded, receipt.state == "exported" {
+                            Text(included ? L("Transcript included") : L("Transcript was unavailable on the Mac."))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 } else {
                     Text(L("Not exported to Obsidian yet."))
@@ -435,6 +440,11 @@ struct IOSMeetingDetailView: View {
                     Label(L("Save in Obsidian on Mac"), systemImage: "square.and.arrow.down.on.square")
                 }
                 .disabled(!sync.enabled)
+                if transcriptIsLocalOnly, transcriptEvents.contains(where: { $0.kind == "transcript" }) {
+                    Text(L("This transcript is stored locally on this iPhone. Obsidian export uses the transcript available on the Mac."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .listStyle(.insetGrouped)

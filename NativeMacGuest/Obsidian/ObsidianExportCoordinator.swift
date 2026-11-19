@@ -21,10 +21,19 @@ import Foundation
     var saveAfterMeeting: Bool { destination?.saveAfterMeeting == true }
     var syncChanges: Bool { destination?.syncChanges == true }
 
-    init(library: MeetingLibraryController, worker: ObsidianExportWorker? = nil) {
+    init(library: MeetingLibraryController, worker: ObsidianExportWorker? = nil,
+         archive: TranscriptArchiveStore = TranscriptArchiveStore()) {
         self.library = library
         let root = library.store.storeRoot.appendingPathComponent("ExportBackups", isDirectory: true)
-        self.worker = worker ?? ObsidianExportWorker(store: library.store, backupRoot: root) { event, fields in
+        let journal = library.workspaceJournal
+        self.worker = worker ?? ObsidianExportWorker(store: library.store, backupRoot: root, transcriptProvider: { session in
+            let events = await journal.exportSyncedEvents(sessionID: session.id, deviceID: "")
+            if let body = MeetingMarkdownTemplate.transcriptBody(events: events, startedAt: session.recordedStart) {
+                return body
+            }
+            let archived = await archive.loadTranscript(sessionID: session.id) ?? []
+            return MeetingMarkdownTemplate.transcriptBody(events: archived, startedAt: session.recordedStart)
+        }) { event, fields in
             probeLog(event, fields)
         }
     }

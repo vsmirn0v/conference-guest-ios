@@ -7,6 +7,12 @@ enum ObsidianComponentRenderer {
             let name = MeetingMarkdownTemplate.meetingFileName(title: snapshot.session.title, sessionID: snapshot.session.id)
             return destination.meetingFolder.isEmpty ? name : destination.meetingFolder + "/" + name
         }
+        if component == .transcript {
+            let name = MeetingMarkdownTemplate.meetingFileName(title: snapshot.session.title, sessionID: snapshot.session.id)
+            let folder = (destination.layout.documentPath as NSString).deletingLastPathComponent
+            let transcript = (name as NSString).deletingPathExtension + " - Transcript.md"
+            return folder.isEmpty ? transcript : folder + "/" + transcript
+        }
         let path = destination.layout.documentPath
         guard destination.layout.monthly else { return path }
         let date = dayKey(for: snapshot.session, timeZoneID: destination.layout.timeZoneID)
@@ -17,6 +23,7 @@ enum ObsidianComponentRenderer {
 
     static func patch(existing: String, binding: ObsidianExportBindingRecord, destination: ObsidianDestinationRecord,
                       snapshot: ObsidianExportSnapshot, meetingRelativePath: String?,
+                      transcriptBody: String? = nil, transcriptRelativePath: String? = nil,
                       fileExists: Bool = false) throws -> MarkdownFilePatcher.PatchResult {
         guard let nonce = binding.markerID else { throw ObsidianExportError.markerDamage("The export binding has no marker identity.") }
         let layout = destination.layout
@@ -28,7 +35,11 @@ enum ObsidianComponentRenderer {
             let heading = shared ? (layout.groupByDay ? 4 : 3) : 1
             content = MeetingMarkdownTemplate.managedContent(session: session, note: snapshot.note, outcome: snapshot.outcome,
                 outcomeState: snapshot.outcomeState, sections: layout.sections, headingLevel: heading,
-                boldTitle: shared && layout.runtimeStyle)
+                boldTitle: shared && layout.runtimeStyle) + transcriptSection(component: binding.component, layout: layout,
+                    path: binding.relativePath, body: transcriptBody, transcriptPath: transcriptRelativePath)
+        case .transcript:
+            content = "# " + MeetingMarkdownTemplate.transcriptText(session.title) + transcriptSection(component: .transcript, layout: layout,
+                path: binding.relativePath, body: transcriptBody, transcriptPath: nil)
         case .index:
             guard let meetingRelativePath else {
                 throw ObsidianExportError.placementConflict("The index requires a delivered meeting file.")
@@ -51,7 +62,7 @@ enum ObsidianComponentRenderer {
             $0.markers.sessionID == session.id && $0.markers.component == binding.component
         }
         let placement: ObsidianWorklogPlacement.Insertion?
-        if existingBlock || binding.component == .meeting {
+        if existingBlock || binding.component == .meeting || binding.component == .transcript {
             placement = nil
         } else {
             placement = try ObsidianWorklogPlacement.insertion(in: existing, structure: structure,
@@ -77,6 +88,20 @@ enum ObsidianComponentRenderer {
             }
         }
         return result
+    }
+
+    static func transcriptSection(component: ObsidianExportComponent, layout: ObsidianExportLayout,
+                                  path: String, body: String?, transcriptPath: String?) -> String {
+        guard layout.sections.contains(.transcript), let body else { return "" }
+        switch component {
+        case .meeting, .transcript:
+            return "\n\n## Transcript\n\n" + body
+        case .worklog:
+            guard let transcriptPath else { return "" }
+            return "\n\n[" + L("Full transcript") + "](\(relativeLink(from: path, to: transcriptPath)))"
+        case .index:
+            return ""
+        }
     }
 
     static func dayKey(for session: MeetingSessionRecord, timeZoneID: String) -> String {

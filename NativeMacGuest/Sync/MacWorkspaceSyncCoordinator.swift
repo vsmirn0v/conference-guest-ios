@@ -358,8 +358,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
             if syncPreferences.syncWorkspace {
                 do {
-                    try await syncWorkspacePass()
-                    try await syncTranscriptsPass()
+                    let prefetchedTranscripts = try await syncWorkspacePass()
+                    try await syncTranscriptsPass(prefetched: prefetchedTranscripts)
                     anyPassSucceeded = true
                 } catch {
                     syncError = error.localizedDescription
@@ -413,7 +413,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         } while needsAnotherPass && !Task.isCancelled
     }
 
-    private func syncWorkspacePass() async throws {
+    private func syncWorkspacePass() async throws -> CloudZoneSession? {
         await meetingLibrary.prepare()
         let snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
         ingestLocalSnapshotIntoDocument(snapshot)
@@ -448,6 +448,16 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             report.changedSessions.insert(redirect.loser)
         }
 
+        // Transcript records arrive in a different zone. Import them before creating
+        // export jobs for the incoming meetings, including phone-initiated saves.
+        var prefetchedTranscripts: CloudZoneSession?
+        if !report.changedSessions.isEmpty,
+           try await meetingLibrary.store.destination()?.layout.sections.contains(.transcript) == true,
+           let session = try? await connectTranscriptZone(),
+           (try? await mergeIncomingTranscripts(session: session)) != nil {
+            prefetchedTranscripts = session
+        }
+
         if !report.changedSessions.isEmpty || !report.changedTaskIDs.isEmpty ||
             !report.changedProfileIDs.isEmpty || !report.changedSettingsKeys.isEmpty ||
             !changes.records.isEmpty {
@@ -469,23 +479,37 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                 }
             }
         }
+        return prefetchedTranscripts
     }
 
-    private func syncTranscriptsPass() async throws {
-        let snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
-        exportLocalTranscriptsAndArchive(snapshot: snapshot)
-
-        let zoneSession = try await connectZone(name: "transcript", transport: transcriptTransport) {
+    private func connectTranscriptZone() async throws -> CloudZoneSession {
+        try await connectZone(name: "transcript", transport: transcriptTransport) {
             self.replica.transcriptToken = nil
             self.replica.acknowledgedTranscripts.removeAll()
         }
-        let changes = try await transcriptTransport.fetch(session: zoneSession, after: replica.transcriptToken)
+    }
+
+    private func mergeIncomingTranscripts(session: CloudZoneSession) async throws {
+        let changes = try await transcriptTransport.fetch(session: session, after: replica.transcriptToken)
         replica.transcriptToken = changes.token
         let changedSessions = replica.workspaceDoc.mergeTranscriptRecords(changes.records)
 
         if !changedSessions.isEmpty {
             applyTranscriptsToJournal(for: changedSessions)
             archiveUpdatedSessions(Array(changedSessions))
+        }
+    }
+
+    private func syncTranscriptsPass(prefetched: CloudZoneSession?) async throws {
+        let snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
+        exportLocalTranscriptsAndArchive(snapshot: snapshot)
+
+        let zoneSession: CloudZoneSession
+        if let prefetched {
+            zoneSession = prefetched
+        } else {
+            zoneSession = try await connectTranscriptZone()
+            try await mergeIncomingTranscripts(session: zoneSession)
         }
 
         let retention = syncPreferences.transcriptRetention

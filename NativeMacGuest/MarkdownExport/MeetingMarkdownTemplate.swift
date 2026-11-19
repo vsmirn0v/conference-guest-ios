@@ -8,6 +8,8 @@ struct MeetingMarkdownSections: OptionSet, Codable, Sendable {
     static let decisions = Self(rawValue: 1 << 2)
     static let tasks = Self(rawValue: 1 << 3)
     static let questions = Self(rawValue: 1 << 4)
+    static let transcript = Self(rawValue: 1 << 5)
+    // Transcripts are opt-in for both new and existing destinations.
     static let all: Self = [.notes, .summary, .decisions, .tasks, .questions]
 }
 
@@ -66,7 +68,7 @@ enum MeetingMarkdownTemplate {
                 parts.append("_No notes for this meeting._")
             }
         }
-        if !sections.subtracting(.notes).isEmpty {
+        if !sections.intersection([.summary, .decisions, .tasks, .questions]).isEmpty {
             parts += ["", heading + "# Outcome"]
             switch outcomeState {
             case .notStarted:
@@ -99,6 +101,31 @@ enum MeetingMarkdownTemplate {
             }
         }
         return MarkdownStructureScanner.closingTrailingFence(in: parts.joined(separator: "\n"))
+    }
+
+    static func transcriptBody(events: [SyncedTranscriptEvent], startedAt: Date?) -> String? {
+        let speech = events.filter { $0.kind == "transcript" }.sorted {
+            ($0.occurredAt, $0.id) < ($1.occurredAt, $1.id)
+        }
+        guard let origin = startedAt ?? speech.first?.occurredAt else { return nil }
+        let paragraphs = speech.compactMap { event -> String? in
+            let line = transcriptText(event.text)
+            guard !line.isEmpty else { return nil }
+            let elapsed = Int(max(0, event.occurredAt.timeIntervalSince(origin)))
+            let time = String(format: "%02ld:%02ld:%02ld", elapsed / 3600, elapsed / 60 % 60, elapsed % 60)
+            let speaker = transcriptText(event.speaker ?? "")
+            let label = speaker.isEmpty ? time : "\(time) \(speaker)"
+            return "**\(label)** — \(line)"
+        }
+        return paragraphs.isEmpty ? nil : paragraphs.joined(separator: "\n\n")
+    }
+
+    static func transcriptText(_ text: String) -> String {
+        // Transcript text is literal, including HTML, links and marker-like content.
+        let punctuation = CharacterSet(charactersIn: "\\`*_[]<>~|&")
+        let line = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return line.unicodeScalars.map { punctuation.contains($0) ? "\\" + String($0) : String($0) }
+            .joined()
     }
 
     /// Sanitized, collision-resistant file name for a meeting. The name derives from

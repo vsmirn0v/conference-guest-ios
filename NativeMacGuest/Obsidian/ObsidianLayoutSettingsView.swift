@@ -66,13 +66,18 @@ struct ObsidianLayoutSettingsView: View {
                         }
                     }
                 }
-                HStack {
-                    section(L("Notes"), .notes)
-                    section(L("Summary"), .summary)
-                    section(L("Decisions"), .decisions)
-                    section(L("Tasks"), .tasks)
-                    section(L("Open questions"), .questions)
-                }
+                Grid(alignment: .leading, horizontalSpacing: 16) {
+                    GridRow {
+                        section(L("Notes"), .notes)
+                        section(L("Summary"), .summary)
+                        section(L("Decisions"), .decisions)
+                    }
+                    GridRow {
+                        section(L("Tasks"), .tasks)
+                        section(L("Open questions"), .questions)
+                        section(L("Transcript"), .transcript)
+                    }
+                }.toggleStyle(.checkbox)
             }.formStyle(.grouped).disabled(loading)
             if let issue { Text(issue).foregroundStyle(.red).padding(.horizontal, 16) }
             if let preview {
@@ -224,8 +229,16 @@ private enum ObsidianLayoutPreview {
         let components = destination.mode.requiredComponents
         let paths = components.map { ObsidianComponentRenderer.relativePath(for: $0, destination: destination, snapshot: snapshot) }
         var result = paths
+        let transcript = destination.layout.sections.contains(.transcript)
+            ? "**00:00:12 Alex** — " + L("Let’s review the next steps.") + "\n\n**00:00:31 Maria** — " + L("I’ll update the plan.")
+            : nil
+        let transcriptPath = transcript != nil && destination.mode == .worklog
+            ? ObsidianComponentRenderer.relativePath(for: .transcript, destination: destination, snapshot: snapshot)
+            : nil
         guard let shared = components.last, shared != .meeting, let path = paths.last else {
-            return Snapshot(text: result.joined(separator: "\n"))
+            let section = ObsidianComponentRenderer.transcriptSection(component: .meeting, layout: destination.layout,
+                path: paths[0], body: transcript, transcriptPath: nil)
+            return Snapshot(text: paths[0] + section)
         }
         var source = [destination.layout.startAfter, destination.layout.endBefore].compactMap { $0 }.joined(separator: "\n")
         if let bookmark = destination.vaultBookmark, case .granted(let root) = ObsidianVaultAccess.resolve(bookmark) {
@@ -249,7 +262,8 @@ private enum ObsidianLayoutPreview {
         let patched: String
         do {
             patched = try ObsidianComponentRenderer.patch(existing: source, binding: binding, destination: destination,
-                snapshot: snapshot, meetingRelativePath: shared == .index ? paths.first : nil).text
+                snapshot: snapshot, meetingRelativePath: shared == .index ? paths.first : nil,
+                transcriptBody: transcript, transcriptRelativePath: transcriptPath).text
         } catch let error as ObsidianExportError {
             if case .placementConflict = error, !legacyDays.isEmpty {
                 return Snapshot(path: path, legacyDays: legacyDays, text: nil, issue: error.localizedDescription)
@@ -260,6 +274,12 @@ private enum ObsidianLayoutPreview {
             let start = patched.index(marker.lowerBound, offsetBy: -900, limitedBy: patched.startIndex) ?? patched.startIndex
             let end = patched.index(marker.upperBound, offsetBy: 1600, limitedBy: patched.endIndex) ?? patched.endIndex
             result.append(String(patched[start..<end]))
+        }
+        if let transcript {
+            let component: ObsidianExportComponent = shared == .worklog ? .transcript : .meeting
+            let path = transcriptPath ?? paths[0]
+            result.append(path + ObsidianComponentRenderer.transcriptSection(component: component, layout: destination.layout,
+                path: path, body: transcript, transcriptPath: nil))
         }
         return Snapshot(path: path, legacyDays: legacyDays, text: result.joined(separator: "\n\n"))
     }

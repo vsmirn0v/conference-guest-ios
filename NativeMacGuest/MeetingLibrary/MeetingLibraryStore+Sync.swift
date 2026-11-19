@@ -609,20 +609,22 @@ extension MeetingLibraryStore {
                 errorMessage: outbox.text(1)
             )
         }
-        if let binding = try db.one("""
-            SELECT relative_path, last_exported_revision, state, error_code, updated_at
-            FROM export_bindings WHERE destination_id=? AND session_id=? AND component='meeting'
+        let component: ObsidianExportComponent = destination.mode == .worklog ? .worklog : .meeting
+        if let row = try db.one("""
+            SELECT * FROM export_bindings WHERE destination_id=? AND session_id=? AND component=?
             """, bind: {
                 try Self.bindText($0, destination.id.uuidString, at: 1)
                 try Self.bindText($0, sessionID.uuidString, at: 2)
-            }) {
+                try Self.bindText($0, component.rawValue, at: 3)
+            }), let binding = Self.binding(from: row, destinationID: destination.id) {
             return ObsidianSyncReceipt(
                 exporterDeviceID: exporterDeviceID,
-                state: binding.text(2) ?? "exported",
-                relativePath: binding.text(0),
-                exportedRevision: Int(binding.integer(1) ?? 0),
-                updatedAt: Self.date(binding.integer(4)) ?? Date(),
-                errorMessage: binding.text(3)
+                state: binding.state.rawValue,
+                relativePath: binding.relativePath,
+                exportedRevision: binding.lastExportedRevision,
+                updatedAt: binding.updatedAt,
+                errorMessage: binding.errorCode,
+                transcriptIncluded: binding.transcriptSignature.map { !$0.isEmpty }
             )
         }
         return nil

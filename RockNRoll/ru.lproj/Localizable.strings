@@ -3262,6 +3262,12 @@
 "The outcome provider returned an error." = "Провайдер итогов вернул ошибку.";
 "Title" = "Название";
 "Transcript" = "Расшифровка";
+"Full transcript" = "Полная расшифровка";
+"Let’s review the next steps." = "Давайте обсудим следующие шаги.";
+"I’ll update the plan." = "Я обновлю план.";
+"Transcript included" = "Расшифровка включена в экспорт";
+"Transcript was unavailable on the Mac." = "Расшифровка была недоступна на Mac.";
+"This transcript is stored locally on this iPhone. Obsidian export uses the transcript available on the Mac." = "Эта расшифровка хранится на iPhone. Для экспорта в Obsidian используется расшифровка, доступная на Mac.";
 "Transcript Backup & Archive" = "Архив и резервное копирование расшифровок";
 "Transcript backup folder" = "Папка архива расшифровок";
 "Unassigned" = "Не назначено";
