@@ -133,7 +133,7 @@ struct NativeDesktopHomeView: View {
                             PersonalTasksView(attention: workspace.attention) { sessionID in
                                 workspace.attention.requestedOutcomeSessionID = sessionID
                                 workspace.selection = .assistant
-                            }.navigationTitle(L("My Tasks"))
+                            }.navigationTitle(L("Tasks"))
                         case .home: home
                         }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)

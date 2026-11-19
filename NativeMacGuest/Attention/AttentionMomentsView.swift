@@ -26,7 +26,7 @@ struct AttentionMomentsView: View {
             Picker(L("Assistant section"), selection: $area) {
                 Text(L("Moments")).tag(Section.moments)
                 Text(L("Outcomes")).tag(Section.outcomes)
-                Text(L("My Tasks")).tag(Section.tasks)
+                Text(L("Tasks")).tag(Section.tasks)
                 Text(L("Talk")).tag(Section.talk)
             }.pickerStyle(.segmented).labelsHidden().padding(12)
             Divider()

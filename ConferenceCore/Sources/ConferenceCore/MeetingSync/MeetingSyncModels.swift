@@ -835,6 +835,17 @@ public struct SyncedCalendarOccurrence: Codable, Equatable, Identifiable, Sendab
         ].compactMap { $0 }.max() ?? 0
     }
 
+    public var semanticFingerprint: CalendarOccurrenceSemanticFingerprint {
+        CalendarOccurrenceSemanticFingerprint(
+            title: title,
+            start: start,
+            end: end,
+            allDay: allDay,
+            links: links,
+            invitation: boundInvitation?.value ?? invitation
+        )
+    }
+
     public func merging(_ other: Self) -> Self {
         guard occurrenceKey == other.occurrenceKey else { return self }
         let selfFresh = sourceDevices.values.max() ?? updatedAt
@@ -842,11 +853,29 @@ public struct SyncedCalendarOccurrence: Codable, Equatable, Identifiable, Sendab
         let preferOtherMeta = (otherFresh, other.invitation != nil ? 1 : 0) >
             (selfFresh, invitation != nil ? 1 : 0)
         var result = preferOtherMeta ? other : self
-        var sources = sourceDevices
-        for (device, seen) in other.sourceDevices {
-            sources[device] = max(sources[device] ?? seen, seen)
+        let mergedDeleted = isDeleted.merging(other.isDeleted)
+        result.isDeleted = mergedDeleted
+        if mergedDeleted.value {
+            if isDeleted.value && other.isDeleted.value {
+                var intersection: [String: Date] = [:]
+                for (device, seen) in sourceDevices {
+                    if let otherSeen = other.sourceDevices[device] {
+                        intersection[device] = max(seen, otherSeen)
+                    }
+                }
+                result.sourceDevices = intersection
+            } else {
+                result.sourceDevices = isDeleted.value ? sourceDevices : other.sourceDevices
+            }
+        } else {
+            var sources = isDeleted.value ? [:] : sourceDevices
+            if !other.isDeleted.value {
+                for (device, seen) in other.sourceDevices {
+                    sources[device] = max(sources[device] ?? seen, seen)
+                }
+            }
+            result.sourceDevices = sources
         }
-        result.sourceDevices = sources
         result.boundInvitation = mergeOptional(boundInvitation, other.boundInvitation)
         result.reminderOverride = mergeOptional(reminderOverride, other.reminderOverride)
         result.skipped = mergeOptional(skipped, other.skipped)
@@ -854,8 +883,50 @@ public struct SyncedCalendarOccurrence: Codable, Equatable, Identifiable, Sendab
         result.snoozeScope = mergeOptional(snoozeScope, other.snoozeScope)
         result.attendedDevices = attendedDevices.union(other.attendedDevices)
         result.linkedSessionID = mergeOptional(linkedSessionID, other.linkedSessionID)
-        result.isDeleted = isDeleted.merging(other.isDeleted)
         result.updatedAt = max(updatedAt, other.updatedAt)
+        return result
+    }
+
+    public func coalescingSemanticDuplicate(_ other: Self) -> Self {
+        let selfResolved = (!isDeleted.value && (boundInvitation?.value ?? invitation) != nil && engine != nil && !requiresChoice) ? 1 : 0
+        let otherResolved = (!other.isDeleted.value && (other.boundInvitation?.value ?? other.invitation) != nil && other.engine != nil && !other.requiresChoice) ? 1 : 0
+        let selfAny = ((boundInvitation?.value ?? invitation) != nil || !links.isEmpty) ? 1 : 0
+        let otherAny = ((other.boundInvitation?.value ?? other.invitation) != nil || !other.links.isEmpty) ? 1 : 0
+        let selfFresh = sourceDevices.values.max() ?? updatedAt
+        let otherFresh = other.sourceDevices.values.max() ?? other.updatedAt
+
+        let selfRank = (isDeleted.value ? 0 : 1, selfResolved, selfAny, selfFresh)
+        let otherRank = (other.isDeleted.value ? 0 : 1, otherResolved, otherAny, otherFresh)
+        let preferOther = otherRank > selfRank || (otherRank == selfRank && other.occurrenceKey < occurrenceKey)
+
+        let base = preferOther ? other : self
+        let secondary = preferOther ? self : other
+        var result = base
+
+        var sources = base.sourceDevices
+        for (device, seen) in secondary.sourceDevices {
+            sources[device] = max(sources[device] ?? seen, seen)
+        }
+        result.sourceDevices = sources
+
+        var mergedLinks = base.links
+        var seenLinks = Set(base.links)
+        for link in secondary.links where seenLinks.insert(link).inserted {
+            mergedLinks.append(link)
+        }
+        result.links = mergedLinks
+        result.invitation = base.invitation ?? secondary.invitation
+        result.engine = base.engine ?? secondary.engine
+        result.endpoint = base.endpoint ?? secondary.endpoint
+        result.boundInvitation = mergeOptional(base.boundInvitation, secondary.boundInvitation)
+        result.reminderOverride = mergeOptional(base.reminderOverride, secondary.reminderOverride)
+        result.skipped = mergeOptional(base.skipped, secondary.skipped)
+        result.snoozeUntil = mergeOptional(base.snoozeUntil, secondary.snoozeUntil)
+        result.snoozeScope = mergeOptional(base.snoozeScope, secondary.snoozeScope)
+        result.attendedDevices = base.attendedDevices.union(secondary.attendedDevices)
+        result.linkedSessionID = mergeOptional(base.linkedSessionID, secondary.linkedSessionID)
+        result.isDeleted = base.isDeleted
+        result.updatedAt = max(base.updatedAt, secondary.updatedAt)
         return result
     }
 

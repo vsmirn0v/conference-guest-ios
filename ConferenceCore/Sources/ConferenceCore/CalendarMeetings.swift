@@ -88,6 +88,71 @@ public struct CalendarLinkGroup: Equatable, Sendable {
     public init(source: Source, links: [URL]) { self.source = source; self.links = links }
 }
 
+public struct CalendarOccurrenceSemanticFingerprint: Equatable, Sendable {
+    public let allDay: Bool
+    public let startMinute: Int64
+    public let endMinute: Int64
+    public let normalizedTitle: String
+    public let roomKeys: Set<String>
+    public let primaryRoomKey: String?
+
+    public init(
+        title: String,
+        start: Date,
+        end: Date,
+        allDay: Bool,
+        links: [URL],
+        invitation: URL?
+    ) {
+        self.allDay = allDay
+        self.startMinute = Int64((start.timeIntervalSince1970 / 60.0).rounded())
+        self.endMinute = Int64((end.timeIntervalSince1970 / 60.0).rounded())
+        let folded = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        self.normalizedTitle = folded.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+
+        var keys = Set<String>()
+        if let invitation, let key = Self.canonicalRoomKey(for: invitation) {
+            keys.insert(key)
+        }
+        for url in links {
+            if let key = Self.canonicalRoomKey(for: url) {
+                keys.insert(key)
+            }
+        }
+        self.roomKeys = keys
+        if let invitation, let key = Self.canonicalRoomKey(for: invitation) {
+            self.primaryRoomKey = key
+        } else if keys.count == 1 {
+            self.primaryRoomKey = keys.first
+        } else {
+            self.primaryRoomKey = nil
+        }
+    }
+
+    public func matches(_ other: Self) -> Bool {
+        guard allDay == other.allDay,
+              startMinute == other.startMinute,
+              endMinute == other.endMinute else {
+            return false
+        }
+        if let primaryRoomKey, primaryRoomKey == other.primaryRoomKey {
+            return true
+        }
+        guard !normalizedTitle.isEmpty, normalizedTitle == other.normalizedTitle else {
+            return false
+        }
+        return roomKeys.isEmpty || other.roomKeys.isEmpty || !roomKeys.isDisjoint(with: other.roomKeys)
+    }
+
+    private static func canonicalRoomKey(for url: URL) -> String? {
+        if let identity = MeetingRoomIdentity(url, engine: nil) {
+            return "\(identity.origin)|\(identity.room.lowercased())"
+        }
+        return MeetingRoomIdentity.normalizedEndpoint(url)?.lowercased()
+    }
+}
+
 public struct CalendarMeeting: Identifiable, Equatable, Sendable {
     public let id: String
     public let seriesID: String
@@ -109,6 +174,17 @@ public struct CalendarMeeting: Identifiable, Equatable, Sendable {
 
     public var occurrenceSyncKey: String {
         (externalSeriesID ?? seriesID) + "|" + String(Int64(start.timeIntervalSince1970.rounded()))
+    }
+
+    public var semanticFingerprint: CalendarOccurrenceSemanticFingerprint {
+        CalendarOccurrenceSemanticFingerprint(
+            title: title,
+            start: start,
+            end: end,
+            allDay: allDay,
+            links: links,
+            invitation: invitation
+        )
     }
 
     public init(id: String, seriesID: String, calendarID: String, calendarTitle: String,

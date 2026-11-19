@@ -700,6 +700,38 @@ final class IOSMultiMeetingTests: XCTestCase {
         XCTAssertFalse(h.model.workspaceAudio.isMuted)
     }
 
+    func testHandoverJoinFromContinuationAlongsideActiveMeeting() async throws {
+        let h = makeModel()
+        defer {
+            h.model.workspaceAudio.systemCall.markEnded(reason: .remoteEnded)
+            withExtendedLifetime(h.container) {}
+        }
+
+        let firstURL = URL(string: "https://meeting.example.test/calls/first-room")!
+        h.model.receive(url: firstURL)
+        h.model.join()
+        try await waitUntil { h.model.isInConference && h.model.sessions.count == 1 }
+
+        // Ensure beginJoiningAnotherMeeting minimizes the foreground call and requests focus
+        let triggerBefore = h.model.focusJoinLinkTrigger
+        h.model.beginJoiningAnotherMeeting()
+        XCTAssertTrue(h.model.isCallMinimized)
+        XCTAssertNotEqual(h.model.focusJoinLinkTrigger, triggerBefore)
+
+        // Joining a second meeting via continuation handover succeeds alongside the first meeting
+        let secondJam = ActiveJam(
+            deviceID: "mac-1",
+            invitation: URL(string: "https://rock.glowsoft.ru/jams/test")!,
+            title: "Second Handover Room",
+            name: "Vi",
+            deviceLabel: "MacBook Pro"
+        )
+        let joinedID = h.model.joinFromContinuation(secondJam, quiet: false)
+        XCTAssertNotNil(joinedID)
+        try await waitUntil { h.model.sessions.count == 2 && h.model.sessions.last?.phase == .connected }
+        XCTAssertEqual(h.model.sessions.count, 2)
+    }
+
     private static func findScrollView(id: String, in root: UIView) -> UIScrollView? {
         if let scroll = root as? UIScrollView, scroll.accessibilityIdentifier == id {
             return scroll

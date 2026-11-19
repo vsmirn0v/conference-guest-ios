@@ -296,6 +296,12 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     static let pushToTalkKey = "attention.commands.pushToTalk"
     static let talkBackKey = "attention.commands.talkBack"
     static let headphoneUIDsKey = "attention.voice.headphones"
+    static let autoSeededTaskAliasesKey = "native.assistant.autoSeededTaskAliases"
+    private(set) var taskProfileLastUpdatedByAutoSeedOnly = false
+
+    func markTaskProfileManuallyEdited() {
+        taskProfileLastUpdatedByAutoSeedOnly = false
+    }
     /// On-device writers run whenever outcome generation is on. A remote writer also needs
     /// Attention on and `remoteOutcomes`, so a saved key cannot send a transcript by itself.
     func setHeadphoneApproved(_ uid: String, _ approved: Bool) {
@@ -610,6 +616,39 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         guard FileManager.default.fileExists(atPath: source.path),
               !FileManager.default.fileExists(atPath: target.path) else { return }
         try? FileManager.default.copyItem(at: source, to: target)
+    }
+
+    @discardableResult
+    func seedTaskProfileWithMeetingName(_ rawName: String) async -> Bool {
+        await waitForMeetingLibrary()
+        let cleaned = PersonalTaskProfile.cleanedAlias(rawName)
+        guard !cleaned.isEmpty else { return false }
+        let key = PersonalTaskProfile.normalized(cleaned)
+        let store = meetingLibrary.store
+        var profile = (try? await store.taskProfile()) ?? assistant.taskProfile
+        guard !profile.id.isEmpty else { return false }
+
+        var seeded = Set(defaults.stringArray(forKey: Self.autoSeededTaskAliasesKey) ?? [])
+        if profile.aliases.contains(where: { PersonalTaskProfile.normalized($0) == key }) {
+            if seeded.insert(key).inserted {
+                defaults.set(Array(seeded).sorted(), forKey: Self.autoSeededTaskAliasesKey)
+            }
+            return false
+        }
+        guard !seeded.contains(key) else { return false }
+
+        let wasEmpty = !profile.isConfigured
+        guard profile.appendAliasIfMissing(cleaned) else { return false }
+        do {
+            try await store.saveTaskProfile(profile)
+            seeded.insert(key)
+            defaults.set(Array(seeded).sorted(), forKey: Self.autoSeededTaskAliasesKey)
+            taskProfileLastUpdatedByAutoSeedOnly = wasEmpty
+            assistant.taskProfile = profile
+            return true
+        } catch {
+            return false
+        }
     }
 
     func applyRemoteSeriesTransition(_ mode: SameRoomMeetingTransitionMode?, seriesID: String) {

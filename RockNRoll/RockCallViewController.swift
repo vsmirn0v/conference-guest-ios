@@ -43,6 +43,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var onSelectMeeting: ((UUID) -> Void)?
     var onTalkHere: ((UUID) -> Void)?
     var onLeaveMeeting: ((UUID) -> Void)?
+    var onJoinAnotherMeeting: (() -> Void)? { didSet { refreshSwitcherChrome() } }
+    var onOpenAssistant: (() -> Void)? { didSet { refreshSwitcherChrome() } }
     var reactions: MeetingReactionsModel?
     var studio: StudioModel?
     private(set) var isFloatingVideoPresenting = false
@@ -112,8 +114,16 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let missedButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
     private let minimizeButton = UIButton(type: .system)
+    private let assistantButton = UIButton(type: .system)
     private let switcherButton = UIButton(type: .system)
     private let talkHereButton = UIButton(type: .system)
+    private let compactTalkHereButton = UIButton(type: .system)
+    private var currentAssistantMode: IOSMeetingAssistantMode = .off
+    private var currentAssistantPaused = false
+    private var currentAssistantAlertCount = 0
+    private var assistantBannerView: UIView?
+    private var assistantBannerDismissTask: Task<Void, Never>?
+    private var assistantBannerTapHandler: (() -> Void)?
     private let reactionsButton = AlignedCallButton(frame: .zero)
     private let reactionOverlay = ReceivedReactionOverlay()
     private let meetingStatusButton = UIButton(type: .system)
@@ -377,8 +387,27 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         focusButton.accessibilityLabel = L("Hide controls")
         focusButton.addAction(UIAction { [weak self] _ in self?.focus.hide() }, for: .touchUpInside)
         view.addSubview(focusButton)
+        var compactTalkConfig = UIButton.Configuration.filled()
+        compactTalkConfig.title = L("Talk Here")
+        compactTalkConfig.image = UIImage(systemName: "mic.fill")
+        compactTalkConfig.imagePadding = 4
+        compactTalkConfig.cornerStyle = .capsule
+        compactTalkConfig.baseBackgroundColor = accent
+        compactTalkConfig.baseForegroundColor = .black
+        compactTalkConfig.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        compactTalkHereButton.configuration = compactTalkConfig
+        compactTalkHereButton.accessibilityIdentifier = "call.talkHere"
+        compactTalkHereButton.isHidden = true
+        compactTalkHereButton.addAction(UIAction { [weak self] _ in
+            guard let self, let id = self.activeMeetingsForSwitcher.first(where: \.isCurrent)?.id else { return }
+            self.onTalkHere?(id)
+        }, for: .touchUpInside)
+        view.addSubview(compactTalkHereButton)
         view.addSubview(compactHeader)
         focus.installHint(in: view)
+        compactHeader.minimize.addAction(UIAction { [weak self] _ in self?.onMinimize?() }, for: .touchUpInside)
+        compactHeader.assistant.addAction(UIAction { [weak self] _ in self?.onOpenAssistant?() }, for: .touchUpInside)
+        compactHeader.switcher.addAction(UIAction { [weak self] _ in self?.presentSwitcher() }, for: .touchUpInside)
         compactHeader.previous.addAction(UIAction { [weak self] _ in self?.browse(-1) }, for: .touchUpInside)
         compactHeader.nextStream.addAction(UIAction { [weak self] _ in self?.browse(1) }, for: .touchUpInside)
         compactHeader.automatic.addAction(UIAction { [weak self] _ in
@@ -402,10 +431,25 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }, for: .touchUpInside)
         compactHeader.details.addAction(UIAction { [weak self] _ in
             guard let self else { return }
+            var quickActions: [(String, () -> Void)] = []
+            if self.onOpenAssistant != nil {
+                let label = self.currentAssistantMode == .off
+                    ? L("Assistant mode")
+                    : L("Assistant mode: %@", self.currentAssistantMode.title)
+                quickActions.append((label, { [weak self] in self?.onOpenAssistant?() }))
+            }
+            if self.activeMeetingsForSwitcher.count > 1 || self.onJoinAnotherMeeting != nil {
+                let label = self.activeMeetingsForSwitcher.count > 1 ? L("Active meetings") : L("Join another meeting…")
+                quickActions.append((label, { [weak self] in self?.presentSwitcher() }))
+            }
+            if self.onMinimize != nil {
+                quickActions.append((L("Return to Home"), { [weak self] in self?.onMinimize?() }))
+            }
             self.workspace.showDetails(from: self.compactHeader.details, presenter: self,
                 title: self.titleLabel.text ?? L("Jam"),
                 lines: [self.countLabel.text, self.workspace.roomIdentifier, self.routeLabel.text,
-                        self.statusLabel.text].compactMap { $0 })
+                        self.statusLabel.text].compactMap { $0 },
+                actions: quickActions)
         }, for: .touchUpInside)
         let tap = UITapGestureRecognizer(target: self, action: #selector(tappedStage(_:)))
         tap.delegate = self; tap.cancelsTouchesInView = false
@@ -565,10 +609,24 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             meetingName: titleLabel.text)
         // Layout and receive filtering have one stable, visible entry in the dock.
         compactHeader.setLayout(mode: effectiveLayoutMode, available: false, choose: { _ in })
+        syncCompactWorkspaceControls()
         updateShareScaleControl()
         statusLabel.isHidden = focus.hidden || geometry.compactHeader
         statusLabel.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY - statusHeight,
             width: geometry.header.width, height: statusHeight)
+        let hideCompactTalkHere = focus.hidden || !geometry.compactHeader || isTalkRoom || activeMeetingsForSwitcher.count <= 1 || textCapture != nil
+        compactTalkHereButton.isHidden = hideCompactTalkHere
+        if !hideCompactTalkHere {
+            let talkSize = compactTalkHereButton.sizeThatFits(CGSize(width: max(0, stage.width - 16), height: 34))
+            let talkWidth = min(max(110, ceil(talkSize.width)), max(110, stage.width - 16))
+            compactTalkHereButton.frame = CGRect(
+                x: floor(stage.midX - talkWidth / 2),
+                y: geometry.header.maxY + 8,
+                width: talkWidth,
+                height: 34
+            )
+            view.bringSubviewToFront(compactTalkHereButton)
+        }
         shareOffer.frame = CGRect(x: stage.minX + 56, y: stage.minY + 8, width: max(0, stage.width - 210), height: 44)
         shareOffer.alpha = focus.hidden ? 0 : 1
         focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
@@ -590,7 +648,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             fittedShare = AVMakeRect(aspectRatio: entry.video.displaySize, insideRect: entry.video.bounds)
             fittedShare = entry.video.convert(fittedShare, to: view)
         }
-        let exclusions = [sourceSelector, shareOffer, localShareCard].filter { !$0.isHidden && $0.alpha > 0 }.map(\.frame)
+        let exclusions = [sourceSelector, shareOffer, localShareCard, compactTalkHereButton].filter { !$0.isHidden && $0.alpha > 0 }.map(\.frame)
         presenterCompanion.place(in: stage, fittedShareFrame: fittedShare, avoiding: exclusions)
         presenterCompanion.refreshVisibility()
         shareReconnectNotice.isHidden = !sharing || !reconnectingShares.contains(currentPrimaryTarget?.participantID ?? "")
@@ -636,7 +694,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             view.bringSubviewToFront(textCapture)
             view.bringSubviewToFront(toolbar)
             if dockedConversation != nil { view.bringSubviewToFront(conversationHost) }
-            header.isHidden = true; compactHeader.isHidden = true; accessControls.isHidden = true
+            header.isHidden = true; compactHeader.isHidden = true; compactTalkHereButton.isHidden = true; accessControls.isHidden = true
         }
     }
 
@@ -737,7 +795,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             identity.topAnchor.constraint(equalTo: identityContainer.topAnchor),
             identity.bottomAnchor.constraint(equalTo: identityContainer.bottomAnchor)
         ])
-        let header = UIStackView(arrangedSubviews: [minimizeButton, identityContainer, talkHereButton, switcherButton,
+        let header = UIStackView(arrangedSubviews: [minimizeButton, identityContainer, talkHereButton, assistantButton, switcherButton,
                                                     participantsButton, missedButton, conversationButton])
         headerView = header
         header.axis = .horizontal
@@ -795,10 +853,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }, for: .touchUpInside)
         configure(participantsButton, symbol: "person.2.fill", label: L("Musicians"))
         configure(minimizeButton, symbol: "chevron.down", label: L("Return to Home"))
-        minimizeButton.accessibilityIdentifier = "call.minimize"
         minimizeButton.addAction(UIAction { [weak self] _ in self?.onMinimize?() }, for: .touchUpInside)
-        configure(switcherButton, symbol: "rectangle.stack.fill", label: L("Active meetings"))
-        switcherButton.accessibilityIdentifier = "call.switcher"
+        configure(assistantButton, symbol: "sparkles", label: L("Assistant mode"))
+        assistantButton.addAction(UIAction { [weak self] _ in self?.onOpenAssistant?() }, for: .touchUpInside)
+        configure(switcherButton, symbol: "rectangle.stack.badge.plus", label: L("Meetings & join another"))
         switcherButton.addAction(UIAction { [weak self] _ in self?.presentSwitcher() }, for: .touchUpInside)
         var talkConfig = UIButton.Configuration.filled()
         talkConfig.title = L("Talk Here")
@@ -810,7 +868,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         talkConfig.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
         talkHereButton.configuration = talkConfig
         talkHereButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        talkHereButton.accessibilityIdentifier = "call.talkHere"
         talkHereButton.addAction(UIAction { [weak self] _ in
             guard let self, let id = self.activeMeetingsForSwitcher.first(where: \.isCurrent)?.id else { return }
             self.onTalkHere?(id)
@@ -1055,9 +1112,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             header.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
             header.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
             header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
-            minimizeButton.widthAnchor.constraint(equalToConstant: 44).withPriority(.defaultHigh),
+            minimizeButton.widthAnchor.constraint(equalToConstant: 42).withPriority(.defaultHigh),
             minimizeButton.heightAnchor.constraint(equalToConstant: 44),
-            switcherButton.widthAnchor.constraint(equalToConstant: 48).withPriority(.defaultHigh),
+            assistantButton.widthAnchor.constraint(equalToConstant: 40).withPriority(.defaultHigh),
+            assistantButton.heightAnchor.constraint(equalToConstant: 44),
+            switcherButton.widthAnchor.constraint(equalToConstant: 44).withPriority(.defaultHigh),
             switcherButton.heightAnchor.constraint(equalToConstant: 44),
             participantsButton.widthAnchor.constraint(equalToConstant: 48),
             participantsButton.heightAnchor.constraint(equalToConstant: 48),
@@ -1721,7 +1780,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 }
         ]
         var invite: [UIMenuElement] = []
-        var meeting: [UIMenuElement] = [UIAction(title: L("Voice reply"), image: UIImage(systemName: "waveform.and.mic"),
+        let assistantTitle = currentAssistantMode == .off
+            ? L("Assistant mode")
+            : L("Assistant mode: %@", currentAssistantMode.title)
+        var meeting: [UIMenuElement] = [UIAction(title: assistantTitle, image: UIImage(systemName: "sparkles")) { [weak self] _ in
+            self?.onOpenAssistant?()
+        }, UIAction(title: L("Voice reply"), image: UIImage(systemName: "waveform.and.mic"),
                 attributes: isHeld ? [.disabled] : []) { [weak self] _ in
             self?.workspace.openVoiceReply?()
         }, UIAction(title: L("Meeting details"), image: UIImage(systemName: "info.circle")) { [weak self] _ in
@@ -1731,6 +1795,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             alert.addAction(UIAlertAction(title: L("Done"), style: .default))
             self.reactionsButton.callActionPresenter?.present(alert, animated: true)
         }]
+        if activeMeetingsForSwitcher.count < ConferenceModel.maxConcurrentMeetings, onJoinAnotherMeeting != nil {
+            meeting.append(UIAction(title: L("Join another meeting…"), image: UIImage(systemName: "plus.circle")) { [weak self] _ in
+                self?.onJoinAnotherMeeting?()
+            })
+        }
         if onMinimize != nil {
             meeting.append(UIAction(title: L("Return to Home"), image: UIImage(systemName: "house")) { [weak self] _ in
                 self?.onMinimize?()
@@ -1816,8 +1885,31 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         #if DEBUG
         meeting = fixtureActions + meeting
         #endif
-        actionsMenu = MeetingActionGroup.make(cameraSound: cameraSound, sharePresenter: sharePresenter,
+        var quickActions: [UIMenuElement] = []
+        if onOpenAssistant != nil {
+            let assistantSymbol = currentAssistantMode == .off ? "sparkles" : currentAssistantMode.symbol
+            quickActions.append(UIAction(title: assistantTitle, image: UIImage(systemName: assistantSymbol)) { [weak self] _ in
+                self?.onOpenAssistant?()
+            })
+        }
+        if activeMeetingsForSwitcher.count < ConferenceModel.maxConcurrentMeetings, onJoinAnotherMeeting != nil {
+            quickActions.append(UIAction(title: L("Join another meeting…"), image: UIImage(systemName: "plus.circle")) { [weak self] _ in
+                self?.onJoinAnotherMeeting?()
+            })
+        }
+        if onMinimize != nil {
+            quickActions.append(UIAction(title: L("Return to Home"), image: UIImage(systemName: "house")) { [weak self] _ in
+                self?.onMinimize?()
+            })
+        }
+        let baseMenu = MeetingActionGroup.make(cameraSound: cameraSound, sharePresenter: sharePresenter,
             view: [visibility, screen, floating], invite: invite, meeting: meeting)
+        if quickActions.isEmpty {
+            actionsMenu = baseMenu
+        } else {
+            let quickMenu = UIMenu(title: "", options: .displayInline, children: quickActions)
+            actionsMenu = UIMenu(children: [quickMenu] + baseMenu.children)
+        }
     }
 
     func performGroupedShareAction() {
@@ -2049,15 +2141,52 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         guard isViewLoaded else { return }
         minimizeButton.isHidden = onMinimize == nil
         let multiple = activeMeetingsForSwitcher.count > 1
-        switcherButton.isHidden = !multiple
+        let canJoinMore = onJoinAnotherMeeting != nil
+        switcherButton.isHidden = activeMeetingsForSwitcher.isEmpty && !canJoinMore
+        let symbol = multiple ? "rectangle.stack.fill" : "rectangle.stack.badge.plus"
+        let label = multiple ? L("Active meetings") : L("Meetings & join another")
+        switcherButton.configuration?.image = UIImage(systemName: symbol)
         switcherButton.configuration?.title = multiple ? "\(activeMeetingsForSwitcher.count)" : nil
+        switcherButton.accessibilityLabel = label
+        switcherButton.largeContentTitle = label
+        switcherButton.largeContentImage = UIImage(systemName: symbol)
         talkHereButton.isHidden = isTalkRoom || !multiple
+        syncCompactWorkspaceControls()
         configureMoreMenu()
         view.setNeedsLayout()
     }
 
+    private func syncCompactWorkspaceControls() {
+        let symbol = currentAssistantMode == .off ? "sparkles" : currentAssistantMode.symbol
+        let modeColor: UIColor
+        if currentAssistantPaused || currentAssistantAlertCount > 0 {
+            modeColor = .systemOrange
+        } else {
+            switch currentAssistantMode {
+            case .off: modeColor = .label
+            case .mentions: modeColor = .systemBlue
+            case .follow: modeColor = .systemIndigo
+            case .participating: modeColor = .systemGreen
+            }
+        }
+        let label = L("Assistant mode: %@", currentAssistantMode.title)
+        let activeCount = activeMeetingsForSwitcher.count
+        let switcherAvailable = !activeMeetingsForSwitcher.isEmpty || onJoinAnotherMeeting != nil
+        compactHeader.setCallWorkspaceControls(
+            minimizeAvailable: onMinimize != nil,
+            assistantAvailable: onOpenAssistant != nil,
+            assistantSymbol: symbol,
+            assistantColor: modeColor,
+            assistantLabel: label,
+            assistantAlertCount: currentAssistantAlertCount,
+            switcherAvailable: switcherAvailable,
+            activeMeetingCount: activeCount
+        )
+    }
+
     private func presentSwitcher() {
-        guard presentedViewController == nil, !activeMeetingsForSwitcher.isEmpty else { return }
+        guard presentedViewController == nil,
+              !activeMeetingsForSwitcher.isEmpty || onJoinAnotherMeeting != nil || onMinimize != nil else { return }
         let sheet = UIAlertController(title: L("Active meetings"), message: nil, preferredStyle: .actionSheet)
         for item in activeMeetingsForSwitcher {
             let role = item.isTalk ? L("Talk") : L("Listening")
@@ -2075,12 +2204,139 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 self?.onLeaveMeeting?(item.id)
             })
         }
+        if activeMeetingsForSwitcher.count < ConferenceModel.maxConcurrentMeetings, let onJoinAnotherMeeting {
+            sheet.addAction(UIAlertAction(title: L("Join another meeting…"), style: .default) { _ in
+                onJoinAnotherMeeting()
+            })
+        }
+        if let onMinimize {
+            sheet.addAction(UIAlertAction(title: L("Return to Home"), style: .default) { _ in
+                onMinimize()
+            })
+        }
         sheet.addAction(UIAlertAction(title: L("Cancel"), style: .cancel))
         if let popover = sheet.popoverPresentationController {
-            popover.sourceView = switcherButton
-            popover.sourceRect = switcherButton.bounds
+            let anchor = !compactHeader.isHidden ? compactHeader.switcher : switcherButton
+            popover.sourceView = anchor
+            popover.sourceRect = anchor.bounds
         }
         present(sheet, animated: true)
+    }
+
+    func updateAssistantBadge(mode: IOSMeetingAssistantMode, isPaused: Bool, alertCount: Int) {
+        currentAssistantMode = mode
+        currentAssistantPaused = isPaused
+        currentAssistantAlertCount = alertCount
+        guard isViewLoaded else { return }
+        let symbol = mode == .off ? "sparkles" : mode.symbol
+        let color: UIColor
+        if isPaused || alertCount > 0 {
+            color = .systemOrange
+        } else {
+            switch mode {
+            case .off: color = .label
+            case .mentions: color = .systemBlue
+            case .follow: color = .systemIndigo
+            case .participating: color = .systemGreen
+            }
+        }
+        let label = L("Assistant mode: %@", mode.title)
+        assistantButton.configuration?.image = UIImage(systemName: symbol)
+        assistantButton.configuration?.title = alertCount > 0 ? "\(alertCount)" : nil
+        assistantButton.configuration?.baseForegroundColor = color
+        assistantButton.accessibilityLabel = label
+        assistantButton.largeContentTitle = label
+        assistantButton.largeContentImage = UIImage(systemName: symbol)
+        syncCompactWorkspaceControls()
+        configureMoreMenu()
+    }
+
+    func showAssistantAlert(title: String, reason: String, onTap: @escaping () -> Void) {
+        guard isViewLoaded else { return }
+        dismissAssistantAlert()
+        assistantBannerTapHandler = onTap
+
+        let container = UIView()
+        container.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.96)
+        container.layer.cornerRadius = 14
+        container.layer.borderWidth = 0.5
+        container.layer.borderColor = UIColor.separator.cgColor
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = UIImageView(image: UIImage(systemName: "sparkles"))
+        icon.tintColor = accent
+        icon.contentMode = .scaleAspectFit
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLbl = UILabel()
+        titleLbl.text = title
+        titleLbl.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleLbl.textColor = .secondaryLabel
+        titleLbl.numberOfLines = 1
+
+        let bodyLbl = UILabel()
+        bodyLbl.text = reason
+        bodyLbl.font = .preferredFont(forTextStyle: .subheadline)
+        bodyLbl.textColor = .label
+        bodyLbl.numberOfLines = 2
+
+        let textStack = UIStackView(arrangedSubviews: [titleLbl, bodyLbl])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+
+        let closeBtn = UIButton(type: .system)
+        closeBtn.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        closeBtn.tintColor = .tertiaryLabel
+        closeBtn.accessibilityLabel = L("Dismiss alert")
+        closeBtn.addAction(UIAction { [weak self] _ in self?.dismissAssistantAlert() }, for: .touchUpInside)
+
+        let row = UIStackView(arrangedSubviews: [icon, textStack, closeBtn])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(row)
+        view.addSubview(container)
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleAssistantBannerTap))
+        container.addGestureRecognizer(tap)
+
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 22),
+            icon.heightAnchor.constraint(equalToConstant: 22),
+            closeBtn.widthAnchor.constraint(equalToConstant: 32),
+            closeBtn.heightAnchor.constraint(equalToConstant: 32),
+            row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            row.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+            row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+            container.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 56),
+            container.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            container.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12)
+        ])
+        view.bringSubviewToFront(container)
+
+        assistantBannerView = container
+        assistantBannerDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            self?.dismissAssistantAlert()
+        }
+    }
+
+    private func dismissAssistantAlert() {
+        assistantBannerDismissTask?.cancel()
+        assistantBannerDismissTask = nil
+        assistantBannerView?.removeFromSuperview()
+        assistantBannerView = nil
+        assistantBannerTapHandler = nil
+    }
+
+    @objc private func handleAssistantBannerTap() {
+        let handler = assistantBannerTapHandler
+        dismissAssistantAlert()
+        handler?()
     }
 
     private func configure(_ button: UIButton, symbol: String, label: String, title: String? = nil) {

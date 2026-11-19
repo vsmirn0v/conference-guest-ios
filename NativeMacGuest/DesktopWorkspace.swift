@@ -6,7 +6,7 @@ import UserNotifications
 
 @MainActor final class NativeDesktopWorkspace: NSObject, ObservableObject, NSWindowDelegate {
     enum Section: String, CaseIterable, Identifiable {
-        case home = "Home", workspace = "Meeting workspace", assistant = "Assistant", tasks = "My Tasks", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
+        case home = "Home", workspace = "Meeting workspace", assistant = "Assistant", tasks = "Tasks", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
         var id: Self { self }
         var symbol: String {
             switch self { case .home: "house"; case .workspace: "rectangle.split.3x1"; case .assistant: "tray"; case .tasks: "checklist"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
@@ -118,6 +118,7 @@ import UserNotifications
             guard let self else { return }
             await self.attention.store.waitForMeetingLibrary()
             self.obsidian.load()
+            await self.attention.store.seedTaskProfileWithMeetingName(self.library.displayName)
         }
         library.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         library.onOpenMeeting = { [weak self] url, engine, title, event in self?.join(url, engine: engine, title: title, eventID: event) }
@@ -201,6 +202,11 @@ import UserNotifications
         }
         library.sync.onSyncPreferencesChanged = { [weak self] in
             self?.workspaceSync.scheduleSync(delayMilliseconds: 100)
+        }
+        library.sync.onCommittedName = { [weak self] name in
+            Task { @MainActor [weak self] in
+                await self?.attention.store.seedTaskProfileWithMeetingName(name)
+            }
         }
         let existingDeleteSyncedData = library.sync.beforeDeleteSyncedData
         library.sync.beforeDeleteSyncedData = { [weak self] in
@@ -364,6 +370,11 @@ import UserNotifications
                 }
                 let name = (nameOverride ?? library.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard destination.engineKind.inputPolicy.accepts(name: name) else { throw NativeGuestEntryError.invalidName }
+                if !name.isEmpty {
+                    Task { @MainActor [weak self] in
+                        await self?.attention.store.seedTaskProfileWithMeetingName(name)
+                    }
+                }
                 let explicitTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let nowAtJoin = library.calendar.currentTime
                 let calendarMeeting: CalendarMeeting? = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id } }

@@ -7,9 +7,23 @@ struct PersonalTaskProfile: Codable, Equatable, Sendable {
 
     var isConfigured: Bool { assigneeID != nil || !aliases.isEmpty }
 
-    static func normalized(_ name: String) -> String {
+    static func cleanedAlias(_ name: String) -> String {
         name.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    static func normalized(_ name: String) -> String {
+        cleanedAlias(name)
             .folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    @discardableResult
+    mutating func appendAliasIfMissing(_ name: String) -> Bool {
+        let cleaned = Self.cleanedAlias(name)
+        guard !cleaned.isEmpty else { return false }
+        let key = Self.normalized(cleaned)
+        guard !aliases.contains(where: { Self.normalized($0) == key }) else { return false }
+        aliases.append(cleaned)
+        return true
     }
 
     func owns(_ task: MeetingOutcomeTask) -> Bool {
@@ -32,6 +46,30 @@ enum PersonalTaskFilter: String, CaseIterable {
     case all, open, completed
 }
 
+enum PersonalTaskGrouping: String, CaseIterable {
+    case list, byMeeting
+}
+
+enum PersonalTaskAssigneeFilter: Equatable, Hashable, Sendable {
+    case all
+    case unassigned
+    case person(String)
+}
+
+struct PersonalTaskAssigneeOption: Identifiable, Equatable, Sendable {
+    let key: String
+    let displayName: String
+    var id: String { key }
+}
+
+struct PersonalTaskMeetingGroup: Identifiable, Equatable, Sendable {
+    var id: UUID { sessionID }
+    let sessionID: UUID
+    let title: String
+    let meetingDate: Date?
+    let rows: [PersonalTaskRow]
+}
+
 struct PersonalTaskRow: Identifiable, Equatable, Sendable {
     var id: UUID { task.id }
     var outcomeID: UUID
@@ -47,12 +85,57 @@ enum PersonalTaskQuery {
         profile.owns(task) ? dates[task.id] : nil
     }
 
+    private static func searchFolded(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    }
+
+    static func assignees(in rows: [PersonalTaskRow]) -> (people: [PersonalTaskAssigneeOption], hasUnassigned: Bool) {
+        var peopleByKey: [String: String] = [:]
+        var hasUnassigned = false
+        for row in rows where row.archivedAt == nil {
+            let cleaned = PersonalTaskProfile.cleanedAlias(row.task.owner)
+            if cleaned.isEmpty {
+                hasUnassigned = true
+            } else {
+                let key = PersonalTaskProfile.normalized(cleaned)
+                if peopleByKey[key] == nil {
+                    peopleByKey[key] = cleaned
+                }
+            }
+        }
+        let people = peopleByKey
+            .map { PersonalTaskAssigneeOption(key: $0.key, displayName: $0.value) }
+            .sorted {
+                let cmp = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                return cmp == .orderedSame ? $0.key < $1.key : cmp == .orderedAscending
+            }
+        return (people, hasUnassigned)
+    }
+
     static func rows(_ rows: [PersonalTaskRow], filter: PersonalTaskFilter,
-                     calendar: Calendar, archive: Bool = false) -> [PersonalTaskRow] {
-        rows.filter { row in
+                     calendar: Calendar, archive: Bool = false,
+                     search: String = "",
+                     assignee: PersonalTaskAssigneeFilter = .all) -> [PersonalTaskRow] {
+        let needle = searchFolded(search.trimmingCharacters(in: .whitespacesAndNewlines))
+        return rows.filter { row in
             if archive { return row.archivedAt != nil }
             guard row.archivedAt == nil else { return false }
-            return filter == .all || (filter == .completed) == row.task.done
+            guard filter == .all || (filter == .completed) == row.task.done else { return false }
+            switch assignee {
+            case .all:
+                break
+            case .unassigned:
+                guard PersonalTaskProfile.cleanedAlias(row.task.owner).isEmpty else { return false }
+            case .person(let key):
+                guard PersonalTaskProfile.normalized(row.task.owner) == key else { return false }
+            }
+            if !needle.isEmpty {
+                let matches = searchFolded(row.task.text).contains(needle)
+                    || searchFolded(row.task.owner).contains(needle)
+                    || searchFolded(row.title).contains(needle)
+                guard matches else { return false }
+            }
+            return true
         }.sorted { left, right in
             if left.task.done != right.task.done { return !left.task.done }
             if left.task.done {
@@ -68,6 +151,40 @@ enum PersonalTaskQuery {
                 }
             }
             return left.id.uuidString < right.id.uuidString
+        }
+    }
+
+    static func groupedByMeeting(_ sortedRows: [PersonalTaskRow]) -> [PersonalTaskMeetingGroup] {
+        var grouped: [UUID: (title: String, meetingDate: Date?, rows: [PersonalTaskRow])] = [:]
+        for row in sortedRows {
+            if var entry = grouped[row.sessionID] {
+                if entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !row.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    entry.title = row.title
+                }
+                if let date = row.meetingDate, entry.meetingDate.map({ date > $0 }) ?? true {
+                    entry.meetingDate = date
+                }
+                entry.rows.append(row)
+                grouped[row.sessionID] = entry
+            } else {
+                grouped[row.sessionID] = (row.title, row.meetingDate, [row])
+            }
+        }
+        return grouped.map { sessionID, entry in
+            PersonalTaskMeetingGroup(
+                sessionID: sessionID,
+                title: entry.title,
+                meetingDate: entry.meetingDate,
+                rows: entry.rows
+            )
+        }.sorted { lhs, rhs in
+            let lDate = lhs.meetingDate ?? .distantPast
+            let rDate = rhs.meetingDate ?? .distantPast
+            if lDate != rDate { return lDate > rDate }
+            let cmp = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+            if cmp != .orderedSame { return cmp == .orderedAscending }
+            return lhs.sessionID.uuidString < rhs.sessionID.uuidString
         }
     }
 }

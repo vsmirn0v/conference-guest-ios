@@ -20,6 +20,10 @@ p.add_argument('--distribution', choices=('app-store', 'direct'), default='app-s
 p.add_argument('--version', default='0.1')
 p.add_argument('--build-number', default='1')
 p.add_argument('--archive', action='store_true', help='Create an Xcode archive for later TestFlight distribution')
+p.add_argument('--jobs', type=int, default=max(4, min(os.cpu_count() or 4, 10)),
+               help='Maximum concurrent build jobs passed to xcodebuild')
+p.add_argument('--reuse-cache', action='store_true',
+               help='Reuse persistent prepared SDK dependencies, project, and DerivedData cache')
 a = p.parse_args()
 if a.compile_only and (a.install or a.archive):
     p.error('--compile-only cannot install or archive an unsigned build')
@@ -29,7 +33,8 @@ if not a.version or not a.build_number.isdecimal() or int(a.build_number) < 1:
     raise SystemExit('A nonempty version and positive numeric build number are required')
 build = a.output_dir.resolve()
 archive = build/(f'RockNRollNativeGuest-{a.version}-{a.build_number}.xcarchive') if a.archive else None
-project = build/'Project'; project.mkdir(parents=True, exist_ok=True)
+if archive is not None and archive.exists():
+    raise SystemExit('Refusing to replace an existing archive')
 env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 framework_root = ensure_framework(a.framework_root)
 if a.distribution == 'direct':
@@ -45,12 +50,42 @@ for resource in (ROOT/'RockNRoll/Assets.xcassets/AdditionalRootCA.dataset').iter
     native_resource = ROOT/'NativeMacGuest/Assets.xcassets/AdditionalRootCA.dataset'/resource.name
     if resource.is_file() and (not native_resource.is_file() or native_resource.read_bytes() != resource.read_bytes()):
         raise SystemExit('Native public root certificate asset differs from its canonical shared resource')
+if a.reuse_cache:
+    cache_root = ROOT / '.build/native-mac-guest-cache'
+    cache_key = f'{a.distribution}-{a.configuration}'
+    dependency_root = cache_root / 'Dependencies'
+    project = cache_root / f'Project-{cache_key}'
+    derived_data = cache_root / f'Xcode-{cache_key}'
+    spec_dir = cache_root / f'Spec-{cache_key}'
+    marker_path = dependency_root / 'native-livekit.json'
+    if marker_path.is_file():
+        expected_patches = {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted((ROOT / 'Dependencies/native-macos/livekit-patches').glob('*.patch'))
+        }
+        try:
+            cached_marker = json.loads(marker_path.read_text())
+        except (OSError, ValueError):
+            cached_marker = None
+        if (not cached_marker or
+                cached_marker.get('framework_sha256') != framework_evidence['frameworkBinarySHA256'] or
+                cached_marker.get('patches') != expected_patches):
+            shutil.rmtree(dependency_root, ignore_errors=True)
+            shutil.rmtree(derived_data, ignore_errors=True)
+    for directory in (build, dependency_root, project, derived_data, spec_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+else:
+    dependency_root = build/'Dependencies'
+    project = build/'Project'
+    derived_data = build/'Xcode'
+    spec_dir = build/'Spec'
+    project.mkdir(parents=True, exist_ok=True)
+    spec_dir.mkdir(parents=True, exist_ok=True)
 spec_source = (ROOT/'NativeMacGuest/project.yml').read_text()
 # Persist the requested identity in the generated project too. Otherwise a later
 # build-for-testing silently restores the specification's development defaults.
 spec_source = re.sub(r'(?m)^(\s*MARKETING_VERSION: ).*$', lambda m: m[1]+json.dumps(a.version), spec_source)
 spec_source = re.sub(r'(?m)^(\s*CURRENT_PROJECT_VERSION: ).*$', lambda m: m[1]+json.dumps(a.build_number), spec_source)
-dependency_root = build/'Dependencies'
 # The local speech runtime is a pinned static library; it must exist before xcodegen.
 subprocess.run(['python3',str(ROOT/'NativeMacGuest/prepare-sherpa.py')],check=True,env=env)
 subprocess.run(['python3',str(ROOT/'NativeMacGuest/prepare-livekit.py'),
@@ -65,32 +100,45 @@ for name in ['client-sdk-swift','webrtc-xcframework']:
     spec_source = spec_source.replace('../.build/unified-sdk-dependencies/'+name,str(dependency_root/name))
 # Resolve source/package and file-setting paths independently of output depth.
 spec_source = resolve_source_paths(ROOT, spec_source)
-spec_dir = build/'Spec'; spec_dir.mkdir(parents=True, exist_ok=True)
 spec_source, sparkle_evidence, distribution_inputs = configure_distribution(ROOT, spec_dir, spec_source, a.distribution)
-with tempfile.NamedTemporaryFile(mode='w', prefix='.native-guest-build-', suffix='.yml',
-                                 dir=spec_dir, delete=False) as spec_file:
-    spec_file.write(spec_source)
-    generated_spec = pathlib.Path(spec_file.name)
+last_spec_path = spec_dir / 'last-spec.yml'
+pbxproj_path = project / 'RockNativeGuest.xcodeproj/project.pbxproj'
+needs_xcodegen = (
+    not a.reuse_cache
+    or not pbxproj_path.is_file()
+    or not last_spec_path.is_file()
+    or last_spec_path.read_text() != spec_source
+)
+generated_spec = None
+if needs_xcodegen:
+    with tempfile.NamedTemporaryFile(mode='w', prefix='.native-guest-build-', suffix='.yml',
+                                     dir=spec_dir, delete=False) as spec_file:
+        spec_file.write(spec_source)
+        generated_spec = pathlib.Path(spec_file.name)
 try:
-    subprocess.run(['xcodegen','generate','--spec',str(generated_spec),'--project',str(project)],env=env,check=True)
+    if needs_xcodegen:
+        subprocess.run(['xcodegen','generate','--spec',str(generated_spec),'--project',str(project)],env=env,check=True)
+        last_spec_path.write_text(spec_source)
     resolved = project/'RockNativeGuest.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
     resolved.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT/'NativeMacGuest/Package.resolved', resolved)
     cmd = ['xcodebuild','-disableAutomaticPackageResolution','-project',str(project/'RockNativeGuest.xcodeproj'),'-scheme','RockNRollNativeGuest',
-           '-configuration',a.configuration,'-destination','platform=macOS,arch=arm64','-derivedDataPath',str(build/'Xcode'),
-           '-jobs','4',
+           '-configuration',a.configuration,'-destination','platform=macOS,arch=arm64','-derivedDataPath',str(derived_data),
+           '-jobs',str(max(1, a.jobs)),
            'MARKETING_VERSION='+a.version,'CURRENT_PROJECT_VERSION='+a.build_number]
     if a.compile_only:
         cmd.append('CODE_SIGNING_ALLOWED=NO')
     if a.allow_provisioning_updates: cmd.append('-allowProvisioningUpdates')
-    subprocess.run(cmd+['build'],env=env,check=True)
     if a.archive:
         assert archive is not None
         if archive.exists(): raise SystemExit('Refusing to replace an existing archive')
         subprocess.run(cmd+['-archivePath',str(archive),'archive'],env=env,check=True)
+    else:
+        subprocess.run(cmd+['build'],env=env,check=True)
 finally:
-    generated_spec.unlink(missing_ok=True)
-app = build/'Xcode/Build/Products'/a.configuration/APP_BUNDLE_NAME
+    if generated_spec is not None:
+        generated_spec.unlink(missing_ok=True)
+app = find_application(archive/'Products/Applications') if a.archive else derived_data/'Build/Products'/a.configuration/APP_BUNDLE_NAME
 voice_worker_path = pathlib.Path('Contents/MacOS/RockClonedVoiceWorker')
 gpu_voice_worker_path = pathlib.Path('Contents/MacOS/RockClonedVoiceGPUWorker')
 for worker_path in (voice_worker_path, gpu_voice_worker_path):
@@ -102,7 +150,8 @@ if a.compile_only:
 info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
 if any(info.get(key) != APP_NAME for key in ('CFBundleName', 'CFBundleDisplayName')):
     raise SystemExit('Built app name differs from the requested product')
-subprocess.run(['codesign','--force','--sign',a.identity,'--preserve-metadata=identifier,entitlements,flags,runtime',str(app)],check=True)
+if not a.archive:
+    subprocess.run(['codesign','--force','--sign',a.identity,'--preserve-metadata=identifier,entitlements,flags,runtime',str(app)],check=True)
 subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
 signature = subprocess.run(['codesign','-dv','--verbose=4',str(app)],capture_output=True,text=True,check=True)
 if 'TeamIdentifier=5V64BP2H3P' not in signature.stderr:
@@ -188,6 +237,8 @@ if a.install:
         subprocess.run(['/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister','-u',str(destination)],check=True)
         destination.rename(previous)
     shutil.copytree(app,destination,symlinks=True)
+    if a.archive:
+        subprocess.run(['codesign','--force','--sign',a.identity,'--preserve-metadata=identifier,entitlements,flags,runtime',str(destination)],check=True)
     subprocess.run(['codesign','--verify','--deep','--strict',str(destination)],check=True)
     subprocess.run(['/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister','-f',str(destination)],check=True)
     print(destination)

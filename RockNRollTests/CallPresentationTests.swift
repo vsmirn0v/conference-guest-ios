@@ -707,4 +707,113 @@ final class CallPresentationTests: XCTestCase {
         try await track.capturer.stopCapture()
     }
 
+    func testCompactHeaderShowsMinimizeAssistantAndSwitcherTargetsAcrossPhoneWidths() throws {
+        for width: CGFloat in [304, 375, 393, 430, 812] {
+            let header = CompactCallHeader(frame: CGRect(x: 0, y: 0, width: width, height: 44))
+            header.setCallWorkspaceControls(
+                minimizeAvailable: true,
+                assistantAvailable: true,
+                assistantSymbol: IOSMeetingAssistantMode.follow.symbol,
+                assistantColor: .systemIndigo,
+                assistantLabel: L("Assistant mode: %@", IOSMeetingAssistantMode.follow.title),
+                assistantAlertCount: 2,
+                switcherAvailable: true,
+                activeMeetingCount: 2
+            )
+            header.update(
+                name: "Daily Sync",
+                navigation: false,
+                browsing: false,
+                pinned: false,
+                pinLabel: nil,
+                participantsLabel: L("Musicians"),
+                chatValue: nil,
+                chatCount: 1,
+                missedCount: 0,
+                status: nil,
+                focusAvailable: true
+            )
+            header.layoutIfNeeded()
+
+            XCTAssertFalse(header.minimize.isHidden, "Minimize hidden at width \(width)")
+            XCTAssertFalse(header.assistant.isHidden, "Assistant hidden at width \(width)")
+            XCTAssertFalse(header.switcher.isHidden, "Switcher hidden at width \(width)")
+            XCTAssertGreaterThanOrEqual(header.details.bounds.width, 100, "Details squeezed at width \(width)")
+
+            let visibleRects: [(String, CGRect)] = [header.minimize, header.details, header.assistant, header.switcher].map { btn in
+                let rect = header.convert(btn.bounds, from: btn)
+                XCTAssertTrue(header.bounds.contains(rect), "Out of header bounds at width \(width)")
+                XCTAssertGreaterThanOrEqual(rect.width, 44)
+                XCTAssertEqual(rect.height, 44)
+                let center = CGPoint(x: rect.midX, y: rect.midY)
+                XCTAssertTrue(header.hitTest(center, with: nil) === btn, "Hit test failed at width \(width)")
+                return (btn.accessibilityIdentifier ?? "", rect)
+            }
+            for i in visibleRects.indices {
+                for j in (i + 1)..<visibleRects.count {
+                    XCTAssertFalse(visibleRects[i].1.intersects(visibleRects[j].1),
+                                   "\(visibleRects[i].0) overlapped \(visibleRects[j].0) at width \(width)")
+                }
+            }
+            for button in [header.assistant, header.switcher] {
+                let badge = try XCTUnwrap(button.subviews.compactMap { $0 as? UILabel }.first { $0.text == "2" })
+                XCTAssertFalse(badge.isHidden)
+            }
+        }
+    }
+
+    func testRockCallViewControllerExposesVisibleCompactHeaderControlsAndWiresCallbacks() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+
+        let call = RockCallViewController(title: "Standup", catchUp: CatchUpStore(), chat: ChatStore())
+        var minimized = false
+        var openedAssistant = false
+        var talkedIn: UUID?
+        let id1 = UUID()
+        let id2 = UUID()
+
+        call.onMinimize = { minimized = true }
+        call.onOpenAssistant = { openedAssistant = true }
+        call.onJoinAnotherMeeting = {}
+        call.onTalkHere = { talkedIn = $0 }
+        call.activeMeetingsForSwitcher = [
+            .init(id: id1, title: "Standup", subtitle: L("Listening"), isCurrent: true, isTalk: false),
+            .init(id: id2, title: "Design", subtitle: L("Talk"), isCurrent: false, isTalk: true)
+        ]
+        call.isTalkRoom = false
+        window.rootViewController = call
+        window.isHidden = false
+        defer { window.isHidden = true }
+
+        call.updateAssistantBadge(mode: .follow, isPaused: false, alertCount: 1)
+        window.layoutIfNeeded()
+        call.view.layoutIfNeeded()
+
+        let header = try XCTUnwrap(descendants(call.view).compactMap { $0 as? CompactCallHeader }.first)
+        XCTAssertFalse(header.isHidden)
+        XCTAssertEqual(header.frame.height, 44)
+        XCTAssertFalse(header.minimize.isHidden)
+        XCTAssertFalse(header.assistant.isHidden)
+        XCTAssertFalse(header.switcher.isHidden)
+
+        for id in ["call.minimize", "call.assistant", "call.switcher", "call.talkHere"] {
+            let matches = descendants(call.view).compactMap { $0 as? UIButton }.filter { $0.accessibilityIdentifier == id }
+            XCTAssertEqual(matches.count, 1, "Expected exactly one button with id \(id)")
+            XCTAssertFalse(matches[0].isHidden, "Expected visible button for id \(id)")
+        }
+
+        let talkHere = try XCTUnwrap(descendants(call.view).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "call.talkHere"
+        })
+        talkHere.sendActions(for: .touchUpInside)
+        XCTAssertEqual(talkedIn, id1)
+
+        header.minimize.sendActions(for: .touchUpInside)
+        XCTAssertTrue(minimized)
+
+        header.assistant.sendActions(for: .touchUpInside)
+        XCTAssertTrue(openedAssistant)
+    }
 }

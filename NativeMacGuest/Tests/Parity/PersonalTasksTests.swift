@@ -411,6 +411,140 @@ final class PersonalTasksTests: XCTestCase {
     }
 
     @MainActor
+    func testTaskHistoryIncludeAllReturnsOwnedAndForeignTasksWithScopedArchive() async throws {
+        let attention = try await preparedAttention()
+        let store = attention.store
+        let library = store.meetingLibrary.store
+        let profile = store.assistant.taskProfile
+
+        let owned = MeetingOutcomeTask(text: "Mine", owner: "Test Owner")
+        let foreign = MeetingOutcomeTask(text: "Theirs", owner: "Other Owner")
+        let unassigned = MeetingOutcomeTask(text: "Open to anyone")
+        let outcome = MeetingOutcome(meetingTitle: "Standup", endedAt: Date(),
+                                     summary: "", tasks: [owned, foreign, unassigned])
+        _ = try await library.saveOutcome(outcome, state: .ready)
+        _ = try await library.setTaskArchived(taskID: owned.id, profile: profile, archived: true)
+
+        let mineOnly = try await library.taskHistory(profile: profile)
+        XCTAssertEqual(mineOnly.map(\.id), [owned.id])
+        XCTAssertNotNil(mineOnly.first?.archivedAt)
+
+        let allTasks = try await library.taskHistory(profile: profile, includeAll: true)
+        XCTAssertEqual(Set(allTasks.map(\.id)), Set([owned.id, foreign.id, unassigned.id]))
+        XCTAssertNotNil(allTasks.first(where: { $0.id == owned.id })?.archivedAt)
+        XCTAssertNil(allTasks.first(where: { $0.id == foreign.id })?.archivedAt)
+        XCTAssertNil(allTasks.first(where: { $0.id == unassigned.id })?.archivedAt)
+
+        let foreignRow = try XCTUnwrap(allTasks.first(where: { $0.id == foreign.id }))
+        try await attention.setTaskDone(foreignRow, done: true)
+        let afterDone = try await library.taskHistory(profile: profile, includeAll: true)
+        XCTAssertEqual(afterDone.first(where: { $0.id == foreign.id })?.task.done, true)
+
+        do {
+            _ = try await library.setTaskArchived(taskID: foreign.id, profile: profile, archived: true)
+            XCTFail("Expected archiving a non-owned task to be rejected")
+        } catch {
+            // Ownership check for personal archive remains intact.
+        }
+    }
+
+    @MainActor
+    func testAutoSeedMeetingContactNameAppendsWithoutReaddingRemovedAlias() async throws {
+        let id = UUID().uuidString
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(id)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "personal-task-seed-\(id)"))
+        let keychain = AttentionKeychain(service: "personal-task-seed-\(id)")
+        let store = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        closeLibraryAtTeardown(store)
+        await store.waitForMeetingLibrary()
+
+        XCTAssertFalse(store.assistant.taskProfile.isConfigured)
+        let seededFirst = await store.seedTaskProfileWithMeetingName("  Vitalii   Smirnov ")
+        XCTAssertTrue(seededFirst)
+        XCTAssertEqual(store.assistant.taskProfile.aliases, ["Vitalii Smirnov"])
+        XCTAssertTrue(store.taskProfileLastUpdatedByAutoSeedOnly)
+
+        let seededDup = await store.seedTaskProfileWithMeetingName("VITALII SMIRNOV")
+        XCTAssertFalse(seededDup)
+        XCTAssertEqual(store.assistant.taskProfile.aliases, ["Vitalii Smirnov"])
+
+        var edited = store.assistant.taskProfile
+        edited.aliases = []
+        try await store.meetingLibrary.store.saveTaskProfile(edited)
+        store.markTaskProfileManuallyEdited()
+        store.assistant.taskProfile = edited
+        let reseeded = await store.seedTaskProfileWithMeetingName("Vitalii Smirnov")
+        XCTAssertFalse(reseeded)
+        XCTAssertEqual(store.assistant.taskProfile.aliases, [])
+
+        let seededCyrillic = await store.seedTaskProfileWithMeetingName("Виталий Смирнов")
+        XCTAssertTrue(seededCyrillic)
+        XCTAssertEqual(store.assistant.taskProfile.aliases, ["Виталий Смирнов"])
+        var withManual = store.assistant.taskProfile
+        withManual.aliases.append("V. Smirnov")
+        try await store.meetingLibrary.store.saveTaskProfile(withManual)
+        store.markTaskProfileManuallyEdited()
+        store.assistant.taskProfile = withManual
+        let seededThird = await store.seedTaskProfileWithMeetingName("Vitaly")
+        XCTAssertTrue(seededThird)
+        XCTAssertEqual(store.assistant.taskProfile.aliases, ["Виталий Смирнов", "V. Smirnov", "Vitaly"])
+    }
+
+    func testSearchAssigneeFilterAndGroupByMeeting() {
+        let olderDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let newerDate = Date(timeIntervalSince1970: 1_700_100_000)
+        let sOld = UUID()
+        let sNew = UUID()
+        let outcomeOld = UUID()
+        let outcomeNew = UUID()
+
+        let rows: [PersonalTaskRow] = [
+            .init(outcomeID: outcomeOld, sessionID: sOld, title: "Design Sync", meetingDate: olderDate,
+                  task: .init(text: "Update Figma specs", owner: " Анна "), archivedAt: nil),
+            .init(outcomeID: outcomeOld, sessionID: sOld, title: "Design Sync", meetingDate: olderDate,
+                  task: .init(text: "Ship prototype", owner: "анна"), archivedAt: nil),
+            .init(outcomeID: outcomeNew, sessionID: sNew, title: "Backend Planning", meetingDate: newerDate,
+                  task: .init(text: "Review SQL index", owner: ""), archivedAt: nil),
+            .init(outcomeID: outcomeNew, sessionID: sNew, title: "Backend Planning", meetingDate: newerDate,
+                  task: .init(text: "Rotate API key", owner: "Vitalii"), archivedAt: nil),
+            .init(outcomeID: outcomeNew, sessionID: sNew, title: "Backend Planning", meetingDate: newerDate,
+                  task: .init(text: "Archived note", owner: "Ghost"), archivedAt: newerDate),
+        ]
+
+        let assignees = PersonalTaskQuery.assignees(in: rows)
+        XCTAssertTrue(assignees.hasUnassigned)
+        XCTAssertEqual(assignees.people.map(\.key), [
+            PersonalTaskProfile.normalized("Анна"),
+            PersonalTaskProfile.normalized("Vitalii"),
+        ])
+        XCTAssertFalse(assignees.people.contains { $0.displayName == "Ghost" })
+
+        let unassigned = PersonalTaskQuery.rows(rows, filter: .all, calendar: .current, assignee: .unassigned)
+        XCTAssertEqual(unassigned.map(\.task.text), ["Review SQL index"])
+
+        let anna = PersonalTaskQuery.rows(
+            rows,
+            filter: .all,
+            calendar: .current,
+            assignee: .person(PersonalTaskProfile.normalized("Анна"))
+        )
+        XCTAssertEqual(anna.count, 2)
+
+        let byTitle = PersonalTaskQuery.rows(rows, filter: .all, calendar: .current, search: "design")
+        XCTAssertEqual(byTitle.count, 2)
+
+        let byOwner = PersonalTaskQuery.rows(rows, filter: .all, calendar: .current, search: "vital")
+        XCTAssertEqual(byOwner.map(\.task.text), ["Rotate API key"])
+
+        let allSorted = PersonalTaskQuery.rows(rows, filter: .all, calendar: .current)
+        let groups = PersonalTaskQuery.groupedByMeeting(allSorted)
+        XCTAssertEqual(groups.map(\.sessionID), [sNew, sOld])
+        XCTAssertEqual(groups.first?.rows.count, 2)
+        XCTAssertEqual(groups.last?.rows.count, 2)
+    }
+
+    @MainActor
     private func preparedAttention() async throws -> AttentionCoordinator {
         let id = UUID().uuidString
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(id)

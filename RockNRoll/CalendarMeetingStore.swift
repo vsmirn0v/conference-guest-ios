@@ -344,21 +344,37 @@ final class CalendarMeetingStore: ObservableObject {
     }
     private func rebuildMeetings() {
         let localKeys = Set(localMeetings.map(\.occurrenceSyncKey))
-        let remoteByKey = Dictionary(uniqueKeysWithValues: remoteOccurrences.map { ($0.occurrenceKey, $0) })
+        let localFingerprints = localMeetings.map(\.semanticFingerprint)
+        let activeRemote = remoteOccurrences.filter { !$0.isDeleted.value }
+        let remoteByKey = Dictionary(
+            remoteOccurrences.map { ($0.occurrenceKey, $0) },
+            uniquingKeysWith: { lhs, rhs in lhs.merging(rhs) }
+        )
         let enrichedLocal = localMeetings.map { item -> CalendarMeeting in
             var updated = item
-            if updated.invitation == nil, let bound = remoteByKey[item.occurrenceSyncKey]?.boundInvitation?.value {
+            let matchedRemote = remoteByKey[item.occurrenceSyncKey]
+                ?? activeRemote.first(where: { $0.semanticFingerprint.matches(item.semanticFingerprint) })
+            let fallbackInvite = (matchedRemote?.engine != nil && matchedRemote?.requiresChoice == false)
+                ? matchedRemote?.invitation
+                : nil
+            if updated.invitation == nil, let bound = matchedRemote?.boundInvitation?.value ?? fallbackInvite {
                 updated.invitation = bound
-                updated.engine = updated.engine ?? remoteByKey[item.occurrenceSyncKey]?.engine
+                updated.engine = updated.engine ?? matchedRemote?.engine
+                updated.requiresChoice = false
             }
             return updated
         }
+        var seenRemoteFingerprints: [CalendarOccurrenceSemanticFingerprint] = []
         let remoteOnly: [CalendarMeeting] = remoteOccurrences.compactMap { occ in
+            let fp = occ.semanticFingerprint
             guard !localKeys.contains(occ.occurrenceKey),
+                  !localFingerprints.contains(where: { $0.matches(fp) }),
                   !occ.isDeleted.value,
-                  occ.sourceDevices.keys.contains(where: { $0 != lastLocalDeviceID }) || lastLocalDeviceID.isEmpty else {
+                  occ.sourceDevices.keys.contains(where: { $0 != lastLocalDeviceID }) || lastLocalDeviceID.isEmpty,
+                  !seenRemoteFingerprints.contains(where: { $0.matches(fp) }) else {
                 return nil
             }
+            seenRemoteFingerprints.append(fp)
             let resolvedURL = occ.boundInvitation?.value ?? occ.invitation
             let links = occ.links.isEmpty ? (resolvedURL.map { [$0] } ?? []) : occ.links
             var meeting = CalendarMeeting(

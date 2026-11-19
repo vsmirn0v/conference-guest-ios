@@ -600,10 +600,15 @@ final class CalendarReminderCoordinator: ObservableObject {
         localDeviceID: String
     ) {
         guard loaded else { return }
-        let byKey = Dictionary(uniqueKeysWithValues: remoteOccurrences.map { ($0.occurrenceKey, $0) })
+        let activeRemote = remoteOccurrences.filter { !$0.isDeleted.value }
+        let byKey = Dictionary(
+            remoteOccurrences.map { ($0.occurrenceKey, $0) },
+            uniquingKeysWith: { lhs, rhs in lhs.merging(rhs) }
+        )
         var didChange = false
         for meeting in meetings {
-            guard let remote = byKey[meeting.occurrenceSyncKey],
+            guard let remote = byKey[meeting.occurrenceSyncKey]
+                ?? activeRemote.first(where: { $0.semanticFingerprint.matches(meeting.semanticFingerprint) }),
                   let localOcc = occurrence(for: meeting) else { continue }
             var state = repository.states[localOcc.id] ?? .init()
             let original = state

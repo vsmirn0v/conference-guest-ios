@@ -38,8 +38,11 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
     private var lastLocalSchedule: (meetings: [CalendarMeeting], bindings: [String: URL], suppressed: [String: Date])?
     private var cancellables: Set<AnyCancellable> = []
+    private let replicaIOQueue = DispatchQueue(label: "dev.vsmirn0v.mac.workspace.replica-io", qos: .utility)
+    private var cloudBackoffUntil: Date = .distantPast
+    private var consecutiveCloudBackoffs = 0
 
-    private struct ReplicaState: Codable {
+    private struct ReplicaState: Codable, Sendable {
         var workspaceDoc: MeetingWorkspaceSyncDocument
         var scheduleDoc: CalendarScheduleSyncDocument
         var libraryToken: Data?
@@ -58,14 +61,14 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         var lastRemoteSettingsRaw: [String: SettingsFingerprint] = [:]
     }
 
-    private struct ExportedOutcomeSnapshot: Codable, Equatable {
+    private struct ExportedOutcomeSnapshot: Codable, Equatable, Sendable {
         var stateRaw: String
         var summary: String
         var decisions: [String]
         var openQuestions: [String]
     }
 
-    private struct SettingsFingerprint: Codable, Equatable {
+    private struct SettingsFingerprint: Codable, Equatable, Sendable {
         var scopeKey: String
         var title: String
         var sameRoomTransition: String?
@@ -139,10 +142,12 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
     func scheduleSync(delayMilliseconds: Int = 600) {
         guard syncPreferences.enabled else { return }
+        let remainingMs = max(0, Int(ceil(cloudBackoffUntil.timeIntervalSinceNow * 1000)))
+        let effectiveDelay = max(delayMilliseconds, remainingMs)
         pendingSyncTask?.cancel()
         pendingSyncTask = Task { @MainActor [weak self] in
-            if delayMilliseconds > 0 {
-                try? await Task.sleep(for: .milliseconds(delayMilliseconds))
+            if effectiveDelay > 0 {
+                try? await Task.sleep(for: .milliseconds(effectiveDelay))
             }
             guard !Task.isCancelled else { return }
             await self?.synchronizeNow()
@@ -342,29 +347,69 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                 calendar?.applyRemoteSchedule([], localDeviceID: deviceID)
                 break
             }
+            if Date() < cloudBackoffUntil {
+                scheduleSync(delayMilliseconds: 0)
+                break
+            }
 
             syncError = nil
+            var hitRateLimit = false
+            var anyPassSucceeded = false
+
             if syncPreferences.syncWorkspace {
                 do {
                     try await syncWorkspacePass()
                     try await syncTranscriptsPass()
+                    anyPassSucceeded = true
                 } catch {
                     syncError = error.localizedDescription
+                    let ns = error as NSError
+                    var fields: [String: Any] = ["pass": "library", "domain": ns.domain, "code": ns.code]
+                    if let retryAfter = CloudKitRateLimit.retryAfter(for: error, consecutiveFailures: consecutiveCloudBackoffs + 1) {
+                        consecutiveCloudBackoffs += 1
+                        cloudBackoffUntil = Date().addingTimeInterval(retryAfter)
+                        hitRateLimit = true
+                        fields["retryAfter"] = Int(retryAfter.rounded())
+                    }
+                    probeLog("workspace-sync-error", fields)
                 }
             }
 
             if syncPreferences.shareCalendar {
-                do {
-                    try await syncCalendarPass()
-                } catch {
-                    syncError = error.localizedDescription
+                if !hitRateLimit {
+                    do {
+                        try await syncCalendarPass()
+                        anyPassSucceeded = true
+                    } catch {
+                        syncError = error.localizedDescription
+                        let ns = error as NSError
+                        var fields: [String: Any] = ["pass": "schedule", "domain": ns.domain, "code": ns.code]
+                        if let retryAfter = CloudKitRateLimit.retryAfter(for: error, consecutiveFailures: consecutiveCloudBackoffs + 1) {
+                            consecutiveCloudBackoffs += 1
+                            cloudBackoffUntil = Date().addingTimeInterval(retryAfter)
+                            hitRateLimit = true
+                            fields["retryAfter"] = Int(retryAfter.rounded())
+                        }
+                        probeLog("workspace-sync-error", fields)
+                    }
                 }
             } else {
                 calendar?.applyRemoteSchedule([], localDeviceID: deviceID)
             }
 
-            lastSyncedAt = Date()
-            persistReplica()
+            if anyPassSucceeded && !hitRateLimit {
+                consecutiveCloudBackoffs = 0
+                cloudBackoffUntil = .distantPast
+                lastSyncedAt = Date()
+                persistReplica()
+            } else if anyPassSucceeded {
+                lastSyncedAt = Date()
+                persistReplica()
+            }
+            if hitRateLimit {
+                scheduleSync(delayMilliseconds: 0)
+                break
+            }
         } while needsAnotherPass && !Task.isCancelled
     }
 
@@ -381,10 +426,23 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         let changes = try await libraryTransport.fetch(session: zoneSession, after: replica.libraryToken)
         replica.libraryToken = changes.token
 
-        var report = replica.workspaceDoc.mergeLibraryRecords(changes.records)
-        let redirects = replica.workspaceDoc.coalesceOverlappingSessions { [weak self] roomIdentity in
-            self?.resolvedTransitionMode(roomIdentity: roomIdentity)?.rawValue
+        var roomModes: [String: String] = [:]
+        if let attentionStore {
+            for preset in attentionStore.presets {
+                for binding in preset.bindings {
+                    if case .room(let room) = binding {
+                        roomModes[room.workspaceFolded] = (preset.sameRoomTransition ?? attentionStore.sameRoomTransitionDefault).rawValue
+                    }
+                }
+            }
         }
+        var doc = replica.workspaceDoc
+        var report = doc.mergeLibraryRecords(changes.records)
+        let redirects = doc.coalesceOverlappingSessions { roomIdentity in
+            guard let roomIdentity else { return nil }
+            return roomModes[roomIdentity.workspaceFolded]
+        }
+        replica.workspaceDoc = doc
         for redirect in redirects {
             report.changedSessions.insert(redirect.winner)
             report.changedSessions.insert(redirect.loser)
@@ -579,7 +637,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             let canonicalID = replica.workspaceDoc.resolveCanonicalSessionID(for: sid)
             if replica.lastExportedNoteMarkdown[canonicalID] != note.markdown &&
                 replica.workspaceDoc.notes[canonicalID]?.markdown != note.markdown {
-                replica.workspaceDoc.saveNote(sessionID: canonicalID, noteID: note.noteID, markdown: note.markdown, now: note.updatedAt)
+                replica.workspaceDoc.saveNote(sessionID: canonicalID, noteID: note.id, markdown: note.markdown, now: note.updatedAt)
             }
             replica.lastExportedNoteMarkdown[canonicalID] = note.markdown
         }
@@ -589,14 +647,21 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         let profileID = snapshot.taskProfile.id.isEmpty ? "default" : snapshot.taskProfile.id
         if replica.lastExportedProfile != snapshot.taskProfile {
             let existing = replica.workspaceDoc.taskProfiles[profileID]
+            let lowPriorityAutoSeed = existing == nil && attentionStore?.taskProfileLastUpdatedByAutoSeedOnly == true
+            let assigneeVal: SyncValue<String?>
+            let aliasesVal: SyncValue<[String]>
+            if lowPriorityAutoSeed {
+                let lowVersion = SyncVersion(counter: 0, device: deviceID)
+                assigneeVal = SyncValue(snapshot.taskProfile.assigneeID, version: lowVersion)
+                aliasesVal = SyncValue(snapshot.taskProfile.aliases, version: lowVersion)
+            } else {
+                assigneeVal = syncValue(snapshot.taskProfile.assigneeID, reusing: existing?.assigneeID)
+                aliasesVal = syncValue(snapshot.taskProfile.aliases, reusing: existing?.aliases)
+            }
             let syncedProfile = SyncedTaskProfile(
                 profileID: profileID,
-                assigneeID: existing?.assigneeID.value == snapshot.taskProfile.assigneeID
-                    ? existing!.assigneeID
-                    : SyncValue(snapshot.taskProfile.assigneeID, version: replica.workspaceDoc.nextVersion()),
-                aliases: existing?.aliases.value == snapshot.taskProfile.aliases
-                    ? existing!.aliases
-                    : SyncValue(snapshot.taskProfile.aliases, version: replica.workspaceDoc.nextVersion())
+                assigneeID: assigneeVal,
+                aliases: aliasesVal
             )
             replica.workspaceDoc.upsertTaskProfile(syncedProfile)
             replica.lastExportedProfile = snapshot.taskProfile
@@ -641,17 +706,10 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                         completedAt: $0.completedAt
                     )
                 }
-                let stateVal = existing?.state.value == entry.state.rawValue
-                    ? existing!.state : SyncValue(entry.state.rawValue, version: replica.workspaceDoc.nextVersion())
-                let summaryChanged = existing?.summary.value != entry.outcome.summary
-                let summaryVal = !summaryChanged && existing != nil
-                    ? existing!.summary : SyncValue(entry.outcome.summary, version: replica.workspaceDoc.nextVersion())
-                let decisionsChanged = existing?.decisions.value != entry.outcome.decisions
-                let decisionsVal = !decisionsChanged && existing != nil
-                    ? existing!.decisions : SyncValue(entry.outcome.decisions, version: replica.workspaceDoc.nextVersion())
-                let questionsChanged = existing?.openQuestions.value != entry.outcome.openQuestions
-                let questionsVal = !questionsChanged && existing != nil
-                    ? existing!.openQuestions : SyncValue(entry.outcome.openQuestions, version: replica.workspaceDoc.nextVersion())
+                let stateVal = syncValue(entry.state.rawValue, reusing: existing?.state)
+                let summaryVal = syncValue(entry.outcome.summary, reusing: existing?.summary)
+                let decisionsVal = syncValue(entry.outcome.decisions, reusing: existing?.decisions)
+                let questionsVal = syncValue(entry.outcome.openQuestions, reusing: existing?.openQuestions)
 
                 let synced = SyncedMeetingOutcome(
                     outcomeID: existing?.outcomeID ?? entry.outcome.id,
@@ -666,8 +724,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                     coverageSeconds: max(existing?.coverageSeconds ?? 0, journalDurationSeconds(sessionID: canonicalID)),
                     writerTier: 2,
                     versions: entry.versions,
-                    reviewCandidates: existing?.reviewCandidates.value == reviewSnaps
-                        ? existing!.reviewCandidates : SyncValue(reviewSnaps, version: replica.workspaceDoc.nextVersion()),
+                    reviewCandidates: syncValue(reviewSnaps, reusing: existing?.reviewCandidates),
                     updatedAt: entry.updatedAt,
                     isDeleted: existing?.isDeleted ?? SyncValue(false, version: fallbackV)
                 )
@@ -683,7 +740,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                         leaseExpiresAt: Date().addingTimeInterval(60),
                         state: entry.state == .ready ? "ready" : "pending"
                     )
-                    if syncedSession.outcomeClaim?.value.state != claim.state || syncedSession.outcomeClaim?.value.ownerDeviceID != deviceID {
+                    if syncedSession.outcomeClaim?.value?.state != claim.state ||
+                        syncedSession.outcomeClaim?.value?.ownerDeviceID != deviceID {
                         syncedSession.outcomeClaim = SyncValue(claim, version: replica.workspaceDoc.nextVersion())
                         replica.workspaceDoc.upsertSession(syncedSession)
                     }
@@ -750,7 +808,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             completedAt: pick(task.completedAt, existing?.completedAt),
             archivedByProfile: archiveMap,
             isDeleted: pick(false, existing?.isDeleted),
-            updatedAt: existing == nil ? Date() : (existing!.isDeleted.value ? Date() : existing!.updatedAt)
+            updatedAt: (existing.map { $0.isDeleted.value ? Date() : $0.updatedAt }) ?? Date()
         )
         if existing != updated {
             var stamped = updated
@@ -934,24 +992,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
         let store = meetingLibrary.store
         for sessionID in report.changedSessions {
-            if let remoteSession = replica.workspaceDoc.sessions[sessionID] {
-                _ = try await store.applyRemoteSession(remoteSession)
-                if !remoteSession.isDeleted.value && remoteSession.canonicalSessionID == nil {
-                    replica.knownLocalSessions.insert(sessionID)
-                } else {
-                    replica.knownLocalSessions.remove(sessionID)
-                }
-            }
-
-            if let remoteNote = replica.workspaceDoc.notes[sessionID] {
-                let (finalMarkdown, _) = try await store.applyRemoteNote(remoteNote, localDeviceID: deviceID)
-                if finalMarkdown != remoteNote.markdown && !remoteNote.isDeleted.value {
-                    replica.workspaceDoc.saveNote(sessionID: sessionID, noteID: remoteNote.noteID, markdown: finalMarkdown)
-                }
-                replica.lastExportedNoteMarkdown[sessionID] = finalMarkdown
-                await notes.reloadIfClean(sessionID: sessionID)
-            }
-
+            let remoteSession = replica.workspaceDoc.sessions[sessionID]
+            let remoteNote = replica.workspaceDoc.notes[sessionID]
             let sessionOutcome = replica.workspaceDoc.outcomes[sessionID]
             let sessionTasks = replica.workspaceDoc.tasks.values.filter {
                 replica.workspaceDoc.resolveCanonicalSessionID(for: $0.sessionID) == sessionID
@@ -959,27 +1001,45 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             let sessionLinks = replica.workspaceDoc.taskLinks.values.filter {
                 replica.workspaceDoc.resolveCanonicalSessionID(for: $0.sessionID) == sessionID
             }
-            if sessionOutcome != nil {
-                _ = try await store.applyRemoteOutcomeAndTasks(
-                    sessionID: sessionID,
-                    outcome: sessionOutcome,
-                    tasks: Array(sessionTasks),
-                    links: Array(sessionLinks)
-                )
-                if let sessionOutcome {
-                    replica.lastExportedOutcomes[sessionID] = ExportedOutcomeSnapshot(
-                        stateRaw: sessionOutcome.state.value,
-                        summary: sessionOutcome.summary.value,
-                        decisions: sessionOutcome.decisions.value,
-                        openQuestions: sessionOutcome.openQuestions.value
-                    )
-                    replica.lastExportedTaskIDs[sessionID] = Set(sessionTasks.filter { !$0.isDeleted.value }.map(\.id))
+
+            let bundleResult = try await store.applyRemoteSessionBundle(
+                sessionID: sessionID,
+                session: remoteSession,
+                note: remoteNote,
+                outcome: sessionOutcome,
+                tasks: Array(sessionTasks),
+                links: Array(sessionLinks),
+                localDeviceID: deviceID
+            )
+
+            if bundleResult.sessionBecameActiveLocal {
+                replica.knownLocalSessions.insert(sessionID)
+            } else if remoteSession != nil {
+                replica.knownLocalSessions.remove(sessionID)
+            }
+
+            if let finalMarkdown = bundleResult.finalMarkdown {
+                if let remoteNote, finalMarkdown != remoteNote.markdown && !remoteNote.isDeleted.value {
+                    replica.workspaceDoc.saveNote(sessionID: sessionID, noteID: remoteNote.noteID, markdown: finalMarkdown)
                 }
+                replica.lastExportedNoteMarkdown[sessionID] = finalMarkdown
+                await notes.reloadIfClean(sessionID: sessionID)
+            }
+
+            if let sessionOutcome {
+                replica.lastExportedOutcomes[sessionID] = ExportedOutcomeSnapshot(
+                    stateRaw: sessionOutcome.state.value,
+                    summary: sessionOutcome.summary.value,
+                    decisions: sessionOutcome.decisions.value,
+                    openQuestions: sessionOutcome.openQuestions.value
+                )
+                replica.lastExportedTaskIDs[sessionID] = Set(sessionTasks.filter { !$0.isDeleted.value }.map(\.id))
             }
         }
 
-        for profile in replica.workspaceDoc.taskProfiles.values {
-            _ = try await store.applyRemoteTaskProfile(profile)
+        if let canonical = replica.workspaceDoc.canonicalTaskProfile {
+            _ = try await store.applyRemoteTaskProfile(canonical)
+            attentionStore?.markTaskProfileManuallyEdited()
         }
 
         let refreshedProfile = try await store.taskProfile()
@@ -1151,6 +1211,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
               let st = calendar.reminders.repository.states[occ.id] else { return }
         replica.scheduleDoc.setOccurrenceState(
             occurrenceKey: occurrenceKey,
+            matchingFingerprint: meeting.semanticFingerprint,
             reminderOverride: st.override,
             skipped: st.skipped,
             snoozeUntil: st.snooze,
@@ -1174,18 +1235,6 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         return session
     }
 
-    private func resolvedTransitionMode(roomIdentity: String) -> SameRoomMeetingTransitionMode? {
-        guard let attentionStore else { return nil }
-        for preset in attentionStore.presets {
-            for binding in preset.bindings {
-                if case .room(let room) = binding, room.workspaceFolded == roomIdentity.workspaceFolded {
-                    return preset.sameRoomTransition ?? attentionStore.sameRoomTransitionDefault
-                }
-            }
-        }
-        return attentionStore.sameRoomTransitionDefault
-    }
-
     private func externalSeriesID(for session: MeetingSessionRecord) -> String? {
         guard let sid = session.calendarSeriesID else { return nil }
         return calendar?.meetings.first(where: { $0.seriesID == sid || $0.id == sid })?.externalSeriesID
@@ -1202,9 +1251,18 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         micIntervalsBySession[sessionID, default: []].append(DateInterval(start: start, end: end))
     }
 
+    private func syncValue<V: Equatable>(_ value: V, reusing existing: SyncValue<V>?) -> SyncValue<V> {
+        if let existing, existing.value == value { return existing }
+        return SyncValue(value, version: replica.workspaceDoc.nextVersion())
+    }
+
     private func persistReplica() {
-        guard let data = try? JSONEncoder().encode(replica) else { return }
-        try? FileManager.default.createDirectory(at: replicaURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: replicaURL, options: .atomic)
+        let snapshot = replica
+        let url = replicaURL
+        replicaIOQueue.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
     }
 }

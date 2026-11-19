@@ -120,8 +120,51 @@ final class ConferenceModel: ObservableObject {
         coordinator.onRemoteName = { [weak self] name in
             self?.applySyncedName(name)
         }
+        coordinator.onCommittedName = { [weak self] name in
+            Task { @MainActor [weak self] in
+                await self?.workspace.seedTaskProfileWithMeetingName(name)
+            }
+        }
         return coordinator
     }()
+    lazy var workspace: IOSWorkspaceCoordinator = IOSWorkspaceCoordinator(
+        calendar: calendar,
+        syncPreferences: sync,
+        preferences: preferences
+    )
+    @Published var focusJoinLinkTrigger = UUID()
+    lazy var assistant: IOSAssistantCoordinator = {
+        let coordinator = IOSAssistantCoordinator(
+            workspace: workspace,
+            preferences: preferences,
+            resolveBridge: { [weak self] controllerID in
+                self?.makeAssistantBridge(for: controllerID)
+            }
+        )
+        coordinator.onSessionModeChanged = { [weak self] controllerID, _, _ in
+            self?.syncAssistantBadge(for: controllerID)
+        }
+        coordinator.onBannerAlert = { [weak self] card in
+            guard let self else { return }
+            self.syncAssistantBadge(for: card.controllerID)
+            if !self.isCallMinimized, let foreground = self.foregroundSession {
+                foreground.showAssistantBanner(
+                    title: card.meetingTitle,
+                    reason: card.reason,
+                    onTap: { [weak self] in
+                        guard let self else { return }
+                        if card.controllerID != self.foregroundSession?.id {
+                            self.presentSession(id: card.controllerID)
+                        }
+                        self.sessions.first(where: { $0.id == card.controllerID })?
+                            .presentAssistantSheet(assistant: self.assistant)
+                    }
+                )
+            }
+        }
+        return coordinator
+    }()
+    private var pendingContinuationWorkspaceSessionID: UUID?
 
     private func applySyncedName(_ name: String) {
         applyingSyncedName = true
@@ -150,6 +193,11 @@ final class ConferenceModel: ObservableObject {
     func installSyncFixture(_ coordinator: RoomSyncCoordinator) {
         sync = coordinator
         coordinator.onRemoteName = { [weak self] name in self?.applySyncedName(name) }
+        coordinator.onCommittedName = { [weak self] name in
+            Task { @MainActor [weak self] in
+                await self?.workspace.seedTaskProfileWithMeetingName(name)
+            }
+        }
     }
     func installContinuationFixture(_ coordinator: MeetingContinuationCoordinator) { continuation = coordinator }
     var joinTransportForTesting: ((JoinDestination, @escaping (CallEvent) -> Void) -> Void)?
@@ -238,6 +286,19 @@ final class ConferenceModel: ObservableObject {
         setup.onDefer = { [weak self] in self?.sync.dismissOffer() }
 
         observeWorkspaceAudio()
+        _ = continuation
+        let existingDeleteSyncedData = sync.beforeDeleteSyncedData
+        sync.beforeDeleteSyncedData = { [weak self] in
+            try await existingDeleteSyncedData?()
+            try await self?.workspace.clearCloudData()
+        }
+        sync.onSyncNow = { [weak self] in
+            self?.workspace.scheduleSync(delayMilliseconds: 150)
+        }
+        sync.onSyncPreferencesChanged = { [weak self] in
+            self?.workspace.scheduleSync(delayMilliseconds: 100)
+        }
+        workspace.start()
     }
 
     deinit {
@@ -532,6 +593,9 @@ final class ConferenceModel: ObservableObject {
         isCallMinimized = true
         foreground.dismissFromPresentation(animated: false)
         syncSwitcherItems()
+        assistant.activePresentationChanged(foregroundControllerID: nil)
+        continuation.updateCurrent(continuationSnapshot())
+        updateContinuationActivity()
         refreshReminders()
     }
 
@@ -542,9 +606,24 @@ final class ConferenceModel: ObservableObject {
             foregroundSessionID = id
             target.setForegroundVisible(true)
             syncSwitcherItems()
+            assistant.activePresentationChanged(foregroundControllerID: id)
+            continuation.updateCurrent(continuationSnapshot())
+            updateContinuationActivity()
             return
         }
         showForegroundSession(target, container: container)
+    }
+
+    func beginJoiningAnotherMeeting() {
+        let cleanInvite = invite.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanInvite.isEmpty,
+           sessions.contains(where: {
+               $0.invitationURL.absoluteString == cleanInvite || sessionRecords[$0.id]?.connectedURL?.absoluteString == cleanInvite
+           }) {
+            invite = ""
+        }
+        minimizeActiveCall()
+        focusJoinLinkTrigger = UUID()
     }
 
     func switchTalk(to id: UUID) {
@@ -588,6 +667,9 @@ final class ConferenceModel: ObservableObject {
             target.present(in: container, animated: false)
         }
         syncSwitcherItems()
+        assistant.activePresentationChanged(foregroundControllerID: target.id)
+        continuation.updateCurrent(continuationSnapshot())
+        updateContinuationActivity()
         refreshReminders()
     }
 
@@ -606,7 +688,47 @@ final class ConferenceModel: ObservableObject {
         }
         for controller in sessions {
             controller.updateSwitcherItems(items: items)
+            syncAssistantBadge(for: controller.id)
         }
+    }
+
+    private func makeAssistantBridge(for controllerID: UUID) -> IOSAssistantSessionBridge? {
+        guard let controller = sessions.first(where: { $0.id == controllerID }) else { return nil }
+        let matchedCalendar = calendar.meetings.first { meeting in
+            meeting.invitation.map { $0 == controller.invitationURL } ?? false
+        }
+        let seriesKey = matchedCalendar?.externalSeriesID
+            ?? workspace.sessions.first(where: { $0.id == controller.workspaceSessionID })?.externalSeriesID
+        return IOSAssistantSessionBridge(
+            controllerID: controller.id,
+            title: controller.title,
+            roomKey: controller.invitationURL.absoluteString,
+            calendarSeriesKey: seriesKey,
+            localDisplayName: displayName,
+            participantNames: controller.participantDisplayNames,
+            canSendChat: controller.canSendAssistantChat,
+            isMicUnmuted: controller.isLocalMicrophoneUnmuted,
+            isForeground: !isCallMinimized && foregroundSessionID == controller.id,
+            ensureTranscription: { [weak controller] in
+                await controller?.ensureTranscriptionRunningForAssistant()
+            },
+            sendChat: { [weak controller] text in
+                guard let controller else { throw MeetingSessionError.notConnected }
+                try await controller.sendAssistantChat(text)
+            },
+            speakVoice: { [weak controller] text in
+                guard let controller else { throw MeetingSessionError.notConnected }
+                try await controller.speakVoiceReply(text)
+            }
+        )
+    }
+
+    func syncAssistantBadge(for controllerID: UUID) {
+        guard let controller = sessions.first(where: { $0.id == controllerID }) else { return }
+        let mode = assistant.resolvedMode(for: controllerID)
+        let isPaused = assistant.isPausedForMicrophone(controllerID: controllerID)
+        let alertCount = assistant.alertCards.filter { $0.controllerID == controllerID && !$0.dismissed }.count
+        controller.updateAssistantBadge(mode: mode, isPaused: isPaused, alertCount: alertCount)
     }
 
     // MARK: - Links & Join Entry Points
@@ -940,6 +1062,7 @@ final class ConferenceModel: ObservableObject {
             }
         } else {
             companionAudioPaused = request.quiet
+            liveSessionID = UUID()
             liveName = name
         }
 
@@ -1086,6 +1209,23 @@ final class ConferenceModel: ObservableObject {
                 controller.onSelectMeeting = { [weak self] id in self?.presentSession(id: id) }
                 controller.onTalkHere = { [weak self] id in self?.switchTalk(to: id) }
                 controller.onLeaveMeeting = { [weak self] id in self?.leaveSession(id: id) }
+                controller.onJoinAnotherMeeting = { [weak self] in self?.beginJoiningAnotherMeeting() }
+                controller.onOpenAssistant = { [weak self, weak controller] in
+                    guard let self, let controller else { return }
+                    controller.presentAssistantSheet(assistant: self.assistant)
+                }
+                controller.onMicrophoneStateChanged = { [weak self] id, unmuted in
+                    self?.assistant.handleMicrophoneChange(controllerID: id, unmuted: unmuted)
+                }
+                controller.workspaceDeviceID = sync.deviceID
+                controller.onOpenNotes = { [weak self, weak controller] in
+                    guard let self, let controller else { return }
+                    controller.presentNotesSheet(workspace: self.workspace)
+                }
+                controller.onWorkspaceEventsChanged = { [weak self] id, events, intervals in
+                    self?.workspace.recordLiveEvents(controllerID: id, events: events, micIntervals: intervals)
+                    self?.assistant.observeEvents(events, for: id)
+                }
                 controller.voiceReplyTargetsProvider = { [weak self, weak controller] in
                     guard let self else { return [] }
                     let talkID = self.workspaceAudio.talkSessionID
@@ -1126,6 +1266,12 @@ final class ConferenceModel: ObservableObject {
 
                 joinTask = nil
                 status = L("Connecting with microphone and camera off…")
+                if !request.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let joinName = request.name
+                    Task { @MainActor [weak self] in
+                        await self?.workspace.seedTaskProfileWithMeetingName(joinName)
+                    }
+                }
                 controller.start(displayName: request.name, quiet: request.quiet, backgroundJoin: request.backgroundJoin)
                 if !request.backgroundJoin {
                     showForegroundSession(controller, container: container)
@@ -1167,6 +1313,7 @@ final class ConferenceModel: ObservableObject {
             }
         }
         syncSwitcherItems()
+        workspace.updateSessionTitle(cleanTitle, controllerID: controller.id)
         continuation.updateCurrent(continuationSnapshot())
         updateContinuationActivity()
     }
@@ -1226,11 +1373,33 @@ final class ConferenceModel: ObservableObject {
                         sessionRecords[id] = clearTarget
                     }
                 }
+                if controller.workspaceSessionID == nil {
+                    let roomID = MeetingRoomIdentity(controller.invitationURL, engine: controller.kind)
+                    let matchedCalendar = roomID.flatMap {
+                        calendar.currentScheduledMeeting(
+                            matching: ActiveRoomConnection(room: $0, endpoint: rec.guestEndpoint),
+                            at: Date()
+                        )
+                    }
+                    controller.workspaceSessionID = workspace.beginSession(
+                        controllerID: id,
+                        requestedWorkspaceID: pendingContinuationWorkspaceSessionID,
+                        title: effectiveTitle,
+                        invitation: controller.invitationURL,
+                        roomIdentity: controller.invitationURL.absoluteString,
+                        calendarMeeting: matchedCalendar
+                    )
+                    pendingContinuationWorkspaceSessionID = nil
+                }
             }
             continuation.targetDidConnect(invitation: controller.invitationURL, sessionID: id)
+            continuation.updateCurrent(continuationSnapshot())
+            updateContinuationActivity()
             refreshContinuationBanner()
             synchronizeScheduledMeeting()
             syncSwitcherItems()
+            assistant.activePresentationChanged(foregroundControllerID: isCallMinimized ? nil : foregroundSessionID)
+            syncAssistantBadge(for: id)
             refreshReminders()
             objectWillChange.send()
 
@@ -1238,6 +1407,8 @@ final class ConferenceModel: ObservableObject {
             if event == .failed || event == .inactive {
                 Task { await engineDetector.invalidate(controller.invitationURL) }
             }
+            workspace.finishSession(controllerID: id, endedAt: Date())
+            assistant.sessionEnded(controllerID: id)
             recordDisconnect(for: id)
             sessionRecords.removeValue(forKey: id)
             leavingSessionIDs.remove(id)
@@ -1291,6 +1462,7 @@ final class ConferenceModel: ObservableObject {
                 completeReplacement()
             }
             syncSwitcherItems()
+            assistant.activePresentationChanged(foregroundControllerID: isCallMinimized ? nil : foregroundSessionID)
             refreshReminders()
             continuation.updateCurrent(continuationSnapshot())
             updateContinuationActivity()
@@ -1445,7 +1617,7 @@ final class ConferenceModel: ObservableObject {
         let invitation = calendar.preferredInvitation(for: room)
         rejoinEvidence = calendar.preferredEngine(for: room).map { (invitation, $0) }
         receive(url: invitation)
-        if !isJoining && !isInConference && !isLeaving { join() }
+        if sessions.isEmpty && !isJoining && !isInConference && !isLeaving { join() }
     }
 
     func toggleStar(_ room: RecentRoom) { history.toggleStar(room.invitationURL) }
@@ -1733,7 +1905,8 @@ final class ConferenceModel: ObservableObject {
             isSharingScreen: active.isSharingScreen,
             supportsCompanion: active.kind == .community,
             audioPaused: companionAudioPaused,
-            engine: active.kind
+            engine: active.kind,
+            workspaceSessionID: active.workspaceSessionID
         )
     }
 
@@ -1768,15 +1941,23 @@ final class ConferenceModel: ObservableObject {
 
     @discardableResult
     func joinFromContinuation(_ jam: ActiveJam, quiet: Bool) -> UUID? {
-        guard !isJoining && !isInConference && !isLeaving else {
+        guard !isJoining && !isLeaving && nonLeavingSessions.count < Self.maxConcurrentMeetings else {
             continuation.targetDidFail()
             return nil
         }
         do {
             let target = try destination(for: jam.invitation.absoluteString, verifiedEngine: jam.engine)
             set(target: target)
-            startJoin(target, nameOverride: jam.name, quiet: quiet, title: jam.title)
+            pendingContinuationWorkspaceSessionID = jam.workspaceSessionID
+            startJoin(
+                target,
+                nameOverride: jam.name,
+                quiet: quiet,
+                title: jam.title,
+                allowAlongside: !nonLeavingSessions.isEmpty
+            )
         } catch {
+            pendingContinuationWorkspaceSessionID = nil
             status = error.localizedDescription
             statusIsError = true
             continuation.targetDidFail()

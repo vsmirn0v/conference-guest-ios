@@ -21,8 +21,19 @@ extension MeetingLibraryStore {
         }
     }
 
+    struct RemoteSessionApplyResult {
+        var changed: Bool
+        var becameEnded: Bool = false
+        var exportRevision: Int = 0
+        var newManualSaveAt: Date? = nil
+    }
+
     @discardableResult
-    func applyRemoteSession(_ remote: SyncedMeetingSession) throws -> Bool {
+    func applyRemoteSession(_ remote: SyncedMeetingSession, deferOutbox: Bool = false) throws -> Bool {
+        try applyRemoteSessionDetailed(remote, deferOutbox: deferOutbox).changed
+    }
+
+    private func applyRemoteSessionDetailed(_ remote: SyncedMeetingSession, deferOutbox: Bool) throws -> RemoteSessionApplyResult {
         let db = try db()
         if remote.isDeleted.value {
             let existed = try db.one("SELECT 1 FROM meeting_sessions WHERE session_id=?", bind: {
@@ -37,7 +48,7 @@ extension MeetingLibraryStore {
                     }
                 }
             }
-            return existed
+            return RemoteSessionApplyResult(changed: existed)
         }
         if let canonical = remote.canonicalSessionID?.value, canonical != remote.id {
             let exists = try db.one("SELECT 1 FROM meeting_sessions WHERE session_id=?", bind: {
@@ -48,7 +59,7 @@ extension MeetingLibraryStore {
                     try Self.bindText($0, remote.id.uuidString, at: 1)
                 }
             }
-            return exists
+            return RemoteSessionApplyResult(changed: exists)
         }
 
         return try db.transaction {
@@ -133,19 +144,22 @@ extension MeetingLibraryStore {
             }
 
             let becameEnded = existing?.state != .ended && newState == .ended
-            if becameEnded {
-                let awaiting = remote.outcomeClaim?.value?.state == "pending"
-                _ = try Self.queueOutbox(
-                    db: db,
-                    sessionID: remote.id,
-                    desiredRevision: exportRevision,
-                    finalEnd: true,
-                    awaitingOutcome: awaiting
-                )
-            } else if exportedChanged {
-                _ = try Self.queueOutbox(db: db, sessionID: remote.id, desiredRevision: exportRevision)
+            if !deferOutbox {
+                if becameEnded {
+                    let awaiting = remote.outcomeClaim?.value?.state == "pending"
+                    _ = try Self.queueOutbox(
+                        db: db,
+                        sessionID: remote.id,
+                        desiredRevision: exportRevision,
+                        finalEnd: true,
+                        awaitingOutcome: awaiting
+                    )
+                } else if exportedChanged {
+                    _ = try Self.queueOutbox(db: db, sessionID: remote.id, desiredRevision: exportRevision)
+                }
             }
 
+            var newManualAt: Date?
             if let manualAt = remote.manualObsidianSaveAt?.value {
                 let metaKey = "remote_manual_obsidian_" + remote.id.uuidString
                 let lastRaw = try db.one("SELECT value FROM meeting_library_meta WHERE key=?", bind: {
@@ -153,29 +167,38 @@ extension MeetingLibraryStore {
                 })?.text(0)
                 let lastMs = lastRaw.flatMap(Int64.init) ?? 0
                 if manualAt.syncMilliseconds > lastMs {
-                    try db.run("""
-                        INSERT INTO meeting_library_meta(key,value) VALUES(?,?)
-                        ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                        """) {
-                        try Self.bindText($0, metaKey, at: 1)
-                        try Self.bindText($0, String(manualAt.syncMilliseconds), at: 2)
-                    }
-                    if let destination = try Self.activeDestination(db),
-                       destination.vaultBookmark != nil,
-                       let snapshot = try Self.exportSnapshot(db, sessionID: remote.id) {
-                        try Self.putExport(db: db, destination: destination, snapshot: snapshot, intent: .manualSave, held: false)
+                    newManualAt = manualAt
+                    if !deferOutbox {
+                        try db.run("""
+                            INSERT INTO meeting_library_meta(key,value) VALUES(?,?)
+                            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                            """) {
+                            try Self.bindText($0, metaKey, at: 1)
+                            try Self.bindText($0, String(manualAt.syncMilliseconds), at: 2)
+                        }
+                        if let destination = try Self.activeDestination(db),
+                           destination.vaultBookmark != nil,
+                           let snapshot = try Self.exportSnapshot(db, sessionID: remote.id) {
+                            try Self.putExport(db: db, destination: destination, snapshot: snapshot, intent: .manualSave, held: false)
+                        }
                     }
                 }
             }
 
-            return exportedChanged
+            return RemoteSessionApplyResult(
+                changed: exportedChanged || newManualAt != nil,
+                becameEnded: becameEnded,
+                exportRevision: exportRevision,
+                newManualSaveAt: newManualAt
+            )
         }
     }
 
     @discardableResult
     func applyRemoteNote(
         _ remote: SyncedMeetingNote,
-        localDeviceID: String
+        localDeviceID: String,
+        deferOutbox: Bool = false
     ) throws -> (markdown: String, changed: Bool) {
         let db = try db()
         if remote.isDeleted.value {
@@ -236,7 +259,7 @@ extension MeetingLibraryStore {
                 return (finalMarkdown, false)
             }
 
-            let noteID = existingNote?.noteID ?? remote.noteID
+            let noteID = existingNote?.id ?? remote.noteID
             let revision = (existingNote?.revision ?? 0) + 1
             let now = Date()
 
@@ -287,7 +310,9 @@ extension MeetingLibraryStore {
                 }
             }
 
-            _ = try Self.queueOutbox(db: db, sessionID: remote.sessionID, desiredRevision: exportRevision)
+            if !deferOutbox {
+                _ = try Self.queueOutbox(db: db, sessionID: remote.sessionID, desiredRevision: exportRevision)
+            }
             return (finalMarkdown, true)
         }
     }
@@ -297,7 +322,8 @@ extension MeetingLibraryStore {
         sessionID: UUID,
         outcome: SyncedMeetingOutcome?,
         tasks: [SyncedMeetingTask],
-        links: [SyncedTaskLink]
+        links: [SyncedTaskLink],
+        deferOutbox: Bool = false
     ) throws -> Bool {
         let db = try db()
         if outcome?.isDeleted.value == true {
@@ -445,21 +471,107 @@ extension MeetingLibraryStore {
             }
 
             if outcomeChanged {
-                let exportRevision = Int((sessionRow?.integer(4) ?? 0) + 1)
+                let latestRevRow = try db.one("SELECT export_revision FROM meeting_sessions WHERE session_id=?", bind: {
+                    try Self.bindText($0, sessionID.uuidString, at: 1)
+                })
+                let exportRevision = Int((latestRevRow?.integer(0) ?? sessionRow?.integer(4) ?? 0) + 1)
                 try db.run("UPDATE meeting_sessions SET export_revision=?,updated_at=? WHERE session_id=?") {
                     try Self.bindInt($0, Int64(exportRevision), at: 1)
                     try Self.bindInt($0, now.syncMilliseconds, at: 2)
                     try Self.bindText($0, sessionID.uuidString, at: 3)
                 }
-                _ = try Self.queueOutbox(
-                    db: db,
-                    sessionID: sessionID,
-                    desiredRevision: exportRevision,
-                    outcomeReady: targetState == .ready
-                )
+                if !deferOutbox {
+                    _ = try Self.queueOutbox(
+                        db: db,
+                        sessionID: sessionID,
+                        desiredRevision: exportRevision,
+                        outcomeReady: targetState == .ready
+                    )
+                }
             }
             return outcomeChanged
         }
+    }
+
+    /// Applies a complete synced session bundle (session + note + outcome + tasks + links) before
+    /// queueing Obsidian export so initial-end snapshots always include notes and outcomes.
+    func applyRemoteSessionBundle(
+        sessionID: UUID,
+        session: SyncedMeetingSession?,
+        note: SyncedMeetingNote?,
+        outcome: SyncedMeetingOutcome?,
+        tasks: [SyncedMeetingTask],
+        links: [SyncedTaskLink],
+        localDeviceID: String
+    ) throws -> (finalMarkdown: String?, sessionBecameActiveLocal: Bool) {
+        var sessionResult = RemoteSessionApplyResult(changed: false)
+        if let session {
+            sessionResult = try applyRemoteSessionDetailed(session, deferOutbox: true)
+            if session.isDeleted.value || (session.canonicalSessionID?.value != nil && session.canonicalSessionID?.value != session.id) {
+                return (nil, false)
+            }
+        }
+
+        var noteMarkdown: String?
+        var noteChanged = false
+        if let note {
+            let applied = try applyRemoteNote(note, localDeviceID: localDeviceID, deferOutbox: true)
+            noteMarkdown = applied.markdown
+            noteChanged = applied.changed
+        }
+
+        var outcomeChanged = false
+        if outcome != nil || !tasks.isEmpty || !links.isEmpty {
+            outcomeChanged = try applyRemoteOutcomeAndTasks(
+                sessionID: sessionID,
+                outcome: outcome,
+                tasks: tasks,
+                links: links,
+                deferOutbox: true
+            )
+        }
+
+        let db = try db()
+        let latestRevision = Int(
+            try db.one("SELECT export_revision FROM meeting_sessions WHERE session_id=?", bind: {
+                try Self.bindText($0, sessionID.uuidString, at: 1)
+            })?.integer(0) ?? Int64(sessionResult.exportRevision)
+        )
+
+        if let manualAt = sessionResult.newManualSaveAt {
+            let metaKey = "remote_manual_obsidian_" + sessionID.uuidString
+            try db.run("""
+                INSERT INTO meeting_library_meta(key,value) VALUES(?,?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """) {
+                try Self.bindText($0, metaKey, at: 1)
+                try Self.bindText($0, String(manualAt.syncMilliseconds), at: 2)
+            }
+            if let destination = try Self.activeDestination(db),
+               destination.vaultBookmark != nil,
+               let snapshot = try Self.exportSnapshot(db, sessionID: sessionID) {
+                try Self.putExport(db: db, destination: destination, snapshot: snapshot, intent: .manualSave, held: false)
+            }
+        } else if sessionResult.becameEnded {
+            let awaiting = (outcome?.state.value != "ready") && (session?.outcomeClaim?.value?.state == "pending")
+            _ = try Self.queueOutbox(
+                db: db,
+                sessionID: sessionID,
+                desiredRevision: latestRevision,
+                outcomeReady: outcome?.state.value == "ready",
+                finalEnd: true,
+                awaitingOutcome: awaiting
+            )
+        } else if sessionResult.changed || noteChanged || outcomeChanged {
+            _ = try Self.queueOutbox(
+                db: db,
+                sessionID: sessionID,
+                desiredRevision: latestRevision,
+                outcomeReady: outcome?.state.value == "ready"
+            )
+        }
+
+        return (noteMarkdown, session != nil && !session!.isDeleted.value && session!.canonicalSessionID == nil)
     }
 
     @discardableResult

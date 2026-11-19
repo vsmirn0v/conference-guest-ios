@@ -1,3 +1,4 @@
+import CloudKit
 import Foundation
 import XCTest
 @testable import ConferenceCore
@@ -510,5 +511,265 @@ final class MeetingWorkspaceSyncTests: XCTestCase {
         let stats = await archive.stats()
         XCTAssertEqual(stats.archivedCount, 1)
         XCTAssertGreaterThan(stats.totalBytes, 0)
+    }
+
+    func testCoalesceExcludesSameSingleDevicePairsAndReadsDocumentContextSettings() {
+        let now = Date()
+        var doc = MeetingWorkspaceSyncDocument(device: "ios-1")
+        let macOnlyV1 = SyncVersion(counter: 1, device: "mac-1")
+        let macOnlyV2 = SyncVersion(counter: 2, device: "mac-1")
+        let macA = UUID()
+        let macB = UUID()
+
+        doc.upsertSession(SyncedMeetingSession(
+            id: macA,
+            occurrenceKey: "room:daily-a",
+            title: SyncValue("Daily 1", version: macOnlyV1),
+            hasTitleOverride: SyncValue(false, version: macOnlyV1),
+            invitation: SyncValue(nil, version: macOnlyV1),
+            roomIdentity: "rock.glowsoft.ru · daily",
+            startedAt: now,
+            endedAt: SyncValue(nil, version: macOnlyV1),
+            timeZoneID: "UTC",
+            state: SyncValue("active", version: macOnlyV1),
+            legs: ["mac-1": .init(deviceID: "mac-1", deviceKind: .mac, joinedAt: now)],
+            isDeleted: SyncValue(false, version: macOnlyV1),
+            createdAt: now,
+            updatedAt: now
+        ))
+        doc.upsertSession(SyncedMeetingSession(
+            id: macB,
+            occurrenceKey: "room:daily-b",
+            title: SyncValue("Daily 2", version: macOnlyV2),
+            hasTitleOverride: SyncValue(false, version: macOnlyV2),
+            invitation: SyncValue(nil, version: macOnlyV2),
+            roomIdentity: "rock.glowsoft.ru · daily",
+            startedAt: now.addingTimeInterval(60),
+            endedAt: SyncValue(nil, version: macOnlyV2),
+            timeZoneID: "UTC",
+            state: SyncValue("active", version: macOnlyV2),
+            legs: ["mac-1": .init(deviceID: "mac-1", deviceKind: .mac, joinedAt: now.addingTimeInterval(60))],
+            isDeleted: SyncValue(false, version: macOnlyV2),
+            createdAt: now.addingTimeInterval(60),
+            updatedAt: now.addingTimeInterval(60)
+        ))
+
+        let noRedirects = doc.coalesceOverlappingSessions()
+        XCTAssertTrue(noRedirects.isEmpty)
+        XCTAssertEqual(doc.resolveCanonicalSessionID(for: macA), macA)
+        XCTAssertEqual(doc.resolveCanonicalSessionID(for: macB), macB)
+
+        // Separate-sessions setting stored inside doc.contextSettings is honored directly without external closure state.
+        let vCfg = SyncVersion(counter: 3, device: "mac-1")
+        doc.upsertContextSettings(SyncedMeetingContextSettings(
+            scopeKey: "room:rock.glowsoft.ru · cal-sep",
+            scopeKind: .room,
+            title: SyncValue("Cal Sep", version: vCfg),
+            sameRoomTransition: SyncValue("separateSessions", version: vCfg)
+        ))
+        let s1 = UUID()
+        let s2 = UUID()
+        doc.upsertSession(SyncedMeetingSession(
+            id: s1,
+            occurrenceKey: "cal:sep:1",
+            title: SyncValue("Part 1", version: vCfg),
+            hasTitleOverride: SyncValue(false, version: vCfg),
+            invitation: SyncValue(nil, version: vCfg),
+            roomIdentity: "rock.glowsoft.ru · cal-sep",
+            startedAt: now,
+            endedAt: SyncValue(now.addingTimeInterval(120), version: vCfg),
+            timeZoneID: "UTC",
+            state: SyncValue("ended", version: vCfg),
+            legs: ["mac-1": .init(deviceID: "mac-1", deviceKind: .mac, joinedAt: now)],
+            isDeleted: SyncValue(false, version: vCfg),
+            createdAt: now,
+            updatedAt: now
+        ))
+        let vIOS = SyncVersion(counter: 1, device: "ios-1")
+        doc.upsertSession(SyncedMeetingSession(
+            id: s2,
+            occurrenceKey: "cal:sep:1",
+            title: SyncValue("Part 2", version: vIOS),
+            hasTitleOverride: SyncValue(false, version: vIOS),
+            invitation: SyncValue(nil, version: vIOS),
+            roomIdentity: "rock.glowsoft.ru · cal-sep",
+            startedAt: now.addingTimeInterval(240),
+            endedAt: SyncValue(now.addingTimeInterval(360), version: vIOS),
+            timeZoneID: "UTC",
+            state: SyncValue("ended", version: vIOS),
+            legs: ["ios-1": .init(deviceID: "ios-1", deviceKind: .ios, joinedAt: now.addingTimeInterval(240))],
+            isDeleted: SyncValue(false, version: vIOS),
+            createdAt: now.addingTimeInterval(240),
+            updatedAt: now.addingTimeInterval(240)
+        ))
+        let sepRedirects = doc.coalesceOverlappingSessions()
+        XCTAssertTrue(sepRedirects.isEmpty)
+    }
+
+    func testCloudKitRateLimitExtractsRetryAfterAndExponentialBackoff() {
+        let withHint = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.Code.requestRateLimited.rawValue,
+            userInfo: [CKErrorRetryAfterKey: 28.0]
+        )
+        XCTAssertEqual(CloudKitRateLimit.retryAfter(for: withHint, consecutiveFailures: 1), 28.0)
+
+        let withoutHint = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.Code.serviceUnavailable.rawValue,
+            userInfo: [:]
+        )
+        XCTAssertEqual(CloudKitRateLimit.retryAfter(for: withoutHint, consecutiveFailures: 1), 15.0)
+        XCTAssertEqual(CloudKitRateLimit.retryAfter(for: withoutHint, consecutiveFailures: 2), 30.0)
+        XCTAssertEqual(CloudKitRateLimit.retryAfter(for: withoutHint, consecutiveFailures: 5), 120.0)
+
+        let partialRateLimit = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.Code.partialFailure.rawValue,
+            userInfo: [CKPartialErrorsByItemIDKey: ["rec-1": withHint]]
+        )
+        XCTAssertEqual(CloudKitRateLimit.retryAfter(for: partialRateLimit, consecutiveFailures: 1), 28.0)
+
+        let nonThrottle = NSError(domain: CKError.errorDomain, code: CKError.Code.unknownItem.rawValue)
+        XCTAssertNil(CloudKitRateLimit.retryAfter(for: nonThrottle))
+        XCTAssertNil(CloudKitRateLimit.retryAfter(for: CloudZoneError.noAccount))
+    }
+
+    func testCalendarScheduleDeduplicatesCrossPlatformExternalIDsAndAvoidsNoOpRewrites() {
+        let now = Date(timeIntervalSince1970: 1_795_070_000)
+        let start = now.addingTimeInterval(1800)
+        let end = now.addingTimeInterval(3600)
+        let roomA = URL(string: "https://salutejazz.ru/j1ds87")!
+        let roomB = URL(string: "https://salutejazz.ru/q01xx4")!
+
+        var macMeeting = CalendarMeeting(
+            id: "mac-ev-1",
+            seriesID: "mac-cal-series",
+            calendarID: "mac-cal",
+            calendarTitle: "Календарь",
+            title: "FW: рг.5 Утр. синк",
+            start: start,
+            end: end,
+            links: [roomA],
+            externalSeriesID: "a-mac-ext-1"
+        )
+        macMeeting.invitation = roomA
+        macMeeting.engine = .community
+
+        let phoneMeeting = CalendarMeeting(
+            id: "ios-ev-1",
+            seriesID: "ios-cal-series",
+            calendarID: "ios-cal",
+            calendarTitle: "Work Calendar",
+            title: "FW: рг.5 Утр. синк",
+            start: start,
+            end: end,
+            links: [roomA],
+            externalSeriesID: "z-ios-ext-1"
+        )
+
+        var parallelPhoneMeeting = CalendarMeeting(
+            id: "ios-ev-2",
+            seriesID: "ios-cal-series-2",
+            calendarID: "ios-cal",
+            calendarTitle: "Work Calendar",
+            title: "Infra daily [Cloud]",
+            start: start,
+            end: end,
+            links: [roomB],
+            externalSeriesID: "z-ios-ext-2"
+        )
+        parallelPhoneMeeting.invitation = roomB
+        parallelPhoneMeeting.engine = .community
+
+        var macDoc = CalendarScheduleSyncDocument(device: "mac")
+        var phoneDoc = CalendarScheduleSyncDocument(device: "ios")
+
+        // Simulate both devices having already uploaded separate records for the same event before merging.
+        macDoc.updateLocalMeetings([macMeeting], bindings: [:], suppressed: [:], reminderStates: [:], now: now)
+        phoneDoc.updateLocalMeetings([phoneMeeting, parallelPhoneMeeting], bindings: [:], suppressed: [:], reminderStates: [:], now: now.addingTimeInterval(1))
+        let countBeforeRepeat = phoneDoc.counter
+        let snapshotRecordsBeforeRepeat = phoneDoc.records
+
+        // Repeat pass with unchanged local calendar must be a strict no-op (counter and records unchanged).
+        phoneDoc.updateLocalMeetings([phoneMeeting, parallelPhoneMeeting], bindings: [:], suppressed: [:], reminderStates: [:], now: now.addingTimeInterval(20))
+        XCTAssertEqual(phoneDoc.counter, countBeforeRepeat)
+        XCTAssertEqual(phoneDoc.records, snapshotRecordsBeforeRepeat)
+
+        // Merge both zones; projectedOccurrences immediately deduplicates to 2 unique meetings (1 synced + 1 parallel).
+        _ = macDoc.merge(phoneDoc.records)
+        _ = phoneDoc.merge(macDoc.records)
+        XCTAssertEqual(Set(macDoc.projectedOccurrences(now: now).map(\.title)), ["FW: рг.5 Утр. синк", "Infra daily [Cloud]"])
+        XCTAssertEqual(macDoc.projectedOccurrences(now: now).count, 2)
+        XCTAssertEqual(phoneDoc.projectedOccurrences(now: now).count, 2)
+
+        // Next sync pass on both devices converges onto the deterministic smaller occurrenceKey and tombstones the duplicate.
+        macDoc.updateLocalMeetings([macMeeting], bindings: [:], suppressed: [:], reminderStates: [:], now: now.addingTimeInterval(30))
+        phoneDoc.updateLocalMeetings([phoneMeeting, parallelPhoneMeeting], bindings: [:], suppressed: [:], reminderStates: [:], now: now.addingTimeInterval(31))
+        _ = macDoc.merge(phoneDoc.records)
+        _ = phoneDoc.merge(macDoc.records)
+
+        let activeMac = macDoc.projectedOccurrences(now: now)
+        let activePhone = phoneDoc.projectedOccurrences(now: now)
+        XCTAssertEqual(activeMac.count, 2)
+        XCTAssertEqual(activePhone.count, 2)
+        XCTAssertEqual(activeMac.first(where: { $0.title == "FW: рг.5 Утр. синк" })?.sourceDevices.keys.sorted(), ["ios", "mac"])
+        XCTAssertEqual(phoneDoc.occurrences[phoneMeeting.occurrenceSyncKey]?.isDeleted.value, true)
+
+        // Repeat steady-state pass after convergence must emit zero counter/record mutations on either device.
+        let macSteadyCounter = macDoc.counter
+        let macSteadyRecords = macDoc.records
+        let phoneSteadyCounter = phoneDoc.counter
+        let phoneSteadyRecords = phoneDoc.records
+        macDoc.updateLocalMeetings([macMeeting], bindings: [:], suppressed: [:], reminderStates: [:], now: now.addingTimeInterval(60))
+        phoneDoc.updateLocalMeetings([phoneMeeting, parallelPhoneMeeting], bindings: [:], suppressed: [:], reminderStates: [:], now: now.addingTimeInterval(61))
+        XCTAssertEqual(macDoc.counter, macSteadyCounter)
+        XCTAssertEqual(macDoc.records, macSteadyRecords)
+        XCTAssertEqual(phoneDoc.counter, phoneSteadyCounter)
+        XCTAssertEqual(phoneDoc.records, phoneSteadyRecords)
+    }
+
+    func testCanonicalTaskProfilePrefersConfiguredHigherCounterAndNonDefaultID() {
+        var doc = MeetingWorkspaceSyncDocument(device: "ios-1")
+        let emptyUUID = SyncedTaskProfile(
+            profileID: "ZZZZZZZZ-0000-0000-0000-000000000001",
+            assigneeID: SyncValue(nil, version: SyncVersion(counter: 10, device: "mac-2")),
+            aliases: SyncValue([], version: SyncVersion(counter: 10, device: "mac-2"))
+        )
+        let uuidLow = SyncedTaskProfile(
+            profileID: "AAAAAAAA-0000-0000-0000-000000000001",
+            assigneeID: SyncValue(nil, version: SyncVersion(counter: 1, device: "mac-1")),
+            aliases: SyncValue(["Vitalii"], version: SyncVersion(counter: 1, device: "mac-1"))
+        )
+        let defaultCounterZero = SyncedTaskProfile(
+            profileID: "default",
+            assigneeID: SyncValue(nil, version: SyncVersion(counter: 0, device: "ios-1")),
+            aliases: SyncValue(["Phone Alias"], version: SyncVersion(counter: 0, device: "ios-1"))
+        )
+        doc.upsertTaskProfile(emptyUUID)
+        doc.upsertTaskProfile(defaultCounterZero)
+        XCTAssertEqual(doc.canonicalTaskProfile?.profileID, "default")
+        XCTAssertEqual(doc.canonicalTaskProfile?.aliases.value, ["Phone Alias"])
+
+        doc.upsertTaskProfile(uuidLow)
+        XCTAssertEqual(doc.canonicalTaskProfile?.profileID, uuidLow.profileID)
+
+        // Same configured counter prefers non-default UUID over "default".
+        let defaultSameCounter = SyncedTaskProfile(
+            profileID: "default",
+            assigneeID: SyncValue(nil, version: SyncVersion(counter: 1, device: "ios-1")),
+            aliases: SyncValue(["Phone"], version: SyncVersion(counter: 1, device: "ios-1"))
+        )
+        doc.upsertTaskProfile(defaultSameCounter)
+        XCTAssertEqual(doc.canonicalTaskProfile?.profileID, uuidLow.profileID)
+
+        // Higher counter wins even on "default".
+        let defaultNewer = SyncedTaskProfile(
+            profileID: "default",
+            assigneeID: SyncValue("Vitalii", version: SyncVersion(counter: 5, device: "ios-1")),
+            aliases: SyncValue(["Vitalii", "Виталий"], version: SyncVersion(counter: 5, device: "ios-1"))
+        )
+        doc.upsertTaskProfile(defaultNewer)
+        XCTAssertEqual(doc.canonicalTaskProfile?.profileID, "default")
     }
 }

@@ -1385,7 +1385,7 @@ extension MeetingLibraryStore {
         })
     }
 
-    func taskHistory(profile: PersonalTaskProfile) throws -> [PersonalTaskRow] {
+    func taskHistory(profile: PersonalTaskProfile, includeAll: Bool = false) throws -> [PersonalTaskRow] {
         let archive = try taskArchiveDates(profileID: profile.id)
         return try db().rows("""
             SELECT t.payload_json, o.outcome_id, s.session_id, s.title, s.started_at, s.ended_at, s.start_provenance, s.outcome_end_fallback
@@ -1396,12 +1396,13 @@ extension MeetingLibraryStore {
                   let outcomeID = row.text(1).flatMap(UUID.init(uuidString:)),
                   let sessionID = row.text(2).flatMap(UUID.init(uuidString:)) else { return nil }
             let task = try JSONDecoder.attention.decode(MeetingOutcomeTask.self, from: data)
-            guard profile.owns(task) else { return nil }
+            let owned = profile.owns(task)
+            guard includeAll || owned else { return nil }
             let start = row.text(6) == MeetingStartProvenance.recorded.rawValue ? Self.date(row.integer(4)) : nil
             let end = Self.date(row.integer(5)) ?? Self.date(row.integer(7))
             let meetingDate = MeetingEffectiveDate.resolve(start: start, end: end)?.date
             return PersonalTaskRow(outcomeID: outcomeID, sessionID: sessionID, title: row.text(3) ?? "",
-                                   meetingDate: meetingDate, task: task, archivedAt: archive[task.id])
+                                   meetingDate: meetingDate, task: task, archivedAt: owned ? archive[task.id] : nil)
         }
     }
 

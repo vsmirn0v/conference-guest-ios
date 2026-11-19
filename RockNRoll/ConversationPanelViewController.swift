@@ -473,6 +473,18 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         header.isLayoutMarginsRelativeArrangement = true
         header.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 4)
         header.addArrangedSubview(title)
+        if call?.openNotes != nil {
+            let notesButton = UIButton(type: .system)
+            notesButton.setImage(UIImage(systemName: "note.text"), for: .normal)
+            notesButton.accessibilityIdentifier = "conversation.notes"
+            notesButton.accessibilityLabel = L("Notes")
+            notesButton.addAction(UIAction { [weak self] _ in
+                self?.call?.openNotes?()
+            }, for: .touchUpInside)
+            notesButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            notesButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            header.addArrangedSubview(notesButton)
+        }
         header.addArrangedSubview(close)
     }
 

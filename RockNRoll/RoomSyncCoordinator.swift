@@ -56,6 +56,7 @@ final class RoomSyncCoordinator: ObservableObject {
     private var networkMonitor: NWPathMonitor?
     private var networkWasAvailable = false
     var onRemoteName: ((String) -> Void)?
+    var onCommittedName: ((String) -> Void)?
     var onCloudAccessChanged: ((String?) -> Void)?
     var onSyncNow: (() -> Void)?
     var onSyncPreferencesChanged: (() -> Void)?
@@ -112,6 +113,7 @@ final class RoomSyncCoordinator: ObservableObject {
         state.document.setName(name)
         resolveNameChoiceIfNeeded()
         changed()
+        notifyCommittedName(name)
     }
 
     func beginNameEditing() { nameAtEditStart = nameDraft }
@@ -127,6 +129,13 @@ final class RoomSyncCoordinator: ObservableObject {
         state.document.setName(useCloud ? choice.cloud : choice.local)
         nameDraft = useCloud ? choice.cloud : choice.local
         resolveNameChoiceIfNeeded(); changed(); onRemoteName?(nameDraft)
+        notifyCommittedName(nameDraft)
+    }
+
+    private func notifyCommittedName(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onCommittedName?(trimmed)
     }
 
     private func resolveNameChoiceIfNeeded() {
@@ -412,6 +421,7 @@ final class RoomSyncCoordinator: ObservableObject {
         guard nameAtEditStart == nil, nameChoice == nil, let name = state.document.name?.value,
               nameDraft != name else { return }
         nameDraft = name; onRemoteName?(name)
+        notifyCommittedName(name)
     }
 
     private func pause(_ message: String) {

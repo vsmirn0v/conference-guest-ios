@@ -1,0 +1,109 @@
+{
+  "version": "0.3.0",
+  "build": "124",
+  "channel": "beta",
+  "sourceCommit": "e3d92f8bafe8ff6549ff9df9a8f759bebd438a6d",
+  "sourceState": "Workspace on top of e3d92f8b matching iOS 0.2.0 (131): CalendarOccurrenceSemanticFingerprint cross-platform event deduplication, tombstone sourceDevices handling in SyncedCalendarOccurrence.merging, steady-state zero-op CalendarScheduleSyncDocument sync, and client-side CalendarMeetingStore & CalendarReminderCoordinator semantic deduplication.",
+  "sourceManifest": {
+    "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-124/build/build-evidence.json",
+    "sha256": "16475bbef4ae55073f09f2e999d3353dbe53569649a15495d8682fdcd6484d88"
+  },
+  "validation": {
+    "architectureGate": {
+      "command": "python3 NativeMacGuest/Tests/verify-universal-architecture.py",
+      "passed": true
+    },
+    "conferenceCoreTests": {
+      "executed": 170,
+      "failed": 0
+    },
+    "meetingEngineTests": {
+      "executed": 3,
+      "failed": 0
+    },
+    "nativeDependenciesTests": {
+      "command": "python3 -m unittest NativeMacGuest/Tests/test_native_dependencies.py",
+      "executed": 15,
+      "failed": 0
+    },
+    "distributionTests": {
+      "command": "python3 -m unittest discover -s NativeMacGuest/distribution -p 'test_*.py'",
+      "executed": 27,
+      "failed": 0
+    },
+    "nativeLibraryTests": {
+      "command": "bash NativeMacGuest/test-library.sh",
+      "passed": true
+    },
+    "nativeDesktopTests": {
+      "scope": "MacWorkspaceSyncAndObsidianTests, MeetingLibraryTests, ObsidianExportTests, PersonalTasksTests, SameRoomBackToBackTests",
+      "executed": 50,
+      "failed": 0
+    },
+    "archive": {
+      "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-124/build/RockNRollNativeGuest-0.3.0-124.xcarchive",
+      "command": "python3 NativeMacGuest/build.py --distribution direct --configuration Release --version 0.3.0 --build-number 124 --identity \"Apple Development: Vitalii Smirnov (4Z8BRSUNL4)\" --archive --reuse-cache --allow-provisioning-updates --output-dir .build/native-beta-124/build",
+      "wallClockSeconds": 398.7,
+      "log": "/Users/v.smirnov/.gemini/antigravity/brain/34623704-0886-4428-b18b-0be7b56872cc/.system_generated/tasks/task-2127.log"
+    }
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-124/build/RockNRollNativeGuest-0.3.0-124.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-124/export-124/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "124",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "124",
+    "file": "RockNRoll-0.3.0-124-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-124-arm64.dmg",
+    "sha256": "9b5baff6871a28a1172a41ae794bdfd2faed8e2980033ed82e28c7b9a32658d7",
+    "length": 40964762,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-124/package-124/RockNRoll-0.3.0-124-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "evidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-124/publication-124.json",
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-124-arm64.dmg",
+      "sha256": "9b5baff6871a28a1172a41ae794bdfd2faed8e2980033ed82e28c7b9a32658d7",
+      "length": 40964762
+    },
+    "state": {
+      "appcastSHA256": "ef0102c2a6d33f8dcf505d3f7bd0be10309f58b651345b6fe1a8777d923802a9",
+      "inventorySHA256": "6f939a3d79f12b1646a1096a9a0844d1a5a49761433327969e02bf48a7f94d7a",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-124-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/eeb363c5c6a84923a51a6a5eb9268d65/backup",
+    "httpsVerified": true
+  },
+  "inventory": {
+    "schemaVersion": 1,
+    "stable": {
+      "version": "0.3.0",
+      "build": "53",
+      "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009"
+    },
+    "beta": {
+      "version": "0.3.0",
+      "build": "124",
+      "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-124-arm64.dmg",
+      "sha256": "9b5baff6871a28a1172a41ae794bdfd2faed8e2980033ed82e28c7b9a32658d7"
+    }
+  },
+  "recordedAt": "2026-11-19T05:16:26Z"
+}

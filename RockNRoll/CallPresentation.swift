@@ -271,7 +271,10 @@ final class CallToolbar: UIView {
 
 /// A stable floating row for meeting identity and actions at every window size.
 final class CompactCallHeader: UIView {
+    let minimize = MeetingMenuButton(type: .system)
     let details = MeetingMenuButton(type: .system)
+    let assistant = MeetingMenuButton(type: .system)
+    let switcher = MeetingMenuButton(type: .system)
     let previous = MeetingMenuButton(type: .system)
     let nextStream = MeetingMenuButton(type: .system)
     let automatic = MeetingMenuButton(type: .system)
@@ -288,11 +291,14 @@ final class CompactCallHeader: UIView {
             overflow.onMenuVisibilityChanged = onMenuVisibilityChanged
         }
     }
+    private let assistantBadge = UILabel()
+    private let switcherBadge = UILabel()
     private let chatBadge = UILabel()
     private let missedBadge = UILabel()
     private let sourceLabel = UILabel()
     private let privacyIcon = UIImageView()
     private let speakerIndicator = ActiveSpeakerIndicator(font: .systemFont(ofSize: 15, weight: .medium))
+    private let minimizeSurface = MeetingChromeContainer(radius: 22)
     private let identitySurface = MeetingChromeContainer(radius: 22)
     private let actionsSurface = MeetingChromeContainer(radius: 22)
     private var sourceName = ""
@@ -312,9 +318,25 @@ final class CompactCallHeader: UIView {
         let followsSpeaker: Bool
     }
     private var renderedLayout: Layout?
+    private struct WorkspaceState: Equatable {
+        let minimizeAvailable: Bool
+        let assistantAvailable: Bool
+        let assistantSymbol: String
+        let assistantColor: UIColor
+        let assistantLabel: String
+        let assistantAlertCount: Int
+        let switcherAvailable: Bool
+        let activeMeetingCount: Int
+    }
+    private var renderedWorkspace: WorkspaceState?
     private var availableActions = Set<ObjectIdentifier>()
     private var layoutAvailable = false
     private var disclosureOnly = false
+    private var minimizeAvailable = false
+    private var assistantAvailable = false
+    private var switcherAvailable = false
+    private var assistantAlertCount = 0
+    private var activeMeetingCount = 0
     private struct OverflowItem: Equatable {
         let button: ObjectIdentifier
         let title: String
@@ -322,13 +344,27 @@ final class CompactCallHeader: UIView {
         let menu: ObjectIdentifier?
     }
     private var overflowItems: [OverflowItem] = []
-    private var actions: [UIButton] { [layoutButton, previous, automatic, nextStream, pin, participants, missed, conversation, focus] }
+    private var actions: [UIButton] {
+        [assistant, switcher, layoutButton, previous, automatic, nextStream, pin, participants, missed, conversation, focus]
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         accessibilityIdentifier = "Compact meeting header"
         backgroundColor = .clear
-        addSubview(identitySurface); addSubview(actionsSurface)
+        addSubview(minimizeSurface); addSubview(identitySurface); addSubview(actionsSurface)
+        minimize.configuration = .plain()
+        minimize.configuration?.baseForegroundColor = .label
+        minimize.configuration?.image = UIImage(systemName: "chevron.down")
+        MeetingControlMetrics.boundSymbol(in: minimize)
+        minimize.accessibilityLabel = L("Return to Home")
+        minimize.accessibilityIdentifier = "call.minimize"
+        minimize.showsLargeContentViewer = true
+        minimize.largeContentTitle = L("Return to Home")
+        minimize.largeContentImage = UIImage(systemName: "chevron.down")
+        minimize.isHidden = true
+        minimizeSurface.isHidden = true
+        minimizeSurface.contentView.addSubview(minimize)
         details.contentHorizontalAlignment = .leading
         details.configuration = .plain()
         details.configuration?.titleLineBreakMode = .byTruncatingTail
@@ -355,6 +391,8 @@ final class CompactCallHeader: UIView {
         privacyIcon.isAccessibilityElement = false
         details.addSubview(privacyIcon)
         for (button, symbol, label) in [
+            (assistant, "sparkles", L("Assistant mode")),
+            (switcher, "rectangle.stack.badge.plus", L("Meetings & join another")),
             (layoutButton, "square.grid.2x2", L("Meeting layout")),
             (previous, "chevron.left", L("Previous stream")),
             (automatic, "arrow.triangle.2.circlepath", L("Automatic view")),
@@ -372,7 +410,19 @@ final class CompactCallHeader: UIView {
             button.accessibilityLabel = label
             actionsSurface.contentView.addSubview(button)
         }
-        availableActions = Set(actions.filter { $0 !== layoutButton }.map(ObjectIdentifier.init))
+        assistant.accessibilityIdentifier = "call.assistant"
+        assistant.showsLargeContentViewer = true
+        assistant.largeContentTitle = L("Assistant mode")
+        assistant.largeContentImage = UIImage(systemName: "sparkles")
+        assistant.isHidden = true
+        switcher.accessibilityIdentifier = "call.switcher"
+        switcher.showsLargeContentViewer = true
+        switcher.largeContentTitle = L("Meetings & join another")
+        switcher.largeContentImage = UIImage(systemName: "rectangle.stack.badge.plus")
+        switcher.isHidden = true
+        availableActions = Set(actions.filter {
+            $0 !== layoutButton && $0 !== assistant && $0 !== switcher
+        }.map(ObjectIdentifier.init))
         overflow.configuration = .plain()
         overflow.configuration?.baseForegroundColor = .label
         overflow.configuration?.image = UIImage(systemName: "ellipsis")
@@ -382,12 +432,13 @@ final class CompactCallHeader: UIView {
         overflow.accessibilityIdentifier = "More meeting controls"
         overflow.isHidden = true
         actionsSurface.contentView.addSubview(overflow)
-        for (button, badge) in [(conversation, chatBadge), (missed, missedBadge)] {
+        for (button, badge) in [(assistant, assistantBadge), (switcher, switcherBadge), (conversation, chatBadge), (missed, missedBadge)] {
             badge.font = .systemFont(ofSize: 10, weight: .semibold)
             badge.textAlignment = .center
             badge.textColor = .black; badge.backgroundColor = .systemOrange
             badge.layer.cornerRadius = 7; badge.clipsToBounds = true
             badge.isAccessibilityElement = false; badge.isUserInteractionEnabled = false
+            badge.isHidden = true
             button.addSubview(badge)
         }
         automatic.configuration?.image = nil
@@ -424,6 +475,66 @@ final class CompactCallHeader: UIView {
         layoutButton.menu = UIMenu(children: options)
         setNeedsLayout()
     }
+    func setCallWorkspaceControls(
+        minimizeAvailable: Bool,
+        assistantAvailable: Bool,
+        assistantSymbol: String,
+        assistantColor: UIColor,
+        assistantLabel: String,
+        assistantAlertCount: Int,
+        switcherAvailable: Bool,
+        activeMeetingCount: Int
+    ) {
+        let nextState = WorkspaceState(
+            minimizeAvailable: minimizeAvailable,
+            assistantAvailable: assistantAvailable,
+            assistantSymbol: assistantSymbol,
+            assistantColor: assistantColor,
+            assistantLabel: assistantLabel,
+            assistantAlertCount: assistantAlertCount,
+            switcherAvailable: switcherAvailable,
+            activeMeetingCount: activeMeetingCount
+        )
+        guard renderedWorkspace != nextState else { return }
+        renderedWorkspace = nextState
+        self.minimizeAvailable = minimizeAvailable
+        self.assistantAvailable = assistantAvailable
+        self.switcherAvailable = switcherAvailable
+        self.assistantAlertCount = assistantAlertCount
+        self.activeMeetingCount = activeMeetingCount
+
+        assistant.configuration?.image = UIImage(systemName: assistantSymbol)
+        assistant.configuration?.baseForegroundColor = assistantColor
+        assistant.accessibilityLabel = assistantLabel
+        assistant.accessibilityValue = assistantAlertCount > 0 ? "\(assistantAlertCount)" : nil
+        assistant.largeContentTitle = assistantLabel
+        assistant.largeContentImage = UIImage(systemName: assistantSymbol)
+        assistantBadge.text = assistantAlertCount > 99 ? "99+" : String(assistantAlertCount)
+        assistantBadge.isHidden = assistantAlertCount == 0
+
+        let switcherSymbol = activeMeetingCount > 1 ? "rectangle.stack.fill" : "rectangle.stack.badge.plus"
+        let switcherLabel = activeMeetingCount > 1 ? L("Active meetings") : L("Meetings & join another")
+        switcher.configuration?.image = UIImage(systemName: switcherSymbol)
+        switcher.accessibilityLabel = switcherLabel
+        switcher.accessibilityValue = activeMeetingCount > 1 ? "\(activeMeetingCount)" : nil
+        switcher.largeContentTitle = switcherLabel
+        switcher.largeContentImage = UIImage(systemName: switcherSymbol)
+        switcherBadge.text = "\(activeMeetingCount)"
+        switcherBadge.isHidden = activeMeetingCount <= 1
+
+        if assistantAvailable && !disclosureOnly {
+            availableActions.insert(ObjectIdentifier(assistant))
+        } else {
+            availableActions.remove(ObjectIdentifier(assistant))
+        }
+        if switcherAvailable && !disclosureOnly {
+            availableActions.insert(ObjectIdentifier(switcher))
+        } else {
+            availableActions.remove(ObjectIdentifier(switcher))
+        }
+        setNeedsLayout()
+    }
+
     func update(name: String, navigation: Bool, browsing: Bool, pinned: Bool,
                 pinLabel: String?, participantsLabel: String?, chatValue: String?,
                 chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: CallSpeaker? = nil, focusAvailable: Bool,
@@ -454,7 +565,10 @@ final class CompactCallHeader: UIView {
         missed.configuration?.baseForegroundColor = .systemOrange
         missed.accessibilityLabel = L("Catch up, %ld missed sections", missedCount)
         missedBadge.text = missedCount > 99 ? "99+" : String(missedCount)
+        missedBadge.isHidden = missedCount == 0
         focus.isHidden = !focusAvailable
+        assistant.isHidden = !assistantAvailable
+        switcher.isHidden = !switcherAvailable
         self.disclosureOnly = disclosureOnly
         if disclosureOnly { actions.forEach { $0.isHidden = true } }
         availableActions = Set(actions.filter { $0 !== layoutButton && !$0.isHidden }.map(ObjectIdentifier.init))
@@ -480,13 +594,23 @@ final class CompactCallHeader: UIView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
+        let showMinimize = minimizeAvailable && !disclosureOnly && bounds.width >= 156
+        minimizeSurface.isHidden = !showMinimize
+        minimize.isHidden = !showMinimize
+        if showMinimize {
+            minimizeSurface.frame = CGRect(x: 4, y: 0, width: 44, height: 44)
+            minimizeSurface.layoutIfNeeded()
+            minimize.frame = minimizeSurface.contentView.bounds
+        }
+        let identityStart: CGFloat = showMinimize ? 52 : 4
         let available = disclosureOnly ? [] : actions.filter {
             $0 === layoutButton ? layoutAvailable : availableActions.contains(ObjectIdentifier($0))
         }
         let showsIdentity = bounds.width >= 104 || available.isEmpty
-        let capacity = max(1, Int(max(0, bounds.width - (showsIdentity ? 116 : 8)) / 44))
-        let needsOverflow = available.count > capacity || !showsIdentity
-        let priority: [UIButton] = [participants, conversation, focus, layoutButton, pin, missed, previous, automatic, nextStream]
+        let reserved: CGFloat = showsIdentity ? (showMinimize ? 160 : 116) : (showMinimize ? 56 : 8)
+        let capacity = max(1, Int(max(0, bounds.width - reserved) / 44))
+        let needsOverflow = available.count > capacity || !showsIdentity || (minimizeAvailable && !disclosureOnly && !showMinimize)
+        let priority: [UIButton] = [assistant, switcher, conversation, focus, participants, missed, layoutButton, pin, previous, automatic, nextStream]
         let availableIDs = Set(available.map(ObjectIdentifier.init))
         let direct = Set(priority.filter { availableIDs.contains(ObjectIdentifier($0)) }
             .prefix(needsOverflow ? max(0, capacity - 1) : capacity).map(ObjectIdentifier.init))
@@ -494,13 +618,21 @@ final class CompactCallHeader: UIView {
         actions.forEach { $0.isHidden = !direct.contains(ObjectIdentifier($0)) }
         overflow.isHidden = !needsOverflow
         if needsOverflow {
-            updateOverflow((showsIdentity ? [] : [details]) + available.filter { !direct.contains(ObjectIdentifier($0)) })
+            var hiddenItems: [UIButton] = []
+            if minimizeAvailable && !disclosureOnly && !showMinimize {
+                hiddenItems.append(minimize)
+            }
+            if !showsIdentity {
+                hiddenItems.append(details)
+            }
+            hiddenItems.append(contentsOf: available.filter { !direct.contains(ObjectIdentifier($0)) })
+            updateOverflow(hiddenItems)
             visible.append(overflow)
         }
         let start = bounds.maxX - CGFloat(visible.count) * 44 - 4
         details.isHidden = !showsIdentity
         identitySurface.isHidden = !showsIdentity
-        identitySurface.frame = CGRect(x: 4, y: 0, width: min(220, max(0, start - 12)), height: 44)
+        identitySurface.frame = CGRect(x: identityStart, y: 0, width: min(220, max(0, start - identityStart - 8)), height: 44)
         identitySurface.layoutIfNeeded(); details.frame = identitySurface.contentView.bounds
         actionsSurface.isHidden = visible.isEmpty
         actionsSurface.frame = CGRect(x: start - 2, y: 0, width: CGFloat(visible.count) * 44 + 6, height: 44)
@@ -515,7 +647,7 @@ final class CompactCallHeader: UIView {
         for (index, button) in visible.enumerated() {
             button.frame = actionsSurface.contentView.convert(CGRect(x: start + CGFloat(index) * 44, y: 0, width: 44, height: 44), from: self)
         }
-        for badge in [chatBadge, missedBadge] {
+        for badge in [assistantBadge, switcherBadge, chatBadge, missedBadge] {
             let width = min(22, max(14, ceil(badge.intrinsicContentSize.width) + 6))
             badge.frame = CGRect(x: 39 - width, y: 6, width: width, height: 14)
         }

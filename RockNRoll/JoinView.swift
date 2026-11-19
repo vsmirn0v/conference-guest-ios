@@ -38,6 +38,9 @@ struct JoinView: View {
     @State private var undoToken = UUID()
     @State private var staleContinuation: ActiveJam?
     @State private var confirmingStaleContinuation = false
+    @State private var showingWorkspace = false
+    @State private var workspaceTab: IOSWorkspaceHubTab = .history
+    @State private var assistantSheetSessionID: UUID?
     private let accent = Color(red: 1, green: 0.60, blue: 0.33)
     private let linkAccent = Color(uiColor: .init { traits in
         traits.userInterfaceStyle == .dark ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) :
@@ -61,6 +64,13 @@ struct JoinView: View {
                 }
                 Form {
                     activeMeetingsSection
+                    IOSAssistantAlertsHomeSection(
+                        assistant: model.assistant,
+                        canSendChat: { id in
+                            model.sessions.first(where: { $0.id == id })?.canSendAssistantChat ?? false
+                        },
+                        onFocusMeeting: { model.presentSession(id: $0) }
+                    )
                     urgentSection
                     Section {
                         joinPanel(width: window.size.width - (wide ? min(320, window.size.width * 0.32) : 0))
@@ -85,6 +95,16 @@ struct JoinView: View {
             .navigationTitle("Rock’n’Roll")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        workspaceTab = .history
+                        showingWorkspace = true
+                    } label: {
+                        Image(systemName: "note.text")
+                    }
+                    .accessibilityIdentifier("home.assistant")
+                    .accessibilityLabel(L("Assistant"))
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel(L("Settings"))
@@ -121,6 +141,24 @@ struct JoinView: View {
             }
             .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { !showingAgenda }))
             .sheet(isPresented: $showingAgenda) { agendaSheet }
+            .sheet(isPresented: $showingWorkspace) {
+                IOSWorkspaceHubView(workspace: model.workspace, sync: sync, assistant: model.assistant, initialTab: workspaceTab)
+            }
+            .sheet(item: Binding<IOSMeetingSessionController?>(
+                get: { model.sessions.first { $0.id == assistantSheetSessionID } },
+                set: { assistantSheetSessionID = $0?.id }
+            )) { session in
+                IOSAssistantModeSheet(
+                    controllerID: session.id,
+                    meetingTitle: session.title,
+                    canSendChat: session.canSendAssistantChat,
+                    assistant: model.assistant,
+                    onFocusMeeting: { model.presentSession(id: session.id) }
+                )
+            }
+            .onChange(of: model.focusJoinLinkTrigger) { _, _ in
+                linkFocused = true
+            }
             .sheet(isPresented: $showingDevices, onDismiss: {
                 if staleContinuation != nil { confirmingStaleContinuation = true }
             }) { devicesSheet }
@@ -289,18 +327,31 @@ struct JoinView: View {
             calendar.choosingMeeting != nil || model.siteSelection != nil || model.engineSelection != nil ||
             model.showSwitchConfirmation || busy
     }
-    private var shouldTick: Bool { homeVisible && foreground && !model.isInConference && (calendar.enabled || !continuation.candidates.isEmpty) }
+    private var shouldTick: Bool {
+        homeVisible && foreground && !model.isInConference &&
+            (calendar.enabled || !calendar.syncedRemoteMeetings.isEmpty || !continuation.candidates.isEmpty)
+    }
     private func refreshHome(meetings: [CalendarMeeting]? = nil, handoffs: [ActiveJam]? = nil) {
         homeNow = Date()
-        let available = calendar.enabled && calendar.access == .allowed ?
-            (meetings ?? calendar.upcoming).filter { calendar.selected.contains($0.calendarID) && $0.end > homeNow && $0.hasResolvedInvitation } : []
+        let hasLocalCalendar = calendar.enabled && calendar.access == .allowed
+        let hasRemoteCalendar = !calendar.syncedRemoteMeetings.isEmpty
+        let available = (hasLocalCalendar || hasRemoteCalendar) ?
+            (meetings ?? calendar.upcoming).filter {
+                ($0.isRemoteSynced || (hasLocalCalendar && calendar.selected.contains($0.calendarID))) &&
+                    $0.end > homeNow && $0.hasResolvedInvitation
+            } : []
         let candidates = HomeMeetingPolicy.candidates(meetings: available,
                             handoffs: handoffs ?? continuation.candidates, at: homeNow)
         let allowChanges = !homeVisible || (!homeInteracting && foreground)
         var updated = homeSnapshot
         updated.update(candidates, calendarMeetings: available,
-            calendarState: .init(enabled: calendar.enabled, available: calendar.access == .allowed && !calendar.selected.isEmpty,
-                hasSelection: !calendar.selected.isEmpty, loading: calendar.loading, error: calendar.error), allowChanges: allowChanges)
+            calendarState: .init(
+                enabled: calendar.enabled || hasRemoteCalendar,
+                available: (hasLocalCalendar && !calendar.selected.isEmpty) || hasRemoteCalendar,
+                hasSelection: !calendar.selected.isEmpty || hasRemoteCalendar,
+                loading: calendar.loading,
+                error: calendar.error
+            ), allowChanges: allowChanges)
         if allowChanges {
             let before = HomeMeetingPolicy.today(meetings: homeSnapshot.calendarItems, at: homeLayoutNow,
                 excluding: Set(homeSnapshot.items.compactMap { $0.calendar?.id })).map(\.id)
@@ -321,7 +372,7 @@ struct JoinView: View {
             Section(L("Active meetings (%ld/4)", model.sessions.count)) {
                 ForEach(model.sessions) { session in
                     HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(session.title).font(.headline).lineLimit(1)
                             HStack(spacing: 6) {
                                 Text(session.isTalkRoom ? L("Talk active") : L("Listening"))
@@ -332,6 +383,9 @@ struct JoinView: View {
                                 } else if session.phase == .reconnecting {
                                     Text(L("· Reconnecting")).font(.caption).foregroundStyle(.orange)
                                 }
+                            }
+                            IOSActiveMeetingAssistantPill(controllerID: session.id, assistant: model.assistant) {
+                                assistantSheetSessionID = session.id
                             }
                         }
                         Spacer()
@@ -354,6 +408,14 @@ struct JoinView: View {
                         .accessibilityIdentifier("active.leave.\(session.id.uuidString)")
                     }
                     .padding(.vertical, 2)
+                }
+                if model.sessions.count < ConferenceModel.maxConcurrentMeetings {
+                    Button {
+                        linkFocused = true
+                    } label: {
+                        Label(L("Join another meeting"), systemImage: "plus.circle.fill")
+                    }
+                    .accessibilityIdentifier("active.join-another")
                 }
             }
             .accessibilityIdentifier("home.active-meetings")
@@ -498,9 +560,34 @@ struct JoinView: View {
         if !catchUp.timeline.intervals.isEmpty && !model.isInConference {
             Section(L("Catch up")) { Button(L("Review missed section")) { showingSavedHistory = true } }
         }
+        Section(L("Meetings & Tasks")) {
+            Button {
+                workspaceTab = .history
+                showingWorkspace = true
+            } label: {
+                Label(L("Meetings & Summaries"), systemImage: "note.text")
+            }
+            .accessibilityIdentifier("home.workspace.meetings")
+            Button {
+                workspaceTab = .tasks
+                showingWorkspace = true
+            } label: {
+                HStack {
+                    Label(L("Tasks"), systemImage: "checklist")
+                    Spacer()
+                    if model.workspace.openTasksCount > 0 {
+                        Text("\(model.workspace.openTasksCount)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .accessibilityIdentifier("home.workspace.tasks")
+        }
         Section {
             Button(L("Join a practice room")) {
-                model.receive(url: URL(string: "https://rock.glowsoft.ru/jams/test")!); model.join()
+                model.receive(url: URL(string: "https://rock.glowsoft.ru/jams/test")!)
+                if model.sessions.isEmpty { model.join() }
             }
         } footer: { Text(L("Practice with a shared music group. Other visitors can join; your microphone and camera start off.")) }
     }
@@ -652,6 +739,11 @@ struct JoinView: View {
                     NavigationLink { CalendarSettingsView(calendar: calendar) } label: {
                         Label(L("Calendars"), systemImage: "calendar")
                     }.accessibilityIdentifier("calendar.settings")
+                    NavigationLink {
+                        IOSAssistantSettingsView(workspace: model.workspace, sync: sync, assistant: model.assistant)
+                    } label: {
+                        Label(L("Assistant & summaries"), systemImage: "sparkles")
+                    }.accessibilityIdentifier("settings.assistant")
                     NavigationLink {
                         TranscriptionAndVoiceSettingsView()
                     } label: {

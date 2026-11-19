@@ -38,7 +38,7 @@ enum CoreMLGigaAMError: LocalizedError, Equatable {
     }
 }
 
-final class CoreMLGigaAMRecognizer {
+final class CoreMLGigaAMRecognizer: @unchecked Sendable {
     static let sampleRate = 16_000
     /// The encoder takes a fixed 30 s window; longer speech is split.
     static let window = 30 * sampleRate
@@ -46,11 +46,67 @@ final class CoreMLGigaAMRecognizer {
     static let blank = 1024
     static let maxSymbolsPerFrame = 10
 
+    private static let sharedLock = NSLock()
+    private nonisolated(unsafe) static var sharedRecognizers: [URL: CoreMLGigaAMRecognizer] = [:]
+    private nonisolated(unsafe) static var sharedInflight: [URL: (id: UUID, task: Task<CoreMLGigaAMRecognizer, Error>)] = [:]
+
+    static func shared(directory: URL) async throws -> CoreMLGigaAMRecognizer {
+        let key = directory.standardizedFileURL
+        let token = UUID()
+        let entry: (id: UUID, task: Task<CoreMLGigaAMRecognizer, Error>) = sharedLock.withLock {
+            if let existing = sharedRecognizers[key] {
+                return (token, Task { existing })
+            }
+            if let existingEntry = sharedInflight[key] {
+                return existingEntry
+            }
+            let created = Task.detached(priority: .utility) {
+                let recognizer = try CoreMLGigaAMRecognizer(directory: key)
+                sharedLock.withLock {
+                    if sharedInflight[key]?.id == token {
+                        sharedRecognizers[key] = recognizer
+                        sharedInflight.removeValue(forKey: key)
+                    }
+                }
+                return recognizer
+            }
+            let newEntry = (token, created)
+            sharedInflight[key] = newEntry
+            return newEntry
+        }
+        do {
+            return try await entry.task.value
+        } catch {
+            sharedLock.withLock {
+                if sharedInflight[key]?.id == entry.id {
+                    sharedInflight.removeValue(forKey: key)
+                }
+            }
+            throw error
+        }
+    }
+
+    static func invalidateCache(directory: URL? = nil) {
+        sharedLock.withLock {
+            if let directory {
+                let key = directory.standardizedFileURL
+                sharedRecognizers.removeValue(forKey: key)
+                sharedInflight[key]?.task.cancel()
+                sharedInflight.removeValue(forKey: key)
+            } else {
+                sharedRecognizers.removeAll()
+                sharedInflight.values.forEach { $0.task.cancel() }
+                sharedInflight.removeAll()
+            }
+        }
+    }
+
     private let encoder: MLModel
     private let decoder: MLModel
     private let joint: MLModel
     private let pieces: [String]
     private let front = GigaAMMelFrontEnd()
+    private let inferenceLock = NSLock()
     /// Seconds spent loading (compiling on first use, then the cached compiled copy).
     let loadSeconds: TimeInterval
 
@@ -120,6 +176,8 @@ final class CoreMLGigaAMRecognizer {
 
     /// Text for one utterance of 16 kHz mono speech.
     func transcribe(_ samples: [Float]) throws -> String {
+        inferenceLock.lock()
+        defer { inferenceLock.unlock() }
         guard !samples.isEmpty else { return "" }
         var ids: [Int] = []
         var start = 0

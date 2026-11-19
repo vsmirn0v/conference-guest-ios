@@ -102,6 +102,146 @@ enum IOSTranscriptionState: Equatable {
     }
 }
 
+/// Owns off-main-thread PCM routing and recognition pipelines so high-frequency audio frames
+/// never hop onto `@MainActor` before entering `workerQueue`.
+private final class AudioIngressRouter: @unchecked Sendable {
+    private let workerQueue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.ios-transcription")
+    private let lock = NSLock()
+
+    private var running = false
+    private var backend: IOSListenModel = .appleSpeech
+    private var language: IOSTranscriptionLanguage = .english
+    private var gigaam: CoreMLGigaAMRecognizer?
+    private var localSpeaker = ""
+    private var speakerNames: [String: String] = [:]
+
+    // Worker-queue-only state
+    private var pipelines: [String: SpeakerPipeline] = [:]
+    private var timeline = IOSSpeakingTimeline()
+
+    var onText: (@Sendable (String, String?, String, Bool, Date) -> Void)?
+
+    init() {}
+
+    func updateMetadata(
+        running: Bool,
+        backend: IOSListenModel,
+        language: IOSTranscriptionLanguage,
+        gigaam: CoreMLGigaAMRecognizer?,
+        localSpeaker: String,
+        speakerNames: [String: String]
+    ) {
+        lock.withLock {
+            self.running = running
+            self.backend = backend
+            self.language = language
+            self.gigaam = gigaam
+            self.localSpeaker = localSpeaker
+            self.speakerNames = speakerNames
+        }
+        workerQueue.async { [self] in
+            for (id, pipeline) in self.pipelines {
+                if id == "local" {
+                    pipeline.updateSpeaker(localSpeaker)
+                } else if let name = speakerNames[id] {
+                    pipeline.updateSpeaker(name)
+                }
+            }
+        }
+    }
+
+    func enqueueLocal(_ buffer: AVAudioPCMBuffer) {
+        let state: (running: Bool, backend: IOSListenModel, language: IOSTranscriptionLanguage, gigaam: CoreMLGigaAMRecognizer?, speaker: String) = lock.withLock {
+            (running, backend, language, gigaam, localSpeaker)
+        }
+        guard state.running else { return }
+        workerQueue.async { [self] in
+            self.processOnWorker(
+                streamID: "local",
+                speakerName: state.speaker,
+                backend: state.backend,
+                language: state.language,
+                gigaam: state.gigaam,
+                buffer: buffer
+            )
+        }
+    }
+
+    func enqueueRemote(streamID: String, buffer: AVAudioPCMBuffer) {
+        let state: (running: Bool, backend: IOSListenModel, language: IOSTranscriptionLanguage, gigaam: CoreMLGigaAMRecognizer?, speaker: String?) = lock.withLock {
+            (running, backend, language, gigaam, speakerNames[streamID])
+        }
+        guard state.running else { return }
+        workerQueue.async { [self] in
+            self.processOnWorker(
+                streamID: streamID,
+                speakerName: state.speaker,
+                backend: state.backend,
+                language: state.language,
+                gigaam: state.gigaam,
+                buffer: buffer
+            )
+        }
+    }
+
+    func finishStream(id: String) {
+        workerQueue.async { [self] in
+            let closing = self.pipelines.removeValue(forKey: id)
+            closing?.finishAndFlush()
+        }
+    }
+
+    func stopAll(resetTimeline: Bool = false) {
+        lock.withLock {
+            self.running = false
+            self.gigaam = nil
+        }
+        workerQueue.async { [self] in
+            let active = self.pipelines.values
+            self.pipelines.removeAll()
+            for pipeline in active {
+                pipeline.stop()
+            }
+            if resetTimeline {
+                self.timeline.reset()
+            }
+        }
+    }
+
+    private func processOnWorker(
+        streamID: String,
+        speakerName: String?,
+        backend: IOSListenModel,
+        language: IOSTranscriptionLanguage,
+        gigaam: CoreMLGigaAMRecognizer?,
+        buffer: AVAudioPCMBuffer
+    ) {
+        let pipeline: SpeakerPipeline
+        if let existing = pipelines[streamID] {
+            pipeline = existing
+            pipeline.updateSpeaker(speakerName)
+        } else {
+            pipeline = SpeakerPipeline(
+                streamID: streamID,
+                speakerName: speakerName,
+                backend: backend,
+                language: language,
+                gigaam: gigaam,
+                workerQueue: workerQueue
+            ) { [weak self] stream, speaker, text, isFinal, spokenAt in
+                guard let self else { return }
+                let resolvedSpeaker = speaker ?? self.timeline.speaker(near: spokenAt)
+                self.onText?(stream, resolvedSpeaker, text, isFinal, spokenAt)
+            }
+            pipelines[streamID] = pipeline
+        }
+        if let speakerName, !speakerName.isEmpty {
+            timeline.record(speaker: speakerName)
+        }
+        pipeline.append(buffer)
+    }
+}
+
 /// Manages real-time speech transcription for one iOS meeting session across remote participants and local microphone input.
 @MainActor
 final class IOSMeetingTranscriber: ObservableObject {
@@ -114,81 +254,104 @@ final class IOSMeetingTranscriber: ObservableObject {
     private let localDisplayName: () -> String
     private let participantNameLookup: (String) -> String?
     private let setOutputDemand: (Bool) async -> Bool
+    private let gigaamLoader: @Sendable (URL) async throws -> CoreMLGigaAMRecognizer
 
     private var remoteSources: [MeetingAudioSource] = []
     private var taps: [String: (source: MeetingAudioSource, sink: MeetingAudioSink)] = [:]
-    private let workerQueue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.ios-transcription")
-    private var pipelines: [String: SpeakerPipeline] = [:]
-    private var timeline = IOSSpeakingTimeline()
+    nonisolated private let router = AudioIngressRouter()
     private var currentBackend: IOSListenModel?
     private var gigaamRecognizer: CoreMLGigaAMRecognizer?
     private var running = false
     private var segmentOrder = 0
     private var activeUtteranceByStream: [String: TranscriptSegment] = [:]
     private var finalizedSegments: [TranscriptSegment] = []
-    private var restartAppleTask: Task<Void, Never>?
 
     init(
         modelStore: IOSListenModelStore = .shared,
         localDisplayName: @escaping () -> String,
         participantNameLookup: @escaping (String) -> String?,
-        setOutputDemand: @escaping (Bool) async -> Bool
+        setOutputDemand: @escaping (Bool) async -> Bool,
+        gigaamLoader: (@Sendable (URL) async throws -> CoreMLGigaAMRecognizer)? = nil
     ) {
         self.modelStore = modelStore
         self.localDisplayName = localDisplayName
         self.participantNameLookup = participantNameLookup
         self.setOutputDemand = setOutputDemand
+        self.gigaamLoader = gigaamLoader ?? { dir in
+            try await CoreMLGigaAMRecognizer.shared(directory: dir)
+        }
+        self.router.onText = { [weak self] stream, speaker, text, isFinal, spokenAt in
+            Task { @MainActor [weak self] in
+                self?.handleRecognition(
+                    streamID: stream,
+                    speaker: speaker,
+                    text: text,
+                    isFinal: isFinal,
+                    spokenAt: spokenAt
+                )
+            }
+        }
     }
 
     func updateRemoteSources(_ sources: [MeetingAudioSource]) {
         remoteSources = sources
+        pushRouterMetadata()
         guard running else { return }
         syncTaps()
     }
 
     nonisolated func enqueueLocalAudio(_ buffer: AVAudioPCMBuffer) {
         guard let copy = MeetingAudioSink.copy(buffer) else { return }
-        Task { @MainActor [weak self] in
-            self?.receiveCopiedLocalAudio(copy)
-        }
+        router.enqueueLocal(copy)
     }
 
     func receiveLocalAudio(_ buffer: AVAudioPCMBuffer) {
         guard running, let copy = MeetingAudioSink.copy(buffer) else { return }
-        receiveCopiedLocalAudio(copy)
-    }
-
-    private func receiveCopiedLocalAudio(_ copy: AVAudioPCMBuffer) {
-        guard running else { return }
-        let speaker = localDisplayName().trimmingCharacters(in: .whitespacesAndNewlines)
-        let label = speaker.isEmpty ? L("You") : speaker
-        timeline.record(speaker: label)
-        feedAudio(streamID: "local", speakerName: label, buffer: copy)
+        pushRouterMetadata()
+        router.enqueueLocal(copy)
     }
 
     func start() async -> Bool {
         guard !running else { return true }
         running = true
         state = .starting
-
+        let startedAt = ProcessInfo.processInfo.systemUptime
         let backend = modelStore.effectiveBackend()
+        AppDiagnostics.log("local-transcription-start", ["backend": backend.rawValue])
+
         if backend == .gigaamV3CoreML, let dir = modelStore.installedGigaAMDirectoryIfReady() {
             do {
-                let recognizer = try CoreMLGigaAMRecognizer(directory: dir)
+                let recognizer = try await gigaamLoader(dir)
                 guard running else { return false }
                 self.gigaamRecognizer = recognizer
                 self.currentBackend = .gigaamV3CoreML
                 state = .active(.gigaamV3CoreML)
+                let ms = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
+                AppDiagnostics.log("local-transcription-ready", ["backend": IOSListenModel.gigaamV3CoreML.rawValue, "ms": ms])
+            } catch is CancellationError {
+                self.gigaamRecognizer = nil
+                self.running = false
+                if case .starting = state { state = .off }
+                return false
             } catch {
-                // Fall back to Apple Speech if CoreML model fails to compile/open
+                AppDiagnostics.log("local-transcription-fallback", [
+                    "from": IOSListenModel.gigaamV3CoreML.rawValue,
+                    "to": IOSListenModel.appleSpeech.rawValue
+                ])
                 self.gigaamRecognizer = nil
                 guard await startAppleSpeech() else { return false }
+                let ms = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
+                AppDiagnostics.log("local-transcription-ready", ["backend": IOSListenModel.appleSpeech.rawValue, "ms": ms])
             }
         } else {
             guard await startAppleSpeech() else { return false }
+            let ms = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
+            AppDiagnostics.log("local-transcription-ready", ["backend": IOSListenModel.appleSpeech.rawValue, "ms": ms])
         }
 
+        pushRouterMetadata()
         _ = await setOutputDemand(true)
+        guard running else { return false }
         syncTaps()
         return running
     }
@@ -196,17 +359,9 @@ final class IOSMeetingTranscriber: ObservableObject {
     func stop() async {
         guard running || state != .off else { return }
         running = false
-        restartAppleTask?.cancel()
-        restartAppleTask = nil
         detachAllTaps()
         _ = await setOutputDemand(false)
-        let activePipelines = pipelines.values
-        pipelines.removeAll()
-        workerQueue.async {
-            for pipeline in activePipelines {
-                pipeline.stop()
-            }
-        }
+        router.stopAll(resetTimeline: false)
         activeUtteranceByStream.removeAll()
         currentBackend = nil
         gigaamRecognizer = nil
@@ -215,11 +370,30 @@ final class IOSMeetingTranscriber: ObservableObject {
 
     func reset() async {
         await stop()
+        router.stopAll(resetTimeline: true)
         finalizedSegments.removeAll()
         activeUtteranceByStream.removeAll()
-        timeline.reset()
         segments = []
         onSegmentsChanged?([])
+    }
+
+    private func pushRouterMetadata() {
+        let rawLocal = localDisplayName().trimmingCharacters(in: .whitespacesAndNewlines)
+        let localSpeaker = rawLocal.isEmpty ? L("You") : rawLocal
+        var names: [String: String] = [:]
+        for source in remoteSources {
+            if let resolved = resolvedSpeakerName(for: source), !resolved.isEmpty {
+                names[source.id] = resolved
+            }
+        }
+        router.updateMetadata(
+            running: running,
+            backend: currentBackend ?? .appleSpeech,
+            language: modelStore.language,
+            gigaam: gigaamRecognizer,
+            localSpeaker: localSpeaker,
+            speakerNames: names
+        )
     }
 
     private func startAppleSpeech() async -> Bool {
@@ -263,24 +437,17 @@ final class IOSMeetingTranscriber: ObservableObject {
         for (id, entry) in taps where !validIDs.contains(id) {
             entry.source.detach(entry.sink)
             taps.removeValue(forKey: id)
-            let closingPipeline = pipelines.removeValue(forKey: id)
-            workerQueue.async {
-                closingPipeline?.finishAndFlush()
-            }
+            router.finishStream(id: id)
         }
+        let audioRouter = router
         for source in remoteSources where taps[source.id] == nil {
-            let speakerName = resolvedSpeakerName(for: source)
-            let sink = MeetingAudioSink(trackID: source.id) { [weak self] id, pcm in
-                Task { @MainActor [weak self] in
-                    guard let self, self.running else { return }
-                    let currentName = self.resolvedSpeakerName(for: source)
-                    self.feedAudio(streamID: id, speakerName: currentName, buffer: pcm)
-                }
+            let sink = MeetingAudioSink(trackID: source.id) { id, pcm in
+                audioRouter.enqueueRemote(streamID: id, buffer: pcm)
             }
             source.attach(sink)
             taps[source.id] = (source, sink)
-            _ = speakerName
         }
+        pushRouterMetadata()
     }
 
     private func detachAllTaps() {
@@ -300,40 +467,6 @@ final class IOSMeetingTranscriber: ObservableObject {
         return nil
     }
 
-    private func feedAudio(streamID: String, speakerName: String?, buffer: AVAudioPCMBuffer) {
-        let pipeline: SpeakerPipeline
-        if let existing = pipelines[streamID] {
-            pipeline = existing
-            pipeline.updateSpeaker(speakerName)
-        } else {
-            pipeline = SpeakerPipeline(
-                streamID: streamID,
-                speakerName: speakerName,
-                backend: currentBackend ?? .appleSpeech,
-                language: modelStore.language,
-                gigaam: gigaamRecognizer,
-                workerQueue: workerQueue
-            ) { [weak self] stream, speaker, text, isFinal, spokenAt in
-                Task { @MainActor [weak self] in
-                    self?.handleRecognition(
-                        streamID: stream,
-                        speaker: speaker,
-                        text: text,
-                        isFinal: isFinal,
-                        spokenAt: spokenAt
-                    )
-                }
-            }
-            pipelines[streamID] = pipeline
-        }
-        if let speakerName {
-            timeline.record(speaker: speakerName)
-        }
-        workerQueue.async {
-            pipeline.append(buffer)
-        }
-    }
-
     private func handleRecognition(
         streamID: String,
         speaker: String?,
@@ -351,7 +484,7 @@ final class IOSMeetingTranscriber: ObservableObject {
             return
         }
 
-        let attributedSpeaker = speaker ?? timeline.speaker(near: spokenAt) ?? L("Participant")
+        let attributedSpeaker = speaker ?? L("Participant")
         let stableID: String
         let effectiveTime: Date
         if let active = activeUtteranceByStream[streamID] {

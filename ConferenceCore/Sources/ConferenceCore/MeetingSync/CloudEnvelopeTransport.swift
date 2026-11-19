@@ -34,6 +34,41 @@ public enum CloudZoneError: Error, Equatable, Sendable {
     case generationChanged
 }
 
+public enum CloudKitRateLimit {
+    /// Extracts a backoff duration in seconds for transient CloudKit throttling/availability errors.
+    /// Returns `nil` when `error` is not a rate-limit or transient server-busy failure.
+    public static func retryAfter(for error: Error, consecutiveFailures: Int = 1) -> TimeInterval? {
+        guard let info = inspect(error), info.matched else { return nil }
+        let exponent = max(0, min(4, consecutiveFailures - 1))
+        let exponential = min(120.0, 15.0 * pow(2.0, Double(exponent)))
+        return max(info.explicitRetryAfter ?? 0, exponential)
+    }
+
+    private static func inspect(_ error: Error) -> (matched: Bool, explicitRetryAfter: TimeInterval?)? {
+        let nsError = error as NSError
+        guard nsError.domain == CKError.errorDomain else { return nil }
+        let code = CKError.Code(rawValue: nsError.code)
+        let retryAfter = (nsError.userInfo[CKErrorRetryAfterKey] as? NSNumber)?.doubleValue
+        if code == .requestRateLimited || code == .serviceUnavailable || code == .zoneBusy {
+            return (true, retryAfter.flatMap { $0 > 0 ? $0 : nil })
+        }
+        if let partial = nsError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error] {
+            var bestRetry: TimeInterval?
+            var matchedAny = false
+            for child in partial.values {
+                if let info = inspect(child), info.matched {
+                    matchedAny = true
+                    if let r = info.explicitRetryAfter {
+                        bestRetry = max(bestRetry ?? 0, r)
+                    }
+                }
+            }
+            if matchedAny { return (true, bestRetry) }
+        }
+        return nil
+    }
+}
+
 @MainActor
 public protocol CloudZoneTransporting: AnyObject {
     associatedtype Record: SyncZoneRecord
@@ -182,6 +217,9 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
     private let zone: CKRecordZone.ID
     private let subscriptionID: String
     private let notifications: Bool
+    private var cachedSession: CloudZoneSession?
+    private var cachedSessionAt: Date?
+    private var subscriptionRegistered = false
     private var controlID: CKRecord.ID { .init(recordName: "SyncGeneration", zoneID: zone) }
 
     public init(
@@ -196,7 +234,7 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
         self.notifications = notifications
     }
 
-    public static func cloudRecordName(for syncRecordID: String) -> String {
+    nonisolated public static func cloudRecordName(for syncRecordID: String) -> String {
         let digest = SHA256.hash(data: Data(syncRecordID.utf8)).map { String(format: "%02x", $0) }.joined()
         return "item-" + digest
     }
@@ -206,47 +244,62 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
     }
 
     public func connect() async throws -> CloudZoneSession {
-        let status = try await container.accountStatus()
-        guard status == .available else {
-            throw status == .restricted ? CloudZoneError.restricted : CloudZoneError.noAccount
+        if let cached = cachedSession, let at = cachedSessionAt, Date().timeIntervalSince(at) < 300 {
+            return cached
         }
-        let account = try await container.userRecordID().recordName
         do {
-            _ = try await database.recordZone(for: zone)
-        } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
-            _ = try await database.save(CKRecordZone(zoneID: zone))
-        }
-        let control: CKRecord
-        do {
-            control = try await database.record(for: controlID)
-        } catch let error as CKError where error.code == .unknownItem {
-            let new = CKRecord(recordType: "SyncControl", recordID: controlID)
-            new.encryptedValues["generation"] = UUID().uuidString as CKRecordValue
-            do {
-                control = try await database.save(new)
-            } catch let conflict as CKError where conflict.code == .serverRecordChanged {
-                control = try await database.record(for: controlID)
+            let status = try await container.accountStatus()
+            guard status == .available else {
+                cachedSession = nil
+                cachedSessionAt = nil
+                subscriptionRegistered = false
+                throw status == .restricted ? CloudZoneError.restricted : CloudZoneError.noAccount
             }
+            let account = try await container.userRecordID().recordName
+            do {
+                _ = try await database.recordZone(for: zone)
+            } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
+                _ = try await database.save(CKRecordZone(zoneID: zone))
+            }
+            let control: CKRecord
+            do {
+                control = try await database.record(for: controlID)
+            } catch let error as CKError where error.code == .unknownItem {
+                let new = CKRecord(recordType: "SyncControl", recordID: controlID)
+                new.encryptedValues["generation"] = UUID().uuidString as CKRecordValue
+                do {
+                    control = try await database.save(new)
+                } catch let conflict as CKError where conflict.code == .serverRecordChanged {
+                    control = try await database.record(for: controlID)
+                }
+            }
+            guard let generation = control.encryptedValues["generation"] as? String else {
+                throw CloudZoneError.incompatibleData
+            }
+            if notifications && !subscriptionRegistered {
+                let subscription = CKRecordZoneSubscription(zoneID: zone, subscriptionID: subscriptionID)
+                let info = CKSubscription.NotificationInfo()
+                info.shouldSendContentAvailable = true
+                subscription.notificationInfo = info
+                if (try? await database.save(subscription)) != nil {
+                    subscriptionRegistered = true
+                }
+            }
+            let session = CloudZoneSession(account: account, generation: generation)
+            cachedSession = session
+            cachedSessionAt = Date()
+            return session
+        } catch {
+            if let ck = error as? CKError, [.zoneNotFound, .userDeletedZone].contains(ck.code) {
+                cachedSession = nil
+                cachedSessionAt = nil
+                subscriptionRegistered = false
+            }
+            throw error
         }
-        guard let generation = control.encryptedValues["generation"] as? String else {
-            throw CloudZoneError.incompatibleData
-        }
-        if notifications {
-            let subscription = CKRecordZoneSubscription(zoneID: zone, subscriptionID: subscriptionID)
-            let info = CKSubscription.NotificationInfo()
-            info.shouldSendContentAvailable = true
-            subscription.notificationInfo = info
-            _ = try? await database.save(subscription)
-        }
-        return CloudZoneSession(account: account, generation: generation)
     }
 
     public func fetch(session: CloudZoneSession, after data: Data?) async throws -> CloudZoneChanges<Record> {
-        guard try await container.userRecordID().recordName == session.account else {
-            throw CloudZoneError.noAccount
-        }
-        let control = try await verifyControl(expectedGeneration: session.generation)
-        _ = control
         let token = try data.map {
             try NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: $0)
         } ?? nil
@@ -255,6 +308,14 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
         } catch let error as CKError where error.code == .changeTokenExpired {
             return try await fetchChanges(session: session, token: nil)
         } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
+            cachedSession = nil
+            cachedSessionAt = nil
+            subscriptionRegistered = false
+            throw CloudZoneError.generationChanged
+        } catch CloudZoneError.generationChanged {
+            cachedSession = nil
+            cachedSessionAt = nil
+            subscriptionRegistered = false
             throw CloudZoneError.generationChanged
         }
     }
@@ -268,48 +329,65 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
         )
         operation.fetchAllChanges = true
         operation.qualityOfService = .utility
+        let expectedControlID = controlID
+        let targetZone = zone
         return try await withCheckedThrowingContinuation { continuation in
+            let lock = NSLock()
             var records: [Record] = []
             var deletedNames: [String] = []
             var nextToken: CKServerChangeToken?
             var failure: Error?
-            operation.recordWasChangedBlock = { [self] id, result in
+            operation.recordWasChangedBlock = { id, result in
                 do {
                     let record = try result.get()
-                    if id == controlID {
+                    if id == expectedControlID {
                         if record.encryptedValues["generation"] as? String != session.generation {
                             throw CloudZoneError.generationChanged
                         }
-                    } else if let decoded = try decode(record, generation: session.generation) {
+                    } else if let decoded = try Self.decodeRecord(record, generation: session.generation, zone: targetZone) {
+                        lock.lock()
                         records.append(decoded)
+                        lock.unlock()
                     }
                 } catch {
+                    lock.lock()
                     failure = error
+                    lock.unlock()
                 }
             }
-            operation.recordWithIDWasDeletedBlock = { [self] id, _ in
-                if id == controlID {
+            operation.recordWithIDWasDeletedBlock = { id, _ in
+                lock.lock()
+                if id == expectedControlID {
                     failure = CloudZoneError.generationChanged
                 } else {
                     deletedNames.append(id.recordName)
                 }
+                lock.unlock()
             }
             operation.recordZoneFetchResultBlock = { _, result in
+                lock.lock()
                 switch result {
                 case .success(let value): nextToken = value.serverChangeToken
                 case .failure(let error): failure = error
                 }
+                lock.unlock()
             }
             operation.fetchRecordZoneChangesResultBlock = { result in
+                lock.lock()
+                let capturedRecords = records
+                let capturedDeleted = deletedNames
+                let capturedToken = nextToken
+                let capturedFailure = failure
+                lock.unlock()
                 do {
                     try result.get()
-                    if let failure { throw failure }
-                    let encoded = try nextToken.map {
+                    if let capturedFailure { throw capturedFailure }
+                    let encoded = try capturedToken.map {
                         try NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true)
                     }
                     continuation.resume(returning: CloudZoneChanges(
-                        records: records,
-                        deletedCloudRecordNames: deletedNames,
+                        records: capturedRecords,
+                        deletedCloudRecordNames: capturedDeleted,
                         token: encoded
                     ))
                 } catch {
@@ -469,6 +547,9 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
     }
 
     public func clear(session: CloudZoneSession) async throws {
+        cachedSession = nil
+        cachedSessionAt = nil
+        subscriptionRegistered = false
         guard try await container.userRecordID().recordName == session.account else {
             throw CloudZoneError.noAccount
         }
@@ -494,7 +575,11 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
         return control
     }
 
-    private func decode(_ record: CKRecord, generation: String) throws -> Record? {
+    nonisolated private static func decodeRecord(
+        _ record: CKRecord,
+        generation: String,
+        zone: CKRecordZone.ID
+    ) throws -> Record? {
         guard let data = record.encryptedValues["payload"] as? Data else {
             if record.recordChangeTag == nil { return nil }
             throw CloudZoneError.incompatibleData
@@ -508,10 +593,15 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
         guard envelope.generation == generation else {
             throw CloudZoneError.generationChanged
         }
-        guard recordID(for: envelope.record.syncRecordID) == record.recordID else {
+        let expectedID = CKRecord.ID(recordName: Self.cloudRecordName(for: envelope.record.syncRecordID), zoneID: zone)
+        guard expectedID == record.recordID else {
             throw CloudZoneError.incompatibleData
         }
         return envelope.record
+    }
+
+    private func decode(_ record: CKRecord, generation: String) throws -> Record? {
+        try Self.decodeRecord(record, generation: generation, zone: zone)
     }
 
     private static func isConflict(_ error: CKError) -> Bool {

@@ -114,7 +114,7 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         prefs.set(true, forKey: "iCloudSync.shareCalendar")
         prefs.set(TranscriptSyncRetention.days30.rawValue, forKey: "iCloudSync.transcriptRetention")
 
-        let history = RoomHistoryStore(preferences: prefs)
+        let history = RoomHistoryStore(storage: MemoryRoomStorage())
         let roomSync = RoomSyncCoordinator(
             history: history,
             name: "Vlad",
@@ -151,7 +151,7 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         let transcriptCloud = MockZoneTransport<MeetingTranscriptSyncRecord>()
         let scheduleCloud = MockZoneTransport<MeetingScheduleSyncRecord>()
         let archiveRoot = temp.appendingPathComponent("Archive", isDirectory: true)
-        let archiveStore = TranscriptArchiveStore(preferences: prefs, defaultRoot: archiveRoot)
+        let archiveStore = TranscriptArchiveStore(root: archiveRoot, preferences: prefs)
 
         let sync = MacWorkspaceSyncCoordinator(
             storageRoot: root,
@@ -245,8 +245,10 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
 
         await f.sync.synchronizeNow()
 
+        let destination = try await f.library.store.destination()
+        let destID = try XCTUnwrap(destination?.id)
         let binding = try await f.library.store.binding(
-            destinationID: try XCTUnwrap(try await f.library.store.destination()).id,
+            destinationID: destID,
             sessionID: sessionID,
             component: .meeting
         )
@@ -262,8 +264,8 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         guard case .session(let updatedRemoteSession)? = f.libraryCloud.records["session:" + sessionID.uuidString] else {
             return XCTFail("Expected published session receipt in CloudKit")
         }
-        XCTAssertEqual(updatedRemoteSession.obsidianReceipt?.value??.state, "exported")
-        XCTAssertEqual(updatedRemoteSession.obsidianReceipt?.value??.relativePath, exportedPath)
+        XCTAssertEqual(updatedRemoteSession.obsidianReceipt?.value?.state, "exported")
+        XCTAssertEqual(updatedRemoteSession.obsidianReceipt?.value?.relativePath, exportedPath)
 
         // Append user text outside the managed block in Obsidian, then edit note & finish task on iPhone.
         let withExternalText = exportedContent + "\n## Personal Follow-up\nKeep this untouched.\n"
@@ -330,8 +332,10 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
 
         await f.sync.synchronizeNow()
 
-        let destID = try XCTUnwrap(try await f.library.store.destination()?.id)
-        let binding = try XCTUnwrap(try await f.library.store.binding(destinationID: destID, sessionID: sessionID, component: .meeting))
+        let destination = try await f.library.store.destination()
+        let destID = try XCTUnwrap(destination?.id)
+        let fetchedBinding = try await f.library.store.binding(destinationID: destID, sessionID: sessionID, component: .meeting)
+        let binding = try XCTUnwrap(fetchedBinding)
         let fileURL = vault.appendingPathComponent(binding.relativePath)
         let original = try String(contentsOf: fileURL, encoding: .utf8)
         try original.replacingOccurrences(of: "Initial phone body", with: "Hand edited inside managed block")
@@ -361,7 +365,7 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         guard case .session(let published)? = f.libraryCloud.records["session:" + sessionID.uuidString] else {
             return XCTFail("Expected session receipt in CloudKit")
         }
-        XCTAssertEqual(published.obsidianReceipt?.value??.state, "conflict")
+        XCTAssertEqual(published.obsidianReceipt?.value?.state, "conflict")
     }
 
     func testTranscriptRetentionPrunesOldCloudChunksWhileKeepingArchiveIntact() async throws {

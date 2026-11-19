@@ -470,6 +470,64 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
         #endif
     }
 
+    func testMeetingTranscriberLoadsGigaAMOffMainThreadAndEnqueuesAudioWithoutBlockingMainActor() async throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent("TranscriberOffMain-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let suiteName = "TranscriberOffMainTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = IOSListenModelStore(modelsDirectory: tempRoot, preferences: defaults)
+        for spec in IOSListenModelStore.gigaamFiles {
+            let fileURL = store.gigaamDirectory.appendingPathComponent(spec.relativePath)
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data([0]).write(to: fileURL)
+        }
+        store.refreshInstallState()
+        store.selectedModel = .gigaamV3CoreML
+        XCTAssertNotNil(store.installedGigaAMDirectoryIfReady())
+
+        var loaderRanOffMainThread = false
+        var mainTicksWhileLoading = 0
+        var stopCalled = false
+
+        let transcriber = IOSMeetingTranscriber(
+            modelStore: store,
+            localDisplayName: { "Vitalii" },
+            participantNameLookup: { _ in nil },
+            setOutputDemand: { _ in true },
+            gigaamLoader: { _ in
+                try await Task.detached(priority: .utility) {
+                    loaderRanOffMainThread = !Thread.isMainThread
+                    try await Task.sleep(for: .milliseconds(80))
+                    throw CancellationError()
+                }.value
+            }
+        )
+
+        let ticker = Task { @MainActor in
+            while !stopCalled {
+                mainTicksWhileLoading += 1
+                await Task.yield()
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+
+        let started = await transcriber.start()
+        stopCalled = true
+        ticker.cancel()
+
+        XCTAssertFalse(started)
+        XCTAssertTrue(loaderRanOffMainThread)
+        XCTAssertGreaterThan(mainTicksWhileLoading, 2, "MainActor must remain responsive while model loads")
+
+        // Enqueueing local audio off or on MainActor must be non-blocking and safe.
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: IOSPCM16kConverter.targetFormat, frameCapacity: 320))
+        buffer.frameLength = 320
+        transcriber.enqueueLocalAudio(buffer)
+    }
+
     private static func makeSpeechWithStopTap(
         rate: Int,
         totalSeconds: Double,

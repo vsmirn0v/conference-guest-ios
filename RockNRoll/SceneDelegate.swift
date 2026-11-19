@@ -120,6 +120,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         conference?.meetingActivityForegrounded()
         conference?.calendarForegrounded()
         conference?.sync.foregrounded()
+        conference?.workspace.scheduleSync(delayMilliseconds: 250)
         conference?.continuation.setForeground(true)
         conference?.updateContinuationActivity()
         conference?.restoreFromFloatingVideo()
@@ -130,11 +131,17 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         conference?.reminderVisibilityChanged(false)
         conference?.calendar.backgrounded()
         conference?.prepareToFloat()
+        if let workspace = conference?.workspace {
+            Task { await workspace.flushNotesNow() }
+        }
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
         conference?.continuation.setForeground(false)
         conference?.backgroundedWithoutFloatingVideo()
+        if let workspace = conference?.workspace {
+            Task { await workspace.flushNotesNow() }
+        }
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {

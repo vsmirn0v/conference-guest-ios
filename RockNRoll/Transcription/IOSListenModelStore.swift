@@ -249,6 +249,7 @@ final class IOSListenModelStore: ObservableObject {
     func deleteGigaAM() {
         downloadTask?.cancel()
         downloadTask = nil
+        CoreMLGigaAMRecognizer.invalidateCache(directory: gigaamDirectory)
         try? FileManager.default.removeItem(at: gigaamDirectory)
         gigaamState = .notInstalled
         if selectedModel == .gigaamV3CoreML {

@@ -31,14 +31,22 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     var onSelectMeeting: ((UUID) -> Void)?
     var onTalkHere: ((UUID) -> Void)?
     var onLeaveMeeting: ((UUID) -> Void)?
+    var onJoinAnotherMeeting: (() -> Void)?
+    var onOpenAssistant: (() -> Void)?
+    var onMicrophoneStateChanged: ((UUID, Bool) -> Void)?
     var voiceReplyTargetsProvider: (() -> [VoiceReplyTargetRoom])?
     var onSpeakVoiceReplyInRoom: ((UUID, String) async throws -> Void)?
     var onCancelVoiceReplyInRoom: ((UUID) -> Void)?
+    var workspaceSessionID: UUID?
+    var workspaceDeviceID = ""
+    var onOpenNotes: (() -> Void)?
+    var onWorkspaceEventsChanged: ((UUID, [SyncedTranscriptEvent], [DateInterval]) -> Void)?
 
     @Published private(set) var callView: RockCallViewController?
     @Published private(set) var title: String
     @Published private(set) var phase: NativeDesktopMeetingPhase = .idle
     @Published private(set) var isForegroundVisible = false
+    private var lastAssistantBadge: (mode: IOSMeetingAssistantMode, isPaused: Bool, alertCount: Int) = (.off, false, 0)
     @Published private(set) var isTalkRoom = false
     @Published private(set) var isHeld = false
     @Published private(set) var isMicrophoneOn = false
@@ -93,6 +101,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     private var providerCanManageTranscript = false
     private var didAutoStartLocalTranscription = false
     private var voiceReplyTask: Task<Bool, Error>?
+    private var micActiveStart: Date?
+    private var micActiveIntervals: [DateInterval] = []
 
     init(destination: JoinDestination,
          session: MeetingSession,
@@ -192,6 +202,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         view.onSelectMeeting = { [weak self] id in self?.onSelectMeeting?(id) }
         view.onTalkHere = { [weak self] id in self?.onTalkHere?(id) }
         view.onLeaveMeeting = { [weak self] id in self?.onLeaveMeeting?(id) }
+        view.onJoinAnotherMeeting = { [weak self] in self?.onJoinAnotherMeeting?() }
+        view.onOpenAssistant = { [weak self] in self?.onOpenAssistant?() }
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] enabled in self?.setMicrophone(enabled) }
         view.onToggleMicrophone = { [weak self] in self?.toggleMicrophone() }
@@ -223,9 +235,15 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             self?.updateVideoDemand()
         }
         view.loadViewIfNeeded()
+        view.updateAssistantBadge(
+            mode: lastAssistantBadge.mode,
+            isPaused: lastAssistantBadge.isPaused,
+            alertCount: lastAssistantBadge.alertCount
+        )
         view.setAudioRouteName(workspaceAudio?.audio.outputName ?? L("Audio output"))
         view.workspace.openVoiceReply = { [weak self] in self?.presentVoiceReplySheet() }
         view.workspace.openTranscriptionSettings = { [weak self] in self?.presentTranscriptionSettingsSheet() }
+        view.workspace.openNotes = { [weak self] in self?.onOpenNotes?() }
         view.setHeld(quiet || isHeld)
         view.setMicrophone(false)
         view.setCamera(false)
@@ -770,6 +788,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                 : (session.chatService?.unavailableReason ?? L("Chat is unavailable in this meeting."))
             if !features.messages.isEmpty || chat.items.isEmpty {
                 chat.replace(features.messages.map(Self.chatEntry(from:)))
+                emitWorkspaceEvents()
             }
         }
 
@@ -826,6 +845,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     private func applyCapturedMessages(_ messages: [GuestMeetingMessage]) {
         guard !leaving, !(session.chatService?.managesChatStoreSendCallbacks ?? false), !messages.isEmpty else { return }
         chat.replace(messages.map(Self.chatEntry(from:)))
+        emitWorkspaceEvents()
     }
 
     private func bindChatCallbacks() {
@@ -985,6 +1005,50 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         isSpeakingVoiceReply = false
     }
 
+    var canSendAssistantChat: Bool {
+        session.chatService?.canSend == true || chat.canSend
+    }
+
+    var isLocalMicrophoneUnmuted: Bool {
+        isMicrophoneOn && isTalkRoom && !isHeld && !quiet
+    }
+
+    var participantDisplayNames: [String] {
+        session.sessionSnapshot.participants.compactMap { $0.isLocal ? nil : $0.name }
+    }
+
+    func ensureTranscriptionRunningForAssistant() async {
+        guard !leaving, phase == .connected else { return }
+        guard !providerTranscriptActive, !localTranscriber.state.isRunning else { return }
+        _ = await localTranscriber.start()
+        refreshLocalAudioSink()
+        syncCatchUpTranscript()
+    }
+
+    func sendAssistantChat(_ text: String) async throws {
+        guard !leaving, phase == .connected else {
+            throw MeetingSessionError.notConnected
+        }
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        if let service = session.chatService, service.canSend {
+            try await service.send(clean)
+        } else if chat.canSend, let onSend = chat.onSend {
+            onSend(clean)
+        } else {
+            throw MeetingSessionError.unavailable(L("Chat is unavailable in this meeting."))
+        }
+    }
+
+    func updateAssistantBadge(mode: IOSMeetingAssistantMode, isPaused: Bool, alertCount: Int) {
+        lastAssistantBadge = (mode, isPaused, alertCount)
+        callView?.updateAssistantBadge(mode: mode, isPaused: isPaused, alertCount: alertCount)
+    }
+
+    func showAssistantBanner(title: String, reason: String, onTap: @escaping () -> Void) {
+        callView?.showAssistantAlert(title: title, reason: reason, onTap: onTap)
+    }
+
     private func setPrivateCheckAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
         privateCheckAudioSink = sink
         refreshLocalAudioSink()
@@ -1021,6 +1085,74 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         } else {
             catchUp.transcriptUnavailableReason = nil
         }
+        emitWorkspaceEvents()
+    }
+
+    private func emitWorkspaceEvents() {
+        guard !leaving, let handler = onWorkspaceEventsChanged else { return }
+        let device = workspaceDeviceID.isEmpty ? "ios" : workspaceDeviceID
+        var out: [SyncedTranscriptEvent] = []
+        for seg in providerTranscriptSegments {
+            out.append(SyncedTranscriptEvent(
+                id: seg.id,
+                providerMessageID: seg.id,
+                kind: "transcript",
+                sourceTier: 3,
+                occurredAt: seg.spokenAt ?? Date(),
+                speaker: seg.speaker,
+                isOwn: seg.speaker?.workspaceFolded == displayName.workspaceFolded,
+                text: seg.text,
+                deviceID: device
+            ))
+        }
+        for seg in localTranscriber.segments {
+            out.append(SyncedTranscriptEvent(
+                id: "local:" + seg.id,
+                providerMessageID: nil,
+                kind: "transcript",
+                sourceTier: 2,
+                occurredAt: seg.spokenAt ?? Date(),
+                speaker: seg.speaker,
+                isOwn: seg.speaker?.workspaceFolded == displayName.workspaceFolded,
+                text: seg.text,
+                deviceID: device
+            ))
+        }
+        for msg in chat.items {
+            out.append(SyncedTranscriptEvent(
+                id: "chat:" + msg.id,
+                providerMessageID: msg.id,
+                kind: "chat",
+                sourceTier: 3,
+                occurredAt: msg.sentAt,
+                speaker: msg.sender,
+                isOwn: msg.isOwn,
+                text: msg.text,
+                deviceID: device
+            ))
+        }
+        handler(id, out, micActiveIntervals)
+    }
+
+    func presentNotesSheet(workspace: IOSWorkspaceCoordinator) {
+        guard let sid = workspaceSessionID, let host = topPresentedCallController() else { return }
+        let view = IOSInCallNotesView(workspace: workspace, sessionID: sid, title: title, roomURL: invitationURL)
+        let sheet = UIHostingController(rootView: view)
+        sheet.modalPresentationStyle = .formSheet
+        host.present(sheet, animated: true)
+    }
+
+    func presentAssistantSheet(assistant: IOSAssistantCoordinator) {
+        guard let host = topPresentedCallController() else { return }
+        let view = IOSAssistantModeSheet(
+            controllerID: id,
+            meetingTitle: title,
+            canSendChat: canSendAssistantChat,
+            assistant: assistant
+        )
+        let sheet = UIHostingController(rootView: view)
+        sheet.modalPresentationStyle = .formSheet
+        host.present(sheet, animated: true)
     }
 
     private func presentVoiceReplySheet() {
@@ -1293,9 +1425,20 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
 
     private func updateMicrophoneIndicator(snapshot explicit: MeetingSessionSnapshot? = nil) {
         let snapshot = explicit ?? session.sessionSnapshot
+        let previousMic = isMicrophoneOn
         let unmuted = isTalkRoom && snapshot.effective.microphoneOn && !(workspaceAudio?.isMuted ?? true) && !isHeld && !quiet
         isMicrophoneOn = unmuted
         callView?.setMicrophone(unmuted)
+        if previousMic != unmuted {
+            onMicrophoneStateChanged?(id, unmuted)
+        }
+        let now = Date()
+        if unmuted {
+            if micActiveStart == nil { micActiveStart = now }
+        } else if let start = micActiveStart {
+            micActiveStart = nil
+            if now > start { micActiveIntervals.append(DateInterval(start: start, end: now)) }
+        }
 
         let status: PiPMicrophoneStatus
         if isHeld || quiet || phase != .connected {
@@ -1320,6 +1463,12 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     private func finish(event: CallEvent) async {
         guard !terminalDelivered else { return }
         terminalDelivered = true
+        if let start = micActiveStart {
+            micActiveStart = nil
+            let end = Date()
+            if end > start { micActiveIntervals.append(DateInterval(start: start, end: end)) }
+        }
+        emitWorkspaceEvents()
         leaving = true
         connectTask?.cancel()
         connectTask = nil

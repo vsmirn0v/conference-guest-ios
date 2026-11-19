@@ -1,3 +1,4 @@
+import CloudKit
 import ConferenceCore
 import XCTest
 @testable import RockNRoll
@@ -16,10 +17,12 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         var transferReads: [UUID: Int] = [:]
         var transitionGate: ((JamTransfer, JamTransfer.Phase) async -> Void)?
         var snapshotReads = 0
+        var connectError: Error?
         var snapshotHandler: ((Int) async throws -> [ActiveJam])?
         var clearHandler: (() async throws -> Void)?
         func connect(account: String) async throws {
             if suspendConnect { await withCheckedContinuation { connectWaiter = $0 } }
+            if let connectError { throw connectError }
             if !available { throw ContinuationError.unavailable }
         }
         func jams() async throws -> [ActiveJam] { if !available { throw ContinuationError.unavailable }; return Array(records.values) }
@@ -603,5 +606,28 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         await source.refresh()
         XCTAssertEqual(attempts, 2)
         XCTAssertEqual(cloud.requests[active.sessionID]?.phase, .completed)
+    }
+
+    func testRateLimitedRefreshBacksOffEvenDuringActiveMeeting() async {
+        let cloud = Cloud()
+        var currentNow = Date(timeIntervalSince1970: 1_795_040_000)
+        let coordinator = make(cloud, "phone", now: { currentNow })
+        defer { coordinator.setEnabled(false) }
+
+        cloud.connectError = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.Code.requestRateLimited.rawValue,
+            userInfo: [CKErrorRetryAfterKey: 32.0]
+        )
+
+        coordinator.updateCurrent(jam("phone"))
+        await eventually { coordinator.scheduledBackoffUntilForTesting > currentNow }
+        XCTAssertGreaterThanOrEqual(coordinator.scheduledBackoffUntilForTesting.timeIntervalSince(currentNow), 32.0)
+
+        // Calling refresh() before backoff expires is ignored rather than pounding CloudKit every 5s
+        let readsBefore = cloud.snapshotReads
+        currentNow = currentNow.addingTimeInterval(5)
+        await coordinator.refresh()
+        XCTAssertEqual(cloud.snapshotReads, readsBefore)
     }
 }

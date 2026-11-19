@@ -63,6 +63,9 @@ final class MeetingContinuationCoordinator: ObservableObject {
     private(set) var destinationInvitation: URL?
     private var hasWithdrawn = false
     private var refreshFailed = false
+    private var consecutiveRefreshFailures = 0
+    private var cloudBackoffUntil: Date = .distantPast
+    internal var scheduledBackoffUntilForTesting: Date { cloudBackoffUntil }
 
     init(deviceID: String, deviceLabel: String, preferences: UserDefaults = .standard,
          transport: (any MeetingContinuationTransport)? = nil, automatic: Bool = true, now: @escaping () -> Date = Date.init) {
@@ -81,6 +84,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
         guard enabled != value else { return }
         enabled = value; preferences.set(value, forKey: "shareActiveJams")
         revision += 1; transferTask?.cancel(); transferTask = nil
+        consecutiveRefreshFailures = 0; cloudBackoffUntil = .distantPast
         if value { transport.resetConnection(); Task { await refresh() } }
         else { stopSharing() }
         onActivityChanged?()
@@ -88,6 +92,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
     func setCloudAccount(_ value: String?) {
         guard account != value else { return }
         revision += 1; transferTask?.cancel(); transferTask = nil
+        consecutiveRefreshFailures = 0; cloudBackoffUntil = .distantPast
         if account != nil { stopSharing(withdraw: false) }
         account = value; transport.resetConnection()
         onActivityChanged?()
@@ -194,13 +199,19 @@ final class MeetingContinuationCoordinator: ObservableObject {
     func refresh() async {
         guard enabled, let account else { return }
         checkExpiredHold()
+        if prepared == nil, receiver == nil, refreshWaiters.isEmpty, now() < cloudBackoffUntil {
+            scheduleTick()
+            return
+        }
         if busy { pendingRefresh = true; return }
         busy = true; pendingRefresh = false
         refreshPass += 1
         let expected = revision, pass = refreshPass
         defer {
             busy = false
-            if pendingRefresh { Task { await refresh() } }
+            if pendingRefresh && (now() >= cloudBackoffUntil || !refreshWaiters.isEmpty) {
+                Task { await refresh() }
+            }
             scheduleTick()
         }
         do {
@@ -230,6 +241,8 @@ final class MeetingContinuationCoordinator: ObservableObject {
             guard expected == revision else { return }
             if refreshFailed && !waitingForMove { show(nil) }
             refreshFailed = false
+            consecutiveRefreshFailures = 0
+            cloudBackoffUntil = .distantPast
             candidates = remote.filter { $0.deviceID != deviceID && $0.isVisible(at: now()) }
                 .sorted { $0.updatedAt > $1.updatedAt }.prefix(8).map { $0 }
             finishRefreshPass(pass, revision: expected, result: .success(candidates))
@@ -244,8 +257,23 @@ final class MeetingContinuationCoordinator: ObservableObject {
             guard expected == revision else { return }
             finishRefreshPass(pass, revision: expected, result: .failure(error))
             refreshFailed = true
-            #if DEBUG
+            consecutiveRefreshFailures += 1
             let detail = error as NSError
+            var fields: [String: Any] = [
+                "domain": detail.domain,
+                "code": detail.code,
+                "type": String(describing: type(of: error))
+            ]
+            if let retryAfter = CloudKitRateLimit.retryAfter(for: error, consecutiveFailures: consecutiveRefreshFailures) {
+                cloudBackoffUntil = max(cloudBackoffUntil, now().addingTimeInterval(retryAfter))
+                fields["retryAfter"] = Int(retryAfter.rounded())
+            }
+            #if os(iOS)
+            AppDiagnostics.log("continuation-refresh-error", fields)
+            #else
+            probeLog("continuation-refresh-error", fields)
+            #endif
+            #if DEBUG
             print("Active-jam refresh failed: \(detail.domain) \(detail.code)")
             #endif
             if error is ContinuationError, case ContinuationError.expired = error {
@@ -257,7 +285,19 @@ final class MeetingContinuationCoordinator: ObservableObject {
     private func scheduleTick() {
         guard automatic, enabled, account != nil, foreground || current != nil else { return }
         tick?.cancel()
-        let delay = prepared != nil ? 1 : (current == nil ? 30 : 5)
+        let currentNow = now()
+        let delay: TimeInterval
+        if prepared != nil {
+            delay = 1
+        } else if currentNow < cloudBackoffUntil {
+            delay = max(1, ceil(cloudBackoffUntil.timeIntervalSince(currentNow)))
+        } else if current != nil {
+            delay = 5
+        } else if refreshFailed {
+            delay = 10
+        } else {
+            delay = 30
+        }
         tick = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             await self?.refresh()

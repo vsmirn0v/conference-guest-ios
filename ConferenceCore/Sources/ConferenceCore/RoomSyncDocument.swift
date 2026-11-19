@@ -4,6 +4,10 @@ import Foundation
 public struct SyncVersion: Codable, Equatable, Comparable, Sendable {
     public var counter: Int64
     public var device: String
+    public init(counter: Int64, device: String) {
+        self.counter = counter
+        self.device = device
+    }
     public static func < (lhs: Self, rhs: Self) -> Bool {
         lhs.counter == rhs.counter ? lhs.device < rhs.device : lhs.counter < rhs.counter
     }

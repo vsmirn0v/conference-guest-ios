@@ -187,6 +187,29 @@ class AudioRouteRecoveryFrameworkTests(unittest.TestCase):
         self.assertFalse((output / "Dependencies").exists())
         self.assertFalse((output / "Xcode").exists())
 
+    def test_reuse_cache_and_jobs_validation_stop_before_modifying_cache(self):
+        legacy = self.root / "legacy-framework"
+        legacy.mkdir(parents=True, exist_ok=True)
+        (legacy / "build-evidence.json").write_text(json.dumps({
+            "sourceRevision": self.contract["upstreamRevision"],
+            "sourceManifestSHA256": self.contract["baseSourceManifestSHA256"],
+            "frameworkBinarySHA256": self.contract["baseFrameworkBinarySHA256"],
+        }))
+        output = self.root / "app-build-cached"
+        help_result = subprocess.run([
+            sys.executable, str(ROOT / "NativeMacGuest/build.py"), "--help",
+        ], cwd=ROOT, capture_output=True, text=True, check=True)
+        self.assertIn("--reuse-cache", help_result.stdout)
+        self.assertIn("--jobs", help_result.stdout)
+        result = subprocess.run([
+            sys.executable, str(ROOT / "NativeMacGuest/build.py"),
+            "--compile-only", "--reuse-cache", "--jobs", "8",
+            "--distribution", "direct",
+            "--framework-root", str(legacy), "--output-dir", str(output),
+        ], cwd=ROOT, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no audioRouteRecovery evidence", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

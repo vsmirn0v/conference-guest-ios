@@ -115,6 +115,19 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
         taskProfiles[profile.profileID] = taskProfiles[profile.profileID]?.merging(profile) ?? profile
     }
 
+    public var canonicalTaskProfile: SyncedTaskProfile? {
+        taskProfiles.values.max { lhs, rhs in
+            let lConfigured = !(lhs.assigneeID.value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) || !lhs.aliases.value.isEmpty
+            let rConfigured = !(rhs.assigneeID.value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) || !rhs.aliases.value.isEmpty
+            if lConfigured != rConfigured { return !lConfigured && rConfigured }
+            if lhs.maximumCounter != rhs.maximumCounter { return lhs.maximumCounter < rhs.maximumCounter }
+            let lIsDefault = lhs.profileID.isEmpty || lhs.profileID == "default"
+            let rIsDefault = rhs.profileID.isEmpty || rhs.profileID == "default"
+            if lIsDefault != rIsDefault { return lIsDefault && !rIsDefault }
+            return lhs.profileID > rhs.profileID
+        }
+    }
+
     public mutating func upsertContextSettings(_ settings: SyncedMeetingContextSettings) {
         counter = max(counter, settings.maximumCounter)
         contextSettings[settings.scopeKey] = contextSettings[settings.scopeKey]?.merging(settings) ?? settings
@@ -191,24 +204,64 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
         return redirects
     }
 
+    private func resolvedTransitionMode(
+        for first: SyncedMeetingSession,
+        second: SyncedMeetingSession,
+        fallback: (String?) -> String?
+    ) -> String? {
+        for series in [
+            first.calendarSeriesID,
+            second.calendarSeriesID,
+            first.externalSeriesID,
+            second.externalSeriesID
+        ].compactMap({ $0 }) where !series.isEmpty {
+            if let mode = contextSettings["series:" + series]?.sameRoomTransition?.value {
+                return mode
+            }
+        }
+        if !first.roomIdentity.isEmpty,
+           let mode = contextSettings["room:" + first.roomIdentity]?.sameRoomTransition?.value {
+            return mode
+        }
+        if let inv = first.invitation.value?.absoluteString,
+           let mode = contextSettings["room:" + inv]?.sameRoomTransition?.value {
+            return mode
+        }
+        if let fallbackMode = fallback(first.roomIdentity) {
+            return fallbackMode
+        }
+        return contextSettings["all"]?.sameRoomTransition?.value
+    }
+
     private func shouldCoalesce(
         _ first: SyncedMeetingSession,
         _ second: SyncedMeetingSession,
         transitionMode: (String?) -> String?
     ) -> Bool {
+        if !first.legs.isEmpty,
+           !second.legs.isEmpty,
+           first.legs.count == 1,
+           Set(first.legs.keys) == Set(second.legs.keys) {
+            return false
+        }
         if first.occurrenceKey.hasPrefix("cal:"), first.occurrenceKey == second.occurrenceKey {
+            if resolvedTransitionMode(for: first, second: second, fallback: transitionMode) == "separateSessions" {
+                if let endFirst = first.endedAt.value, endFirst <= second.startedAt { return false }
+                if let endSecond = second.endedAt.value, endSecond <= first.startedAt { return false }
+            }
             return true
         }
         guard !first.roomIdentity.isEmpty, first.roomIdentity == second.roomIdentity else { return false }
-        if transitionMode(first.roomIdentity) == "separateSessions" {
-            if let endFirst = first.endedAt.value, endFirst <= second.startedAt { return false }
-            if let endSecond = second.endedAt.value, endSecond <= first.startedAt { return false }
-        }
         let delta = abs(first.startedAt.timeIntervalSince(second.startedAt))
         guard delta <= 900 else { return false }
         let endFirst = first.endedAt.value ?? Date.distantFuture
         let endSecond = second.endedAt.value ?? Date.distantFuture
-        return endFirst > second.startedAt && endSecond > first.startedAt
+        guard endFirst > second.startedAt && endSecond > first.startedAt else { return false }
+        if resolvedTransitionMode(for: first, second: second, fallback: transitionMode) == "separateSessions" {
+            if let fEnd = first.endedAt.value, fEnd <= second.startedAt { return false }
+            if let sEnd = second.endedAt.value, sEnd <= first.startedAt { return false }
+        }
+        return true
     }
 
     private mutating func reattributeChildren(from loserID: UUID, to winnerID: UUID, version: SyncVersion) {
@@ -361,7 +414,7 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
 
             case .taskLink(let incoming):
                 let existing = taskLinks[incoming.syncID]
-                if existing == nil || incoming.updatedAt > existing!.updatedAt {
+                if existing.map({ incoming.updatedAt > $0.updatedAt }) ?? true {
                     taskLinks[incoming.syncID] = incoming
                     report.changedSessions.insert(resolveCanonicalSessionID(for: incoming.sessionID))
                 }

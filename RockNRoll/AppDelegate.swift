@@ -15,12 +15,22 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
         let subscription = CKNotification(fromRemoteNotificationDictionary: userInfo)?.subscriptionID
-        guard subscription == "SavedJamsChanges" || subscription == "ActiveJamsChanges" else {
+        guard subscription == "SavedJamsChanges" ||
+                subscription == "ActiveJamsChanges" ||
+                subscription == "MeetingLibraryChanges" ||
+                subscription == "MeetingTranscriptsChanges" ||
+                subscription == "MeetingScheduleChanges" else {
             completionHandler(.noData); return
         }
         Task { @MainActor in
             if subscription == "ActiveJamsChanges" {
                 await MeetingContinuationCoordinator.active?.refresh()
+                completionHandler(.newData); return
+            }
+            if subscription == "MeetingLibraryChanges" ||
+                subscription == "MeetingTranscriptsChanges" ||
+                subscription == "MeetingScheduleChanges" {
+                await IOSWorkspaceCoordinator.active?.synchronizeNow()
                 completionHandler(.newData); return
             }
             guard let sync = RoomSyncCoordinator.active, sync.enabled else { completionHandler(.noData); return }

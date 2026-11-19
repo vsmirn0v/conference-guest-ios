@@ -28,6 +28,16 @@ extension MeetingContinuationTransport {
 
 enum ContinuationError: Error { case unavailable, conflict, expired }
 
+private enum ContinuationPayload: Codable, Sendable {
+    case jam(ActiveJam), transfer(JamTransfer), vacant
+}
+
+private struct ContinuationEnvelope: Codable, Sendable {
+    let schema: Int
+    let generation: String
+    let payload: ContinuationPayload
+}
+
 /// Short-lived coordination uses a separate private zone and the existing encrypted
 /// record types. No meeting access secret appears in an activity title or record name.
 @MainActor
@@ -42,9 +52,11 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
     private var cachedTransfers: [CKRecord.ID: JamTransfer] = [:]
     private var cachedJams: [CKRecord.ID: ActiveJam] = [:]
     private var revision = 0
+    private var subscriptionSaved = false
+    private var lastValidatedAt: Date?
     private var controlID: CKRecord.ID { .init(recordName: "SyncGeneration", zoneID: zone) }
-    private enum Payload: Codable { case jam(ActiveJam), transfer(JamTransfer), vacant }
-    private struct Envelope: Codable { let schema: Int; let generation: String; let payload: Payload }
+    private typealias Payload = ContinuationPayload
+    private typealias Envelope = ContinuationEnvelope
     init(zoneName: String = "ActiveJams", notifications: Bool = true) {
         zone = .init(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
         self.notifications = notifications
@@ -72,11 +84,14 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
         guard let value = control.encryptedValues["generation"] as? String else { throw ContinuationError.unavailable }
         if let generation, generation != value { throw ContinuationError.expired }
         generation = value
-        if notifications {
+        lastValidatedAt = Date()
+        if notifications && !subscriptionSaved {
             let subscription = CKRecordZoneSubscription(zoneID: zone, subscriptionID: "ActiveJamsChanges")
             let info = CKSubscription.NotificationInfo(); info.shouldSendContentAvailable = true
             subscription.notificationInfo = info
-            _ = try? await database.save(subscription)
+            if (try? await database.save(subscription)) != nil {
+                subscriptionSaved = true
+            }
         }
     }
     private func validate() async throws -> CKRecord {
@@ -102,50 +117,96 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
         catch let error as CKError where error.code == .changeTokenExpired {
             token = nil; cachedJams = [:]; cachedTransfers = [:]
             return try await fetchJams()
+        } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
+            token = nil; cachedJams = [:]; cachedTransfers = [:]; generation = nil
+            throw ContinuationError.expired
         }
     }
     private func fetchJams() async throws -> [ActiveJam] {
-        _ = try await validate()
+        if lastValidatedAt == nil || Date().timeIntervalSince(lastValidatedAt!) >= 60 {
+            _ = try await validate()
+            lastValidatedAt = Date()
+        }
+        guard let expectedGen = generation else { throw ContinuationError.unavailable }
         let expected = revision
+        let expectedControlID = controlID
         let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
         configuration.previousServerChangeToken = token
         let operation = CKFetchRecordZoneChangesOperation(recordZoneIDs: [zone], configurationsByRecordZoneID: [zone: configuration])
         operation.fetchAllChanges = true; operation.qualityOfService = .utility
-        let jams: [ActiveJam] = try await withCheckedThrowingContinuation { continuation in
-            var result = cachedJams; var transfers = cachedTransfers; var failure: Error?; var nextToken: CKServerChangeToken?
-            operation.recordWasChangedBlock = { [self] id, value in
+        let fetched: (jams: [CKRecord.ID: ActiveJam], transfers: [CKRecord.ID: JamTransfer], token: CKServerChangeToken?) =
+            try await withCheckedThrowingContinuation { continuation in
+            let lock = NSLock()
+            var result = cachedJams
+            var transfers = cachedTransfers
+            var failure: Error?
+            var nextToken: CKServerChangeToken?
+            operation.recordWasChangedBlock = { id, value in
                 do {
                     let record = try value.get()
-                    if id == controlID {
-                        guard record.encryptedValues["generation"] as? String == generation else { throw ContinuationError.expired }
+                    if id == expectedControlID {
+                        guard record.encryptedValues["generation"] as? String == expectedGen else {
+                            throw ContinuationError.expired
+                        }
                         return
                     }
-                    switch try decode(record) {
-                    case .jam(let jam): result[id] = jam
-                    case .transfer(let transfer): transfers[id] = transfer
-                    default: result.removeValue(forKey: id); transfers.removeValue(forKey: id)
+                    do {
+                        switch try Self.decodeRecord(record, expectedGeneration: expectedGen, controlID: expectedControlID) {
+                        case .jam(let jam):
+                            lock.lock(); result[id] = jam; lock.unlock()
+                        case .transfer(let transfer):
+                            lock.lock(); transfers[id] = transfer; lock.unlock()
+                        case .vacant, .none:
+                            lock.lock(); result.removeValue(forKey: id); transfers.removeValue(forKey: id); lock.unlock()
+                        }
+                    } catch is DecodingError, ContinuationError.expired, ContinuationError.unavailable {
+                        // Drop individual stale/incompatible records rather than failing the whole ActiveJams zone.
+                        lock.lock(); result.removeValue(forKey: id); transfers.removeValue(forKey: id); lock.unlock()
                     }
+                } catch {
+                    lock.lock(); failure = error; lock.unlock()
                 }
-                catch { failure = error }
             }
-            operation.recordWithIDWasDeletedBlock = { id, _ in result.removeValue(forKey: id); transfers.removeValue(forKey: id) }
-            operation.recordZoneFetchResultBlock = { _, result in
-                switch result {
+            operation.recordWithIDWasDeletedBlock = { id, _ in
+                lock.lock()
+                if id == expectedControlID {
+                    failure = ContinuationError.expired
+                } else {
+                    result.removeValue(forKey: id)
+                    transfers.removeValue(forKey: id)
+                }
+                lock.unlock()
+            }
+            operation.recordZoneFetchResultBlock = { _, zoneResult in
+                lock.lock()
+                switch zoneResult {
                 case .success(let value): nextToken = value.serverChangeToken
                 case .failure(let error): failure = error
                 }
+                lock.unlock()
             }
-            operation.fetchRecordZoneChangesResultBlock = { [self] value in
+            operation.fetchRecordZoneChangesResultBlock = { value in
+                lock.lock()
+                let capturedJams = result
+                let capturedTransfers = transfers
+                let capturedToken = nextToken
+                let capturedFailure = failure
+                lock.unlock()
                 do {
-                    try value.get(); if let failure { throw failure }
-                    guard expected == revision else { throw ContinuationError.unavailable }
-                    cachedJams = result; cachedTransfers = transfers; token = nextToken
-                    continuation.resume(returning: Array(result.values))
+                    try value.get()
+                    if let capturedFailure { throw capturedFailure }
+                    continuation.resume(returning: (capturedJams, capturedTransfers, capturedToken))
+                } catch {
+                    continuation.resume(throwing: error)
                 }
-                catch { continuation.resume(throwing: error) }
             }
             database.add(operation)
         }
+        guard expected == revision else { throw ContinuationError.unavailable }
+        cachedJams = fetched.jams
+        cachedTransfers = fetched.transfers
+        token = fetched.token
+        let jams = Array(fetched.jams.values)
         // Remove invitation/name content from expired advertisements. Conditional
         // writes re-read the record so a fresh replacement session is preserved.
         for jam in jams where Date().timeIntervalSince(jam.updatedAt) > 900 {
@@ -165,7 +226,7 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
             return .vacant
         }
     }
-    func resetConnection() { revision += 1; account = nil; generation = nil; token = nil; cachedJams = [:]; cachedTransfers = [:] }
+    func resetConnection() { revision += 1; account = nil; generation = nil; token = nil; cachedJams = [:]; cachedTransfers = [:]; subscriptionSaved = false; lastValidatedAt = nil }
     func claim(_ transfer: JamTransfer) async throws {
         _ = try await write(id: "claim-" + transfer.sourceSession.uuidString) { existing in
             if case .transfer(let previous) = existing, !previous.isTerminal, previous.expiresAt > Date() {
@@ -193,14 +254,17 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
     }
     private func write(id: String, update: (Payload?) throws -> Payload) async throws -> Payload {
         let expected = revision
-        for attempt in 0..<3 {
+        for attempt in 0..<5 {
             let control = try await validate()
             let recordID = CKRecord.ID(recordName: id, zoneID: zone)
             let record: CKRecord
             do { record = try await database.record(for: recordID) }
             catch let error as CKError where error.code == .unknownItem { record = CKRecord(recordType: "RoomPreference", recordID: recordID) }
             guard expected == revision else { throw ContinuationError.unavailable }
-            let payload = try update(record.recordChangeTag == nil ? nil : decode(record))
+            let existingPayload: Payload? = (record.recordChangeTag == nil)
+                ? nil
+                : (id.hasPrefix("device-") ? (try? decode(record)) : (try decode(record)))
+            let payload = try update(existingPayload)
             guard let generation else { throw ContinuationError.unavailable }
             let data = try JSONEncoder().encode(Envelope(schema: 1, generation: generation, payload: payload))
             guard data.count < 32 * 1024 else { throw ContinuationError.unavailable }
@@ -216,16 +280,31 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
                     else { cachedTransfers.removeValue(forKey: recordID) }
                 }
                 return payload
-            } catch let error as CKError where attempt < 2 && Self.conflict(error) { continue }
+            } catch let error as CKError where attempt < 4 && Self.conflict(error) {
+                try? await Task.sleep(for: .milliseconds(150 * (attempt + 1)))
+                continue
+            }
         }
         throw ContinuationError.conflict
     }
-    private func decode(_ record: CKRecord) throws -> Payload? {
+    private nonisolated static func decodeRecord(
+        _ record: CKRecord,
+        expectedGeneration: String,
+        controlID: CKRecord.ID
+    ) throws -> Payload? {
         if record.recordID == controlID { return nil }
-        guard let data = record.encryptedValues["payload"] as? Data, data.count < 32 * 1024 else { throw ContinuationError.unavailable }
+        guard let data = record.encryptedValues["payload"] as? Data, data.count < 32 * 1024 else {
+            throw ContinuationError.unavailable
+        }
         let envelope = try JSONDecoder().decode(Envelope.self, from: data)
-        guard envelope.schema == 1, envelope.generation == generation else { throw ContinuationError.expired }
+        guard envelope.schema == 1, envelope.generation == expectedGeneration else {
+            throw ContinuationError.expired
+        }
         return envelope.payload
+    }
+    private func decode(_ record: CKRecord) throws -> Payload? {
+        guard let generation else { throw ContinuationError.unavailable }
+        return try Self.decodeRecord(record, expectedGeneration: generation, controlID: controlID)
     }
     private static func conflict(_ error: CKError) -> Bool {
         error.code == .serverRecordChanged || error.partialErrorsByItemID?.values.contains {
@@ -236,5 +315,7 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
         _ = try await validate()
         _ = try await database.deleteRecordZone(withID: zone)
         generation = nil
+        subscriptionSaved = false
+        lastValidatedAt = nil
     }
 }
