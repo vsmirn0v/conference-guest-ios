@@ -221,6 +221,7 @@ private final class AudioIngressRouter: @unchecked Sendable {
             pipeline = existing
             pipeline.updateSpeaker(speakerName)
         } else {
+            AppDiagnostics.log("local-transcription-audio", ["source": streamID == "local" ? "microphone" : "remote", "backend": backend.rawValue])
             pipeline = SpeakerPipeline(
                 streamID: streamID,
                 speakerName: speakerName,
@@ -264,6 +265,7 @@ final class IOSMeetingTranscriber: ObservableObject {
     private var running = false
     private var segmentOrder = 0
     private var activeUtteranceByStream: [String: TranscriptSegment] = [:]
+    var partialSegmentIDs: [String] { activeUtteranceByStream.values.map(\.id) }
     private var finalizedSegments: [TranscriptSegment] = []
 
     init(
@@ -295,8 +297,9 @@ final class IOSMeetingTranscriber: ObservableObject {
 
     func updateRemoteSources(_ sources: [MeetingAudioSource]) {
         remoteSources = sources
-        pushRouterMetadata()
-        guard running else { return }
+        // Tracks can arrive while the selected recognizer is loading. Bind them after startup
+        // so their first PCM buffer cannot create a pipeline using the fallback backend.
+        guard running, currentBackend != nil else { return }
         syncTaps()
     }
 
@@ -387,7 +390,7 @@ final class IOSMeetingTranscriber: ObservableObject {
             }
         }
         router.updateMetadata(
-            running: running,
+            running: running && currentBackend != nil,
             backend: currentBackend ?? .appleSpeech,
             language: modelStore.language,
             gigaam: gigaamRecognizer,
@@ -500,7 +503,8 @@ final class IOSMeetingTranscriber: ObservableObject {
             id: stableID,
             speaker: attributedSpeaker,
             text: clean,
-            spokenAt: effectiveTime
+            spokenAt: effectiveTime,
+            isOwn: streamID == "local"
         )
 
         if isFinal {

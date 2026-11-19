@@ -5,6 +5,7 @@ import Foundation
 import Metal
 import MLXAudioTTS
 import XCTest
+@testable import MeetingEngine
 @testable import RockNRoll
 
 @MainActor
@@ -491,6 +492,8 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
         var loaderRanOffMainThread = false
         var mainTicksWhileLoading = 0
         var stopCalled = false
+        var offeredRemoteTrack = false
+        var attachedDuringLoad = false
 
         let transcriber = IOSMeetingTranscriber(
             modelStore: store,
@@ -509,6 +512,13 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
         let ticker = Task { @MainActor in
             while !stopCalled {
                 mainTicksWhileLoading += 1
+                if transcriber.state == .starting && !offeredRemoteTrack {
+                    offeredRemoteTrack = true
+                    transcriber.updateRemoteSources([
+                        MeetingAudioSource(id: "remote", participantIdentity: "guest",
+                                           attach: { _ in attachedDuringLoad = true }, detach: { _ in })
+                    ])
+                }
                 await Task.yield()
                 try? await Task.sleep(for: .milliseconds(5))
             }
@@ -520,6 +530,8 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
 
         XCTAssertFalse(started)
         XCTAssertTrue(loaderRanOffMainThread)
+        XCTAssertTrue(offeredRemoteTrack)
+        XCTAssertFalse(attachedDuringLoad, "Early PCM must wait for the selected recognizer")
         XCTAssertGreaterThan(mainTicksWhileLoading, 2, "MainActor must remain responsive while model loads")
 
         // Enqueueing local audio off or on MainActor must be non-blocking and safe.

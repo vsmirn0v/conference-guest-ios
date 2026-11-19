@@ -338,7 +338,7 @@ final class IOSMultiMeetingTests: XCTestCase {
             initialTitle: nil
         )
         var archivedEvents: [SyncedTranscriptEvent] = []
-        controller.onWorkspaceEventsChanged = { _, events, _ in archivedEvents.append(contentsOf: events) }
+        controller.onWorkspaceEventsChanged = { _, events, _, _ in archivedEvents.append(contentsOf: events) }
         let time = Date()
         let chatMessage = GuestMeetingMessage(id: "chat", participantID: "ani", participantName: "Ani",
                                               text: "Typed message", sentAt: time, isOwn: false)
@@ -346,6 +346,8 @@ final class IOSMultiMeetingTests: XCTestCase {
                                            text: "Live speech", sentAt: time.addingTimeInterval(1), isOwn: false)
         let historyLine = GuestMeetingMessage(id: "history", participantID: "ani", participantName: "Ani",
                                               text: "Earlier speech", sentAt: time.addingTimeInterval(-1), isOwn: false)
+        let ownLine = GuestMeetingMessage(id: "own", participantID: "my-id", participantName: "Ani",
+                                          text: "My reply", sentAt: time.addingTimeInterval(2), isOwn: true)
 
         adapter.onCapturedMessages?([chatMessage], false)
         XCTAssertEqual(controller.chat.items.map(\.id), [chatMessage.id])
@@ -360,13 +362,14 @@ final class IOSMultiMeetingTests: XCTestCase {
         adapter.onFeatures?(GuestMeetingSnapshot(
             permissions: GuestMeetingPermissions(canViewChat: true, canViewTranscript: true),
             messages: [chatMessage],
-            transcript: [historyLine, liveLine],
+            transcript: [historyLine, liveLine, ownLine],
             transcriptionStatus: .active
         ))
-        XCTAssertEqual(controller.catchUp.timeline.segments.map(\.id), [historyLine.id, liveLine.id])
+        XCTAssertEqual(controller.catchUp.timeline.segments.map(\.id), [historyLine.id, liveLine.id, ownLine.id])
         XCTAssertEqual(Set(archivedEvents.filter { $0.kind == "chat" }.map(\.providerMessageID)), [chatMessage.id])
         XCTAssertEqual(Set(archivedEvents.filter { $0.kind == "transcript" }.map(\.providerMessageID)),
-                       [historyLine.id, liveLine.id])
+                       [historyLine.id, liveLine.id, ownLine.id])
+        XCTAssertEqual(Set(archivedEvents.filter(\.isOwn).map(\.id)), [ownLine.id])
     }
 
     func testFourSimultaneousSessionsAcrossAllProvidersAndFifthRoomPromptReplacement() async throws {

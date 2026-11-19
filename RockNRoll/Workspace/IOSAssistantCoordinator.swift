@@ -1,5 +1,6 @@
 import ConferenceCore
 import Foundation
+import UIKit
 import UserNotifications
 #if canImport(FoundationModels)
 import FoundationModels
@@ -226,8 +227,7 @@ struct IOSAssistantLLMService: IOSAssistantEvaluating {
             guard let endpoint = config.endpoint else {
                 throw PortableOutcomeError.notConfigured
             }
-            let rawModel = config.model.trimmingCharacters(in: .whitespacesAndNewlines)
-            let model = rawModel.isEmpty ? config.providerKind.defaultModel : rawModel
+            let model = config.resolvedModel
             guard !model.isEmpty else {
                 throw PortableOutcomeError.notConfigured
             }
@@ -236,13 +236,10 @@ struct IOSAssistantLLMService: IOSAssistantEvaluating {
                 throw PortableOutcomeError.missingKey
             }
 
-            let body: [String: Any] = [
-                "model": model,
-                "messages": messages,
-                "temperature": 0.1,
-                "max_tokens": 500,
-                "response_format": ["type": "json_object"]
-            ]
+            let body = PortableOutcomeService.requestBody(
+                messages: messages, model: model, provider: config.providerKind,
+                tokenLimit: config.providerKind == .openAI ? 2000 : 500, temperature: 0.1
+            )
             var urlRequest = URLRequest(url: endpoint)
             urlRequest.httpMethod = "POST"
             urlRequest.timeoutInterval = 30
@@ -252,8 +249,9 @@ struct IOSAssistantLLMService: IOSAssistantEvaluating {
             }
             urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
             let (data, response) = try await urlSession.data(for: urlRequest)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                throw PortableOutcomeError.transport(L("The assistant provider returned an error."))
+            guard let http = response as? HTTPURLResponse else { throw PortableOutcomeError.invalidResponse }
+            guard (200..<300).contains(http.statusCode) else {
+                throw PortableOutcomeService.httpError(status: http.statusCode, data: data)
             }
             guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = root["choices"] as? [[String: Any]],
@@ -293,6 +291,7 @@ struct IOSAssistantLLMService: IOSAssistantEvaluating {
         Keep `reason` concise (<= 16 words) in the user language (\(req.language)).
         Only set `suggested_reply` when responding makes sense or the user wants a reply draft.
         Never invent facts not present in the transcript or notes.
+        Judge the newest remote speech or chat. Use earlier turns only as context.
         """
 
         var userParts: [String] = ["Meeting: \(req.meetingTitle)"]
@@ -374,7 +373,7 @@ final class IOSAssistantCoordinator: ObservableObject {
     @Published private(set) var alertCards: [IOSAssistantAlertCard] = []
     @Published private(set) var activityLog: [IOSAssistantActivityItem] = []
     @Published private(set) var lastStatusNoteBySession: [UUID: String] = [:]
-    @Published private(set) var lastError: String?
+    @Published private(set) var evaluationErrors: [UUID: String] = [:]
 
     private weak var workspace: IOSWorkspaceCoordinator?
     private let preferences: UserDefaults
@@ -393,8 +392,15 @@ final class IOSAssistantCoordinator: ObservableObject {
     private var seenEventIDs: [UUID: Set<String>] = [:]
     private var lastEvaluatedAt: [UUID: Date] = [:]
     private var lastMentionTriggerAt: [UUID: Date] = [:]
+    private typealias Mention = (event: SyncedTranscriptEvent, alias: String)
+    private struct PendingEvaluation {
+        var mention: Mention?
+        var immediate = false
+    }
+    private var pendingEvaluations: [UUID: PendingEvaluation] = [:]
     private var evaluationTasks: [UUID: Task<Void, Never>] = [:]
     private var foregroundControllerID: UUID?
+    private var requestedNotificationPermission = false
 
     init(
         workspace: IOSWorkspaceCoordinator?,
@@ -430,7 +436,10 @@ final class IOSAssistantCoordinator: ObservableObject {
                 guard NSClassFromString("XCTestCase") == nil else { return }
                 let center = UNUserNotificationCenter.current()
                 let settings = await center.notificationSettings()
-                guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+                guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else {
+                    AppDiagnostics.log("assistant-notification", ["result": "permissionUnavailable"])
+                    return
+                }
                 let content = UNMutableNotificationContent()
                 content.title = card.meetingTitle
                 content.body = card.reason
@@ -441,7 +450,12 @@ final class IOSAssistantCoordinator: ObservableObject {
                     content: content,
                     trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
                 )
-                try? await center.add(req)
+                do {
+                    try await center.add(req)
+                    AppDiagnostics.log("assistant-notification", ["result": "scheduled"])
+                } catch {
+                    AppDiagnostics.log("assistant-notification", ["result": "failed"])
+                }
             }
         }
 
@@ -517,6 +531,12 @@ final class IOSAssistantCoordinator: ObservableObject {
     }
 
     func setMode(_ mode: IOSMeetingAssistantMode, for controllerID: UUID, rememberForRoom: Bool = false) {
+        if mode != resolvedMode(for: controllerID) {
+            cancelEvaluation(for: controllerID)
+            evaluationErrors.removeValue(forKey: controllerID)
+            lastEvaluatedAt.removeValue(forKey: controllerID)
+            lastMentionTriggerAt.removeValue(forKey: controllerID)
+        }
         sessionModeOverrides[controllerID] = mode
         if let bridge = resolveBridge(controllerID) {
             if rememberForRoom, !bridge.roomKey.isEmpty {
@@ -539,13 +559,15 @@ final class IOSAssistantCoordinator: ObservableObject {
                 lastStatusNoteBySession[controllerID] = L("Paused while your microphone is unmuted.")
             } else {
                 pausedParticipatingSessions.remove(controllerID)
-                lastStatusNoteBySession[controllerID] = nil
+                lastStatusNoteBySession[controllerID] = mode != .off && eventBuffers[controllerID]?.contains(where: { !$0.isOwn }) != true
+                    ? L("Waiting for meeting speech or chat.") : nil
             }
             if mode != .off {
                 requestNotificationPermissionIfNeeded()
                 Task { await bridge.ensureTranscription() }
             }
         }
+        AppDiagnostics.log("assistant-mode", ["mode": mode.rawValue, "micPaused": isPausedForMicrophone(controllerID: controllerID)])
         onSessionModeChanged?(controllerID, mode, isPausedForMicrophone(controllerID: controllerID))
     }
 
@@ -563,17 +585,12 @@ final class IOSAssistantCoordinator: ObservableObject {
     func activePresentationChanged(foregroundControllerID: UUID?) {
         let previous = self.foregroundControllerID
         self.foregroundControllerID = foregroundControllerID
-        if let previous, let bridge = resolveBridge(previous) {
-            let mode = resolvedMode(for: previous)
-            onSessionModeChanged?(previous, mode, isPausedForMicrophone(controllerID: previous))
+        for id in Set([previous, foregroundControllerID].compactMap { $0 }) {
+            guard let bridge = resolveBridge(id) else { continue }
+            let mode = resolvedMode(for: id)
+            onSessionModeChanged?(id, mode, isPausedForMicrophone(controllerID: id))
             if mode != .off {
-                Task { await bridge.ensureTranscription() }
-            }
-        }
-        if let foregroundControllerID, let bridge = resolveBridge(foregroundControllerID) {
-            let mode = resolvedMode(for: foregroundControllerID)
-            onSessionModeChanged?(foregroundControllerID, mode, isPausedForMicrophone(controllerID: foregroundControllerID))
-            if mode != .off {
+                requestNotificationPermissionIfNeeded()
                 Task { await bridge.ensureTranscription() }
             }
         }
@@ -583,6 +600,7 @@ final class IOSAssistantCoordinator: ObservableObject {
         let mode = resolvedMode(for: controllerID)
         if unmuted {
             if mode == .participating {
+                cancelEvaluation(for: controllerID)
                 pausedParticipatingSessions.insert(controllerID)
                 lastStatusNoteBySession[controllerID] = L("Paused while your microphone is unmuted.")
             }
@@ -593,8 +611,8 @@ final class IOSAssistantCoordinator: ObservableObject {
     }
 
     func sessionEnded(controllerID: UUID) {
-        evaluationTasks[controllerID]?.cancel()
-        evaluationTasks.removeValue(forKey: controllerID)
+        cancelEvaluation(for: controllerID)
+        evaluationErrors.removeValue(forKey: controllerID)
         eventBuffers.removeValue(forKey: controllerID)
         seenEventIDs.removeValue(forKey: controllerID)
         lastEvaluatedAt.removeValue(forKey: controllerID)
@@ -604,29 +622,31 @@ final class IOSAssistantCoordinator: ObservableObject {
         sessionParticipationGoals.removeValue(forKey: controllerID)
         sessionAskBeforeSending.removeValue(forKey: controllerID)
         pausedParticipatingSessions.remove(controllerID)
-        evaluatingSessions.remove(controllerID)
         lastStatusNoteBySession.removeValue(forKey: controllerID)
         alertCards.removeAll { $0.controllerID == controllerID }
     }
 
     // MARK: - Live Event Observation & Evaluation
 
-    func observeEvents(_ events: [SyncedTranscriptEvent], for controllerID: UUID) {
+    func observeEvents(_ events: [SyncedTranscriptEvent], for controllerID: UUID, partialEventIDs: Set<String> = []) {
         guard !events.isEmpty else { return }
         var seen = seenEventIDs[controllerID] ?? []
+        let previousCount = seen.count
         var buffer = eventBuffers[controllerID] ?? []
         var freshEvents: [SyncedTranscriptEvent] = []
 
         for ev in events {
-            guard !seen.contains(ev.id) else { continue }
-            seen.insert(ev.id)
+            guard !seen.contains(ev.id), !partialEventIDs.contains(ev.id) else { continue }
             let clean = ev.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty, ev.kind == "transcript" || ev.kind == "chat" else { continue }
+            seen.insert(ev.id)
             buffer.append(ev)
             if !ev.isOwn {
                 freshEvents.append(ev)
             }
         }
+        guard seen.count != previousCount else { return }
+        buffer.sort { $0.occurredAt < $1.occurredAt }
         if buffer.count > 80 {
             buffer.removeFirst(buffer.count - 80)
         }
@@ -639,30 +659,16 @@ final class IOSAssistantCoordinator: ObservableObject {
         if mode == .participating && isPausedForMicrophone(controllerID: controllerID) {
             return
         }
+        if lastStatusNoteBySession[controllerID] != nil {
+            lastStatusNoteBySession.removeValue(forKey: controllerID)
+        }
 
         let bridge = resolveBridge(controllerID)
         let aliases = collectedAliases(for: bridge)
         let mention = Self.findMention(in: freshEvents, aliases: aliases)
 
-        if mode == .mentions && mention == nil && !hasModelConfigured() {
-            return
-        }
-
-        let now = nowProvider()
-        if let mention {
-            if let last = lastMentionTriggerAt[controllerID], now.timeIntervalSince(last) < mentionCooldown {
-                return
-            }
-            lastMentionTriggerAt[controllerID] = now
-            scheduleEvaluation(controllerID: controllerID, localMention: mention, recentEvents: buffer, force: true)
-            return
-        }
-
-        guard mode == .follow || mode == .participating else { return }
-        if let last = lastEvaluatedAt[controllerID], now.timeIntervalSince(last) < evaluationCooldown {
-            return
-        }
-        scheduleEvaluation(controllerID: controllerID, localMention: nil, recentEvents: buffer, force: false)
+        guard mention != nil || hasModelConfigured() else { return }
+        queueEvaluation(for: controllerID, mention: mention)
     }
 
     /// Directly evaluates recent events immediately (handy for tests and manual "Check now" taps).
@@ -671,23 +677,52 @@ final class IOSAssistantCoordinator: ObservableObject {
         localMention: (event: SyncedTranscriptEvent, alias: String)? = nil
     ) async {
         let buffer = eventBuffers[controllerID] ?? []
-        guard !buffer.isEmpty else { return }
+        guard !buffer.isEmpty else {
+            lastStatusNoteBySession[controllerID] = L("Waiting for meeting speech or chat.")
+            return
+        }
         let mention = localMention ?? Self.findMention(in: buffer.suffix(5).filter { !$0.isOwn }, aliases: collectedAliases(for: resolveBridge(controllerID)))
-        await performEvaluation(controllerID: controllerID, localMention: mention, recentEvents: buffer)
+        if evaluatingSessions.contains(controllerID), let active = evaluationTasks[controllerID] {
+            await active.value
+            if let next = evaluationTasks[controllerID] { await next.value }
+            return
+        }
+        queueEvaluation(for: controllerID, mention: mention, immediate: true)
+        await evaluationTasks[controllerID]?.value
     }
 
-    private func scheduleEvaluation(
-        controllerID: UUID,
-        localMention: (event: SyncedTranscriptEvent, alias: String)?,
-        recentEvents: [SyncedTranscriptEvent],
-        force: Bool
-    ) {
-        if evaluationTasks[controllerID] != nil && !force { return }
-        evaluationTasks[controllerID]?.cancel()
+    private func cancelEvaluation(for controllerID: UUID) {
+        evaluationTasks.removeValue(forKey: controllerID)?.cancel()
+        pendingEvaluations.removeValue(forKey: controllerID)
+        evaluatingSessions.remove(controllerID)
+    }
+
+    private func queueEvaluation(for controllerID: UUID, mention: Mention?, immediate: Bool = false) {
+        var pending = pendingEvaluations[controllerID] ?? PendingEvaluation()
+        pending.mention = mention ?? pending.mention
+        pending.immediate = immediate || pending.immediate
+        pendingEvaluations[controllerID] = pending
+        // A direct mention or manual check may shorten a pending delay. Never interrupt delivery.
+        if (mention != nil || immediate) && !evaluatingSessions.contains(controllerID) {
+            evaluationTasks.removeValue(forKey: controllerID)?.cancel()
+        }
+        startPendingEvaluation(for: controllerID)
+    }
+
+    private func startPendingEvaluation(for controllerID: UUID) {
+        guard evaluationTasks[controllerID] == nil, let pending = pendingEvaluations[controllerID] else { return }
+        let isMention = pending.mention != nil
+        let last = isMention ? lastMentionTriggerAt[controllerID] : lastEvaluatedAt[controllerID]
+        let cooldown = isMention ? mentionCooldown : evaluationCooldown
+        let delay = pending.immediate ? 0 : last.map { cooldown - nowProvider().timeIntervalSince($0) } ?? 0
         evaluationTasks[controllerID] = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.performEvaluation(controllerID: controllerID, localMention: localMention, recentEvents: recentEvents)
-            self.evaluationTasks.removeValue(forKey: controllerID)
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            guard !Task.isCancelled, let self, let batch = pendingEvaluations.removeValue(forKey: controllerID) else { return }
+            if batch.mention != nil { lastMentionTriggerAt[controllerID] = nowProvider() }
+            await performEvaluation(controllerID: controllerID, localMention: batch.mention, recentEvents: eventBuffers[controllerID] ?? [])
+            guard !Task.isCancelled else { return }
+            evaluationTasks.removeValue(forKey: controllerID)
+            startPendingEvaluation(for: controllerID)
         }
     }
 
@@ -704,10 +739,11 @@ final class IOSAssistantCoordinator: ObservableObject {
         let title = bridge?.title ?? L("Meeting")
         lastEvaluatedAt[controllerID] = nowProvider()
         evaluatingSessions.insert(controllerID)
-        defer { evaluatingSessions.remove(controllerID) }
+        defer { if !Task.isCancelled { evaluatingSessions.remove(controllerID) } }
 
         var verdict: IOSAssistantVerdict?
-        if hasModelConfigured() {
+        AppDiagnostics.log("assistant-evaluation", ["mode": mode.rawValue, "eventCount": recentEvents.count, "nameMatched": localMention != nil])
+        if hasModelConfigured() && !(mode == .mentions && localMention != nil) {
             let roomSettings = bridge.flatMap { workspace?.settings(for: "room:\($0.roomKey)") }
             let seriesSettings = bridge?.calendarSeriesKey.flatMap { workspace?.settings(for: "series:\($0)") }
             let allSettings = workspace?.settings(for: "all")
@@ -730,18 +766,30 @@ final class IOSAssistantCoordinator: ObservableObject {
             )
             do {
                 verdict = try await evaluator.evaluate(req)
-                lastError = nil
+                guard !Task.isCancelled else { return }
+                evaluationErrors.removeValue(forKey: controllerID)
             } catch {
-                lastError = error.localizedDescription
+                guard !Task.isCancelled else { return }
+                var fields: [String: Any] = ["mode": mode.rawValue]
+                if case .http(let status, let code, let parameter) = error as? PortableOutcomeError {
+                    evaluationErrors[controllerID] = L("The assistant provider returned HTTP %ld.", status)
+                    fields["httpStatus"] = status
+                    fields["providerCode"] = code
+                    fields["parameter"] = parameter
+                } else { evaluationErrors[controllerID] = error.localizedDescription }
+                AppDiagnostics.log("assistant-evaluation-error", fields)
             }
         }
 
+        guard !Task.isCancelled, resolvedMode(for: controllerID) == mode,
+              let currentBridge = resolveBridge(controllerID),
+              !(mode == .participating && currentBridge.isMicUnmuted) else { return }
         if let verdict, verdict.needsUser {
             await handleVerdict(
                 verdict,
                 controllerID: controllerID,
                 mode: mode,
-                bridge: bridge,
+                bridge: currentBridge,
                 fallbackExcerpt: Self.formatExcerpt(from: localMention?.event ?? recentEvents.last)
             )
             return
@@ -761,7 +809,7 @@ final class IOSAssistantCoordinator: ObservableObject {
                 fallback,
                 controllerID: controllerID,
                 mode: mode,
-                bridge: bridge,
+                bridge: currentBridge,
                 fallbackExcerpt: Self.formatExcerpt(from: localMention.event)
             )
         } else if mode != .mentions && !hasModelConfigured() {
@@ -813,6 +861,7 @@ final class IOSAssistantCoordinator: ObservableObject {
                         try await bridge.sendChat(replyText)
                         sentChannels.append(L("Chat"))
                     }
+                    try Task.checkCancellation()
                     try await bridge.speakVoice(replyText)
                     sentChannels.append(L("Voice"))
                 }
@@ -828,11 +877,12 @@ final class IOSAssistantCoordinator: ObservableObject {
                     )
                 }
             } catch {
-                lastError = error.localizedDescription
                 deliveryNote = error.localizedDescription
             }
         }
 
+        guard !Task.isCancelled else { return }
+        AppDiagnostics.log("assistant-alert", ["mode": mode.rawValue, "automaticDelivery": deliveredAutomatically, "output": effectiveParticipationOutput(for: controllerID).rawValue])
         let card = IOSAssistantAlertCard(
             controllerID: controllerID,
             workspaceSessionID: workspaceSID,
@@ -859,7 +909,7 @@ final class IOSAssistantCoordinator: ObservableObject {
             channel: deliveredAutomatically ? deliveryNote : nil
         )
         onBannerAlert?(card)
-        if !(bridge?.isForeground ?? false) || !deliveredAutomatically {
+        if !(bridge?.isForeground ?? false) || !deliveredAutomatically || UIApplication.shared.applicationState != .active {
             await scheduleNotification(card)
         }
     }
@@ -881,8 +931,10 @@ final class IOSAssistantCoordinator: ObservableObject {
         let text = card.suggestedReply.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let bridge = resolveBridge(card.controllerID) else { return }
         try await bridge.sendChat(text)
-        alertCards[idx].deliveredAutomatically = false
-        alertCards[idx].deliveryNote = L("Sent to chat")
+        if let current = alertCards.firstIndex(where: { $0.id == cardID }) {
+            alertCards[current].deliveredAutomatically = false
+            alertCards[current].deliveryNote = L("Sent to chat")
+        }
         recordActivity(controllerID: card.controllerID, title: card.meetingTitle, mode: card.mode, summary: text, channel: L("Chat"))
     }
 
@@ -892,7 +944,9 @@ final class IOSAssistantCoordinator: ObservableObject {
         let text = card.suggestedReply.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let bridge = resolveBridge(card.controllerID) else { return }
         try await bridge.speakVoice(text)
-        alertCards[idx].deliveryNote = L("Spoken in call")
+        if let current = alertCards.firstIndex(where: { $0.id == cardID }) {
+            alertCards[current].deliveryNote = L("Spoken in call")
+        }
         recordActivity(controllerID: card.controllerID, title: card.meetingTitle, mode: card.mode, summary: text, channel: L("Voice"))
     }
 
@@ -971,7 +1025,10 @@ final class IOSAssistantCoordinator: ObservableObject {
     }
 
     private func requestNotificationPermissionIfNeeded() {
-        guard NSClassFromString("XCTestCase") == nil else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        guard !requestedNotificationPermission, NSClassFromString("XCTestCase") == nil else { return }
+        requestedNotificationPermission = true
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            AppDiagnostics.log("assistant-notification-permission", ["granted": granted])
+        }
     }
 }

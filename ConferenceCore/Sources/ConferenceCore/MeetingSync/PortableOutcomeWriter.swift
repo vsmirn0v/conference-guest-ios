@@ -411,8 +411,9 @@ public struct PortableOutcomeService: PortableOutcomeWriting {
         }
     }
 
-    static func requestBody(
-        messages: [[String: String]], model: String, provider: PortableOutcomeProviderKind
+    public static func requestBody(
+        messages: [[String: String]], model: String, provider: PortableOutcomeProviderKind,
+        tokenLimit: Int = 2000, temperature: Double = 0
     ) -> [String: Any] {
         var body: [String: Any] = [
             "model": model,
@@ -420,15 +421,15 @@ public struct PortableOutcomeService: PortableOutcomeWriting {
             "response_format": ["type": "json_object"]
         ]
         if provider == .openAI {
-            body["max_completion_tokens"] = 2000
+            body["max_completion_tokens"] = tokenLimit
         } else {
-            body["max_tokens"] = 2000
-            body["temperature"] = 0
+            body["max_tokens"] = tokenLimit
+            body["temperature"] = temperature
         }
         return body
     }
 
-    static func httpError(status: Int, data: Data) -> PortableOutcomeError {
+    public static func httpError(status: Int, data: Data) -> PortableOutcomeError {
         let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         let error = root?["error"] as? [String: Any]
         let code = (error?["code"] as? String) ?? (error?["type"] as? String)

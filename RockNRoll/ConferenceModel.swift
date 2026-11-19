@@ -704,7 +704,7 @@ final class ConferenceModel: ObservableObject {
             title: controller.title,
             roomKey: controller.invitationURL.absoluteString,
             calendarSeriesKey: seriesKey,
-            localDisplayName: displayName,
+            localDisplayName: controller.displayName,
             participantNames: controller.participantDisplayNames,
             canSendChat: controller.canSendAssistantChat,
             isMicUnmuted: controller.isLocalMicrophoneUnmuted,
@@ -1222,9 +1222,9 @@ final class ConferenceModel: ObservableObject {
                     guard let self, let controller else { return }
                     controller.presentNotesSheet(workspace: self.workspace)
                 }
-                controller.onWorkspaceEventsChanged = { [weak self] id, events, intervals in
+                controller.onWorkspaceEventsChanged = { [weak self] id, events, intervals, partialEventIDs in
                     self?.workspace.recordLiveEvents(controllerID: id, events: events, micIntervals: intervals)
-                    self?.assistant.observeEvents(events, for: id)
+                    self?.assistant.observeEvents(events, for: id, partialEventIDs: partialEventIDs)
                 }
                 controller.voiceReplyTargetsProvider = { [weak self, weak controller] in
                     guard let self else { return [] }

@@ -3345,6 +3345,8 @@
 "Talk active" = "Микрофон здесь";
 "Talk in %@" = "Говорить в %@";
 "The assistant provider returned an error." = "Провайдер ассистента вернул ошибку.";
+"The assistant provider returned HTTP %ld." = "Провайдер ассистента вернул ошибку HTTP %ld.";
+"Waiting for meeting speech or chat." = "Ожидание речи участников или сообщений в чате.";
 "Tracks the meeting and drafts or delivers chat and voice replies on your behalf." = "Следит за встречей и готовит или отправляет текстовые и голосовые ответы от вашего имени.";
 "Voice & Chat" = "Голос и чат";
 "Your attention is requested." = "Требуется ваше внимание.";

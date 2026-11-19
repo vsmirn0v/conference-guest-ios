@@ -18,13 +18,15 @@ public struct MissedInterval: Codable, Identifiable, Equatable, Sendable {
 public struct TranscriptSegment: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let speaker: String?
+    public let isOwn: Bool?
     public let text: String
     /// Nil when the provider's clock cannot safely be aligned with wall time.
     public let spokenAt: Date?
 
-    public init(id: String, speaker: String?, text: String, spokenAt: Date?) {
+    public init(id: String, speaker: String?, text: String, spokenAt: Date?, isOwn: Bool? = nil) {
         self.id = id
         self.speaker = speaker
+        self.isOwn = isOwn
         self.text = text
         self.spokenAt = spokenAt
     }

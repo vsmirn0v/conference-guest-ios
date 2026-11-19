@@ -3346,6 +3346,8 @@
 "Talk active" = "Talk active";
 "Talk in %@" = "Talk in %@";
 "The assistant provider returned an error." = "The assistant provider returned an error.";
+"The assistant provider returned HTTP %ld." = "The assistant provider returned HTTP %ld.";
+"Waiting for meeting speech or chat." = "Waiting for meeting speech or chat.";
 "Tracks the meeting and drafts or delivers chat and voice replies on your behalf." = "Tracks the meeting and drafts or delivers chat and voice replies on your behalf.";
 "Voice & Chat" = "Voice & Chat";
 "Your attention is requested." = "Your attention is requested.";

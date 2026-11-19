@@ -22,6 +22,26 @@ final class IOSAssistantModeTests: XCTestCase {
         }
     }
 
+    private actor SuspendedEvaluator: IOSAssistantEvaluating {
+        let started: XCTestExpectation
+        var continuation: CheckedContinuation<IOSAssistantVerdict, Never>?
+
+        init(started: XCTestExpectation) { self.started = started }
+
+        func evaluate(_ request: IOSAssistantEvaluationRequest) async throws -> IOSAssistantVerdict {
+            await withCheckedContinuation {
+                continuation = $0
+                started.fulfill()
+            }
+        }
+
+        func finish() {
+            continuation?.resume(returning: .init(needsUser: true, urgency: .now, reason: "Direct question",
+                                                  suggestedReply: "Late reply", confidence: 1))
+            continuation = nil
+        }
+    }
+
     private final class SuiteBox {
         let name: String
         let defaults: UserDefaults
@@ -69,6 +89,107 @@ final class IOSAssistantModeTests: XCTestCase {
             text: text,
             deviceID: isOwn ? "iphone-test" : "remote-test"
         )
+    }
+
+    private func bridge(for id: UUID, speak: @escaping (String) -> Void = { _ in }) -> IOSAssistantSessionBridge {
+        IOSAssistantSessionBridge(
+            controllerID: id, title: "Test meeting", roomKey: "test", calendarSeriesKey: nil,
+            localDisplayName: "Алексей", participantNames: ["Ирина"], canSendChat: true,
+            isMicUnmuted: false, isForeground: false, ensureTranscription: {},
+            sendChat: { _ in }, speakVoice: { speak($0) }
+        )
+    }
+
+    func testMentionAtEndOfFinalTranscriptNotifiesOnceWithoutCallingModel() async {
+        let id = UUID(), suite = SuiteBox(), evaluator = MockEvaluator()
+        let meeting = bridge(for: id)
+        let notified = expectation(description: "Final mention generates a notification")
+        let coordinator = IOSAssistantCoordinator(
+            workspace: nil, preferences: suite.defaults, evaluator: evaluator, modelAvailable: { true },
+            resolveBridge: { _ in meeting }, scheduleNotification: { _ in notified.fulfill() }
+        )
+        coordinator.setMode(.mentions, for: id)
+        let partial = makeEvent(id: "same", speaker: "Ирина", text: "Есть вопрос")
+        var final = partial
+        final.text += ", Алексей."
+        coordinator.observeEvents([partial], for: id, partialEventIDs: [partial.id])
+        await Task.yield()
+        coordinator.observeEvents([final], for: id)
+        await fulfillment(of: [notified], timeout: 2)
+        coordinator.observeEvents([final], for: id)
+        XCTAssertEqual(coordinator.alertCards.map(\.excerpt), ["Ирина: Есть вопрос, Алексей."])
+        let requests = await evaluator.capturedRequests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testDirectAddressWithoutLiteralAliasUsesModelInMentions() async {
+        let id = UUID(), suite = SuiteBox(), evaluator = MockEvaluator()
+        let meeting = bridge(for: id)
+        let notified = expectation(description: "Model-recognized direct address")
+        await evaluator.setVerdict(.init(needsUser: true, urgency: .now, reason: "Direct question",
+                                         suggestedReply: nil, confidence: 1))
+        let coordinator = IOSAssistantCoordinator(
+            workspace: nil, preferences: suite.defaults, evaluator: evaluator, modelAvailable: { true },
+            resolveBridge: { _ in meeting }, scheduleNotification: { _ in notified.fulfill() }
+        )
+        coordinator.setMode(.mentions, for: id)
+        coordinator.observeEvents([makeEvent(id: "q", speaker: "Ирина", text: "Ты можешь подтвердить?")], for: id)
+        await fulfillment(of: [notified], timeout: 2)
+        let requests = await evaluator.capturedRequests()
+        XCTAssertEqual(requests.map(\.mode), [.mentions])
+        XCTAssertEqual(coordinator.alertCards.first?.reason, "Direct question")
+    }
+
+    func testParticipateEvaluatesLastQuestionDuringCooldownAndSpeaksViaOpenAI() async {
+        let id = UUID(), suite = SuiteBox()
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.protocolClasses = [AssistantProviderFixture.self]
+        let session = URLSession(configuration: sessionConfig)
+        defer { session.invalidateAndCancel() }
+        let evaluator = IOSAssistantLLMService(
+            configProvider: { PortableOutcomeConfiguration(providerKind: .openAI, model: "gpt-5.4-mini") },
+            apiKeyProvider: { _ in "fixture" }, urlSession: session
+        )
+        let delivered = expectation(description: "Only the last turn needs a voice reply")
+        let meeting = bridge(for: id) { reply in
+            XCTAssertEqual(reply, "Confirmed.")
+            delivered.fulfill()
+        }
+        let coordinator = IOSAssistantCoordinator(
+            workspace: nil, preferences: suite.defaults, evaluator: evaluator, modelAvailable: { true },
+            evaluationCooldown: 0.2, resolveBridge: { _ in meeting }, scheduleNotification: { _ in }
+        )
+        coordinator.setMode(.participating, for: id)
+        coordinator.setParticipationOptions(for: id, askBeforeSending: false, output: .voice, goal: "")
+        let first = makeEvent(id: "intro", speaker: "Ирина", text: "First agenda item.")
+        coordinator.observeEvents([first], for: id)
+        await coordinator.evaluateNow(controllerID: id)
+        XCTAssertTrue(coordinator.alertCards.isEmpty)
+        let question = makeEvent(id: "q", speaker: "Ирина", text: "Can you confirm?")
+        coordinator.observeEvents([first, question], for: id)
+        await fulfillment(of: [delivered], timeout: 3)
+        XCTAssertEqual(coordinator.alertCards.first?.deliveredAutomatically, true)
+        XCTAssertNil(coordinator.evaluationErrors[id])
+    }
+
+    func testTurningParticipationOffWhileProviderIsThinkingDiscardsLateVoiceReply() async {
+        let id = UUID(), suite = SuiteBox()
+        let started = expectation(description: "Provider received the question")
+        let evaluator = SuspendedEvaluator(started: started)
+        let meeting = bridge(for: id) { _ in XCTFail("Participation was turned off") }
+        let coordinator = IOSAssistantCoordinator(
+            workspace: nil, preferences: suite.defaults, evaluator: evaluator, modelAvailable: { true },
+            resolveBridge: { _ in meeting }, scheduleNotification: { _ in XCTFail("Unexpected late alert") }
+        )
+        coordinator.setMode(.participating, for: id)
+        coordinator.setParticipationOptions(for: id, askBeforeSending: false, output: .voice, goal: "")
+        coordinator.observeEvents([makeEvent(id: "q", speaker: "Ирина", text: "Can you confirm?")], for: id)
+        let check = Task { await coordinator.evaluateNow(controllerID: id) }
+        await fulfillment(of: [started], timeout: 2)
+        coordinator.setMode(.off, for: id)
+        await evaluator.finish()
+        await check.value
+        XCTAssertTrue(coordinator.alertCards.isEmpty)
     }
 
     func testMentionModeTriggersDeterministicallyAndIgnoresOwnLines() async {
@@ -303,4 +424,45 @@ final class IOSAssistantModeTests: XCTestCase {
         let found = IOSAssistantCoordinator.findMention(in: partial, aliases: ["Vitalii"])
         XCTAssertEqual(found?.event.id, "2")
     }
+}
+
+private final class AssistantProviderFixture: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let body: Data
+            if let data = request.httpBody {
+                body = data
+            } else {
+                let stream = try XCTUnwrap(request.httpBodyStream)
+                stream.open()
+                defer { stream.close() }
+                body = try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: stream))
+            }
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(request.url?.absoluteString, "https://api.openai.com/v1/chat/completions")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture")
+            XCTAssertEqual(json["model"] as? String, "gpt-5.4-mini")
+            XCTAssertNotNil(json["max_completion_tokens"])
+            XCTAssertNil(json["max_tokens"])
+            XCTAssertNil(json["temperature"])
+            let messages = try XCTUnwrap(json["messages"] as? [[String: String]])
+            let needsReply = messages.last?["content"]?.contains("Can you confirm?") == true
+            let verdict = needsReply
+                ? #"{"needs_user":true,"urgency":"now","reason":"Confirmation requested","suggested_reply":"Confirmed."}"#
+                : #"{"needs_user":false,"urgency":"none"}"#
+            let data = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": verdict]]]])
+            let response = try XCTUnwrap(HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200,
+                                                         httpVersion: nil, headerFields: nil))
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

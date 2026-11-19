@@ -284,9 +284,13 @@ struct IOSAssistantModeSheet: View {
                 } header: {
                     Text(meetingTitle)
                 } footer: {
+                    if activeMode != .off, let error = assistant.evaluationErrors[controllerID] {
+                        Text(error).foregroundStyle(.red)
+                    }
                     if let status = assistant.lastStatusNoteBySession[controllerID] {
                         Text(status)
-                    } else if activeMode != .off && !assistant.hasModelConfigured() {
+                    }
+                    if activeMode != .off && !assistant.hasModelConfigured() {
                         Text(L("Local mention detection is active. Configure Apple Intelligence or an AI API key in Settings -> Meeting Assistant for deeper context follow-up."))
                     }
                 }

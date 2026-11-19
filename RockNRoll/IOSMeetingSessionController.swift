@@ -40,7 +40,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     var workspaceSessionID: UUID?
     var workspaceDeviceID = ""
     var onOpenNotes: (() -> Void)?
-    var onWorkspaceEventsChanged: ((UUID, [SyncedTranscriptEvent], [DateInterval]) -> Void)?
+    var onWorkspaceEventsChanged: ((UUID, [SyncedTranscriptEvent], [DateInterval], Set<String>) -> Void)?
 
     @Published private(set) var callView: RockCallViewController?
     @Published private(set) var title: String
@@ -70,7 +70,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     var currentAudioState: (microphoneOn: Bool, playoutOn: Bool) { session.appliedAudioState }
 
     private weak var workspaceAudio: IOSWorkspaceAudioCoordinator?
-    private var displayName = ""
+    private(set) var displayName = ""
     private var quiet = false
     private var joinStarted = false
     private var leaving = false
@@ -830,7 +830,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                     id: msg.id,
                     speaker: msg.participantName,
                     text: String(msg.text.prefix(4_096)),
-                    spokenAt: msg.sentAt ?? msg.receivedAt
+                    spokenAt: msg.sentAt ?? msg.receivedAt,
+                    isOwn: msg.isOwn
                 )
             }
             providerTranscriptSegments = segments
@@ -1051,7 +1052,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
 
     func ensureTranscriptionRunningForAssistant() async {
         guard !leaving, phase == .connected else { return }
-        guard !providerTranscriptActive, !localTranscriber.state.isRunning else { return }
+        guard !(providerTranscriptActive && providerCanViewTranscript == true),
+              !localTranscriber.state.isRunning else { return }
         _ = await localTranscriber.start()
         refreshLocalAudioSink()
         syncCatchUpTranscript()
@@ -1132,7 +1134,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                 sourceTier: 3,
                 occurredAt: seg.spokenAt ?? Date(),
                 speaker: seg.speaker,
-                isOwn: seg.speaker?.workspaceFolded == displayName.workspaceFolded,
+                isOwn: seg.isOwn ?? false,
                 text: seg.text,
                 deviceID: device
             ))
@@ -1145,7 +1147,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                 sourceTier: 2,
                 occurredAt: seg.spokenAt ?? Date(),
                 speaker: seg.speaker,
-                isOwn: seg.speaker?.workspaceFolded == displayName.workspaceFolded,
+                isOwn: seg.isOwn ?? false,
                 text: seg.text,
                 deviceID: device
             ))
@@ -1163,7 +1165,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                 deviceID: device
             ))
         }
-        handler(id, out, micActiveIntervals)
+        let partialEventIDs = Set(localTranscriber.partialSegmentIDs.map { "local:" + $0 })
+        handler(id, out, micActiveIntervals, partialEventIDs)
     }
 
     func presentNotesSheet(workspace: IOSWorkspaceCoordinator) {
