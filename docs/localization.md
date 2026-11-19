@@ -9,8 +9,8 @@ languages available on their own checkout screens.
 Own interface copy includes joining, saved rooms, profile/settings, chat and
 transcript controls, missed sections, participants, video modes, sharing previews,
 PiP microphone status, continuation, sync, errors, keyboard shortcuts and
-accessibility labels. Permission explanations and both broadcast extension names
-also have Russian resources. Meeting names, aliases, names entered by users,
+accessibility labels. Permission explanations and extension display names are
+localized for all nine supported languages. Meeting names, aliases, names entered by users,
 invitations, messages and transcripts remain verbatim. External pages and
 provider-supplied content retain their own language.
 

@@ -6,6 +6,12 @@ Telemost, TrueConf and Rock meetings. The shipping iPhone/iPad app and the old
 Mac app retain their existing defaults. This is a separate Apple Silicon beta,
 not an in-place replacement for their TestFlight bundle.
 
+### Supporting the author
+
+In the direct Mac app, open **Settings → App → Support the author**. Every meeting feature is free. Boosty offers monthly support at 99, 199, 299, 499, 999, or 1,999 rubles. The page opens at 299 rubles, and the provider confirms the charge before you subscribe. One-time support offers the available payment methods for your region.
+
+If you already subscribed on your phone, select **Link this Mac**. Send the code to the author in a private Boosty message from your subscribed account, then choose **I’ve sent the code** on the Mac. Once the author checks your membership, the Mac displays the confirmed period. A quiet invitation appears on Home beginning on the seventh distinct day of use, at most once per calendar month. Confirmed monthly support pauses it through the paid period. [Subscription verification for the maintainer](../RockServer/author-support/README.md)
+
 Architecture, capability limits and measured acceptance are recorded in
 `../docs/native-mac-feature-parity-2026-10-24.md`; desktop interaction drafts are
 in `../docs/native-mac-desktop-drafts.html`. Implementation and live acceptance
