@@ -1,0 +1,91 @@
+{
+  "version": "0.3.0",
+  "build": "133",
+  "channel": "beta",
+  "sourceCommit": "1823fcc0b7ad7b482c27aabaa3f7f351dbb8ad3e",
+  "sourceState": "Clean isolated checkout; 468 tracked build receipt inputs matched the pushed commit and four generated or dependency inputs matched the build files.",
+  "sourceManifest": {
+    "path": ".build/native-beta-133/build/build-evidence.json",
+    "sha256": "7dfe541229c87600a82159abdec279bd99d4240a33aa7fa1cefeb11b1389fb7b"
+  },
+  "validation": {
+    "nativeDesktopTests": {
+      "executed": 56,
+      "failed": 0,
+      "skipped": 2,
+      "configuration": "direct Debug, arm64",
+      "log": ".build/native-beta-133-tests-retry.log",
+      "skips": [
+        "Opt-in localized screenshot, run separately below",
+        "Opt-in offline meeting layout fixture"
+      ],
+      "priorDiagnostic": "Initial run of the same commit had two focus/AX failures while computer-use inventory overlapped; full suite rerun without computer-use passed. Original log retained at .build/native-beta-133-tests-final.log."
+    },
+    "localizedSupportSnapshots": {
+      "languages": [
+        "en",
+        "ru",
+        "ar"
+      ],
+      "appearances": [
+        "light",
+        "dark"
+      ],
+      "passed": 3,
+      "failed": 0,
+      "visualInspection": "All six captures inspected: readable Boosty CTA, default monthly card, app icon and disclosures; Arabic right-to-left layout visible.",
+      "path": ".build/native-beta-133/snapshots"
+    },
+    "distributionTests": {
+      "executed": 27,
+      "failed": 0
+    },
+    "archivedResources": "All nine support language tables byte-match source, signed destination catalog matches source SHA-256 81587b1d0c6c12621ddd59f9043c6653e6858ad02e4c7bc4fc30370dde3192d9; app icon resource present.",
+    "buildGates": [
+      "Signed native app-group IO and one-use ticket",
+      "Embedded cloned voice worker launch and exit"
+    ],
+    "limits": [
+      "Manual one-time selection, keyboard navigation and VoiceOver were not verified: computer-use could not obtain a controllable candidate window.",
+      "Installed Sparkle upgrade, live provider meeting and real paid membership were not exercised."
+    ]
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/.codex-worktrees/rock-support-localization/.build/native-beta-133/build/RockNRollNativeGuest-0.3.0-133.xcarchive",
+    "app": "/Users/v.smirnov/docs/.codex-worktrees/rock-support-localization/.build/native-beta-133/export-133/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "133",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "133",
+    "file": "RockNRoll-0.3.0-133-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-133-arm64.dmg",
+    "sha256": "8fe6bc54e1b04a9418c57e14e86a8ccc70f8dde387f39bef6cf63cdc8a924e0b",
+    "length": 42223148,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/.codex-worktrees/rock-support-localization/.build/native-beta-133/package-133/RockNRoll-0.3.0-133-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "httpsVerified": true,
+    "appcastSHA256": "8e71c162d7255046e59831c99ae76f0bda5b6ba2225ef4f3250adbc9d82600f0",
+    "inventorySHA256": "bda51acdbb1a7187613acae00553fcd3fea50c5635149a7622fb5ca3afc55e63",
+    "stableBuild": "53",
+    "betaBuild": "133",
+    "independentHTTPSReadback": {
+      "immutableSHA256": "8fe6bc54e1b04a9418c57e14e86a8ccc70f8dde387f39bef6cf63cdc8a924e0b",
+      "betaAliasSHA256": "8fe6bc54e1b04a9418c57e14e86a8ccc70f8dde387f39bef6cf63cdc8a924e0b",
+      "stableAliasSHA256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+      "metadataMatchesLocal": true
+    }
+  }
+}
