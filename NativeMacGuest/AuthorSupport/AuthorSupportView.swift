@@ -239,18 +239,28 @@ import SwiftUI
         }
     }
     private func primaryLink(_ label: String, _ url: URL) -> some View {
-        Link(destination: url) {
-            Text(label).foregroundStyle(Color(red: 0.17, green: 0.08, blue: 0.02))
+        Link(label, destination: url).buttonStyle(CheckoutButtonStyle())
+    }
+
+    private struct CheckoutButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .font(.callout.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Color(red: 0.17, green: 0.08, blue: 0.02))
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(red: 1, green: 0.65, blue: 0.34).opacity(configuration.isPressed ? 0.83 : 1))
+                }
         }
-        .buttonStyle(.borderedProminent)
-        .tint(Color(red: 1, green: 0.65, blue: 0.34))
     }
     private func phoneActions(_ url: URL) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { phoneButtons(url) }
                 VStack(alignment: .leading, spacing: 6) { phoneButtons(url) }
-            }.font(.caption).buttonStyle(.link)
+            }.font(.caption).buttonStyle(.plain)
             if showPhone {
                 if let image = Self.qrImage(url) {
                     Image(nsImage: image).interpolation(.none).resizable().frame(width: 144, height: 144)
