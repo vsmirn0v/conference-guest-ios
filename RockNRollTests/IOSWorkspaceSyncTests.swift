@@ -69,6 +69,7 @@ final class IOSWorkspaceSyncTests: XCTestCase {
 
     private actor MockOutcomeWriter: PortableOutcomeWriting {
         var callCount = 0
+        private var failure: PortableOutcomeError?
         var nextResult = PortableOutcomeResult(
             summary: "Generated on iPhone",
             decisions: ["Proceed offline"],
@@ -84,6 +85,7 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         )
 
         func calls() -> Int { callCount }
+        func fail(with error: PortableOutcomeError) { failure = error }
 
         func generateOutcome(
             title: String,
@@ -94,6 +96,7 @@ final class IOSWorkspaceSyncTests: XCTestCase {
             configuration: PortableOutcomeConfiguration
         ) async throws -> PortableOutcomeResult {
             callCount += 1
+            if let failure { throw failure }
             return nextResult
         }
     }
@@ -355,6 +358,31 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         XCTAssertEqual(f.workspace.tasks.count, 1)
         XCTAssertFalse(f.scheduledNotificationIDs.value.isEmpty)
         XCTAssertNotNil(f.libraryCloud.records["outcome:" + sid.uuidString])
+    }
+
+    func testSummaryHTTPFailureIsIncludedInExportDiagnostics() async throws {
+        let f = try await makeCoordinator()
+        f.workspace.outcomeConfig = .init(providerKind: .openAI, model: "gpt-5.4-mini")
+        await f.writer.fail(with: .http(status: 400, code: "unsupported_parameter", parameter: "max_tokens"))
+        let url = URL(string: "https://meet.example.com/diagnostics-fixture")!
+        let sid = f.workspace.beginSession(
+            controllerID: UUID(), requestedWorkspaceID: nil, title: "Private diagnostics fixture title",
+            invitation: url, roomIdentity: url.absoluteString, calendarMeeting: nil
+        )
+        f.workspace.updateNoteDraft("Private diagnostics fixture note", for: sid)
+        await f.workspace.generateOutcomeNow(sessionID: sid)
+
+        let line = try XCTUnwrap(AppDiagnostics.report().split(separator: "\n").last {
+            $0.contains("\"event\":\"meeting-summary-error\"") && $0.contains("\"model\":\"gpt-5.4-mini\"")
+        })
+        let event = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        XCTAssertEqual(event["provider"] as? String, "openAI")
+        XCTAssertEqual(event["httpStatus"] as? Int, 400)
+        XCTAssertEqual(event["providerCode"] as? String, "unsupported_parameter")
+        XCTAssertEqual(event["parameter"] as? String, "max_tokens")
+        XCTAssertEqual(event["hasNotes"] as? Bool, true)
+        XCTAssertFalse(line.contains("Private diagnostics fixture"))
+        XCTAssertFalse(line.contains("meet.example.com"))
     }
 
     func testRemoteMacCalendarProjectsIntoPhoneAgendaWhenLocalCalendarOff() async throws {

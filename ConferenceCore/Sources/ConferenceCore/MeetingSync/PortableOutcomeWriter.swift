@@ -74,13 +74,19 @@ public struct PortableOutcomeConfiguration: Codable, Equatable, Sendable {
         case .appleOnDevice:
             return Self.isAppleOnDeviceAvailable
         case .openAI, .openRouter, .custom:
-            return endpoint != nil && !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return endpoint != nil && !resolvedModel.isEmpty
         }
     }
 
-    public var endpoint: URL? {
-        let raw = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let candidate = raw.isEmpty ? providerKind.defaultBaseURL : raw
+    public var resolvedModel: String {
+        let configured = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return configured.isEmpty ? providerKind.defaultModel : configured
+    }
+
+    private var providerBaseURL: URL? {
+        let candidate = providerKind == .custom
+            ? baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            : providerKind.defaultBaseURL
         guard var url = URL(string: candidate),
               let scheme = url.scheme?.lowercased(),
               ["https", "http"].contains(scheme),
@@ -88,8 +94,11 @@ public struct PortableOutcomeConfiguration: Codable, Equatable, Sendable {
         if url.absoluteString.hasSuffix("/") {
             url = URL(string: String(url.absoluteString.dropLast())) ?? url
         }
-        return url.appendingPathComponent("chat/completions")
+        return url
     }
+
+    public var endpoint: URL? { providerBaseURL?.appendingPathComponent("chat/completions") }
+    public var modelCatalogEndpoint: URL? { providerBaseURL?.appendingPathComponent("models") }
 
     public static var isAppleOnDeviceAvailable: Bool {
         #if canImport(FoundationModels)
@@ -175,15 +184,20 @@ public struct PortableOutcomeResult: Equatable, Sendable {
 
 public enum PortableOutcomeError: LocalizedError, Equatable {
     case notConfigured
+    case noMeetingContent
+    case onDeviceUnavailable
     case missingKey
     case transport(String)
+    case http(status: Int, code: String?, parameter: String?)
     case invalidResponse
 
     public var errorDescription: String? {
         switch self {
-        case .notConfigured: return L("Configure an outcome provider in Assistant settings.")
+        case .notConfigured, .noMeetingContent, .onDeviceUnavailable:
+            return L("Configure an outcome provider in Assistant settings.")
         case .missingKey: return L("Add an API key in Assistant settings.")
         case .transport(let detail): return detail
+        case .http: return L("The outcome provider returned an error.")
         case .invalidResponse: return L("The outcome provider returned an unusable response.")
         }
     }
@@ -340,7 +354,7 @@ public struct PortableOutcomeService: PortableOutcomeWriting {
                 !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         } || !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard hasUsableEvents else {
-            throw PortableOutcomeError.notConfigured
+            throw PortableOutcomeError.noMeetingContent
         }
 
         switch configuration.providerKind {
@@ -351,15 +365,13 @@ public struct PortableOutcomeService: PortableOutcomeWriting {
                 return try await generateOnDevice(title: title, endedAt: endedAt, events: events, notes: notes, language: language)
             }
             #endif
-            throw PortableOutcomeError.notConfigured
+            throw PortableOutcomeError.onDeviceUnavailable
 
         case .openAI, .openRouter, .custom:
             guard let endpoint = configuration.endpoint else {
                 throw PortableOutcomeError.notConfigured
             }
-            let model = configuration.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? configuration.providerKind.defaultModel
-                : configuration.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            let model = configuration.resolvedModel
             guard !model.isEmpty else { throw PortableOutcomeError.notConfigured }
             let key = keychain.read(kind: configuration.providerKind)
             if configuration.providerKind.needsKey && (key?.isEmpty != false) {
@@ -372,13 +384,7 @@ public struct PortableOutcomeService: PortableOutcomeWriting {
                 notes: notes,
                 language: language
             )
-            let body: [String: Any] = [
-                "model": model,
-                "messages": messages,
-                "temperature": 0,
-                "max_tokens": 2000,
-                "response_format": ["type": "json_object"]
-            ]
+            let body = Self.requestBody(messages: messages, model: model, provider: configuration.providerKind)
             var request = URLRequest(url: endpoint)
             request.httpMethod = "POST"
             request.timeoutInterval = 120
@@ -388,8 +394,11 @@ public struct PortableOutcomeService: PortableOutcomeWriting {
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                throw PortableOutcomeError.transport(L("The outcome provider returned an error."))
+            guard let http = response as? HTTPURLResponse else {
+                throw PortableOutcomeError.invalidResponse
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                throw Self.httpError(status: http.statusCode, data: data)
             }
             guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = root["choices"] as? [[String: Any]],
@@ -400,6 +409,45 @@ public struct PortableOutcomeService: PortableOutcomeWriting {
             }
             return try PortableOutcomePrompt.parse(content)
         }
+    }
+
+    static func requestBody(
+        messages: [[String: String]], model: String, provider: PortableOutcomeProviderKind
+    ) -> [String: Any] {
+        var body: [String: Any] = [
+            "model": model,
+            "messages": messages,
+            "response_format": ["type": "json_object"]
+        ]
+        if provider == .openAI {
+            body["max_completion_tokens"] = 2000
+        } else {
+            body["max_tokens"] = 2000
+            body["temperature"] = 0
+        }
+        return body
+    }
+
+    static func httpError(status: Int, data: Data) -> PortableOutcomeError {
+        let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let error = root?["error"] as? [String: Any]
+        let code = (error?["code"] as? String) ?? (error?["type"] as? String)
+        let parameter = error?["param"] as? String
+        // Provider messages and unknown fields can include request data or credentials.
+        let codes = [
+            "invalid_request_error", "invalid_api_key", "model_not_found", "unsupported_parameter",
+            "unsupported_value", "invalid_value", "context_length_exceeded", "insufficient_quota",
+            "rate_limit_exceeded", "unsupported_country_region_territory", "server_error"
+        ]
+        let parameters = [
+            "model", "temperature", "max_tokens", "max_completion_tokens", "response_format",
+            "messages", "reasoning_effort"
+        ]
+        return .http(
+            status: status,
+            code: code.map { codes.contains($0) ? $0 : "other" },
+            parameter: parameter.map { parameters.contains($0) ? $0 : "other" }
+        )
     }
 
     #if canImport(FoundationModels)

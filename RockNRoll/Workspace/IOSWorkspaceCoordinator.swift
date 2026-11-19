@@ -454,15 +454,20 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             return
         }
 
-        guard outcomeConfig.hasOnDeviceOrRemoteWriter else { return }
+        guard outcomeConfig.hasOnDeviceOrRemoteWriter else {
+            var fields = outcomeDiagnosticConfiguration(outcomeConfig)
+            fields["reason"] = "writerUnavailable"
+            AppDiagnostics.log("meeting-summary-skipped", fields)
+            return
+        }
         if let currentSynced = replica.workspaceDoc.sessions[resolvedSID],
            !OutcomeCoordinatorPolicy.canClaimGeneration(session: currentSynced, localDeviceID: deviceID) {
             return
         }
-        await generateOutcomeNow(sessionID: resolvedSID)
+        await generateOutcomeNow(sessionID: resolvedSID, automatic: true)
     }
 
-    func generateOutcomeNow(sessionID: UUID) async {
+    func generateOutcomeNow(sessionID: UUID, automatic: Bool = false) async {
         let sid = replica.workspaceDoc.resolveCanonicalSessionID(for: sessionID)
         guard !generatingSessionIDs.contains(sid) else { return }
         generatingSessionIDs.insert(sid)
@@ -488,7 +493,17 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         let title = session?.title ?? L("Meeting")
         let endedAt = session?.endedAt ?? Date()
         let language = Locale.current.language.languageCode?.identifier ?? "en"
+        let configuration = outcomeConfig
+        var diagnostic = outcomeDiagnosticConfiguration(configuration)
+        diagnostic["attempt"] = UUID().uuidString
+        diagnostic["trigger"] = automatic ? "automatic" : "manual"
+        diagnostic["language"] = language
+        diagnostic["transcriptCount"] = events.filter { $0.kind == "transcript" }.count
+        diagnostic["chatCount"] = events.filter { $0.kind == "chat" }.count
+        diagnostic["hasNotes"] = !noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        AppDiagnostics.log("meeting-summary-start", diagnostic)
 
+        var stage = "generate"
         do {
             let result = try await outcomeWriter.generateOutcome(
                 title: title,
@@ -496,9 +511,10 @@ final class IOSWorkspaceCoordinator: ObservableObject {
                 events: events,
                 notes: noteText,
                 language: language,
-                configuration: outcomeConfig
+                configuration: configuration
             )
 
+            stage = "save"
             let outcomeID = outcomesBySession[sid]?.outcomeID ?? UUID()
             let now = Date()
             let v = replica.workspaceDoc.nextVersion()
@@ -584,9 +600,51 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             await reloadFromStore()
             await reconcileTaskNotifications()
             scheduleSync(delayMilliseconds: 150)
+            AppDiagnostics.log("meeting-summary-ready", diagnostic)
         } catch {
             outcomeErrors[sid] = error.localizedDescription
+            diagnostic["stage"] = stage
+            switch error as? PortableOutcomeError {
+            case .notConfigured: diagnostic["reason"] = "notConfigured"
+            case .noMeetingContent: diagnostic["reason"] = "noMeetingContent"
+            case .onDeviceUnavailable: diagnostic["reason"] = "onDeviceUnavailable"
+            case .missingKey: diagnostic["reason"] = "missingKey"
+            case .transport: diagnostic["reason"] = "transport"
+            case .invalidResponse: diagnostic["reason"] = "invalidResponse"
+            case .http(let status, let code, let parameter):
+                diagnostic["reason"] = "http"
+                diagnostic["httpStatus"] = status
+                diagnostic["providerCode"] = code
+                diagnostic["parameter"] = parameter
+            case nil:
+                let failure = error as NSError
+                diagnostic["reason"] = error is CancellationError ? "cancelled" : "systemError"
+                diagnostic["domain"] = failure.domain
+                diagnostic["code"] = failure.code
+            }
+            AppDiagnostics.log("meeting-summary-error", diagnostic)
         }
+    }
+
+    private func outcomeDiagnosticConfiguration(_ configuration: PortableOutcomeConfiguration) -> [String: Any] {
+        var fields: [String: Any] = ["provider": configuration.providerKind.rawValue]
+        switch configuration.providerKind {
+        case .preferMac, .appleOnDevice:
+            fields["model"] = "system"
+            fields["endpoint"] = "onDevice"
+        case .openAI, .openRouter, .custom:
+            let model = configuration.resolvedModel
+            fields["endpoint"] = configuration.providerKind == .custom ? "configured" : "default"
+            if !model.isEmpty {
+                // Only export public-style model IDs. Custom and fine-tuned names can identify an organization.
+                let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/")
+                let isPublicID = configuration.providerKind != .custom && model.utf8.count <= 100
+                    && model.unicodeScalars.allSatisfy { allowed.contains($0) }
+                    && !model.split(separator: "/").contains { $0.lowercased().hasPrefix("sk-") }
+                fields["model"] = isPublicID ? model : "configured"
+            }
+        }
+        return fields
     }
 
     // MARK: - Notes, Edits, Tasks & Obsidian

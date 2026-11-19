@@ -1,3 +1,4 @@
+import ConferenceCore
 import Foundation
 
 struct JudgeResult: Sendable {
@@ -287,15 +288,7 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
 }
 
 /// One model a provider offers, from its `/models` list.
-struct AttentionModelInfo: Identifiable, Equatable, Sendable {
-    let id: String
-    var name: String?
-    var contextLength: Int?
-    /// Known only when the provider lists supported parameters (OpenRouter does).
-    var structuredOutput: Bool?
-    /// US dollars per million prompt tokens, when the provider lists prices.
-    var promptPrice: Double?
-}
+typealias AttentionModelInfo = ProviderModelInfo
 
 enum AttentionModelCatalog {
     /// Lists the provider's models from `GET {address}/models`, the
@@ -317,28 +310,11 @@ enum AttentionModelCatalog {
     }
 
     static func parse(_ items: [[String: Any]]) -> [AttentionModelInfo] {
-        var seen = Set<String>()
-        let models: [AttentionModelInfo] = items.compactMap { item in
-            guard let id = item["id"] as? String, !id.isEmpty, seen.insert(id).inserted else { return nil }
-            let parameters = item["supported_parameters"] as? [String]
-            let price = ((item["pricing"] as? [String: Any])?["prompt"]).flatMap { ($0 as? String).flatMap(Double.init) ?? $0 as? Double }
-            return .init(id: id, name: item["name"] as? String, contextLength: item["context_length"] as? Int,
-                         structuredOutput: parameters.map { $0.contains("structured_outputs") || $0.contains("response_format") },
-                         promptPrice: price.map { $0 * 1_000_000 })
-        }
-        return models.sorted { lhs, rhs in
-            let left = lhs.structuredOutput ?? true, right = rhs.structuredOutput ?? true
-            return left == right ? lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending : left
-        }
+        ProviderModelCatalog.parse(items)
     }
 
     /// Case- and diacritic-insensitive match on every word of the query against id and name.
     static func filter(_ models: [AttentionModelInfo], query: String) -> [AttentionModelInfo] {
-        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !words.isEmpty else { return models }
-        return models.filter { model in
-            let text = model.id + " " + (model.name ?? "")
-            return words.allSatisfy { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
-        }
+        ProviderModelCatalog.filter(models, query: query)
     }
 }

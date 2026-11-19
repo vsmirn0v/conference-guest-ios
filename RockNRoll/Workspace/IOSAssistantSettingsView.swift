@@ -8,6 +8,7 @@ struct IOSAssistantSettingsView: View {
     @ObservedObject var assistant: IOSAssistantCoordinator
 
     @State private var apiKeyDraft = ""
+    @State private var choosingModel = false
     @State private var pickingArchiveFolder = false
     @State private var pickingExportBundleFolder = false
     @State private var pickingImportBundleFolder = false
@@ -42,15 +43,20 @@ struct IOSAssistantSettingsView: View {
 
             Section {
                 Toggle(L("Generate summaries automatically after meetings"), isOn: $workspace.outcomeConfig.autoGenerateOnLeave)
-                Picker(L("Summary provider"), selection: $workspace.outcomeConfig.providerKind) {
+                Picker(L("Summary provider"), selection: Binding(
+                    get: { workspace.outcomeConfig.providerKind },
+                    set: { kind in
+                        var configuration = workspace.outcomeConfig
+                        guard configuration.providerKind != kind else { return }
+                        configuration.providerKind = kind
+                        configuration.model = kind.defaultModel
+                        configuration.contextTokens = nil
+                        workspace.outcomeConfig = configuration
+                        apiKeyDraft = workspace.readAPIKey(for: kind)
+                    }
+                )) {
                     ForEach(PortableOutcomeProviderKind.allCases, id: \.self) { kind in
                         Text(kind.title).tag(kind)
-                    }
-                }
-                .onChange(of: workspace.outcomeConfig.providerKind) { _, newKind in
-                    apiKeyDraft = workspace.readAPIKey(for: newKind)
-                    if workspace.outcomeConfig.model.isEmpty && !newKind.defaultModel.isEmpty {
-                        workspace.outcomeConfig.model = newKind.defaultModel
                     }
                 }
 
@@ -62,15 +68,33 @@ struct IOSAssistantSettingsView: View {
                 }
 
                 if workspace.outcomeConfig.providerKind.needsKey {
-                    TextField(L("Model"), text: $workspace.outcomeConfig.model)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    SecureField(L("API Key (stored in Keychain)"), text: $apiKeyDraft)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .onChange(of: apiKeyDraft) { _, newValue in
-                            workspace.saveAPIKey(newValue, for: workspace.outcomeConfig.providerKind)
+                    Button {
+                        choosingModel = true
+                    } label: {
+                        Label(L("Choose provider model…"), systemImage: "list.bullet")
+                    }
+                    .disabled(workspace.outcomeConfig.modelCatalogEndpoint == nil || apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    TextField(L("Model"), text: Binding(
+                        get: { workspace.outcomeConfig.model },
+                        set: { model in
+                            var configuration = workspace.outcomeConfig
+                            guard configuration.model != model else { return }
+                            configuration.model = model
+                            configuration.contextTokens = nil
+                            workspace.outcomeConfig = configuration
                         }
+                    ))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField(L("API Key (stored in Keychain)"), text: Binding(
+                        get: { apiKeyDraft },
+                        set: { key in
+                            apiKeyDraft = key
+                            workspace.saveAPIKey(key, for: workspace.outcomeConfig.providerKind)
+                        }
+                    ))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                 }
             } header: {
                 Text(L("Meeting Summaries & Tasks"))
@@ -188,6 +212,17 @@ struct IOSAssistantSettingsView: View {
             }
         }
         .navigationTitle(L("Assistant & Sync"))
+        .sheet(isPresented: $choosingModel) {
+            let configuration = workspace.outcomeConfig
+            IOSSummaryModelPicker(configuration: configuration, key: workspace.readAPIKey(for: configuration.providerKind)) { model in
+                var current = workspace.outcomeConfig
+                guard current.providerKind == configuration.providerKind,
+                      current.modelCatalogEndpoint == configuration.modelCatalogEndpoint else { return }
+                current.model = model.id
+                current.contextTokens = model.contextLength
+                workspace.outcomeConfig = current
+            }
+        }
         .onAppear {
             apiKeyDraft = workspace.readAPIKey(for: workspace.outcomeConfig.providerKind)
             Task { await workspace.refreshArchiveStats() }
@@ -229,5 +264,89 @@ struct IOSAssistantSettingsView: View {
                 }
             }
         }
+    }
+}
+
+private struct IOSSummaryModelPicker: View {
+    let configuration: PortableOutcomeConfiguration
+    let key: String
+    let onSelect: (ProviderModelInfo) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var models: [ProviderModelInfo] = []
+    @State private var search = ""
+    @State private var loading = true
+    @State private var error: String?
+    @State private var loadAttempt = 0
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if loading {
+                    ProgressView(L("Loading models…"))
+                } else if let error {
+                    VStack(spacing: 12) {
+                        Text(error).multilineTextAlignment(.center)
+                        Button(L("Try again")) { loadAttempt += 1 }
+                    }
+                    .padding()
+                } else {
+                    let shown = ProviderModelCatalog.filter(models, query: search)
+                    List(shown) { model in
+                        Button {
+                            onSelect(model)
+                            dismiss()
+                        } label: {
+                            modelRow(model)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .overlay {
+                        if shown.isEmpty { Text(L("No models match.")).foregroundStyle(.secondary) }
+                    }
+                }
+            }
+            .navigationTitle(configuration.providerKind.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $search, prompt: L("Search models"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L("Cancel")) { dismiss() }
+                }
+            }
+            .task(id: loadAttempt) {
+                loading = true
+                error = nil
+                defer { loading = false }
+                do {
+                    models = try await ProviderModelCatalog.fetch(configuration: configuration, key: key)
+                } catch where !Task.isCancelled {
+                    self.error = error.localizedDescription
+                } catch {}
+            }
+        }
+    }
+
+    private func modelRow(_ model: ProviderModelInfo) -> some View {
+        let selected = model.id == configuration.resolvedModel
+        var details: [String] = []
+        if model.name != nil { details.append(model.id) }
+        if let length = model.contextLength { details.append(L("%ld K context", length / 1000)) }
+        if let price = model.promptPrice {
+            details.append(price == 0 ? L("free") : L("$%.2f per million input tokens", price))
+        }
+        if model.structuredOutput == false { details.append(L("no structured output")) }
+        return HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.name ?? model.id)
+                if !details.isEmpty {
+                    Text(details.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if selected { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+        }
+        .contentShape(Rectangle())
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
