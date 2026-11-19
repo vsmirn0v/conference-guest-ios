@@ -7,6 +7,7 @@ Type=simple
 ExecStart=/usr/bin/python3 /opt/rock-author-support/service.py serve
 Restart=on-failure
 RestartSec=2
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
