@@ -32,7 +32,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>133</string>
+	<string>134</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>JoinLinkHost</key>
@@ -58,6 +58,10 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Use your microphone to speak in jams and test your sound privately before unmuting.</string>
+	<key>NSPersonalVoiceUsageDescription</key>
+	<string>Rock'n'Roll can use your Personal Voice to speak voice replies you send into meetings.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Rock'n'Roll uses on-device Speech Recognition to transcribe meetings locally on this iPhone.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSUserActivityTypes</key>
@@ -99,9 +103,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Rock'n'Roll uses on-device Speech Recognition to transcribe meetings locally on this iPhone.</string>
-	<key>NSPersonalVoiceUsageDescription</key>
-	<string>Rock'n'Roll can use your Personal Voice to speak voice replies you send into meetings.</string>
 </dict>
 </plist>

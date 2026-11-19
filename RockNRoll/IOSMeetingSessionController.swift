@@ -605,8 +605,9 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         session.onFeatures = { [weak self] features in
             self?.applyFeaturesSnapshot(features)
         }
-        session.onCapturedMessages = { [weak self] messages, _ in
-            self?.applyCapturedMessages(messages)
+        session.onCapturedMessages = { [weak self] messages, isTranscript in
+            guard !isTranscript else { return }
+            self?.applyCapturedChatMessages(messages)
         }
         session.onFeatureError = { [weak self] error in
             self?.reportMediaStatus(error.localizedDescription)
@@ -842,7 +843,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         }
     }
 
-    private func applyCapturedMessages(_ messages: [GuestMeetingMessage]) {
+    private func applyCapturedChatMessages(_ messages: [GuestMeetingMessage]) {
         guard !leaving, !(session.chatService?.managesChatStoreSendCallbacks ?? false), !messages.isEmpty else { return }
         chat.replace(messages.map(Self.chatEntry(from:)))
         emitWorkspaceEvents()

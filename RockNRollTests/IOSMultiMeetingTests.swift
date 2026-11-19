@@ -76,11 +76,12 @@ final class IOSMultiMeetingTests: XCTestCase {
         var concurrentMicrophoneCalls = 0
         var maxConcurrentMicrophoneCalls = 0
 
-        init(kind: MeetingEngineKind, startInLobby: Bool = false) {
+        init(kind: MeetingEngineKind, startInLobby: Bool = false, canViewTranscript: Bool = false) {
             self.kind = kind
             self.startInLobby = startInLobby
             switch kind {
-            case .guest: capabilities = .guest(canViewChat: true, canSendChat: true, canReact: true)
+            case .guest: capabilities = .guest(canViewChat: true, canSendChat: true, canReact: true,
+                                               canViewTranscript: canViewTranscript)
             case .community: capabilities = .rock()
             case .telemost: capabilities = .telemost
             case .trueconf: capabilities = .trueconf
@@ -291,6 +292,50 @@ final class IOSMultiMeetingTests: XCTestCase {
         while !condition(), Date() < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
+    }
+
+    func testGuestTranscriptCaptureStaysOutOfChatAndWorkspaceChatEvents() throws {
+        let destination = try JoinDestination.parse("https://meeting.example.test/calls/room-guest?psw=secret123")
+        let adapter = MockMultiAdapter(kind: .guest, canViewTranscript: true)
+        let workspaceAudio = IOSWorkspaceAudioCoordinator(sharedAudio: nil, configureLiveKit: false)
+        let controller = IOSMeetingSessionController(
+            destination: destination,
+            session: MeetingSession(kind: .guest, adapter: adapter),
+            chat: ChatStore(),
+            catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            workspaceAudio: workspaceAudio,
+            initialTitle: nil
+        )
+        var archivedEvents: [SyncedTranscriptEvent] = []
+        controller.onWorkspaceEventsChanged = { _, events, _ in archivedEvents.append(contentsOf: events) }
+        let time = Date()
+        let chatMessage = GuestMeetingMessage(id: "chat", participantID: "ani", participantName: "Ani",
+                                              text: "Typed message", sentAt: time, isOwn: false)
+        let liveLine = GuestMeetingMessage(id: "live", participantID: "ani", participantName: "Ani",
+                                           text: "Live speech", sentAt: time.addingTimeInterval(1), isOwn: false)
+        let historyLine = GuestMeetingMessage(id: "history", participantID: "ani", participantName: "Ani",
+                                              text: "Earlier speech", sentAt: time.addingTimeInterval(-1), isOwn: false)
+
+        adapter.onCapturedMessages?([chatMessage], false)
+        XCTAssertEqual(controller.chat.items.map(\.id), [chatMessage.id])
+        let unreadCount = controller.chat.unreadCount
+
+        adapter.onCapturedMessages?([liveLine], true)
+        adapter.onCapturedMessages?([historyLine, liveLine], true)
+        XCTAssertEqual(controller.chat.items.map(\.id), [chatMessage.id])
+        XCTAssertEqual(controller.chat.unreadCount, unreadCount)
+        XCTAssertFalse(controller.chat.unreadCoverageIsLimited)
+
+        adapter.onFeatures?(GuestMeetingSnapshot(
+            permissions: GuestMeetingPermissions(canViewChat: true, canViewTranscript: true),
+            messages: [chatMessage],
+            transcript: [historyLine, liveLine],
+            transcriptionStatus: .active
+        ))
+        XCTAssertEqual(controller.catchUp.timeline.segments.map(\.id), [historyLine.id, liveLine.id])
+        XCTAssertEqual(Set(archivedEvents.filter { $0.kind == "chat" }.map(\.providerMessageID)), [chatMessage.id])
+        XCTAssertEqual(Set(archivedEvents.filter { $0.kind == "transcript" }.map(\.providerMessageID)),
+                       [historyLine.id, liveLine.id])
     }
 
     func testFourSimultaneousSessionsAcrossAllProvidersAndFifthRoomPromptReplacement() async throws {
