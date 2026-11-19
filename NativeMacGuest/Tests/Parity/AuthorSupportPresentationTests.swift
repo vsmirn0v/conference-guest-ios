@@ -23,6 +23,7 @@ private struct SupportLayoutProbe: View {
         let view = NativeDesktopSettingsView(library: NativeDesktopLibrary(), meeting: nil, tab: .constant(SupportCopy.settingsTab))
             .background(SupportLayoutProbe { renderedDirection = $0 })
             .frame(width: 950, height: 700)
+            .background(Color(nsColor: .windowBackgroundColor))
         let host = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 950, height: 700),
                               styleMask: .borderless, backing: .buffered, defer: false)
@@ -33,14 +34,19 @@ private struct SupportLayoutProbe: View {
         host.layoutSubtreeIfNeeded()
         try await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertEqual(renderedDirection, requested == "ar" ? .rightToLeft : .leftToRight)
-        let image = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: image)
-        let png = try XCTUnwrap(image.representation(using: .png, properties: [:]))
-        XCTAssertGreaterThan(png.count, 8_000)
-        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-        attachment.name = "Support Settings - " + requested
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        for (appearance, mode) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            window.appearance = NSAppearance(named: appearance)
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(nanoseconds: 150_000_000)
+            let image = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: image)
+            let png = try XCTUnwrap(image.representation(using: .png, properties: [:]))
+            XCTAssertGreaterThan(png.count, 8_000)
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Support Settings - \(requested) - \(mode)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
     }
 
     func testSeventhDistinctUseDayAndMonthlyVisibleImpressionSurviveRelaunch() throws {

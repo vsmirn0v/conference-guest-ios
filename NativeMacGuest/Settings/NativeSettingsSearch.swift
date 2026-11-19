@@ -174,7 +174,7 @@ enum NativeSettingsSearchCatalog {
             let area = entry.assistantArea.map { fold($0.title) } ?? ""
             var corpus = (titles + [fold(L(entry.section)), fold(entry.section), area, fold(L(description)), fold(description)]).joined(separator: " ")
             #if NATIVE_DIRECT_UPDATES
-            if entry.tab == SupportCopy.settingsTab { corpus += " " + fold(SupportCopy.text("donate donation gift tip subscription")) }
+            if entry.tab == SupportCopy.settingsTab { corpus += " " + fold(SupportCopy.text("voluntary support subscription transfer")) }
             #endif
             guard tokens.allSatisfy({ corpus.contains($0) }) else { return nil }
             let score = titles.map { title in

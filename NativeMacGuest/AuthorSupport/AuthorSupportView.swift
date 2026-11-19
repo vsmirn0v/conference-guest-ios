@@ -3,28 +3,20 @@ import AppKit
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
-struct AuthorSupportHeading: View {
-    let title: String
-    @FocusState private var focused: Bool
-    @AccessibilityFocusState private var spoken: Bool
-    var body: some View {
-        Text(title).accessibilityAddTraits(.isHeader).focusable().focused($focused)
-            .accessibilityFocused($spoken)
-            .onAppear { focused = true; spoken = true }
-    }
-}
-
 @MainActor struct AuthorSupportView: View {
-    private enum Method: String { case bank, boosty, hipolink }
+    private enum Method { case boosty, bank }
+    var focusOnEntry: Binding<Bool> = .constant(false)
     @ObservedObject private var service = AuthorSupportService.shared
     @State private var monthly = true
     @State private var amount = 299
-    @State private var method: Method = SupportCopy.russian ? .bank : .hipolink
-    @State private var tip: Decimal? = 9
+    @State private var method: Method = .boosty
+    @State private var linkDetails = false
     @State private var claimOpen = false
     @State private var working = false
     @State private var feedback = ""
     @State private var showPhone = false
+    @FocusState private var headingFocused: Bool
+    @AccessibilityFocusState(for: .voiceOver) private var headingSpoken: Bool
 
     private func t(_ key: String) -> String { SupportCopy.text(key) }
     private func day(_ date: Date) -> String {
@@ -35,9 +27,8 @@ struct AuthorSupportHeading: View {
     }
     private var offeredMethods: [Method] {
         var result: [Method] = []
-        if service.bankURL != nil { result.append(.bank) }
         if service.boostyOneTimeURL != nil { result.append(.boosty) }
-        if service.hipolinkTipsURL != nil || service.boostyOneTimeURL != nil { result.append(.hipolink) }
+        if service.bankURL != nil { result.append(.bank) }
         return result
     }
     private var shownMethod: Method? { offeredMethods.contains(method) ? method : offeredMethods.first }
@@ -55,51 +46,98 @@ struct AuthorSupportHeading: View {
     }
 
     var body: some View {
+        let claim = visibleClaim
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(t("Rock’n’Roll is free and open source. I test calls, fix audio issues, and keep the app working across macOS releases. If it helps you, you can support my work."))
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) { projectLinks }
-                    VStack(alignment: .leading, spacing: 7) { projectLinks }
-                }
-                VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                Text(t("Rock’n’Roll is free and open source. Your support helps me test calls, fix audio issues, and ship macOS updates."))
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 12) {
                     Picker(t("Support frequency"), selection: $monthly) {
                         Text(t("Monthly")).tag(true)
                         Text(t("One time")).tag(false)
                     }.pickerStyle(.segmented).labelsHidden().fixedSize(horizontal: true, vertical: false)
                         .accessibilityIdentifier("author-support.frequency")
-                    if monthly { monthlyContent } else { oneTimeContent }
-                    if !feedback.isEmpty { Text(feedback).font(.callout).foregroundStyle(.secondary) }
-                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-                Text(t("Giving is voluntary. All features stay free. Support does not buy priority service or specific development work."))
-                    .font(.callout).foregroundStyle(.secondary)
-            }.frame(maxWidth: 680, alignment: .leading).padding(24)
+                    if monthly { monthlyContent(claim) } else { oneTimeContent }
+                }
+                .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                if monthly, case .none = claim { linkDisclosure }
+                if !feedback.isEmpty { Text(feedback).font(.callout).foregroundStyle(.secondary) }
+                footer
+            }.frame(maxWidth: 600, alignment: .leading).padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .tint(.gray)
         .onChange(of: monthly) { _ in clearHandoff() }
         .onChange(of: amount) { _ in clearHandoff() }
         .onChange(of: method) { _ in clearHandoff() }
-        .onChange(of: service.monthlyTiers.map(\.checkoutURL) + [service.bankURL, service.boostyOneTimeURL, service.hipolinkTipsURL].compactMap { $0 }) { _ in clearHandoff() }
+        .onChange(of: service.monthlyTiers.map(\.checkoutURL) + [service.bankURL, service.boostyOneTimeURL].compactMap { $0 }) { _ in clearHandoff() }
         .task { await service.refresh() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
+                .resizable().interpolation(.high).frame(width: 56, height: 56)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(t("Support the author")).font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                    .focusable().focused($headingFocused).accessibilityFocused($headingSpoken)
+                    .onAppear {
+                        if focusOnEntry.wrappedValue {
+                            headingFocused = true
+                            focusOnEntry.wrappedValue = false
+                        }
+                        if NSWorkspace.shared.isVoiceOverEnabled { headingSpoken = true }
+                    }
+                Text(t("Voluntary support")).font(.callout).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Divider()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { projectLinks }
+                VStack(alignment: .leading, spacing: 7) { projectLinks }
+            }.font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(t("Voluntary support does not unlock features, priority service, or work on request. All features are free."))
+                Text(t("Rock’n’Roll is the author’s personal project. It is independent of the author’s employer and has no employer endorsement."))
+            }.font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder private var projectLinks: some View {
         Link(destination: URL(string: "https://github.com/vsmirn0v/rocknroll")!) {
-            Label(t("Source on GitHub"), systemImage: "chevron.left.forwardslash.chevron.right")
+            Text(t("Source on GitHub")).foregroundStyle(.secondary)
         }
         Link(destination: URL(string: "https://testflight.apple.com/join/Hd13C9U3")!) {
-            Label(t("iOS public beta"), systemImage: "iphone")
+            Text(t("iOS public beta")).foregroundStyle(.secondary)
         }
         Link(destination: URL(string: "https://rock.glowsoft.ru/")!) {
-            Label("rock.glowsoft.ru", systemImage: "globe")
+            Text(verbatim: "rock.glowsoft.ru").foregroundStyle(.secondary)
         }
     }
     private func clearHandoff() { showPhone = false; feedback = "" }
 
-    @ViewBuilder private var monthlyContent: some View {
+    private var visibleClaim: AuthorSupportClaimState {
         switch service.claim {
-        case .active(let through) where service.hasActiveSubscription(at: Date()):
+        case .active where service.hasActiveSubscription(at: Date()), .pending:
+            return service.claim
+        case .code(_, let expiry) where claimOpen && expiry > Date():
+            return service.claim
+        default:
+            return .none
+        }
+    }
+
+    @ViewBuilder private func monthlyContent(_ claim: AuthorSupportClaimState) -> some View {
+        switch claim {
+        case .active(let through):
             Label(t("This Mac is linked"), systemImage: "checkmark.circle").font(.headline)
             Text(SupportCopy.text("Support confirmed through %@", day(through)))
             Text(t("Thank you! Home reminders are paused for this period. You can manage your subscription on Boosty."))
@@ -109,39 +147,54 @@ struct AuthorSupportHeading: View {
             Label(t("Awaiting verification"), systemImage: "clock").font(.headline)
             Text(t("The author checks the subscribed account and its paid-through date. You can leave this page and return later."))
             Button(t("Check status")) { run { try await service.refreshClaim() } }.disabled(working)
-        case .code(let code, let expiry) where claimOpen && expiry > Date():
+        case .code(let code, let expiry):
             claimCode(code, expires: expiry)
-        default:
+        case .none:
             if let tier {
                 Text(t("Monthly amount on Boosty")).font(.callout).foregroundStyle(.secondary)
                 ViewThatFits(in: .horizontal) {
-                    HStack { tierPicker; primaryLink(t("Continue on Boosty"), tier.checkoutURL) }
+                    HStack { tierPicker.fixedSize(); primaryLink(t("Continue on Boosty"), tier.checkoutURL).fixedSize() }
                     VStack(alignment: .leading) { tierPicker; primaryLink(t("Continue on Boosty"), tier.checkoutURL) }
                 }
-                Text(t("Renews monthly. You can cancel future renewals on Boosty.")).font(.callout)
+                Text(t("Renews monthly. You can cancel future renewals on Boosty.")).font(.callout).foregroundStyle(.secondary)
                 if donorQuote(tier) != nil, let asOf = service.quoteDate {
                     Text(SupportCopy.text("Price shown by Boosty on %@. Confirm the currency and final charge at checkout.", day(asOf)))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 phoneActions(tier.checkoutURL)
             }
-            Divider()
-            Text(t("Already subscribed on Boosty?")).font(.callout)
-            Text(t("Linking sends a random device identifier and a claim reference to rock.glowsoft.ru so this Mac can check your support period."))
-                .font(.caption).foregroundStyle(.secondary)
-            Button(t("Link this Mac")) {
-                run {
-                    if case .code(_, let expiry) = service.claim, expiry > Date() { claimOpen = true }
-                    else { try await service.startClaim(); claimOpen = true }
-                }
-            }.disabled(working).accessibilityIdentifier("author-support.link")
         }
+    }
+
+    private var linkDisclosure: some View {
+        DisclosureGroup(isExpanded: $linkDetails) {
+            Text(t("Linking sends a random device identifier and a claim reference to rock.glowsoft.ru so this Mac can check your support period."))
+                .font(.caption).foregroundStyle(.secondary).padding(.top, 6)
+            Button(t("Request a code")) {
+                run {
+                    try await service.startClaim()
+                    clearHandoff()
+                    claimOpen = true
+                }
+            }.disabled(working).padding(.top, 4).accessibilityIdentifier("author-support.link.request")
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { linkLabel }
+                VStack(alignment: .leading, spacing: 3) { linkLabel }
+            }.font(.callout)
+        }
+        .accessibilityIdentifier("author-support.link")
+    }
+
+    @ViewBuilder private var linkLabel: some View {
+        Text(t("Already subscribed on Boosty?")).foregroundStyle(.secondary)
+        Text(t("Link this Mac")).fontWeight(.medium)
     }
 
     private var tierPicker: some View {
         Picker(t("Monthly amount on Boosty"), selection: Binding(get: { tier?.amountRUB ?? -1 }, set: { amount = $0 })) {
             ForEach(service.monthlyTiers, id: \.amountRUB) { item in Text(tierPrice(item)).tag(item.amountRUB) }
-        }.labelsHidden().fixedSize().accessibilityIdentifier("author-support.amount")
+        }.labelsHidden().accessibilityIdentifier("author-support.amount")
     }
 
     private func claimCode(_ code: String, expires: Date) -> some View {
@@ -163,54 +216,41 @@ struct AuthorSupportHeading: View {
 
     @ViewBuilder private var oneTimeContent: some View {
         if let shownMethod {
-        Picker(t("One-time support method"), selection: Binding(get: { shownMethod }, set: { method = $0 })) {
-            if service.bankURL != nil { Text(t("T-Bank · From Russia")).tag(Method.bank) }
-            if service.boostyOneTimeURL != nil { Text(t("Boosty · Russia and international")).tag(Method.boosty) }
-            if service.hipolinkTipsURL != nil || service.boostyOneTimeURL != nil { Text(t("Hipolink · International tips")).tag(Method.hipolink) }
-        }.pickerStyle(.radioGroup).accessibilityIdentifier("author-support.one-time-method")
-        Divider()
-        switch shownMethod {
-        case .bank:
-            if let url = service.bankURL {
-                Text(t("In T-Bank, check the organizer Виталий С. and the collection «Сбор на другое»."))
-                primaryLink(t("Open T-Bank"), url); phoneActions(url)
-            }
-        case .boosty:
-            if let url = service.boostyOneTimeURL {
-                Text(t("Choose the amount on the author’s Boosty page. Available methods depend on your country and bank."))
-                primaryLink(t("Give once on Boosty"), url); phoneActions(url)
-            }
-        case .hipolink:
-            if let base = service.hipolinkTipsURL {
-                TextField(t("Suggested tip (USD)"), value: $tip, format: .number.locale(SupportCopy.locale))
-                    .textFieldStyle(.roundedBorder).frame(maxWidth: 170)
-                if let url = hipolinkURL(base) { primaryLink(t("Continue on Hipolink"), url); phoneActions(url) }
-                else { Text(t("Enter an amount from USD 0.10 to 800.00 with up to two decimal places.")).font(.callout) }
-            } else if let url = service.boostyOneTimeURL {
-                Text(t("Hipolink tips are awaiting account verification. You can give once on Boosty and choose your amount there."))
-                primaryLink(t("Give once on Boosty"), url)
+            Picker(t("One-time support method"), selection: Binding(get: { shownMethod }, set: { method = $0 })) {
+                if service.boostyOneTimeURL != nil { Text(t("Boosty · Russia and international")).tag(Method.boosty) }
+                if service.bankURL != nil { Text(t("Bank transfer · From Russia")).tag(Method.bank) }
+            }.accessibilityIdentifier("author-support.one-time-method")
+            switch shownMethod {
+            case .boosty:
+                if let url = service.boostyOneTimeURL {
+                    primaryLink(t("Give once on Boosty"), url)
+                    Text(t("Choose the amount on the author’s Boosty page. Available methods depend on your country and bank."))
+                        .font(.callout).foregroundStyle(.secondary)
+                    phoneActions(url)
+                }
+            case .bank:
+                if let url = service.bankURL {
+                    primaryLink(t("Open bank transfer"), url)
+                    Text(t("Before confirming the transfer, check that the recipient is Виталий С."))
+                        .font(.callout).foregroundStyle(.secondary)
+                    phoneActions(url)
+                }
             }
         }
-        }
-    }
-    private func hipolinkURL(_ base: URL) -> URL? {
-        guard let tip, tip >= Decimal(1) / 10, tip <= 800,
-              var url = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
-        var original = tip, rounded = Decimal()
-        NSDecimalRound(&rounded, &original, 2, .plain)
-        guard rounded == tip else { return nil }
-        url.queryItems = [.init(name: "currency", value: "USD"), .init(name: "amount", value: NSDecimalNumber(decimal: tip).stringValue)]
-        return url.url
     }
     private func primaryLink(_ label: String, _ url: URL) -> some View {
-        Link(label, destination: url).buttonStyle(.borderedProminent)
+        Link(destination: url) {
+            Text(label).foregroundStyle(Color(red: 0.17, green: 0.08, blue: 0.02))
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Color(red: 1, green: 0.65, blue: 0.34))
     }
     private func phoneActions(_ url: URL) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 12) {
-                Button { showPhone.toggle() } label: { Label(t("Open on your phone"), systemImage: "qrcode") }
-                Button(t("Copy link")) { copy(url.absoluteString) }
-            }.buttonStyle(.link)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { phoneButtons(url) }
+                VStack(alignment: .leading, spacing: 6) { phoneButtons(url) }
+            }.font(.caption).buttonStyle(.link)
             if showPhone {
                 if let image = Self.qrImage(url) {
                     Image(nsImage: image).interpolation(.none).resizable().frame(width: 144, height: 144)
@@ -219,6 +259,14 @@ struct AuthorSupportHeading: View {
                 Text(verbatim: url.absoluteString).font(.caption.monospaced()).textSelection(.enabled)
                     .environment(\.layoutDirection, .leftToRight)
             }
+        }
+    }
+    @ViewBuilder private func phoneButtons(_ url: URL) -> some View {
+        Button { showPhone.toggle() } label: {
+            Label(t("Open on your phone"), systemImage: "qrcode").foregroundStyle(.secondary)
+        }.accessibilityAddTraits(showPhone ? .isSelected : [])
+        Button { copy(url.absoluteString) } label: {
+            Label(t("Copy link"), systemImage: "doc.on.doc").foregroundStyle(.secondary)
         }
     }
     private static func qrImage(_ url: URL) -> NSImage? {

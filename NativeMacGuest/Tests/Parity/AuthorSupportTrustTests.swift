@@ -57,6 +57,8 @@ final class AuthorSupportTrustTests: XCTestCase {
         var wrongPayee = row; wrongPayee["url"] = "https://example.org/donate"
         fields["destinations"] = [wrongPayee]
         XCTAssertThrowsError(try load())
+        fields["destinations"] = [["id":"former-tip-route", "method":"hipolink", "url":"https://hipolink.net/vsmirnov/tips"]]
+        XCTAssertThrowsError(try load())
     }
 }
 #endif

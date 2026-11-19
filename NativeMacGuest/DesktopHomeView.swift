@@ -54,6 +54,7 @@ struct NativeDesktopHomeView: View {
     #if NATIVE_DIRECT_UPDATES
     @FocusState private var homeHeadingFocused: Bool
     @AccessibilityFocusState private var homeHeadingSpoken: Bool
+    @State private var focusSupportOnEntry = false
     #endif
     private var blocksScheduledJoining: Bool {
         editingName || addingFavorite || editRoom != nil || library.calendar.choosingMeeting != nil ||
@@ -73,7 +74,7 @@ struct NativeDesktopHomeView: View {
     }
     @ViewBuilder private var settingsView: some View {
         #if NATIVE_DIRECT_UPDATES
-        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, assistantArea: $workspace.assistantSettingsArea, attention: workspace.attention, updates: workspace.updates, mcpService: workspace.mcpService, obsidian: workspace.obsidian)
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, assistantArea: $workspace.assistantSettingsArea, attention: workspace.attention, updates: workspace.updates, focusSupportOnEntry: $focusSupportOnEntry, mcpService: workspace.mcpService, obsidian: workspace.obsidian)
         #else
         NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, assistantArea: $workspace.assistantSettingsArea, attention: workspace.attention, mcpService: workspace.mcpService, obsidian: workspace.obsidian)
         #endif
@@ -374,6 +375,7 @@ struct NativeDesktopHomeView: View {
                 Button(L("Open meeting history")) { workspace.openMeetingHistory() }.font(.callout)
                 #if NATIVE_DIRECT_UPDATES
                 SupportInvitation(visit: workspace.supportHomeVisit, safe: workspace.supportVisitIsSafe && !blocksScheduledJoining) {
+                    focusSupportOnEntry = NSApp.currentEvent?.type == .keyDown
                     workspace.settingsTab = SupportCopy.settingsTab
                     workspace.show(section: .settings)
                 }
@@ -414,8 +416,8 @@ struct NativeDesktopHomeView: View {
                 .onAppear {
                     if workspace.focusHomeAfterSupport {
                         workspace.focusHomeAfterSupport = false
-                        homeHeadingFocused = true
-                        homeHeadingSpoken = true
+                        if NSApp.currentEvent?.type == .keyDown { homeHeadingFocused = true }
+                        if NSWorkspace.shared.isVoiceOverEnabled { homeHeadingSpoken = true }
                     }
                 }
                 #endif
@@ -547,6 +549,7 @@ struct NativeDesktopSettingsView: View {
     var attention: AttentionCoordinator? = nil
     #if NATIVE_DIRECT_UPDATES
     var updates: NativeDesktopUpdates? = nil
+    var focusSupportOnEntry: Binding<Bool> = .constant(false)
     #endif
     /// The local MCP server, surfaced on its own settings tab.
     var mcpService: NativeDesktopMCPService? = nil
@@ -596,6 +599,9 @@ struct NativeDesktopSettingsView: View {
         return String(tab)
     }
     private func choose(_ item: Destination) {
+        #if NATIVE_DIRECT_UPDATES
+        focusSupportOnEntry.wrappedValue = item.tab == SupportCopy.settingsTab && tab != item.tab && NSApp.currentEvent?.type == .keyDown
+        #endif
         tab = item.tab
         if let area = item.area { assistantArea.wrappedValue = area }
         revealID = nil
@@ -612,7 +618,7 @@ struct NativeDesktopSettingsView: View {
             if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && revealID == nil { previousQuery = "" }
         }))
             .textFieldStyle(.roundedBorder).accessibilityIdentifier("settings.search")
-            .onSubmit { if let first = searchResults.first { openResult(first) } }
+            .onSubmit { if let first = searchResults.first { openResult(first, viaKeyboard: true) } }
             .onExitCommand { settingsQuery = ""; previousQuery = "" }
     }
     var body: some View {
@@ -662,16 +668,7 @@ struct NativeDesktopSettingsView: View {
                         .padding(.horizontal, 24).padding(.top, 12)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    if let item = destinations.first(where: { $0.id == selectedDestination }) {
-                        Group {
-                            #if NATIVE_DIRECT_UPDATES
-                            if tab == SupportCopy.settingsTab { AuthorSupportHeading(title: item.title) }
-                            else { Text(L(item.title)) }
-                            #else
-                            Text(L(item.title))
-                            #endif
-                        }.font(.title2.weight(.semibold)).padding(.horizontal, 24).padding(.top, 20)
-                    }
+                    settingsHeading
                     if let revealTarget, revealTarget.requestID == revealID, let message = revealTarget.availabilityMessage {
                         Text(message)
                             .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.top, 8)
@@ -681,6 +678,18 @@ struct NativeDesktopSettingsView: View {
                 }.frame(maxWidth: 760, maxHeight: .infinity, alignment: .topLeading)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+    @ViewBuilder private var settingsHeading: some View {
+        let item = destinations.first { $0.id == selectedDestination }
+        #if NATIVE_DIRECT_UPDATES
+        if tab != SupportCopy.settingsTab, let item {
+            Text(L(item.title)).font(.title2.weight(.semibold)).padding(.horizontal, 24).padding(.top, 20)
+        }
+        #else
+        if let item {
+            Text(L(item.title)).font(.title2.weight(.semibold)).padding(.horizontal, 24).padding(.top, 20)
+        }
+        #endif
     }
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -706,7 +715,10 @@ struct NativeDesktopSettingsView: View {
             }
         }.background(Color(nsColor: .controlBackgroundColor))
     }
-    private func openResult(_ item: NativeSettingsSearchCatalog.Entry) {
+    private func openResult(_ item: NativeSettingsSearchCatalog.Entry, viaKeyboard: Bool = false) {
+        #if NATIVE_DIRECT_UPDATES
+        focusSupportOnEntry.wrappedValue = item.tab == SupportCopy.settingsTab && (viaKeyboard || NSApp.currentEvent?.type == .keyDown)
+        #endif
         previousQuery = settingsQuery
         revealTarget = nil
         tab = item.tab
@@ -854,7 +866,7 @@ struct NativeDesktopSettingsView: View {
         case 4:
             if let updates { NativeDesktopUpdatesView(updates: updates) }
         case SupportCopy.settingsTab:
-            AuthorSupportView()
+            AuthorSupportView(focusOnEntry: focusSupportOnEntry)
         #endif
         default:
             Text(L("Choose a settings section.")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)

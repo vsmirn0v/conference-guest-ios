@@ -45,7 +45,6 @@ final class AuthorSupportService: ObservableObject {
     var quoteDate: Date? { catalog.map { Date(timeIntervalSince1970: TimeInterval($0.quotedAt)) } }
     var bankURL: URL? { destination("bank") }
     var boostyOneTimeURL: URL? { destination("boosty") }
-    var hipolinkTipsURL: URL? { destination("hipolink") }
     private func destination(_ method: String) -> URL? { catalog?.destinations.first { $0.method == method }?.url }
 
     private static let base = URL(string: "https://rock.glowsoft.ru/author-support/")!

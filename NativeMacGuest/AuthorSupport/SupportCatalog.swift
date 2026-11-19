@@ -75,7 +75,6 @@ struct SupportCatalog: Codable {
         case "bank":
             return parts.host == "t.tb.ru" && parts.query == nil &&
                 parts.percentEncodedPath.range(of: #"^/pm_short/[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil
-        case "hipolink": return url.absoluteString == "https://hipolink.net/vsmirnov/tips"
         default: return false
         }
     }
