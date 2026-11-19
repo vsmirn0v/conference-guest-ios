@@ -207,6 +207,7 @@ struct NativeDesktopMeetingView: View {
     private var chromeShown: Bool { !model.immersive || chromeVisible }
     private var showsFooter: Bool { !model.controlsHidden && chromeShown && !(model.immersive && immersiveHint) }
     private static let footerHeight: CGFloat = 56
+    private static let stageVerticalInset: CGFloat = 12
     private func revealChrome() {
         guard model.immersive else { return }
         chromeVisible = true; chromeTask?.cancel()
@@ -237,14 +238,15 @@ struct NativeDesktopMeetingView: View {
         // window, so opening Chat or Share never moves Mic, Video or Leave.
         let docked = geometry.size.width >= 1040 ? model.panel : nil
         let reserved: CGFloat = docked == nil ? 0 : Self.panelWidth + 14
-        let bottomInset: CGFloat = model.immersive ? 0 : model.controlsHidden ? 12 : Self.footerHeight
+        let bottomInset: CGFloat = model.immersive ? 0 : Self.stageVerticalInset + (showsFooter ? Self.footerHeight : 0)
         ZStack(alignment: .topTrailing) {
             ZStack {
                 Color.black
                 if model.mediaPresentation == .meeting {
                     let edge: CGFloat = model.immersive ? 0 : 14
+                    let headerInset: CGFloat = model.controlsHidden || embedded ? 0 : 58
                     media.padding(.leading, edge).padding(.trailing, edge + reserved)
-                        .padding(.top, model.immersive ? 0 : (model.controlsHidden || embedded ? 12 : 70) + (model.isSharingLive ? 48 : 0))
+                        .padding(.top, model.immersive ? 0 : Self.stageVerticalInset + headerInset + (model.isSharingLive ? 48 : 0))
                         .padding(.bottom, bottomInset)
                 }
                 if textSelection.isOpen {
