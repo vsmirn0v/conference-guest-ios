@@ -205,6 +205,8 @@ struct NativeDesktopMeetingView: View {
     @State private var immersiveHint = false
     /// Immersive view keeps only the content until the pointer moves.
     private var chromeShown: Bool { !model.immersive || chromeVisible }
+    private var showsFooter: Bool { !model.controlsHidden && chromeShown && !(model.immersive && immersiveHint) }
+    private static let footerHeight: CGFloat = 56
     private func revealChrome() {
         guard model.immersive else { return }
         chromeVisible = true; chromeTask?.cancel()
@@ -222,6 +224,11 @@ struct NativeDesktopMeetingView: View {
     private func updateTextSource() {
         textSelection.updateSource(id: textSourceID, name: model.focusedVideo.map { name($0.participantID) } ?? "", frame: textFrame)
     }
+    private func selectSharedText() {
+        model.controlsHidden = false
+        updateTextSource()
+        textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size)
+    }
     var body: some View {
         VStack(spacing: 0) {
         if let continuation { NativeDesktopContinuationStatus(coordinator: continuation) }
@@ -230,6 +237,7 @@ struct NativeDesktopMeetingView: View {
         // window, so opening Chat or Share never moves Mic, Video or Leave.
         let docked = geometry.size.width >= 1040 ? model.panel : nil
         let reserved: CGFloat = docked == nil ? 0 : Self.panelWidth + 14
+        let bottomInset: CGFloat = model.immersive ? 0 : model.controlsHidden ? 12 : Self.footerHeight
         ZStack(alignment: .topTrailing) {
             ZStack {
                 Color.black
@@ -237,12 +245,12 @@ struct NativeDesktopMeetingView: View {
                     let edge: CGFloat = model.immersive ? 0 : 14
                     media.padding(.leading, edge).padding(.trailing, edge + reserved)
                         .padding(.top, model.immersive ? 0 : (model.controlsHidden || embedded ? 12 : 70) + (model.isSharingLive ? 48 : 0))
-                        // Two control rows need the taller gap in focus too: a shared screen's
-                        // presenter label and zoom strip sit on the video's bottom edge, and the
-                        // Select text · View · More row used to land on them in a narrow window.
-                        .padding(.bottom, model.immersive ? 0 : model.controlsHidden ? 12 : singleControlRow ? 96 : 160)
+                        .padding(.bottom, bottomInset)
                 }
-                if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
+                if textSelection.isOpen {
+                    NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus))
+                        .padding(.bottom, showsFooter ? Self.footerHeight : 0)
+                }
                 VStack(spacing: 0) {
                     // In the main window the toolbar holds the title, status and meeting buttons.
                     if !model.controlsHidden && !textSelection.isOpen && !embedded && chromeShown { header.padding(.horizontal, 18).padding(.top, 10) }
@@ -256,7 +264,7 @@ struct NativeDesktopMeetingView: View {
                     if model.immersive && immersiveHint {
                         Text(L("Move the pointer to show controls · Esc to leave immersive view")).font(.callout)
                             .padding(.horizontal, 14).padding(.vertical, 8).background(.black.opacity(0.7), in: Capsule()).padding(.bottom, 22)
-                    } else if !model.controlsHidden && chromeShown { controls.padding(.bottom, 18) }
+                    } else if showsFooter { controls(width: geometry.size.width) }
                 }
                 if model.controlsHidden {
                     VStack { Spacer(); Button(L("Show controls")) { model.controlsHidden = false }.buttonStyle(.bordered).padding() }
@@ -269,7 +277,7 @@ struct NativeDesktopMeetingView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
                     .padding(.trailing, 14).padding(.top, model.controlsHidden || embedded ? 12 : 64)
-                    .padding(.bottom, model.controlsHidden ? 12 : 150)
+                    .padding(.bottom, showsFooter ? Self.footerHeight + 12 : 12)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }.animation(.easeOut(duration: 0.18), value: docked)
@@ -354,75 +362,113 @@ struct NativeDesktopMeetingView: View {
             }.padding(6).nativeMeetingChrome()
         }
     }
-    /// View and More join the control bar unless text selection or paging needs the upper row.
-    private var singleControlRow: Bool {
-        textSourceID == nil && !(model.galleryPages > 1 && !model.showsFocus)
-    }
-    private var controls: some View {
-        VStack(spacing: 10) {
-            if !textSelection.isOpen && !singleControlRow { HStack(spacing: 8) {
-                if textSourceID != nil {
-                    iconButton("text.viewfinder", L("Select text")) { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) }
-                        .accessibilityIdentifier("Select shared text")
-                    Divider().frame(height: 18)
-                }
-                if model.galleryPages > 1 && !model.showsFocus {
-                    Button { model.galleryPage = max(0, model.galleryPage - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.galleryPage == 0)
-                    Text("\(model.galleryPage + 1) / \(model.galleryPages)").font(.caption).monospacedDigit()
-                    Button { model.galleryPage = min(model.galleryPages - 1, model.galleryPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.galleryPage == model.galleryPages - 1)
-                    Divider().frame(height: 18)
-                }
-                viewAndMoreMenus
-            }.buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome() }
+    private var hasGalleryPages: Bool { model.galleryPages > 1 && !model.showsFocus }
+
+    private func controls(width: CGFloat) -> some View {
+        let labeled = width >= 920
+        let inlinePager = width >= 700 && hasGalleryPages
+        let buttonWidth: CGFloat = labeled ? 68 : 36
+        let shareWidth: CGFloat = labeled ? 90 : 36
+
+        return ZStack {
+            // Keep the call actions centered independently of gallery paging and the inspector.
             HStack(spacing: 4) {
-                controlButton(model.snapshot.microphoneOn ? "mic.fill" : "mic.slash", L("Mic"), selected: model.snapshot.microphoneOn, pending: model.microphoneStarting) { model.toggleMicrophone() }
+                controlButton(model.snapshot.microphoneOn ? "mic.fill" : "mic.slash", L("Mic"), width: buttonWidth, showsTitle: labeled,
+                              selected: model.snapshot.microphoneOn, pending: model.microphoneStarting) { model.toggleMicrophone() }
                     .help(model.microphoneRestriction ??
                           (model.microphoneStarting ? L("Starting microphone. Click to cancel.") : L("Mute or unmute (Space or ⇧⌘M)")))
                     .contextMenu { Button(L("Audio settings")) { model.panel = .studio } }
-                controlButton(model.snapshot.cameraOn ? "video.fill" : "video.slash", L("Video"), selected: model.snapshot.cameraOn, pending: model.cameraStarting) { model.toggleCamera() }
+                controlButton(model.snapshot.cameraOn ? "video.fill" : "video.slash", L("Video"), width: buttonWidth, showsTitle: labeled,
+                              selected: model.snapshot.cameraOn, pending: model.cameraStarting) { model.toggleCamera() }
                     .help(model.cameraStarting ? L("Starting camera. Click to cancel.") : L("Video"))
                     .contextMenu { Button(L("Camera settings")) { model.panel = .studio } }
                 if model.isSharingLive || model.sharingPending {
-                    controlButton("stop.circle.fill", L("Stop share"), selected: false, destructive: true) { Task { await model.endShare() } }
+                    controlButton("stop.circle.fill", L("Stop share"), width: shareWidth, showsTitle: labeled, destructive: true) { Task { await model.endShare() } }
                         .help(L("Stop sharing")).accessibilityIdentifier("share.control-stop")
                 } else {
-                    controlButton("rectangle.on.rectangle", L("Share"), selected: shareOpen, pending: model.quickSharePending) { shareOpen.toggle() }
+                    controlButton("rectangle.on.rectangle", L("Share"), width: shareWidth, showsTitle: labeled,
+                                  selected: shareOpen, pending: model.quickSharePending) { shareOpen.toggle() }
+                        .help(L("Share"))
                         .accessibilityIdentifier("share.control")
                         .popover(isPresented: $shareOpen, arrowEdge: .top) {
                             NativeDesktopSharePopover(model: model, chooseImage: { Task { await chooseShareImage() } }, close: { shareOpen = false })
                         }
                 }
-                controlButton(model.soundSymbol, L("Sound"), selected: model.snapshot.playoutOn) { model.togglePlayout() }
-                    .help(L("Meeting sound on or off. Use the arrow for meeting volume."))
-                    .overlay(alignment: .topTrailing) {
-                        Button { soundOpen.toggle() } label: {
-                            Image(systemName: "chevron.up").font(.system(size: 9, weight: .bold)).frame(width: 18, height: 18).contentShape(Rectangle())
-                        }.buttonStyle(.plain).help(L("Meeting volume")).accessibilityLabel(L("Meeting volume"))
-                            .popover(isPresented: $soundOpen, arrowEdge: .top) {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Text(L("Meeting volume")).font(.headline)
-                                    NativeDesktopMeetingVolume(model: model)
-                                    Text(L("Only this meeting. Your Mac volume doesn’t change.")).font(.caption).foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }.padding(16).frame(width: 280)
-                            }
-                    }
-                    .contextMenu { Button(L("Meeting volume")) { soundOpen = true } }
-                controlButton("face.smiling", L("Reactions"), selected: reactionsOpen) { reactionsOpen.toggle() }
-                    .disabled(!model.canReact).popover(isPresented: $reactionsOpen, arrowEdge: .bottom) { reactionPicker }
+                HStack(spacing: 0) {
+                    controlButton(model.soundSymbol, L("Sound"), width: buttonWidth, showsTitle: labeled,
+                                  selected: model.snapshot.playoutOn) { model.togglePlayout() }
+                        .help(L("Meeting sound on or off. Use the arrow for meeting volume."))
+                        .contextMenu { Button(L("Meeting volume")) { soundOpen = true } }
+                    Button { soundOpen.toggle() } label: {
+                        Image(systemName: "chevron.up").font(.system(size: 10, weight: .semibold))
+                            .frame(width: 24, height: 36).contentShape(Rectangle())
+                    }.buttonStyle(.plain).help(L("Meeting volume")).accessibilityLabel(L("Meeting volume"))
+                        .popover(isPresented: $soundOpen, arrowEdge: .top) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(L("Meeting volume")).font(.headline)
+                                NativeDesktopMeetingVolume(model: model)
+                                Text(L("Only this meeting. Your Mac volume doesn’t change.")).font(.caption).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.padding(16).frame(width: 280)
+                        }
+                }
+                Divider().frame(height: 20)
+                controlButton("face.smiling", L("Reactions"), width: 36, selected: reactionsOpen) { reactionsOpen.toggle() }
+                    .help(L("Reactions")).disabled(!model.canReact)
+                    .popover(isPresented: $reactionsOpen, arrowEdge: .top) { reactionPicker }
                 if let workspace {
                     AttentionControlButtonGate(attention: workspace.attention, model: model)
                 }
-                if singleControlRow && !textSelection.isOpen {
-                    Menu { viewMenuItems } label: { controlLabel(viewMenuSymbol, L("View")) }
-                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().help(viewMenuTitle)
-                    Menu { moreMenuItems } label: { controlLabel("ellipsis", L("More")) }
-                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            }.fixedSize(horizontal: true, vertical: false)
+            HStack(spacing: 4) {
+                if !textSelection.isOpen {
+                    Menu { viewMenuItems(includePaging: !inlinePager) } label: {
+                        controlLabel(viewMenuSymbol, L("View"), width: buttonWidth, showsTitle: labeled)
+                    }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    .accessibilityLabel(L("View")).accessibilityIdentifier("meeting.footer.view").help(viewMenuTitle)
+                    if inlinePager { galleryPager }
                 }
-                Divider().frame(height: 34).padding(.horizontal, 6)
-                controlButton("phone.down.fill", L("Leave"), selected: false, destructive: true) { Task { await model.onLeave?() } }
-            }.padding(8).nativeMeetingChrome()
+                Spacer(minLength: 0)
+                if !textSelection.isOpen {
+                    Menu { moreMenuItems } label: {
+                        controlLabel("ellipsis", L("More"), width: buttonWidth, showsTitle: labeled)
+                    }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    .accessibilityLabel(L("More")).help(L("More"))
+                    Divider().frame(height: 20)
+                }
+                controlButton("phone.down.fill", L("Leave"), width: buttonWidth, showsTitle: labeled, destructive: true) {
+                    Task { await model.onLeave?() }
+                }
+                .help(L("Leave"))
+                .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
         }
+        .padding(.horizontal, 12)
+        .frame(height: Self.footerHeight)
+        .foregroundStyle(.primary)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .top) { Divider().allowsHitTesting(false) }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("meeting.footer")
+    }
+
+    private func changeGalleryPage(by offset: Int) {
+        model.galleryPage = min(model.galleryPages - 1, max(0, model.galleryPage + offset))
+    }
+
+    private var galleryPager: some View {
+        HStack(spacing: 0) {
+            iconButton("chevron.left", L("Previous page")) { changeGalleryPage(by: -1) }
+                .disabled(model.galleryPage == 0)
+            Text("\(model.galleryPage + 1) / \(model.galleryPages)").font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .frame(width: 48)
+            iconButton("chevron.right", L("Next page")) { changeGalleryPage(by: 1) }
+                .disabled(model.galleryPage == model.galleryPages - 1)
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("meeting.footer.galleryPager")
     }
     private var viewMenuTitle: String {
         switch model.display {
@@ -433,11 +479,23 @@ struct NativeDesktopMeetingView: View {
     private var viewMenuSymbol: String {
         model.display != .all ? model.display.symbol : model.showsFocus ? "rectangle.inset.filled" : "square.grid.2x2"
     }
-    private func controlLabel(_ symbol: String, _ title: String) -> some View {
-        VStack(spacing: 5) { Image(systemName: symbol).font(.title3); Text(title).font(.caption) }
-            .foregroundStyle(.primary).frame(width: 66, height: 48).contentShape(Rectangle())
+    private func controlLabel(_ symbol: String, _ title: String, width: CGFloat, showsTitle: Bool, pending: Bool = false) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.system(size: 15)).opacity(pending ? 0 : 1)
+                .overlay { if pending { ProgressView().controlSize(.small) } }
+            if showsTitle {
+                Text(title).font(.caption).lineLimit(1).minimumScaleFactor(0.8)
+            }
+        }
+        .frame(width: width, height: 36).contentShape(Rectangle())
     }
-    @ViewBuilder private var viewMenuItems: some View {
+    @ViewBuilder private func viewMenuItems(includePaging: Bool) -> some View {
+        if includePaging && hasGalleryPages {
+            Text("\(model.galleryPage + 1) / \(model.galleryPages)")
+            Button(L("Previous page")) { changeGalleryPage(by: -1) }.disabled(model.galleryPage == 0)
+            Button(L("Next page")) { changeGalleryPage(by: 1) }.disabled(model.galleryPage == model.galleryPages - 1)
+            Divider()
+        }
         Picker(L("Show"), selection: $model.display) {
             ForEach(model.availableDisplays, id: \.self) { Label($0.title, systemImage: $0.symbol).tag($0) }
         }.pickerStyle(.inline)
@@ -472,7 +530,7 @@ struct NativeDesktopMeetingView: View {
     }
     private var viewAndMoreMenus: some View {
         Group {
-                Menu { viewMenuItems } label: { Label(viewMenuTitle, systemImage: viewMenuSymbol) }
+                Menu { viewMenuItems(includePaging: true) } label: { Label(viewMenuTitle, systemImage: viewMenuSymbol) }
                 Divider().frame(height: 18)
                 Menu { moreMenuItems } label: { Label(L("More"), systemImage: "ellipsis") }
         }
@@ -544,8 +602,9 @@ struct NativeDesktopMeetingView: View {
         if model.showsFocus, let focused = model.focusedVideo {
             HStack(spacing: 10) {
                 NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport,
-                    textFrame: textFrame, selectText: { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) },
-                    immersive: model.immersive, onImmersive: { model.immersive.toggle() })
+                    textFrame: textFrame, selectText: focused.source == .screen ? selectSharedText : nil,
+                    immersive: model.immersive, onImmersive: { model.immersive.toggle() },
+                    bottomOverlayInset: model.immersive && showsFooter ? Self.footerHeight : 0)
                     .overlay(alignment: .topLeading) { speakerChip }
                     .overlay(alignment: .topTrailing) { railRestoreButton }
                 speakerRail
@@ -656,14 +715,11 @@ struct NativeDesktopMeetingView: View {
     private func iconButton(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).frame(width: 32, height: 30) }.buttonStyle(.plain).help(title).accessibilityLabel(title)
     }
-    private func controlButton(_ symbol: String, _ title: String, selected: Bool, destructive: Bool = false, pending: Bool = false, action: @escaping () -> Void) -> some View {
+    private func controlButton(_ symbol: String, _ title: String, width: CGFloat, showsTitle: Bool = false,
+                               selected: Bool = false, destructive: Bool = false, pending: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: symbol).font(.title3).opacity(pending ? 0 : 1)
-                    .overlay { if pending { ProgressView().controlSize(.small) } }
-                Text(pending ? L("Starting…") : title).font(.caption)
-            }
-                .foregroundStyle(destructive ? Color.red : selected ? .orange : .primary).frame(width: 66, height: 48).contentShape(Rectangle())
+            controlLabel(symbol, title, width: width, showsTitle: showsTitle, pending: pending)
+                .foregroundStyle(destructive ? Color.red : selected ? .orange : .primary)
         }.buttonStyle(.plain).accessibilityLabel(title).accessibilityValue(pending ? L("Starting…") : "")
             .disabled(!model.connected && title != L("Leave"))
     }
@@ -717,6 +773,7 @@ struct NativeDesktopZoomVideo: View {
     var selectText: (() -> Void)? = nil
     var immersive = false
     var onImmersive: (() -> Void)? = nil
+    var bottomOverlayInset: CGFloat = 0
     private var zoom: CGFloat { get { viewport.zoom } nonmutating set { viewport.zoom = newValue } }
     private func setZoom(_ value: CGFloat) {
         zoom = min(8, max(1, value)); savedZoom = zoom
@@ -738,30 +795,42 @@ struct NativeDesktopZoomVideo: View {
                                  height: min(1, max(-1, savedPan.height + value.translation.height / max(1, geometry.size.height / 2))))
                 }.onEnded { _ in savedPan = pan })
                 .onTapGesture(count: 2) { setZoom(zoom > 1 ? 1 : 2) }
-                .overlay(alignment: .bottomLeading) {
-                    Label(video.source == .screen ? L("%@ is presenting", name) : name, systemImage: video.source == .screen ? "rectangle.on.rectangle" : "video")
-                        .font(.caption).lineLimit(1).frame(maxWidth: max(80, min(400, geometry.size.width - 260)), alignment: .leading)
-                        .padding(8).background(.black.opacity(0.55), in: Capsule()).padding(10)
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    VStack(alignment: .trailing, spacing: 6) {
-                        if zoom > 1 { NativeDesktopZoomIndicator(zoom: zoom, pan: pan, aspect: geometry.size) }
-                        HStack(spacing: 4) {
-                            Button { setZoom(zoom - 0.5) } label: { Image(systemName: "minus").frame(width: 26, height: 24) }
-                                .keyboardShortcut("-", modifiers: .command).disabled(zoom <= 1).help(L("Zoom out")).accessibilityLabel(L("Zoom out"))
-                            Button { setZoom(1) } label: { Text(zoom > 1 ? "\(Int((zoom * 100).rounded()))%" : L("Fit")).font(.caption.monospacedDigit()).frame(minWidth: 40) }
-                                .help(L("Fit to screen")).accessibilityLabel(L("Fit to screen"))
-                            Button { setZoom(zoom + 0.5) } label: { Image(systemName: "plus").frame(width: 26, height: 24) }
-                                .keyboardShortcut("=", modifiers: .command).help(L("Zoom in")).accessibilityLabel(L("Zoom in"))
-                            if let onImmersive {
-                                Divider().frame(height: 16)
-                                Button(action: onImmersive) {
-                                    Image(systemName: immersive ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").frame(width: 26, height: 24)
-                                }.help(immersive ? L("Leave immersive view") : L("Immersive view"))
-                                    .accessibilityLabel(immersive ? L("Leave immersive view") : L("Immersive view"))
-                            }
-                        }.buttonStyle(.plain).padding(.horizontal, 6).padding(.vertical, 4).nativeMeetingChrome()
-                    }.padding(10)
+                .overlay(alignment: .bottom) {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        Label(video.source == .screen ? L("%@ is presenting", name) : name, systemImage: video.source == .screen ? "rectangle.on.rectangle" : "video")
+                            .font(.caption).lineLimit(1)
+                            .padding(8).background(.black.opacity(0.55), in: Capsule())
+                            .frame(maxWidth: 400, alignment: .leading)
+                            .allowsHitTesting(false)
+                        Spacer(minLength: 0)
+                        VStack(alignment: .trailing, spacing: 6) {
+                            if zoom > 1 { NativeDesktopZoomIndicator(zoom: zoom, pan: pan, aspect: geometry.size) }
+                            HStack(spacing: 4) {
+                                if video.source == .screen, let selectText {
+                                    Button(action: selectText) {
+                                        Image(systemName: "text.viewfinder").frame(width: 32, height: 28).contentShape(Rectangle())
+                                    }.help(L("Select text")).accessibilityLabel(L("Select text"))
+                                        .accessibilityIdentifier("Select shared text")
+                                    Divider().frame(height: 16)
+                                }
+                                Button { setZoom(zoom - 0.5) } label: { Image(systemName: "minus").frame(width: 26, height: 24) }
+                                    .keyboardShortcut("-", modifiers: .command).disabled(zoom <= 1).help(L("Zoom out")).accessibilityLabel(L("Zoom out"))
+                                Button { setZoom(1) } label: { Text(zoom > 1 ? "\(Int((zoom * 100).rounded()))%" : L("Fit")).font(.caption.monospacedDigit()).frame(minWidth: 40) }
+                                    .help(L("Fit to screen")).accessibilityLabel(L("Fit to screen"))
+                                Button { setZoom(zoom + 0.5) } label: { Image(systemName: "plus").frame(width: 26, height: 24) }
+                                    .keyboardShortcut("=", modifiers: .command).help(L("Zoom in")).accessibilityLabel(L("Zoom in"))
+                                if let onImmersive {
+                                    Divider().frame(height: 16)
+                                    Button(action: onImmersive) {
+                                        Image(systemName: immersive ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").frame(width: 26, height: 24)
+                                    }.help(immersive ? L("Leave immersive view") : L("Immersive view"))
+                                        .accessibilityLabel(immersive ? L("Leave immersive view") : L("Immersive view"))
+                                }
+                            }.buttonStyle(.plain).padding(.horizontal, 6).padding(.vertical, 4).nativeMeetingChrome()
+                        }.fixedSize(horizontal: true, vertical: false)
+                    }
+                    .padding(10)
+                    .padding(.bottom, bottomOverlayInset)
                 }
         }.clipShape(RoundedRectangle(cornerRadius: immersive ? 0 : 14))
             .contextMenu { if video.source == .screen, let selectText { Button(L("Select text"), action: selectText) } }

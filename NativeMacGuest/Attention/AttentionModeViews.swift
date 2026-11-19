@@ -235,7 +235,7 @@ struct AttentionControlButton: View {
             if participation.voiceInProgress {
                 Button { participation.interruptVoice() } label: {
                     Image(systemName: "stop.circle").font(.title3).foregroundStyle(.teal)
-                        .frame(width: 32, height: 48).contentShape(Rectangle())
+                        .frame(width: 32, height: 36).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(L("Stop speaking"))
@@ -245,7 +245,7 @@ struct AttentionControlButton: View {
             if participation.queuedText != nil {
                 Button { participation.cancelCandidate() } label: {
                     Image(systemName: "xmark.circle").font(.title3)
-                        .frame(width: 32, height: 48).contentShape(Rectangle())
+                        .frame(width: 32, height: 36).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(L("Cancel queued assistant message"))
@@ -256,7 +256,7 @@ struct AttentionControlButton: View {
                 Button { participation.pause() } label: {
                     Label(L("Pause"), systemImage: "pause.circle").labelStyle(.iconOnly)
                         .font(.title3).foregroundStyle(.teal)
-                        .frame(width: 32, height: 48).contentShape(Rectangle())
+                        .frame(width: 32, height: 36).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(L("Pause participation"))
@@ -270,17 +270,14 @@ struct AttentionControlButton: View {
         let mode = attention.resolvedMode(model).mode
         let participating = participation.status != .inactive
         return Button { open.toggle() } label: {
-            VStack(spacing: 5) {
-                Image(systemName: participating ? "bubble.left" : mode.symbol).font(.title3)
-                Text(participating ? participation.status.title : L("Assistant"))
-                    .font(.caption).lineLimit(1).minimumScaleFactor(0.8)
-            }
-            .foregroundStyle(mode == .off ? Color.primary : mode.tint).frame(width: 66, height: 48).contentShape(Rectangle())
-            .overlay(alignment: .topTrailing) {
-                if !participating, let card = attention.card(for: model.sessionID) {
-                    Circle().fill(card.verdict.level.color).frame(width: 8, height: 8).padding(.top, 6).padding(.trailing, 14)
+            Image(systemName: participating ? "bubble.left" : mode.symbol).font(.system(size: 15))
+                .foregroundStyle(mode == .off ? Color.primary : mode.tint)
+                .frame(width: 36, height: 36).contentShape(Rectangle())
+                .overlay(alignment: .topTrailing) {
+                    if !participating, let card = attention.card(for: model.sessionID) {
+                        Circle().fill(card.verdict.level.color).frame(width: 6, height: 6).padding(4)
+                    }
                 }
-            }
         }
         .buttonStyle(.plain)
         .keyboardShortcut("a", modifiers: [.control, .option])

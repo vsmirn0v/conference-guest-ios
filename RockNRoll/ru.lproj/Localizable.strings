@@ -786,6 +786,8 @@
 "Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam." = "Звук и «Картинка в картинке» работают и без этой функции. В некоторых сотовых сетях системные элементы звонка мешают совершать телефонные звонки. Изменения вступят в силу при следующем подключении.";
 
 "Gallery" = "Участники";
+"Previous page" = "Предыдущая страница";
+"Next page" = "Следующая страница";
 
 "Focus" = "Фокус";
 

@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import ConferenceCore
 import CoreText
 import LiveKitWebRTC
@@ -82,6 +83,9 @@ import XCTest
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
             attachment.name = "Offline desktop layout fixture guide"; attachment.lifetime = .keepAlways; add(attachment)
             print("NATIVE_DESKTOP_LAYOUT_READY " + String(data: data, encoding: .utf8)!)
+            if hold == 0 {
+                try await verifyCompactFooter(model: model, window: nativeWindow)
+            }
             let end = Date().addingTimeInterval(hold)
             while Date() < end, model.snapshot.phase != .left {
                 try await Task.sleep(for: .milliseconds(100))
@@ -94,6 +98,62 @@ import XCTest
             _ = await model.leave(); window.close(); model.onLeave = nil; throw error
         }
     }
+
+    private func verifyCompactFooter(model: NativeDesktopMeetingModel, window: NSWindow) async throws {
+        func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, name as CFString, &value)
+            return value
+        }
+        func find(_ element: AXUIElement, where matches: (AXUIElement) -> Bool) -> AXUIElement? {
+            if matches(element) { return element }
+            let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            for child in children {
+                if let match = find(child, where: matches) { return match }
+            }
+            return nil
+        }
+        let app = AXUIElementCreateApplication(getpid())
+        let axWindow = try XCTUnwrap(find(app) { attribute($0, kAXTitleAttribute) as? String == window.title })
+        func item(_ identifier: String) -> AXUIElement? {
+            find(axWindow) { attribute($0, kAXIdentifierAttribute) as? String == identifier }
+        }
+        func frame(_ element: AXUIElement) throws -> CGRect {
+            let position = try XCTUnwrap(attribute(element, kAXPositionAttribute))
+            let dimensions = try XCTUnwrap(attribute(element, kAXSizeAttribute))
+            var origin = CGPoint.zero
+            var size = CGSize.zero
+            XCTAssertTrue(AXValueGetValue(position as! AXValue, .cgPoint, &origin))
+            XCTAssertTrue(AXValueGetValue(dimensions as! AXValue, .cgSize, &size))
+            return CGRect(origin: origin, size: size)
+        }
+
+        let view = try XCTUnwrap(item("meeting.footer.view"))
+        let galleryShare = try frame(XCTUnwrap(item("share.control")))
+        XCTAssertEqual(try frame(view).midY, galleryShare.midY, accuracy: 3)
+        if (window.contentView?.bounds.width ?? 0) >= 700 {
+            let pager = try XCTUnwrap(item("meeting.footer.galleryPager"))
+            XCTAssertEqual(try frame(pager).midY, galleryShare.midY, accuracy: 3)
+            let next = try XCTUnwrap(find(pager) { button in
+                [kAXTitleAttribute, kAXDescriptionAttribute].contains { attribute(button, $0) as? String == L("Next page") }
+            })
+            XCTAssertEqual(AXUIElementPerformAction(next, kAXPressAction as CFString), .success)
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertEqual(model.galleryPage, 1)
+        }
+        let presenter = try XCTUnwrap(model.participants.first { $0.sharing == true })
+        model.focus(participantID: presenter.id, source: .screen)
+        try await Task.sleep(for: .milliseconds(400))
+        let focusedShare = try frame(XCTUnwrap(item("share.control")))
+        XCTAssertEqual(focusedShare.midX, galleryShare.midX, accuracy: 1)
+        XCTAssertEqual(focusedShare.midY, galleryShare.midY, accuracy: 1)
+        XCTAssertNil(item("meeting.footer.galleryPager"))
+        let text = try XCTUnwrap(item("Select shared text"))
+        XCTAssertLessThan(try frame(text).maxY, focusedShare.minY)
+        XCTAssertEqual(AXUIElementPerformAction(text, kAXPressAction as CFString), .success)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertNotNil(item("Shared text capture"))
+    }
     private func guide(title: String, nativeWindow: NSWindow, hold: Double) -> [String: Any] {
         let content = nativeWindow.contentView?.bounds.size ?? nativeWindow.frame.size
         let main = NSScreen.screens.first?.frame ?? .zero
@@ -103,7 +163,7 @@ import XCTest
             "frameTopLeftPoints": [nativeWindow.frame.minX, main.maxY - nativeWindow.frame.maxY, nativeWindow.frame.width, nativeWindow.frame.height],
             "contentSizePoints": [content.width, content.height], "backingScaleFactor": nativeWindow.backingScaleFactor,
             "controls": ["participants": L("Participants"), "conversation": L("Conversation"), "mini": L("Mini meeting"),
-                "restore": L("Show meeting"), "view": L("Gallery"), "more": L("More"), "focus": L("Focus"),
+                "restore": L("Show meeting"), "view": L("View"), "more": L("More"), "focus": L("Focus"),
                 "cameraFocus": L("Focus camera"), "screenFocus": L("Focus screen"), "leave": L("Leave")],
             "sharingNames": OfflineLayoutEngine.names.enumerated().filter { [3, 8].contains($0.offset) }.map(\.element),
             "guide": ["Gallery starts with six tiles per page; the two chevron buttons beside the view menu change page.",
