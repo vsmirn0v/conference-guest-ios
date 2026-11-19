@@ -20,6 +20,8 @@ CODE = re.compile(r'^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{5}-[23456789ABCDEFGHJKLM
 ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 LIMIT = 50000
 MAX_PERIOD = 32 * 86400
+CODE_LIFETIME = 30 * 60
+REVIEW_PERIOD = 7 * 86400
 VERIFY_KEY = Ed25519PublicKey.from_public_bytes(base64.b64decode('SyVA6vPGDZnu7wKtv9iqQM9Cj+zWxg2BdhkUXSH+og0='))
 DB = '/var/lib/rock-author-support/claims.sqlite3'
 
@@ -46,11 +48,11 @@ def register(db, device, nonce, now):
             if row[1] <= now or row[2] is not None: raise ValueError('claim expired or consumed')
             db.commit(); return {'code': row[0], 'expires': row[1]}
         if db.execute('SELECT 1 FROM claims WHERE device=? AND nonce=?',(device,nonce)).fetchone(): raise ValueError('claim expired or consumed')
-        db.execute('DELETE FROM claims WHERE expires<=? AND envelope IS NULL', (now,))
+        db.execute('DELETE FROM claims WHERE COALESCE(review_until,expires)<=? AND envelope IS NULL', (now,))
         db.execute('DELETE FROM claim_codes WHERE expires<=?', (now,))
         if db.execute('SELECT count(*) FROM claims').fetchone()[0] >= LIMIT: raise OverflowError('capacity')
         for _ in range(8):
-            code = new_code(); expiry = now + 1800
+            code = new_code(); expiry = now + CODE_LIFETIME
             try:
                 db.execute('INSERT INTO claims(device,nonce,code_hash,expires) VALUES(?,?,?,?)',(device,nonce,codehash(code),expiry))
                 db.execute('INSERT INTO claim_codes VALUES(?,?,?,?)',(device,nonce,code,expiry))
@@ -62,19 +64,57 @@ def register(db, device, nonce, now):
         db.rollback(); raise
 
 def init(db):
-    db.execute('CREATE TABLE IF NOT EXISTS claim_codes (device TEXT NOT NULL, nonce TEXT NOT NULL, code TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(device,nonce))')
+    # Both the HTTP service and SSH operator can start against an existing
+    # registry. Serialize the additive migration with live claim operations.
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        columns = {row[1] for row in db.execute('PRAGMA table_info(claims)')}
+        if 'review_until' not in columns:
+            db.execute('ALTER TABLE claims ADD COLUMN review_until INTEGER')
+        db.execute('CREATE TABLE IF NOT EXISTS claim_codes (device TEXT NOT NULL, nonce TEXT NOT NULL, code TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(device,nonce))')
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+def mark_sent(db, device, nonce, now):
+    """Reserve one bounded manual review. Only signed receipts confer membership."""
+    if not valid_pair(device, nonce):
+        raise ValueError('invalid request')
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        row = db.execute('SELECT expires,review_until,envelope IS NOT NULL FROM claims WHERE device=? AND nonce=?',
+                         (device, nonce)).fetchone()
+        if row is None:
+            raise ValueError('claim unavailable')
+        expires, deadline, issued = row
+        if deadline is None:
+            if issued or now >= expires:
+                raise ValueError('claim unavailable')
+            deadline = now + REVIEW_PERIOD
+            db.execute('UPDATE claims SET review_until=? WHERE device=? AND nonce=?', (deadline, device, nonce))
+        elif now >= deadline:
+            raise ValueError('claim unavailable')
+        db.commit()
+        return {'reviewUntil': deadline}
+    except Exception:
+        db.rollback()
+        raise
 
 def lookup(db, code, now, update=False):
     if not isinstance(code,str) or not CODE.fullmatch(code): raise ValueError('invalid code')
-    row=db.execute('SELECT device,nonce,expires,envelope FROM claims WHERE code_hash=?',(codehash(code),)).fetchone()
-    if not row or (update and row[3] is None) or (not update and (row[2] <= now or row[3] is not None)): raise ValueError('unknown, expired or consumed code')
+    row=db.execute('SELECT device,nonce,expires,envelope,review_until FROM claims WHERE code_hash=?',(codehash(code),)).fetchone()
+    if not row or (update and row[3] is None) or (not update and ((row[4] or row[2]) <= now or row[3] is not None)): raise ValueError('unknown, expired or consumed code')
     revision = json.loads(base64.b64decode(json.loads(row[3])['payload']))['revision'] if row[3] else 0
-    return {'device':row[0], 'nonce':row[1], 'expires':row[2], 'revision':revision}
+    return {'device':row[0], 'nonce':row[1], 'expires':row[2], 'revision':revision, 'reviewUntil':row[4]}
 
-def consume(db, code, envelope, now, update=False):
+def consume(db, code, envelope, now, update=False, message_at=None):
     db.execute('BEGIN IMMEDIATE')
     try:
         claim=lookup(db,code,now,update)
+        if not update and (now >= claim['expires'] or message_at is not None):
+            if type(message_at) is not int or not claim['expires'] - CODE_LIFETIME <= message_at < claim['expires'] or message_at > now:
+                raise ValueError('Boosty message must have been sent during code validity')
         if not isinstance(envelope,dict) or set(envelope)!={'payload','signature'}: raise ValueError('invalid envelope')
         raw=base64.b64decode(envelope['payload'],validate=True); signature=base64.b64decode(envelope['signature'],validate=True)
         if len(raw)>1024 or len(signature)!=64: raise ValueError('invalid envelope')
@@ -100,7 +140,8 @@ class Handler(BaseHTTPRequestHandler):
         data=json.dumps(obj,separators=(',',':')).encode(); self.send_response(status)
         self.send_header('Content-Type','application/json'); self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
     def do_POST(self):
-        if self.path!='/author-support/claims': return self.reply(404,{'error':'not found'})
+        operations = {'/author-support/claims': register, '/author-support/claims/sent': mark_sent}
+        if self.path not in operations: return self.reply(404,{'error':'not found'})
         ip=self.headers.get('X-Real-IP','')
         if len(ip)>64 or not ip: return self.reply(400,{'error':'bad request'})
         now=time.time(); rates=self.server.rates
@@ -113,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
             if not 1<=length<=1024: raise ValueError()
             data=json.loads(self.rfile.read(length))
             if not isinstance(data,dict) or set(data)!={'device','nonce'}: raise ValueError()
-            result=register(self.server.db,data['device'],data['nonce'],int(now)); return self.reply(200,result)
+            result=operations[self.path](self.server.db,data['device'],data['nonce'],int(now)); return self.reply(200,result)
         except OverflowError: return self.reply(503,{'error':'capacity'})
         except (ValueError,TypeError,KeyError,json.JSONDecodeError): return self.reply(400,{'error':'bad request'})
     def do_GET(self):
@@ -131,5 +172,5 @@ def main():
     else:
         data=json.load(sys.stdin); now=int(time.time())
         if a.command in ('lookup','lookup-update'): print(json.dumps(lookup(db,data['code'],now,a.command=='lookup-update')))
-        else: consume(db,data['code'],data['envelope'],now,a.command=='update'); print('{"ok":true}')
+        else: consume(db,data['code'],data['envelope'],now,a.command=='update',data.get('messageAt')); print('{"ok":true}')
 if __name__=='__main__': main()

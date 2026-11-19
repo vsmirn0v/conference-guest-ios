@@ -4,6 +4,7 @@ import argparse, base64, getpass, json, os, pathlib, re, subprocess, tempfile, t
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('action',choices=['issue','renew','revoke']); p.add_argument('--code',help='private enrollment reference (omit to prompt securely)')
 p.add_argument('--through',type=int,help='inclusive Unix expiry; required for issue/renew')
+p.add_argument('--message-at',type=int,help='Unix timestamp of the authenticated Boosty private message; required to issue after the 30-minute code window')
 p.add_argument('--host',default='root@kachat.app'); p.add_argument('--sign-tool',default=str(pathlib.Path(__file__).resolve().parents[2]/'.build/native-dmg/Sparkle/bin/sign_update'))
 a=p.parse_args()
 if a.code is None: a.code=getpass.getpass('Private enrollment reference: ').strip()
@@ -16,6 +17,11 @@ def remote(command,data):
 public=subprocess.check_output([str(pathlib.Path(a.sign_tool).with_name('generate_keys')),'--account','dev.vsmirn0v.rocknroll.support.receipts','-p'],text=True).strip()
 if public != 'SyVA6vPGDZnu7wKtv9iqQM9Cj+zWxg2BdhkUXSH+og0=': raise ValueError('unexpected signing public key')
 update=a.action!='issue'; claim=remote('lookup-update' if update else 'lookup',{'code':a.code})
+if update and a.message_at is not None:
+    p.error('--message-at applies only to initial issuance')
+if not update and (int(time.time()) >= claim['expires'] or a.message_at is not None):
+    if a.message_at is None or not claim['expires'] - 1800 <= a.message_at < claim['expires'] or a.message_at > int(time.time()):
+        p.error('use --message-at with the timestamp of the subscribed account’s in-time private message')
 payload={'kind':'membership','schema':1,'device':claim['device'],'nonce':claim['nonce'],'issued':int(time.time()),'through':0 if a.action=='revoke' else a.through,'revision':claim['revision']+1}
 raw=json.dumps(payload,separators=(',',':'),sort_keys=True).encode()
 with tempfile.TemporaryDirectory() as directory:
@@ -25,7 +31,9 @@ with tempfile.TemporaryDirectory() as directory:
     subprocess.run(sign+['--verify',str(f),sig],check=True,stdout=subprocess.DEVNULL)
     if len(base64.b64decode(sig,validate=True)) != 64: raise ValueError('invalid signature')
 envelope={'payload':base64.b64encode(raw).decode(),'signature':sig}
-remote('update' if update else 'consume',{'code':a.code,'envelope':envelope})
+request={'code':a.code,'envelope':envelope}
+if a.message_at is not None: request['messageAt']=a.message_at
+remote('update' if update else 'consume',request)
 with urllib.request.urlopen('https://rock.glowsoft.ru/author-support/receipts/'+payload['device']+'/'+payload['nonce'],timeout=10) as response:
     if json.load(response) != envelope: raise ValueError('public receipt readback mismatch')
 print(json.dumps({'device':payload['device'],'nonce':payload['nonce'],'revision':payload['revision'],'through':payload['through'],'payloadSHA256':__import__('hashlib').sha256(raw).hexdigest()}))

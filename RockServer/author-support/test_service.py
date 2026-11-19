@@ -32,7 +32,58 @@ class Claims(unittest.TestCase):
  def test_rejects_invalid_inputs(self):
   for value in ('A'*64,'a'*63,'x'*64,None):
    with self.assertRaises(ValueError): s.register(self.db,value,self.n,0)
-if __name__=='__main__': unittest.main()
+
+ def test_submitting_preserves_one_review_window_and_does_not_grant(self):
+  claim = s.register(self.db,self.d,self.n,100)
+  last = claim['expires'] - 1
+  result = s.mark_sent(self.db,self.d,self.n,last)
+  deadline = last + 7 * 86400
+  self.assertEqual(result,{'reviewUntil':deadline})
+  self.assertEqual(s.mark_sent(self.db,self.d,self.n,deadline-1),result)
+  s.register(self.db,'c'*64,'e'*64,last+2)
+  self.assertIsNone(self.db.execute('SELECT envelope FROM claims WHERE device=?',(self.d,)).fetchone()[0])
+  self.assertIsNone(self.db.execute('SELECT code FROM claim_codes WHERE device=?',(self.d,)).fetchone())
+  self.assertEqual(s.lookup(self.db,claim['code'],deadline-1)['reviewUntil'],deadline)
+  with self.assertRaises(ValueError): s.lookup(self.db,claim['code'],deadline)
+  with self.assertRaises(ValueError): s.mark_sent(self.db,self.d,self.n,deadline)
+  s.register(self.db,'a'*64,'e'*64,deadline)
+  self.assertIsNone(self.db.execute('SELECT 1 FROM claims WHERE nonce=?',(self.n,)).fetchone())
+
+ def test_late_first_submission_wrong_nonce_and_consumed_claim_do_not_extend(self):
+  claim=s.register(self.db,self.d,self.n,100)
+  for device,nonce,when in [(self.d,self.n,claim['expires']),('f'*64,self.n,102),(self.d,'e'*64,102)]:
+   with self.assertRaises(ValueError): s.mark_sent(self.db,device,nonce,when)
+  self.assertIsNone(self.db.execute('SELECT review_until FROM claims').fetchone()[0])
+  s.consume(self.db,claim['code'],self.envelope(),102)
+  with self.assertRaises(ValueError): s.mark_sent(self.db,self.d,self.n,103)
+
+ def test_deferred_approval_requires_in_time_subscriber_message_and_signature(self):
+  claim=s.register(self.db,self.d,self.n,100); code=claim['code']
+  s.mark_sent(self.db,self.d,self.n,125)
+  review_time=100+3*86400; envelope=self.envelope(issued=review_time,through=review_time+86400)
+  for invalid in (None,False,99,claim['expires'],review_time):
+   with self.assertRaises(ValueError): s.consume(self.db,code,envelope,review_time,message_at=invalid)
+  with self.assertRaises(ValueError):
+   s.consume(self.db,code,dict(envelope,signature=base64.b64encode(b'x'*64).decode()),review_time,message_at=101)
+  s.consume(self.db,code,envelope,review_time,message_at=claim['expires']-1)
+  with self.assertRaises(ValueError): s.consume(self.db,code,envelope,review_time,message_at=101)
+  # Normal renewal and revocation still work after the pending review has ended.
+  later=100+9*86400
+  s.consume(self.db,code,self.envelope(rev=2,issued=later,through=later+86400),later,update=True)
+  s.consume(self.db,code,self.envelope(rev=3,issued=later,through=0),later,update=True)
+  self.assertEqual(s.lookup(self.db,code,later,update=True)['revision'],3)
+
+ def test_additive_migration_preserves_existing_code_and_signed_receipt(self):
+  db=s.sqlite3.connect(':memory:',isolation_level=None)
+  self.addCleanup(db.close)
+  db.execute('CREATE TABLE claims(device TEXT,nonce TEXT,code_hash TEXT UNIQUE,expires INTEGER,envelope TEXT,PRIMARY KEY(device,nonce))')
+  active=s.new_code(); unused=s.new_code(); envelope=json.dumps(self.envelope())
+  db.executemany('INSERT INTO claims VALUES(?,?,?,?,?)',[(self.d,self.n,s.codehash(active),120,envelope),
+                 ('c'*64,'d'*64,s.codehash(unused),250,None)])
+  s.init(db); s.init(db)
+  self.assertEqual(s.lookup(db,active,1000,update=True)['revision'],1)
+  self.assertEqual(s.mark_sent(db,'c'*64,'d'*64,200),{'reviewUntil':200+s.REVIEW_PERIOD})
+  self.assertEqual(db.execute('SELECT envelope FROM claims WHERE device=?',(self.d,)).fetchone()[0],envelope)
 
 class HTTPClaims(unittest.TestCase):
  def test_http_end_to_end(self):
@@ -48,12 +99,19 @@ class HTTPClaims(unittest.TestCase):
     d='c'*64; n='d'*64; data=json.dumps({'device':d,'nonce':n}).encode(); req=urllib.request.Request(base+'/author-support/claims',data=data,headers={'Content-Type':'application/json','X-Real-IP':'127.0.0.1'})
     with urllib.request.urlopen(req) as r: claim=json.load(r)
     with urllib.request.urlopen(req) as r: self.assertEqual(json.load(r),claim)
+    sent=urllib.request.Request(base+'/author-support/claims/sent',data=data,headers={'Content-Type':'application/json','X-Real-IP':'127.0.0.1'})
+    with urllib.request.urlopen(sent) as r:
+     pending=json.load(r)
+     self.assertEqual(set(pending),{'reviewUntil'})
+    with urllib.request.urlopen(sent) as r: self.assertEqual(json.load(r),pending)
     url=base+'/author-support/receipts/'+d+'/'+n
     with self.assertRaises(urllib.error.HTTPError) as e: urllib.request.urlopen(url)
     self.assertEqual(e.exception.code,404)
-    for _ in range(8):
+    for _ in range(6):
      with urllib.request.urlopen(req): pass
-    with self.assertRaises(urllib.error.HTTPError) as e: urllib.request.urlopen(req)
+    with self.assertRaises(urllib.error.HTTPError) as e: urllib.request.urlopen(sent)
     self.assertEqual(e.exception.code,429)
    finally:
     server.shutdown(); server.server_close(); t.join()
+
+if __name__=='__main__': unittest.main()
