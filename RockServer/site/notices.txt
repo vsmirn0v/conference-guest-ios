@@ -1,5 +1,7 @@
 Rock’n’Roll third-party notices
 
+iPhone and iPad app and speech model notices: https://rock.glowsoft.ru/ios-notices
+
 Open-source libraries used by the self-hosted jam engine and browser. Each notice below retains its supplier’s license text.
 
 ========================================================================

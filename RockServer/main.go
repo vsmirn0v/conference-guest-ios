@@ -97,6 +97,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /support", serveAsset("site/support.html", "text/html; charset=utf-8"))
 	mux.HandleFunc("GET /community", serveAsset("site/community.html", "text/html; charset=utf-8"))
 	mux.HandleFunc("GET /notices", serveAsset("site/notices.txt", "text/plain; charset=utf-8"))
+	mux.HandleFunc("GET /ios-notices", serveAsset("site/ios-notices.txt", "text/plain; charset=utf-8"))
 	mux.HandleFunc("GET /style.css", serveAsset("site/style.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET /app.js", serveScript)
 	mux.HandleFunc("GET /favicon.svg", serveAsset("site/favicon.svg", "image/svg+xml"))

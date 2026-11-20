@@ -13,7 +13,7 @@ go test ./...
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o rock-web .
 ```
 
-`site/app.js` and `site/app.js.gz` are committed build assets so the host does not need Node. The web binary embeds all pages and assets. Its runtime needs `ROOM_API_KEY`, `ROOM_API_SECRET`, and `PUBLIC_ROOM_URL=wss://rock.glowsoft.ru`; keep the matching key and secret out of Git. `/api/jams/test/join` accepts a JSON display name and returns a short-lived token. `/healthz` returns `ok`.
+`site/app.js` and `site/app.js.gz` are committed build assets so the host does not need Node. The web binary embeds all pages and assets. Before rebuilding for an iOS attribution update, copy the app’s complete `RockNRoll/Resources/Legal/ThirdPartyNotices.txt` into `RockServer/site/ios-notices.txt`. The public `/ios-notices` route serves that file. Its runtime needs `ROOM_API_KEY`, `ROOM_API_SECRET`, and `PUBLIC_ROOM_URL=wss://rock.glowsoft.ru`; keep the matching key and secret out of Git. `/api/jams/test/join` accepts a JSON display name and returns a short-lived token. `/healthz` returns `ok`.
 
 ## Running instance
 
