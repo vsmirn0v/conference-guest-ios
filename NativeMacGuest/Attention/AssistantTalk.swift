@@ -22,6 +22,7 @@ import SwiftUI
         var originalInput: String? = nil
     }
 
+    @Published var draft = ""
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var pending: Pending?
     @Published private(set) var working = false
@@ -797,7 +798,6 @@ struct AssistantTalkView: View {
     @ObservedObject private var store: AttentionStore
     @ObservedObject private var agentRuntime: AssistantRuntime
     @ObservedObject private var ruleStore: AssistantRuleStore
-    @State private var input = ""
 
     init(attention: AttentionCoordinator) {
         self.attention = attention
@@ -851,7 +851,7 @@ struct AssistantTalkView: View {
                             }.frame(maxWidth: .infinity).padding(.vertical, 50)
                         }
                         ForEach(agentRuntime.turns) { turn in
-                            AssistantAgentTurnView(turn: turn)
+                            AssistantAgentTurnView(turn: turn, historyAction: historyAction)
                         }
                     } else if talk.entries.isEmpty {
                         VStack(spacing: 8) {
@@ -983,12 +983,12 @@ struct AssistantTalkView: View {
                 }
             }
             HStack(spacing: 8) {
-                TextField(inputPrompt, text: $input)
+                TextField(inputPrompt, text: $talk.draft)
                     .textFieldStyle(.roundedBorder).onSubmit { send() }
                     .disabled(talk.working || talk.pending != nil || talk.agentPending != nil || talk.ruleProposalReview != nil)
                     .accessibilityIdentifier("assistant.input")
                 Button(L("Ask")) { send() }.buttonStyle(.borderedProminent)
-                    .disabled(input.trimmed.isEmpty || talk.working || talk.pending != nil || talk.agentPending != nil || talk.ruleProposalReview != nil)
+                    .disabled(talk.draft.trimmed.isEmpty || talk.working || talk.pending != nil || talk.agentPending != nil || talk.ruleProposalReview != nil)
                     .accessibilityIdentifier("assistant.ask")
                 Button(talk.listening ? L("Stop") : L("Listen")) {
                     talk.listening ? talk.stopPushToTalk() : talk.startPushToTalk()
@@ -1000,5 +1000,26 @@ struct AssistantTalkView: View {
         .onChange(of: liveMeetings.map(\.sessionID)) { _ in talk.reconcileMeetingTarget() }
     }
 
-    private func send() { let text = input; input = ""; talk.submit(text) }
+    private func historyAction(for source: AssistantEvidenceSource) -> (() -> Void)? {
+        guard let open = attention.openHistory else { return nil }
+        let suffix = source.id.dropFirst(source.kind.count + 1)
+        guard source.id.hasPrefix(source.kind + "-"), let id = UUID(uuidString: String(suffix)) else { return nil }
+        let destination: (UUID, MeetingHistoryTab)
+        switch source.kind {
+        case "outcome":
+            guard let sessionID = store.assistant.outcomes.first(where: { $0.id == id })?.meetingID else { return nil }
+            destination = (sessionID, .summary)
+        case "meeting": destination = (id, .summary)
+        case "transcript": destination = (id, .transcript)
+        case "note": destination = (id, .notes)
+        default: return nil
+        }
+        guard store.meetingLibrary.cards.contains(where: { $0.sessionID == destination.0 }) else { return nil }
+        if let active = liveMeetings.first(where: { $0.sessionID == destination.0 || $0.workspaceSessionID == destination.0 }) {
+            return { attention.openMeeting(active.sessionID) }
+        }
+        return { open(destination.0, destination.1) }
+    }
+
+    private func send() { let text = talk.draft; talk.draft = ""; talk.submit(text) }
 }

@@ -24,6 +24,7 @@ struct IOSMeetingDetailView: View {
     @ObservedObject var sync: RoomSyncCoordinator
     let sessionID: UUID
 
+    @State private var linkedRecordID: UUID?
     @State private var tab: IOSMeetingDetailTab = .summary
     @State private var noteText = ""
     @State private var previewNotes = false
@@ -91,6 +92,17 @@ struct IOSMeetingDetailView: View {
             .padding(.vertical, 8)
             .accessibilityIdentifier("workspace.detail.tab")
 
+            let sources = workspace.linkedHistorySources(for: sessionID)
+            if !sources.isEmpty {
+                Menu(L("Linked meeting records")) {
+                    ForEach(sources) { source in
+                        Button(source.title + " · " + source.startedAt.formatted(date: .abbreviated, time: .shortened)) {
+                            linkedRecordID = source.id
+                        }
+                    }
+                }.padding(.bottom, 6)
+            }
+
             switch tab {
             case .summary:
                 summaryView
@@ -103,6 +115,9 @@ struct IOSMeetingDetailView: View {
             }
         }
         .navigationTitle(session?.title ?? L("Meeting"))
+        .navigationDestination(item: $linkedRecordID) { id in
+            IOSMeetingDetailView(workspace: workspace, sync: sync, sessionID: id)
+        }
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             loadInitialState()
@@ -651,7 +666,7 @@ struct IOSMeetingDetailView: View {
     }
 
     private func loadTranscript() async {
-        let (events, isLocal) = await workspace.transcriptForDisplay(sessionID: sessionID)
+        let (events, isLocal) = await workspace.historyTranscriptForDisplay(sessionID: sessionID)
         transcriptEvents = events
         transcriptIsLocalOnly = isLocal
     }

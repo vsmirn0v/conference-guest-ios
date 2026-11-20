@@ -395,6 +395,16 @@ extension MeetingLibraryStore {
                 openQuestions: syncedOutcome.openQuestions.value
             )
             mapped.taskReviewCandidates = reviewCandidates
+            mapped.taskReviewMatches = existingOutcome?.taskReviewMatches ?? [:]
+            if let existingOutcome {
+                if existingOutcome.summary == mapped.summary, existingOutcome.decisions == mapped.decisions,
+                   existingOutcome.openQuestions == mapped.openQuestions {
+                    mapped.transcriptFingerprint = existingOutcome.transcriptFingerprint
+                }
+                if existingOutcome.decisions == mapped.decisions {
+                    mapped.decisionEvidence = existingOutcome.decisionEvidence
+                }
+            }
 
             let existingState = existingRow?.text(1).flatMap(MeetingOutcomePersistenceState.init(rawValue:))
             let outcomeChanged = existingOutcome != mapped || existingState != targetState

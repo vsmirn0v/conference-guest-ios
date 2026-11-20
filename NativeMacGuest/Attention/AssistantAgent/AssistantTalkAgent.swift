@@ -268,6 +268,7 @@ extension AssistantTalkController {
 /// clarification. Raw `rocknroll_*` identifiers stay behind the Details disclosure.
 struct AssistantAgentTurnView: View {
     let turn: AssistantAgentTurn
+    var historyAction: ((AssistantEvidenceSource) -> (() -> Void)?)? = nil
     @State private var showsDetails = false
 
     private var answer: AssistantConversationItem? { turn.activity.last(where: { $0.kind == .assistant }) }
@@ -323,7 +324,7 @@ struct AssistantAgentTurnView: View {
                     AssistantAgentItemView(item: item)
                 }
                 if let answer {
-                    AssistantAgentItemView(item: answer)
+                    AssistantAgentItemView(item: answer, historyAction: historyAction)
                 }
                 ForEach(clarifications) { item in
                     AssistantAgentItemView(item: item)
@@ -343,6 +344,7 @@ struct AssistantAgentTurnView: View {
 /// One structured entry in the agent conversation: text, source chips and status.
 struct AssistantAgentItemView: View {
     let item: AssistantConversationItem
+    var historyAction: ((AssistantEvidenceSource) -> (() -> Void)?)? = nil
 
     private var isUser: Bool { item.kind == .user }
     private var chip: String? {
@@ -369,16 +371,24 @@ struct AssistantAgentItemView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(item.sources) { source in
-                            Label(source.title, systemImage: sourceIcon(source.kind))
-                                .font(.caption2).foregroundStyle(.secondary)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-                                .help(source.at.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? source.kind)
+                            if let action = historyAction?(source) {
+                                Button(action: action) { sourceChip(source) }.buttonStyle(.link)
+                            } else {
+                                sourceChip(source).foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
         }.frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+
+    private func sourceChip(_ source: AssistantEvidenceSource) -> some View {
+        Label(source.title, systemImage: sourceIcon(source.kind))
+            .font(.caption2)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+            .help(source.at.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? source.kind)
     }
 
     private func sourceIcon(_ kind: String) -> String {

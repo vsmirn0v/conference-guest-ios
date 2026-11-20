@@ -1388,19 +1388,21 @@ final class ConferenceModel: ObservableObject {
                 }
                 if controller.workspaceSessionID == nil {
                     let roomID = MeetingRoomIdentity(controller.invitationURL, engine: controller.kind)
-                    let matchedCalendar = roomID.flatMap {
-                        calendar.currentScheduledMeeting(
-                            matching: ActiveRoomConnection(room: $0, endpoint: rec.guestEndpoint),
-                            at: Date()
-                        )
+                    let matches = roomID.map {
+                        calendar.matchingHistoryOccurrences(ActiveRoomConnection(room: $0, endpoint: rec.guestEndpoint), at: Date())
+                    } ?? []
+                    let explicitEvent = rec.calendarReminderTarget.flatMap { target in
+                        matches.first { $0.id == target.eventID }
                     }
+                    let matchedCalendar = explicitEvent ?? (matches.count == 1 ? matches.first : nil)
                     controller.workspaceSessionID = workspace.beginSession(
                         controllerID: id,
                         requestedWorkspaceID: pendingContinuationWorkspaceSessionID,
                         title: effectiveTitle,
                         invitation: controller.invitationURL,
                         roomIdentity: controller.invitationURL.absoluteString,
-                        calendarMeeting: matchedCalendar
+                        calendarMeeting: matchedCalendar,
+                        engine: controller.kind
                     )
                     pendingContinuationWorkspaceSessionID = nil
                 }

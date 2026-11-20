@@ -54,6 +54,8 @@ struct MeetingOutcome: Codable, Identifiable, Equatable, Sendable {
     var taskReviewCandidates: [MeetingOutcomeTask] = []
     var taskReviewMatches: [UUID: UUID] = [:]
     var openQuestions: [String] = []
+    var transcriptFingerprint: String?
+    var decisionEvidence: [String: [String]]?
 
     var knownEndedAt: Date? { endedAt == .distantPast ? nil : endedAt }
 
@@ -78,6 +80,8 @@ struct MeetingOutcome: Codable, Identifiable, Equatable, Sendable {
         taskReviewCandidates = try c.decodeIfPresent([MeetingOutcomeTask].self, forKey: .taskReviewCandidates) ?? []
         taskReviewMatches = try c.decodeIfPresent([UUID: UUID].self, forKey: .taskReviewMatches) ?? [:]
         openQuestions = try c.decodeIfPresent([String].self, forKey: .openQuestions) ?? []
+        transcriptFingerprint = try c.decodeIfPresent(String.self, forKey: .transcriptFingerprint)
+        decisionEvidence = try c.decodeIfPresent([String: [String]].self, forKey: .decisionEvidence)
     }
 
     var shareText: String {

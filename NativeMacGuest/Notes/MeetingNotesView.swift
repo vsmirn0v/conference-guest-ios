@@ -294,8 +294,7 @@ struct LiveMeetingNotes: View {
                             model.panel = .notes
                             workspace.presentEmbedded(model)
                         } else {
-                            workspace.attention.requestedOutcomeSessionID = id
-                            workspace.show(section: .assistant)
+                            workspace.openMeetingHistory(id, tab: .notes, activate: true)
                         }
                     })
                 })

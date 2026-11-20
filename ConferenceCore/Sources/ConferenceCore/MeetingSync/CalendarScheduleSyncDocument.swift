@@ -214,6 +214,9 @@ public struct CalendarScheduleSyncDocument: Codable, Equatable, Sendable {
                 attendedChanged = true
             }
 
+            if meeting.originalOccurrenceStart != nil && existing?.originalOccurrenceStart != meeting.originalOccurrenceStart {
+                metadataChanged = true
+            }
             let missingLocalSource = existing?.sourceDevices[device] == nil
             let shouldWrite = existing == nil
                 || migratedDuplicate
@@ -234,6 +237,7 @@ public struct CalendarScheduleSyncDocument: Codable, Equatable, Sendable {
                 calendarTitle: resolvedCalendarTitle,
                 start: resolvedStart,
                 end: resolvedEnd,
+                originalOccurrenceStart: meeting.originalOccurrenceStart ?? existing?.originalOccurrenceStart,
                 allDay: resolvedAllDay,
                 tentative: resolvedTentative,
                 links: resolvedLinks,

@@ -390,7 +390,8 @@ final class CalendarMeetingStore: ObservableObject {
                 links: links,
                 endpoint: occ.endpoint.flatMap(URL.init(string:)),
                 externalSeriesID: occ.seriesKey,
-                isRemoteSynced: true
+                isRemoteSynced: true,
+                originalOccurrenceStart: occ.originalOccurrenceStart
             )
             meeting.invitation = resolvedURL
             meeting.engine = occ.engine
@@ -498,6 +499,17 @@ final class CalendarMeetingStore: ObservableObject {
             !$0.allDay && !$0.tentative && $0.hasResolvedInvitation &&
                 $0.isScheduledNow(current) && $0.isConnected(in: [connection])
         }.max { ($0.start, $0.id) < ($1.start, $1.id) }
+    }
+
+    func matchingHistoryOccurrences(_ connection: ActiveRoomConnection, at date: Date) -> [CalendarMeeting] {
+        let roomEvents = meetings.filter {
+            !$0.allDay && !$0.tentative && $0.hasResolvedInvitation && $0.isConnected(in: [connection])
+        }
+        return roomEvents.filter { event in
+            let next = roomEvents.filter { $0.start > event.start }.map(\.start).min()
+            let association = MeetingCalendarAssociation(event, room: connection.room)
+            return event.isScheduledNow(date) || association.allowsRejoin(at: date, before: next)
+        }
     }
 
     func nextTransitionDate(matching connections: [ActiveRoomConnection], after date: Date) -> Date? {

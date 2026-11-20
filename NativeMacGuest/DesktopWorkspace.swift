@@ -6,10 +6,10 @@ import UserNotifications
 
 @MainActor final class NativeDesktopWorkspace: NSObject, ObservableObject, NSWindowDelegate {
     enum Section: String, CaseIterable, Identifiable {
-        case home = "Home", workspace = "Meeting workspace", assistant = "Assistant", tasks = "Tasks", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
+        case home = "Home", workspace = "Live", history = "Meeting history", tasks = "Tasks", assistant = "Assistant", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
         var id: Self { self }
         var symbol: String {
-            switch self { case .home: "house"; case .workspace: "rectangle.split.3x1"; case .assistant: "tray"; case .tasks: "checklist"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
+            switch self { case .home: "house"; case .workspace: "dot.radiowaves.left.and.right"; case .history: "clock.arrow.circlepath"; case .assistant: "tray"; case .tasks: "checklist"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
         }
     }
     let library: NativeDesktopLibrary
@@ -175,7 +175,7 @@ import UserNotifications
         library.continuation.onSnapshot = { [weak self] in self?.continuationSnapshot() }
         library.continuation.onJoinTarget = { [weak self] jam, quiet in
             guard let self, !preparing, meetings.isEmpty, mayAdmitMeeting() else { return nil }
-            join(jam.invitation, engine: jam.engine, title: jam.title, quiet: quiet, nameOverride: jam.name)
+            join(jam.invitation, engine: jam.engine, title: jam.title, quiet: quiet, nameOverride: jam.name, workspaceID: jam.workspaceSessionID)
             return sessionID
         }
         library.continuation.onPrepareSource = { [weak self] id in
@@ -198,6 +198,20 @@ import UserNotifications
         CalendarReminderBroker.shared.attach(library.calendar.reminders)
         CalendarReminderBroker.shared.onAttention = { [weak self] id in
             self?.attention.showMoment(id); self?.show(section: .assistant)
+        }
+        CalendarReminderBroker.shared.onTask = { [weak self] id in
+            guard let self else { return }
+            Task { @MainActor in
+                let store = self.attention.store
+                await store.waitForMeetingLibrary()
+                let rows = try? await store.meetingLibrary.store.taskHistory(profile: store.assistant.taskProfile, includeAll: true)
+                if let row = rows?.first(where: { $0.id == id }) {
+                    self.openMeetingHistory(row.sessionID, tab: .tasks, taskID: row.id, source: .tasks, activate: true)
+                } else { self.show(section: .tasks) }
+            }
+        }
+        self.attention.openHistory = { [weak self] id, tab in
+            self?.openMeetingHistory(id, tab: tab, source: .assistant)
         }
         library.calendar.reminders.activeRoom = { [weak self] in self?.meeting.flatMap { MeetingRoomIdentity($0.invitation, engine: $0.kind) } }
         library.calendar.reminders.activeConnections = { [weak self] in self?.currentActiveConnections() ?? [] }
@@ -253,6 +267,7 @@ import UserNotifications
             try await existingDeleteSyncedData?()
             try await self?.workspaceSync.clearCloudData()
         }
+        self.workspaceSync.onTranscriptChanged = { [weak self] id in self?.offerHistoryRefresh(for: id) }
         self.attention.start()
         self.workspaceSync.start()
     }
@@ -277,6 +292,8 @@ import UserNotifications
         content.title = L("“%@” needs you", card.meetingTitle)
         content.body = card.verdict.reason
         content.threadIdentifier = "attention"
+        content.categoryIdentifier = CalendarReminderBroker.attentionCategory
+        content.userInfo = ["momentID": card.id.uuidString]
         content.interruptionLevel = .timeSensitive
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "attention-" + card.id.uuidString, content: content, trigger: nil))
     }
@@ -286,9 +303,28 @@ import UserNotifications
         selection = .settings
     }
 
-    func openMeetingHistory() {
-        workspaceViewState.destination = .review
-        selection = .workspace
+    @Published private(set) var lastFinishedHistoryID: UUID?
+
+    func openLiveWorkspace() { selection = .workspace }
+
+    func openAssistantMoments() {
+        attention.opensAssistantMoments = true
+        show(section: .assistant)
+    }
+
+    func openMeetingHistory(_ id: UUID? = nil, tab: MeetingHistoryTab = .summary, taskID: UUID? = nil,
+                            source: Section? = nil, activate: Bool = false) {
+        let navigation = attention.historyNavigation
+        if let id {
+            navigation.selectedSessionID = id
+            navigation.indexVisible = false
+            navigation.tab = tab
+            navigation.taskID = taskID
+            navigation.eventID = nil
+        }
+        navigation.source = source
+        selection = .history
+        if activate { show(section: .history) }
     }
 
     func show(section: Section? = nil) {
@@ -348,8 +384,29 @@ import UserNotifications
         do { let destination = try library.normalizedDestination(invitation); join(destination.invitationURL) }
         catch { self.error = error.localizedDescription }
     }
+    func canResumeHistory(_ id: UUID, invitation: URL) -> Bool {
+        guard let association = workspaceSync.association(for: id),
+              let room = MeetingRoomIdentity(invitation), room.workspaceKey == association.roomKey else { return false }
+        let connection = ActiveRoomConnection(room: room)
+        let next = library.calendar.meetings.filter {
+            $0.start > association.start && !$0.allDay && !$0.tentative && $0.isConnected(in: [connection]) &&
+                !MeetingCalendarAssociation($0, room: room).matches(association)
+        }.map(\.start).min()
+        return association.allowsRejoin(at: library.calendar.currentTime, before: next)
+    }
+
+    func joinFromHistory(_ id: UUID, invitation: URL, title: String) {
+        let canonical = workspaceSync.canonicalSessionID(id)
+        if let live = meetings.first(where: { workspaceSync.canonicalSessionID($0.workspaceSessionID) == canonical }) {
+            showMeeting(live)
+        } else {
+            join(invitation, title: title, quiet: true, historyRejoinID: id)
+        }
+    }
+
     func join(_ url: URL, engine known: MeetingEngineKind? = nil, title: String? = nil, eventID: String? = nil,
-              quiet: Bool = false, scheduled: NativeDesktopScheduledJoin? = nil, nameOverride: String? = nil) {
+              quiet: Bool = false, scheduled: NativeDesktopScheduledJoin? = nil, nameOverride: String? = nil,
+              workspaceID: UUID? = nil, historyRejoinID: UUID? = nil) {
         guard mayAdmitMeeting() else {
             scheduled?.finish(); error = meetingAdmissionError() ?? L("An update is being installed. Please try again after Rock'N'Roll for Mac restarts."); return
         }
@@ -360,7 +417,7 @@ import UserNotifications
             // Asked for while another join is still finding its service: it starts
             // right after that step, without waiting for the other to connect.
             queuedJoin = { [weak self] in
-                self?.join(url, engine: known, title: title, eventID: eventID, quiet: quiet, nameOverride: nameOverride)
+                self?.join(url, engine: known, title: title, eventID: eventID, quiet: quiet, nameOverride: nameOverride, workspaceID: workspaceID, historyRejoinID: historyRejoinID)
             }
             return
         }
@@ -389,6 +446,7 @@ import UserNotifications
                 if settingUp { endJoinSetup() }
             }
             var ownedModel: NativeDesktopMeetingModel?
+            var earlierRecord: MeetingSessionRecord?
             do {
                 try Task.checkCancellation(); guard token == joinGeneration else { return }
                 guard scheduled?.admission() != false else { throw CancellationError() }
@@ -421,21 +479,35 @@ import UserNotifications
                 }
                 let explicitTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let nowAtJoin = library.calendar.currentTime
-                let calendarMeeting: CalendarMeeting? = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id } }
-                    ?? incomingRoom.flatMap {
-                        library.calendar.currentScheduledMeeting(
-                            matching: ActiveRoomConnection(room: $0, normalizedEndpoint: endpointString),
-                            at: nowAtJoin)
-                    }
-                let initialTitle = (explicitTitle?.isEmpty == false ? explicitTitle : nil) ?? calendarMeeting?.title
+                let calendarCandidates = incomingRoom.map {
+                    library.calendar.matchingHistoryOccurrences(
+                        ActiveRoomConnection(room: $0, normalizedEndpoint: endpointString), at: nowAtJoin)
+                } ?? []
+                let explicitEvent = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id } }
+                let calendarMeeting = explicitEvent ?? (calendarCandidates.count == 1 ? calendarCandidates.first : nil)
+                let association = calendarMeeting.flatMap { event in incomingRoom.map { MeetingCalendarAssociation(event, room: $0) } }
+                let locallyKnown = association.flatMap { candidate -> UUID? in
+                    guard calendarCandidates.contains(where: { $0.id == calendarMeeting?.id }) else { return nil }
+                    return workspaceSync.historySession(matching: candidate)
+                }
+                let historyID = historyRejoinID.flatMap { canResumeHistory($0, invitation: url) ? workspaceSync.canonicalSessionID($0) : nil }
+                let resumedID = workspaceID.map { workspaceSync.canonicalSessionID($0) } ?? historyID ?? locallyKnown
+                let prior = if let resumedID { try? await attention.store.meetingLibrary.store.session(resumedID) } else { nil as MeetingSessionRecord? }
+                earlierRecord = prior
+                let initialTitle = prior?.title ?? (explicitTitle?.isEmpty == false ? explicitTitle : nil) ?? calendarMeeting?.title
                 let model = makeMeeting(destination, name, initialTitle, quiet)
                 ownedModel = model; joinModels[joinID] = ObjectIdentifier(model)
                 model.resolvedEndpoint = detectedEndpoint
+                if let resumedID { model.useInitialWorkspaceSession(resumedID) }
                 if let calendarMeeting {
                     model.applyScheduledTitle(calendarMeeting.title, seriesID: calendarMeeting.seriesID, calendarMeeting: calendarMeeting)
                 } else {
-                    model.calendarSeriesID = nil
+                    model.calendarSeriesID = prior?.calendarSeriesID
                     model.participationCalendar = nil
+                }
+                if let association, calendarCandidates.contains(where: { $0.id == calendarMeeting?.id }),
+                   workspaceID == nil || workspaceSync.association(for: model.workspaceSessionID) == nil {
+                    workspaceSync.recordCalendarAssociation(association, sessionID: model.workspaceSessionID)
                 }
                 model.segments = [
                     NativeDesktopMeetingModel.ScheduledSegment(
@@ -451,18 +523,18 @@ import UserNotifications
                     guard let attention else { throw CancellationError() }
                     return try await attention.synthesize(text)
                 }
-                // The persisted session uses the model's own UUID: a reconnect in this
-                // model keeps the session; only an explicit Leave plus a new model starts a new one.
-                let initialSessionID = model.sessionID
+                let initialSessionID = model.workspaceSessionID
                 let initialSessionTitle = model.title
                 let initialSeriesID = model.calendarSeriesID
-                pendingSessionCreates[initialSessionID] = Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await self.attention.store.meetingLibrary.createSession(
-                        id: initialSessionID, title: initialSessionTitle, invitation: model.invitation,
-                        roomIdentity: MeetingRoomIdentity(model.invitation, engine: model.kind)?.displayDetails ?? "",
-                        calendarSeriesID: initialSeriesID, startedAt: nowAtJoin)
-                    await self.attention.store.meetingLibrary.markSessionConnected(initialSessionID)
+                if prior == nil {
+                    pendingSessionCreates[initialSessionID] = Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        await self.attention.store.meetingLibrary.createSession(
+                            id: initialSessionID, title: initialSessionTitle, invitation: model.invitation,
+                            roomIdentity: MeetingRoomIdentity(model.invitation, engine: model.kind)?.displayDetails ?? "",
+                            calendarSeriesID: initialSeriesID, startedAt: nowAtJoin)
+                        await self.attention.store.meetingLibrary.markSessionConnected(initialSessionID)
+                    }
                 }
                 let concurrent = !meetings.isEmpty, owns = talkMeeting == nil
                 if concurrent { model.configureForConcurrentJoin(ownsMicrophone: owns) }
@@ -491,6 +563,12 @@ import UserNotifications
                 // Commit only after final admission, including same-turn revocation.
                 if scheduledJoinID == joinID { scheduledJoinID = nil; pendingScheduled = nil }
                 let connectedAt = library.calendar.currentTime
+                if prior != nil {
+                    model.workspaceJournal?.reopen(sessionID: initialSessionID)
+                    attention.store.meetingLibrary.markSessionConnected(initialSessionID)
+                }
+                workspaceSync.noteLocalSessionJoined(sessionID: initialSessionID, joinedAt: connectedAt,
+                    hasOutcomeWriter: attention.store.generateOutcomes)
                 if model.segments.count == 1, model.segments[0].sessionID == model.workspaceSessionID {
                     model.segments[0].startedAt = connectedAt
                 }
@@ -506,7 +584,12 @@ import UserNotifications
                 if token == joinGeneration, requestedSession == sessionID { library.continuation.targetDidFail() }
                 if let ownedModel, meetings.contains(where: { $0 === ownedModel }) {
                     _ = await leave(ownedModel)
-                    if !ownedModel.connected { attention.store.meetingLibrary.markSessionFailed(ownedModel.sessionID) }
+                    if let earlierRecord, let end = earlierRecord.endedAt {
+                        ownedModel.workspaceJournal?.end(sessionID: earlierRecord.id, at: end)
+                        await attention.store.meetingLibrary.endSession(earlierRecord.id, endedAt: end, awaitingOutcome: false)
+                    } else if earlierRecord == nil, !ownedModel.connected {
+                        attention.store.meetingLibrary.markSessionFailed(ownedModel.workspaceSessionID)
+                    }
                 }
             }
         }
@@ -664,6 +747,7 @@ import UserNotifications
         switch mode {
         case .separateSessions:
             let newSessionID = UUID()
+            if let room { workspaceSync.recordCalendarAssociation(MeetingCalendarAssociation(scheduled, room: room), sessionID: newSessionID) }
             let protectNote = shouldProtectActiveNote(for: model)
             model.rolloverWorkspaceSession(to: newSessionID, title: scheduled.title, seriesID: scheduled.seriesID,
                                            calendarMeeting: scheduled, at: boundary, protectActiveNote: protectNote)
@@ -815,6 +899,20 @@ import UserNotifications
         }
     }
 
+    private func offerHistoryRefresh(for rawID: UUID) {
+        guard attention.store.shouldCaptureOutcome else { return }
+        let id = workspaceSync.historySessionID(rawID)
+        guard !meetings.contains(where: { workspaceSync.historySessionID($0.workspaceSessionID) == id }),
+              workspaceSync.isHistoryRefreshWriter(for: id, at: library.calendar.currentTime),
+              let old = attention.store.assistant.outcomes.first(where: { $0.meetingID == id && $0.transcriptFingerprint != nil }),
+              let session = workspaceSync.historyConversation(for: id, in: attention.store.meetingLibrary.workspaceJournal),
+              let end = session.endedAt else { return }
+        let window = MeetingOutcomePrompt.historyWindow(title: session.title, events: session.events, endedAt: end,
+            onDevice: attention.store.effectiveWriter.kind == .apple, contextTokens: attention.store.outcomeContextTokens)
+        guard old.transcriptFingerprint != MeetingOutcomePrompt.fingerprint(window) else { return }
+        attention.prepareHistoryOutcome(sessionID: id, title: session.title, endedAt: end, window: window)
+    }
+
     private func shouldProtectActiveNote(for model: NativeDesktopMeetingModel) -> Bool {
         guard let notes = model.notes else { return false }
         let noteID = model.activeNoteSessionID
@@ -962,7 +1060,11 @@ import UserNotifications
             }
             if clean {
                 _ = await self.finalizeSegmentsAndOutcomes(for: model, leftAt: leftAt)
+                if model.connectedSince != nil || model.workspaceJournal?.session(id: model.workspaceSessionID) != nil {
+                    self.lastFinishedHistoryID = model.workspaceSessionID
+                }
                 self.meetings.removeAll { $0 === model }
+                for id in Set(model.segments.map(\.sessionID)) { self.offerHistoryRefresh(for: id) }
                 self.meetingWindows.removeValue(forKey: id)?.close()
                 self.meetingSubscriptions[id] = nil; self.renderedMeetingStates[id] = nil; self.continuationSessions[id] = nil
                 self.pendingSessionCreates[id] = nil; self.sameRoomSwitchTasks[id] = nil
@@ -1031,7 +1133,7 @@ import UserNotifications
     /// the ambient status surface, and floating video is an explicit opt-in
     /// ("Mini meeting"), never an automatic overlay over library sections.
     var sidebarSelection: NativeDesktopSidebarItem? {
-        get { selectedMeetingID.map(NativeDesktopSidebarItem.meeting) ?? .section(selection) }
+        get { .section(selectedMeetingID == nil ? selection : .workspace) }
         set {
             // The sidebar List writes its selection back during view updates;
             // republishing an unchanged value would re-render it in a loop.
@@ -1053,6 +1155,7 @@ import UserNotifications
     func presentEmbedded(_ model: NativeDesktopMeetingModel) {
         guard meetings.contains(where: { $0 === model }) else { return }
         objectWillChange.send()
+        workspaceViewState.focusedID = model.sessionID
         if selectedMeetingID != model.sessionID { selectedMeetingID = model.sessionID }
         presentMainWindow()
     }

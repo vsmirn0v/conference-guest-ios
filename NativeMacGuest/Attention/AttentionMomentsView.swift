@@ -11,12 +11,12 @@ extension AttentionMoment.State {
 /// Durable Assistant inbox. History is already in memory; this view only sorts
 /// when its query changes and renders rows lazily.
 struct AttentionMomentsView: View {
-    private enum Section: Hashable { case moments, outcomes, tasks, talk }
+    private enum Section: Hashable { case moments, talk }
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject var store: AttentionStore
     @State private var filter: AttentionMoment.State?
     @State private var selectedID: UUID?
-    @State private var area = Section.moments
+    @State private var area = Section.talk
 
     private var moments: [AttentionMoment] { store.momentHistory.moments(filter: filter) }
     private var selected: AttentionMoment? { selectedID.flatMap(store.momentHistory.moment(_:)) }
@@ -24,39 +24,39 @@ struct AttentionMomentsView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker(L("Assistant section"), selection: $area) {
-                Text(L("Moments")).tag(Section.moments)
-                Text(L("Outcomes")).tag(Section.outcomes)
-                Text(L("Tasks")).tag(Section.tasks)
                 Text(L("Talk")).tag(Section.talk)
+                Text(L("Moments")).tag(Section.moments)
             }.pickerStyle(.segmented).labelsHidden().padding(12)
             Divider()
             switch area {
-            case .outcomes: AssistantOutcomesView(attention: attention)
-            case .tasks:
-                PersonalTasksView(attention: attention) { sessionID in
-                    attention.requestedOutcomeSessionID = sessionID
-                    area = .outcomes
-                }
             case .talk: AssistantTalkView(attention: attention)
             case .moments: momentsView
             }
         }.navigationTitle(L("Assistant"))
         .onAppear {
-            if attention.requestedOutcomeSessionID != nil { area = .outcomes }
+            if attention.opensAssistantMoments {
+                area = .moments
+                attention.opensAssistantMoments = false
+            }
+            openRequestedMoment()
         }
-        .onChange(of: attention.requestedOutcomeSessionID) { id in
-            if id != nil { area = .outcomes }
+        .onChange(of: attention.opensAssistantMoments) { open in
+            if open { area = .moments; attention.opensAssistantMoments = false }
         }
         .onChange(of: filter) { _ in selectedID = nil; attention.selectedCard = nil }
         .onChange(of: store.momentsLoaded) { _ in
-            if let id = attention.requestedMomentID, let moment = store.momentHistory.moment(id) {
-                filter = nil; selectedID = id; attention.selectMoment(moment)
-            }
+            openRequestedMoment()
         }
-        .onChange(of: attention.requestedMomentID) { id in
-            guard let id, let moment = store.momentHistory.moment(id) else { return }
-            area = .moments; filter = nil; selectedID = id; attention.selectMoment(moment)
-        }
+        .onChange(of: attention.requestedMomentID) { _ in openRequestedMoment() }
+    }
+
+    private func openRequestedMoment() {
+        guard let id = attention.requestedMomentID, let moment = store.momentHistory.moment(id) else { return }
+        area = .moments
+        filter = nil
+        selectedID = id
+        attention.selectMoment(moment)
+        attention.requestedMomentID = nil
     }
 
     private var momentsView: some View {

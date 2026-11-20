@@ -179,6 +179,7 @@ struct WorkspaceTimeline: View {
     let empty: String
     let live: Bool
     let followsLatest: Bool
+    var scrollTargetID: String? = nil
     let selectedID: String?
     let onSelect: (String) -> Void
     let onBookmark: (String) -> Void
@@ -203,7 +204,13 @@ struct WorkspaceTimeline: View {
                     if live && followsLatest { WorkspaceTimelineScrollObserver(onScrollBack: onScrollBack) }
                 }
             }
-            .onAppear { scrollIfFollowing(proxy) }
+            .onAppear {
+                if let scrollTargetID { proxy.scrollTo(scrollTargetID, anchor: .center) }
+                else { scrollIfFollowing(proxy) }
+            }
+            .onChange(of: scrollTargetID) { id in
+                if let id { proxy.scrollTo(id, anchor: .center) }
+            }
             .onChange(of: followsLatest) { _ in scrollIfFollowing(proxy) }
             .onChange(of: events.last?.id) { _ in scrollIfFollowing(proxy) }
         }

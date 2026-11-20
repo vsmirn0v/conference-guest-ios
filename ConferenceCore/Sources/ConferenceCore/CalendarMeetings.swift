@@ -14,6 +14,11 @@ public struct MeetingRoomIdentity: Hashable, Codable, Sendable {
     public let origin: String
     public let room: String
     public let engine: MeetingEngineKind
+    /// A portable key for history matching. The invitation is stored separately for joining.
+    public var workspaceKey: String {
+        MeetingWorkspaceSyncDocument.digest([engine.rawValue, origin, room].joined(separator: "\u{1F}"))
+    }
+
     /// Human-readable authority and room identity, never invitation credentials.
     public var displayDetails: String {
         let components = URLComponents(string: origin)
@@ -171,6 +176,7 @@ public struct CalendarMeeting: Identifiable, Equatable, Sendable {
     public var requiresChoice: Bool = false
     public var externalSeriesID: String? = nil
     public var isRemoteSynced: Bool = false
+    public var originalOccurrenceStart: Date?
 
     public var occurrenceSyncKey: String {
         (externalSeriesID ?? seriesID) + "|" + String(Int64(start.timeIntervalSince1970.rounded()))
@@ -190,7 +196,7 @@ public struct CalendarMeeting: Identifiable, Equatable, Sendable {
     public init(id: String, seriesID: String, calendarID: String, calendarTitle: String,
                 title: String, start: Date, end: Date, allDay: Bool = false, tentative: Bool = false,
                 links: [URL] = [], linkGroups: [CalendarLinkGroup]? = nil, endpoint: URL? = nil,
-                externalSeriesID: String? = nil, isRemoteSynced: Bool = false) {
+                externalSeriesID: String? = nil, isRemoteSynced: Bool = false, originalOccurrenceStart: Date? = nil) {
         self.id = id; self.seriesID = seriesID; self.calendarID = calendarID; self.calendarTitle = calendarTitle
         self.title = title; self.start = start; self.end = end; self.allDay = allDay; self.tentative = tentative
         self.linkGroups = (linkGroups ?? [.init(source: .notes, links: links)])
@@ -198,6 +204,7 @@ public struct CalendarMeeting: Identifiable, Equatable, Sendable {
         self.endpoint = endpoint
         self.externalSeriesID = externalSeriesID
         self.isRemoteSynced = isRemoteSynced
+        self.originalOccurrenceStart = originalOccurrenceStart
     }
 
     public func isScheduledNow(_ now: Date) -> Bool { start <= now && end > now }

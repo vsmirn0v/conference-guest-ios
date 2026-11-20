@@ -324,10 +324,8 @@ private struct CompactSettingsFixture: View {
         workspace.openCalendarSettings()
         XCTAssertEqual(workspace.selection, .settings)
         XCTAssertEqual(workspace.settingsTab, 1)
-        workspace.workspaceViewState.destination = .live
         workspace.openMeetingHistory()
-        XCTAssertEqual(workspace.selection, .workspace)
-        XCTAssertEqual(workspace.workspaceViewState.destination, .review)
+        XCTAssertEqual(workspace.selection, .history)
         XCTAssertEqual(fixture.calls.detections, 0)
         XCTAssertEqual(fixture.calls.models, 0)
     }

@@ -54,7 +54,7 @@ struct IOSWorkspaceHubView: View {
                 .navigationTitle(L("Assistant"))
                 .toolbar { hubToolbar }
         } detail: {
-            if let selectedID = selectedSessionID ?? workspace.sessions.first?.id {
+            if let selectedID = selectedSessionID ?? workspace.historySessions.first?.id {
                 IOSMeetingDetailView(workspace: workspace, sync: sync, sessionID: selectedID)
             } else {
                 ContentUnavailableView(
@@ -152,7 +152,7 @@ struct IOSWorkspaceHubView: View {
 
     @ViewBuilder
     private var historyList: some View {
-        if workspace.sessions.isEmpty {
+        if workspace.historySessions.isEmpty {
             ContentUnavailableView(
                 L("No Meetings Yet"),
                 systemImage: "note.text",
@@ -160,7 +160,7 @@ struct IOSWorkspaceHubView: View {
             )
         } else {
             List(selection: sizeClass == .regular ? $selectedSessionID : .constant(nil)) {
-                ForEach(workspace.sessions) { session in
+                ForEach(workspace.historySessions) { session in
                     Button {
                         openMeeting(session.id)
                     } label: {
