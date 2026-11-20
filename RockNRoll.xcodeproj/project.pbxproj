@@ -154,6 +154,7 @@
 		772D6857C9D1ADD26D37C906 /* FloatingVideoContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1567DFCAF9DFADA92D9DECFF /* FloatingVideoContentView.swift */; };
 		78EDB81044209169D81D49A8 /* ParticipantMediaBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1670DCC27A23A887BFBF0F8F /* ParticipantMediaBadge.swift */; };
 		792920E1AD87832C0D03CCDB /* LiveKitWebRTC-notices.txt in Resources */ = {isa = PBXBuildFile; fileRef = C06F78D38F40E86788A17689 /* LiveKitWebRTC-notices.txt */; };
+		73DE9BAC5B19A1B12872D5A7 /* ThirdPartyNotices.txt in Resources */ = {isa = PBXBuildFile; fileRef = A592AB94131118D994162F0E /* ThirdPartyNotices.txt */; };
 		798A57E4B684067FF5A86372 /* CameraUplinkStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5500E7632CE754D5ABF5A365 /* CameraUplinkStatistics.swift */; };
 		7B64C3E70A699389A9055A95 /* PresenterCanvasTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB369290564963B920E5DB8A /* PresenterCanvasTests.swift */; };
 		7BB46EB18FF4A4AB7BCCDF8D /* ReactionHistoryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A5355673DABA2B3B37E8EC /* ReactionHistoryStoreTests.swift */; };
@@ -649,6 +650,7 @@
 		BE6E9EDF239CB05382785B3A /* MeetingGalleryFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingGalleryFixture.swift; sourceTree = "<group>"; };
 		BED2653E8497C35147D804BC /* SpeakerFixtureActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerFixtureActions.swift; sourceTree = "<group>"; };
 		C06F78D38F40E86788A17689 /* LiveKitWebRTC-notices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LiveKitWebRTC-notices.txt"; sourceTree = "<group>"; };
+		A592AB94131118D994162F0E /* ThirdPartyNotices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ThirdPartyNotices.txt; sourceTree = "<group>"; };
 		C09FCE59F22D1FD6B3AD3F2A /* RockCallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RockCallViewController.swift; sourceTree = "<group>"; };
 		C0C3D18EA35C020152606060 /* IOSMeetingSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSMeetingSessionController.swift; sourceTree = "<group>"; };
 		C1D417D9688050BACFBBA14B /* client-sdk-swift */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "client-sdk-swift"; path = ".build/unified-sdk-dependencies/client-sdk-swift"; sourceTree = SOURCE_ROOT; };
@@ -885,6 +887,7 @@
 			isa = PBXGroup;
 			children = (
 				C06F78D38F40E86788A17689 /* LiveKitWebRTC-notices.txt */,
+				A592AB94131118D994162F0E /* ThirdPartyNotices.txt */,
 			);
 			path = Legal;
 			sourceTree = "<group>";
@@ -1474,6 +1477,7 @@
 				A6B7066F04A854827E9466A5 /* InfoPlist.strings in Resources */,
 				261048B542501F2E67DD41D2 /* LICENSE in Resources */,
 				792920E1AD87832C0D03CCDB /* LiveKitWebRTC-notices.txt in Resources */,
+				73DE9BAC5B19A1B12872D5A7 /* ThirdPartyNotices.txt in Resources */,
 				AB028C03E1A572AB2D347562 /* Localizable.strings in Resources */,
 				A84E5AF54AB0C60B1F0F65BC /* Localizable.stringsdict in Resources */,
 			);

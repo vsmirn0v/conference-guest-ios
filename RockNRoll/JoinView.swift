@@ -1,4 +1,5 @@
 import ConferenceCore
+import QuickLook
 import SwiftUI
 
 struct JoinView: View {
@@ -26,6 +27,7 @@ struct JoinView: View {
     @State private var homeLayoutNow = Date()
     @State private var foreground = true
     @State private var showingSettings = false
+    @State private var noticesToPreview: URL?
     @AppStorage(SystemCallCoordinator.controlsPreferenceKey) private var systemCallControls = false
     @AppStorage(MeetingActivityCoordinator.enabledKey) private var meetingActivityEnabled = true
     @AppStorage(MeetingActivityCoordinator.titleKey) private var meetingActivityShowTitle = true
@@ -829,7 +831,12 @@ struct JoinView: View {
             Link(L("Community"), destination: URL(string: "https://rock.glowsoft.ru/community")!)
             Link(L("Privacy policy"), destination: URL(string: "https://rock.glowsoft.ru/privacy")!)
             Link(L("Support"), destination: URL(string: "https://rock.glowsoft.ru/support")!)
-            Link(L("Third-party notices"), destination: URL(string: "https://rock.glowsoft.ru/notices")!)
+            if let notices = Bundle.main.url(forResource: "ThirdPartyNotices", withExtension: "txt") {
+                Button(L("Third-party notices")) { noticesToPreview = notices }
+                    .quickLookPreview($noticesToPreview)
+            } else {
+                Link(L("Third-party notices"), destination: URL(string: "https://rock.glowsoft.ru/notices")!)
+            }
         }
     }
     private static func makeMediaCheck() -> StudioModel {
