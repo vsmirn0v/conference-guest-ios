@@ -1,0 +1,9 @@
+# iOS App Review build 0.2.0 (144)
+
+The signed archive was built from `75f62315f297a1f796cf2b12541af4e7ce8a0c7f`. Signature and provisioning checks covered the iOS app, broadcast extension and Live Activity. All three carry build 144. The bundled [third-party notices](https://rock.glowsoft.ru/ios-notices) match the public copy, SHA-256 `7df002b7a388dc036dd4485afba274441f5a5c2284f58c1fb3ec4ef7f4256026`.
+
+The focused iOS simulator run passed all 114 tests on 21 November 2026. Two test-only commits replaced a live calendar discovery dependency with a deterministic fixture and exercised fallback when the server returns HTTP 404. The validated checkout `81ba942dffe3c9021454b8c020e9f80801cd963b` has the same production sources as the archive.
+
+Xcode uploaded the binary at 00:07 Moscow time on 21 November. It reported a missing dSYM for the LiveKitWebRTC framework. App Store Connect recorded the upload. The review thread for the rejected build 119 contains the developer’s reply identifying the old SDK, the replacement native adapters and the public demo instructions. The listing uses Business and Productivity, the updated English description, and [eleven screenshots](../AppStore/Screenshots/2026-11-20-build143/manifest.json), including both iPhone Duo displays.
+
+App Store Connect processed build 144 and saved it on iOS version 1.0 with manual release selected. On 21 November, choosing **Update Review** returned **Unable to Add for Review**. With mainland China included, Apple requires both proof of a completed security assessment with its report and an AI-generated or synthetic content service declaration with filing information. The current storefront selection is retained at the owner’s request. The version is in **Prepare for Submission** pending those filings. [App Compliance](https://appstoreconnect.apple.com/apps/6815394127/distribution/compliance)
