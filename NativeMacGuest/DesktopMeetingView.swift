@@ -52,6 +52,7 @@ import SwiftUI
     private weak var workspace: NativeDesktopWorkspace?
     private var titleSubscription: AnyCancellable?
     private let hider = NativeDesktopWindowHider()
+    private var hasShownWindow = false
     private(set) var detached = false
     init(model: NativeDesktopMeetingModel, continuation: MeetingContinuationCoordinator? = nil, workspace: NativeDesktopWorkspace? = nil) {
         self.model = model
@@ -63,9 +64,7 @@ import SwiftUI
         window.title = model.title; window.minSize = NSSize(width: 740, height: 520)
         window.isReleasedWhenClosed = false; window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden; window.delegate = self
-        // Detached meetings group as native tabs and can be dragged apart.
-        window.tabbingIdentifier = "nativeDesktop.meeting"; window.tabbingMode = .preferred
-        if !window.setFrameAutosaveName("nativeDesktop.meeting") { window.center() } else { window.center() }
+        window.tabbingMode = .disallowed
         titleSubscription = model.$title.sink { [weak window = window] in window?.title = $0 }
     }
     /// Shown in the main window rather than in its own window.
@@ -75,15 +74,44 @@ import SwiftUI
     /// A visible, non-occluded mini panel — the single predicate for "this Mini
     /// meeting occupies a video streaming slot" (synchronization and the cap).
     var isStreamingMini: Bool { mini.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false }
-    /// Re-shown detached meetings join a visible meeting's tab group explicitly.
-    func show(tabbedWith other: NativeDesktopMeetingWindow?) {
-        if !isEmbedded, let other, other !== self, !other.isEmbedded, !window.isVisible, other.window.isVisible,
-           other.window.tabbingIdentifier == window.tabbingIdentifier, other.window.tabbedWindows?.contains(window) != true {
-            other.window.addTabbedWindow(window, ordered: .above)
-        }
-        show()
-    }
     var isKeyWindow: Bool { (!isEmbedded && window.isKeyWindow) || mini?.isKeyWindow == true }
+    private func positionNewWindow(_ target: NSWindow) {
+        target.center()
+        guard let screen = target.screen else { return }
+        let isMini = target is NSPanel
+        // AppKit's orderedWindows omits floating panels.
+        let windows = isMini ? NSApp.windows : NSApp.orderedWindows
+        let peers = windows.filter {
+            $0 !== target && $0.isVisible && !$0.isMiniaturized && $0.screen == screen &&
+                $0.delegate is NativeDesktopMeetingWindow && ($0 is NSPanel) == isMini
+        }
+        guard let neighbor = peers.first(where: { $0.frame.intersects(target.frame) }) else { return }
+        let frame = target.frame
+        if isMini {
+            let gap: CGFloat = 12
+            // Keep the entire mini, including its controls, clear when there is room.
+            for peer in peers {
+                let anchor = peer.frame
+                let origins = [
+                    NSPoint(x: anchor.maxX + gap, y: anchor.maxY - frame.height),
+                    NSPoint(x: anchor.minX - frame.width - gap, y: anchor.maxY - frame.height),
+                    NSPoint(x: anchor.minX, y: anchor.minY - frame.height - gap),
+                    NSPoint(x: anchor.minX, y: anchor.maxY + gap)
+                ]
+                for origin in origins {
+                    let candidate = NSRect(origin: origin, size: frame.size)
+                    if screen.visibleFrame.contains(candidate), !peers.contains(where: { $0.frame.intersects(candidate) }) {
+                        target.setFrameOrigin(origin)
+                        return
+                    }
+                }
+            }
+        }
+        let offset: CGFloat = 28
+        let cascaded = NSRect(x: neighbor.frame.minX + offset, y: neighbor.frame.maxY - frame.height - offset,
+                             width: frame.width, height: frame.height)
+        target.setFrame(target.constrainFrameRect(cascaded, to: screen), display: false)
+    }
     private func mountMeeting() {
         if !(window.contentView is NSHostingView<NativeDesktopMeetingView>) {
             window.contentView = NSHostingView(rootView: NativeDesktopMeetingView(model: model, onMini: { [weak self] in self?.showMini() },
@@ -94,6 +122,10 @@ import SwiftUI
     func show() {
         mini?.orderOut(nil); mini?.contentView = nil
         if isEmbedded { workspace?.presentEmbedded(model); return }
+        if !hasShownWindow {
+            positionNewWindow(window)
+            hasShownWindow = true
+        }
         if window.isMiniaturized { window.deminiaturize(nil) }
         mountMeeting(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         synchronizePresentation()
@@ -106,6 +138,7 @@ import SwiftUI
     /// Closing a detached window returns its meeting to the main window.
     func moveToMainWindow() {
         guard detached, workspace != nil else { return }
+        mini?.orderOut(nil); mini?.contentView = nil
         hider.hide(window) { [weak self] in
             guard let self, detached else { return }
             window.contentView = nil; detached = false
@@ -142,9 +175,12 @@ import SwiftUI
     func windowDidMiniaturize(_ notification: Notification) { synchronizePresentation() }
     func windowDidDeminiaturize(_ notification: Notification) { synchronizePresentation() }
     func windowDidChangeOcclusionState(_ notification: Notification) { synchronizePresentation() }
+    private final class MiniHostingView: NSHostingView<NativeDesktopMiniMeeting> {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    }
     private func mountMini() {
         if !(mini?.contentView is NSHostingView<NativeDesktopMiniMeeting>) {
-            mini?.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() }))
+            mini?.contentView = MiniHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() }))
         }
     }
     func synchronizePresentation() {
@@ -178,7 +214,9 @@ import SwiftUI
             panel.delegate = self; panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; panel.isReleasedWhenClosed = false
             panel.title = model.title; panel.minSize = NSSize(width: 280, height: 210)
-            panel.center(); mini = panel
+            panel.tabbingMode = .disallowed
+            positionNewWindow(panel)
+            mini = panel
         }
         mountMini()
         mini?.orderFrontRegardless()
@@ -1171,12 +1209,6 @@ struct NativeDesktopMiniMeeting: View {
                     Spacer()
                 }
             }
-            .onContinuousHover { phase in
-                switch phase {
-                case .active: reveal()
-                case .ended: scheduleHide()
-                }
-            }
             .contentShape(Rectangle())
             .onTapGesture { controlsVisible ? scheduleHide() : reveal() }
             controls
@@ -1184,7 +1216,15 @@ struct NativeDesktopMiniMeeting: View {
                 .opacity(controlsVisible || pinned ? 1 : 0)
                 .allowsHitTesting(controlsVisible || pinned)
         }
+        .contentShape(Rectangle())
+        .onContinuousHover { phase in
+            switch phase {
+            case .active: reveal()
+            case .ended: scheduleHide()
+            }
+        }
         .onAppear { if pinned { controlsVisible = true } }
+        .onDisappear { hideTask?.cancel() }
     }
     /// Always-visible strip: the meeting and, when someone speaks, the speaker.
     private var header: some View {
@@ -1213,6 +1253,7 @@ struct NativeDesktopMiniMeeting: View {
     }
     private func reveal() {
         hideTask?.cancel(); hideTask = nil
+        guard !controlsVisible else { return }
         withAnimation(.easeOut(duration: 0.15)) { controlsVisible = true }
     }
     private func scheduleHide() {

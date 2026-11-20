@@ -1021,8 +1021,7 @@ import UserNotifications
     /// Selects an embedded meeting in the main window, or fronts a detached one.
     func showMeeting(_ model: NativeDesktopMeetingModel) {
         guard let host = meetingWindows[model.sessionID] else { return }
-        if host.isEmbedded { host.show() }
-        else { host.show(tabbedWith: meetingWindows.first { $0.key != model.sessionID && !$0.value.isEmbedded && $0.value.isVisible }?.value) }
+        host.show()
         refreshMenu()
     }
     var selectedMeeting: NativeDesktopMeetingModel? { meetings.first { $0.sessionID == selectedMeetingID } }

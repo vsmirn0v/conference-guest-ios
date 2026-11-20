@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import AVFoundation
 import ConferenceCore
 import LiveKitWebRTC
@@ -1433,6 +1434,106 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(workspace.embeddedMeetings.map(\.sessionID), [a.sessionID])
         XCTAssertEqual(workspace.selectedMeetingID, a.sessionID)
         _ = await workspace.leave()
+    }
+    func testDetachedMeetingsRemainIndependentWhenRestoringFromMini() async throws {
+        let workspace = multiWorkspace([DesktopTestEngine(), DesktopTestEngine()])
+        addTeardownBlock { @MainActor in _ = await workspace.leave() }
+        try await join(workspace, 1); try await join(workspace, 2)
+        let first = workspace.meetings[0], second = workspace.meetings[1]
+        func fullWindow(_ model: NativeDesktopMeetingModel) -> NSWindow? {
+            NSApp.windows.first { ($0.contentView as? NSHostingView<NativeDesktopMeetingView>)?.rootView.model === model }
+        }
+        func miniWindow(_ model: NativeDesktopMeetingModel) -> NSWindow? {
+            NSApp.windows.first { ($0.contentView as? NSHostingView<NativeDesktopMiniMeeting>)?.rootView.model === model }
+        }
+        workspace.toggleWindow(first); workspace.toggleWindow(second)
+        let firstWindow = try XCTUnwrap(fullWindow(first))
+        let secondWindow = try XCTUnwrap(fullWindow(second))
+        XCTAssertTrue(firstWindow.isVisible && secondWindow.isVisible)
+        XCTAssertNotEqual(firstWindow.frame.origin, secondWindow.frame.origin)
+
+        workspace.showMini(first); workspace.showMini(second)
+        let firstMini = try XCTUnwrap(miniWindow(first))
+        let secondMini = try XCTUnwrap(miniWindow(second))
+        XCTAssertTrue(firstMini.isVisible && secondMini.isVisible)
+        XCTAssertNotEqual(firstMini.frame.origin, secondMini.frame.origin)
+
+        workspace.showMeeting(first)
+        XCTAssertTrue(firstWindow.isVisible && secondMini.isVisible)
+        XCTAssertFalse(firstMini.isVisible)
+        workspace.showMeeting(second)
+        XCTAssertTrue(firstWindow.isVisible && secondWindow.isVisible)
+        XCTAssertFalse(secondMini.isVisible)
+        for window in [firstWindow, secondWindow] {
+            XCTAssertEqual(window.tabbingMode, .disallowed)
+            XCTAssertLessThanOrEqual(window.tabbedWindows?.count ?? 0, 1)
+        }
+
+        workspace.showMini(second)
+        workspace.toggleWindow(second)
+        XCTAssertFalse(secondMini.isVisible)
+        XCTAssertEqual(workspace.embeddedMeetings.map(\.sessionID), [second.sessionID])
+        XCTAssertTrue(workspace.isDetached(first) && firstWindow.isVisible)
+    }
+    func testMiniVolumeRespondsAfterHoveringOverTheSlider() async throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_DESKTOP_MINI_INPUT_FIXTURE"] == "1" else {
+            throw XCTSkip("Set NATIVE_DESKTOP_MINI_INPUT_FIXTURE=1 to exercise the slider with real mouse events.")
+        }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let engine = DesktopTestEngine(), model = try model(engine)
+        let savedVolume = UserDefaults.standard.object(forKey: model.meetingVolumeKey)
+        let host = NativeDesktopMeetingWindow(model: model)
+        defer {
+            host.close()
+            UserDefaults.standard.set(savedVolume, forKey: model.meetingVolumeKey)
+        }
+        addTeardownBlock { @MainActor in _ = await model.leave() }
+        try await model.connect()
+        model.setMeetingVolume(1, persist: false)
+        host.show(); host.showMini()
+        let panel = try XCTUnwrap(NSApp.windows.first { $0.delegate === host && $0 is NSPanel })
+        try await spin { panel.isVisible && model.mediaPresentation == .floating && engine.volumes.last == 1 }
+
+        func mouse(_ type: NSEvent.EventType, at point: CGPoint) throws {
+            let location = panel.convertPoint(fromScreen: CGPoint(x: point.x, y: screen.frame.maxY - point.y))
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber, context: nil,
+                eventNumber: 0, clickCount: type == .mouseMoved ? 0 : 1, pressure: type == .leftMouseUp ? 0 : 1))
+            NSApp.postEvent(event, atStart: false)
+        }
+        func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+        }
+        func find(_ element: AXUIElement, _ matches: (AXUIElement) -> Bool) -> AXUIElement? {
+            if matches(element) { return element }
+            let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            for child in children {
+                if let match = find(child, matches) { return match }
+            }
+            return nil
+        }
+
+        try mouse(.mouseMoved, at: CGPoint(x: panel.frame.midX, y: screen.frame.maxY - panel.frame.midY))
+        try await Task.sleep(for: .milliseconds(350))
+        let app = AXUIElementCreateApplication(getpid())
+        let window = try XCTUnwrap(find(app) { attribute($0, kAXTitleAttribute) as? String == panel.title })
+        let slider = try XCTUnwrap(find(window) { attribute($0, kAXIdentifierAttribute) as? String == "meeting.volume" })
+        var origin = CGPoint.zero, size = CGSize.zero
+        let position = try XCTUnwrap(attribute(slider, kAXPositionAttribute))
+        let dimensions = try XCTUnwrap(attribute(slider, kAXSizeAttribute))
+        XCTAssertTrue(AXValueGetValue(position as! AXValue, .cgPoint, &origin))
+        XCTAssertTrue(AXValueGetValue(dimensions as! AXValue, .cgSize, &size))
+        let start = CGPoint(x: origin.x + size.width * 0.75, y: origin.y + size.height / 2)
+        let end = CGPoint(x: origin.x + size.width * 0.25, y: start.y)
+        try mouse(.mouseMoved, at: start)
+        // Crossing into the footer must cancel the two-second hide timer.
+        try await Task.sleep(for: .milliseconds(4000))
+        try mouse(.leftMouseDown, at: start)
+        try mouse(.leftMouseDragged, at: end)
+        try mouse(.leftMouseUp, at: end)
+        try await spin { model.meetingVolume < 0.5 && engine.volumes.last == model.meetingVolume }
+        XCTAssertEqual(UserDefaults.standard.double(forKey: model.meetingVolumeKey), model.meetingVolume, accuracy: 0.001)
     }
     func testOrganizerEndingMeetingLeavesItWithANoticeInsteadOfAnError() async throws {
         let engine = DesktopTestEngine()
