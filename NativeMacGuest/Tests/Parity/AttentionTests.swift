@@ -1113,11 +1113,13 @@ import XCTest
         let store = store()
         store.situationModes[.background] = .mentions
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
-        let (trueconf, _) = try await meeting("trueconf")
-        let judge = FakeJudge()
+        let (trueconf, engine) = try await meeting("trueconf")
+        engine.supportsVoiceReply = true
+        let judge = FakeJudge(), writer = FakeWriter()
         var spoken: [String] = [], played = 0, fail = false
         let coordinator = AttentionCoordinator(store: store)
         coordinator.meetings = { [trueconf] }; coordinator.hasTranscript = { _ in true }; coordinator.makeJudge = { _, _ in judge }
+        coordinator.makeWriter = { _, _ in writer }
         coordinator.replyChannels = { _ in .init() }  // no chat, no reactions
         coordinator.voiceAvailable = { _ in true }
         coordinator.synthesizeOverride = { text in
@@ -2422,6 +2424,7 @@ private final class StubProtocol: URLProtocol {
 
 /// Connects at once with two participants and no media.
 @MainActor private final class AttentionTestEngine: NativeDesktopMeetingEngine {
+    var supportsVoiceReply = false
     var onState: ((NativeDesktopExternalSnapshot) -> Void)?
     var onVideo: (([NativeDesktopExternalVideo]) -> Void)?
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)?

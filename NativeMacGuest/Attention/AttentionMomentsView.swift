@@ -43,7 +43,6 @@ struct AttentionMomentsView: View {
         .onChange(of: attention.opensAssistantMoments) { open in
             if open { area = .moments; attention.opensAssistantMoments = false }
         }
-        .onChange(of: filter) { _ in selectedID = nil; attention.selectedCard = nil }
         .onChange(of: store.momentsLoaded) { _ in
             openRequestedMoment()
         }
@@ -62,7 +61,11 @@ struct AttentionMomentsView: View {
     private var momentsView: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                Picker(L("Filter"), selection: $filter) {
+                Picker(L("Filter"), selection: Binding(get: { filter }, set: { value in
+                    filter = value
+                    selectedID = nil
+                    attention.selectedCard = nil
+                })) {
                     Text(L("All")).tag(AttentionMoment.State?.none)
                     ForEach([AttentionMoment.State.live, .missed, .answered], id: \.self) { Text($0.title).tag(Optional($0)) }
                 }.pickerStyle(.segmented).labelsHidden().controlSize(.small).padding(12)

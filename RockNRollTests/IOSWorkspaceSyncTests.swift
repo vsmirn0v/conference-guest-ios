@@ -333,7 +333,7 @@ final class IOSWorkspaceSyncTests: XCTestCase {
             model: "gpt-4.1-mini"
         )
         f.workspace.saveAPIKey("sk-test-token", for: .openAI)
-        await f.workspace.saveTaskProfile(IOSTaskProfile(profileID: "default", assigneeID: "Vlad", aliases: []))
+        await f.workspace.saveTaskProfile(IOSTaskProfile(profileID: "default", assigneeID: "Vlad", aliases: ["Vlad"]))
 
         let controllerID = UUID()
         let url = URL(string: "https://meet.example.com/solo-ios")!

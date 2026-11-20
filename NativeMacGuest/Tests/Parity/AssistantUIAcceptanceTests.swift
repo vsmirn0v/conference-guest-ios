@@ -56,8 +56,9 @@ import XCTest
         return id
     }
 
-    private func meeting(_ title: String) async throws -> NativeDesktopMeetingModel {
+    private func meeting(_ title: String, supportsVoiceReply: Bool = false) async throws -> NativeDesktopMeetingModel {
         let engine = AssistantUIEngine()
+        engine.supportsVoiceReply = supportsVoiceReply
         let model = NativeDesktopMeetingModel(destination: try .verified(
             URL(string: "https://example.test/calls/\(UUID().uuidString)")!, engine: .guest),
             name: "Vitalii", title: title, engine: engine)
@@ -486,6 +487,7 @@ import XCTest
             try await wait { workspace.meetings.count == index + 1 && workspace.meetings.allSatisfy(\.connected) }
         }
         let first = try XCTUnwrap(workspace.meetings.first)
+        workspace.workspaceViewState.focusedID = first.sessionID
         let journal = store.meetingLibrary.workspaceJournal
         let at = Date().addingTimeInterval(-10)
         let line = "Начинаем с десяти процентов после успешной проверки."
@@ -501,7 +503,7 @@ import XCTest
         try await withRussianBundle {
             let view = NativeDesktopMeetingWorkspaceView(workspace: workspace)
             let rendered = await present(view, size: NSSize(width: 1030, height: 815), name: "workspace-live")
-            XCTAssertTrue(containsText(rendered, "Текущие встречи"))
+            XCTAssertTrue(containsText(rendered, L("Live")))
             XCTAssertTrue(containsText(rendered, "Микрофон назначен на"))
             XCTAssertTrue(containsText(rendered, "Расшифровка речи недоступна"))
             XCTAssertTrue(containsText(rendered, line))
@@ -709,7 +711,7 @@ import XCTest
     func testTerminalFlowsRenderReadOnlyAndCannotDeliverTwice() async throws {
         for flow in [Flow.open, .send, .reaction, .say, .dismiss, .decline] {
             let store = store(); await store.waitForMoments()
-            let model = try await meeting(flow.rawValue)
+            let model = try await meeting(flow.rawValue, supportsVoiceReply: flow == .say)
             let coordinator = AttentionCoordinator(store: store)
             coordinator.meetings = { [model] }
             var chat: [String] = [], reactions: [MeetingReaction] = [], spoken = 0, opened = 0
@@ -868,6 +870,17 @@ import XCTest
         XCTAssertFalse(containsText(rendered, L("The meeting is not open, so there is no later conversation to summarize.")))
         XCTAssertTrue(containsText(rendered, "Reminder fixture failed"))
         try capture(Rendered(window: rendered.window, hosting: rendered.hosting, name: "errors-second"))
+
+        // A notification must reveal its missed target even when a different
+        // inbox filter excluded it before the notification was opened.
+        let filterControl = try XCTUnwrap(views(rendered.hosting).compactMap { $0 as? NSSegmentedControl }.first { control in
+            (0..<control.segmentCount).contains { control.label(forSegment: $0) == L("Answered") }
+        })
+        let answeredIndex = try XCTUnwrap((0..<filterControl.segmentCount).first { filterControl.label(forSegment: $0) == L("Answered") })
+        filterControl.selectedSegment = answeredIndex
+        XCTAssertTrue(filterControl.sendAction(filterControl.action, to: filterControl.target))
+        await settle()
+        XCTAssertTrue(containsText(rendered, L("No Moments in this view.")))
 
         let notificationID = seed(store, "Notification target", at: now.addingTimeInterval(-200))
         let target = try XCTUnwrap(store.momentHistory.moment(notificationID))
@@ -1704,6 +1717,7 @@ private final class AssistantUIJudge: AttentionJudge, @unchecked Sendable {
 }
 
 @MainActor private final class AssistantUIEngine: NativeDesktopMeetingEngine {
+    var supportsVoiceReply = false
     var onState: ((NativeDesktopExternalSnapshot) -> Void)?
     var onVideo: (([NativeDesktopExternalVideo]) -> Void)?
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)?

@@ -505,8 +505,8 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
     func testPhoneSaveIncludesTranscriptFromSameCloudSyncPass() async throws {
         let f = try await makeFixture(includeTranscript: true)
         let sessionID = UUID()
-        let start = Date().addingTimeInterval(-600)
-        let now = Date()
+        let start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 600)
+        let now = start.addingTimeInterval(600)
         let version = SyncVersion(counter: 1, device: "iphone-1")
         let session = SyncedMeetingSession(id: sessionID, occurrenceKey: "room:phone-transcript",
             title: SyncValue("iPhone Review", version: version), hasTitleOverride: SyncValue(false, version: version),
