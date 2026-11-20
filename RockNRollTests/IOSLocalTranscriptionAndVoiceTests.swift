@@ -171,6 +171,55 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
         XCTAssertEqual(decoded.format.sampleRate, 16_000, accuracy: 1)
     }
 
+    func testRapidMLXRequiresExplicitConsentForEachEndpoint() async throws {
+        let suite = "IOSRapidMLXConsent.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        // A server saved by an older build has never been authorized for text sharing.
+        defaults.set("rapidMLX", forKey: "ios.voice.engine")
+        defaults.set("http://mac.local:8080/v1", forKey: "ios.voice.rapidMLX.baseURL")
+        let store = IOSVoiceStore(preferences: defaults)
+        XCTAssertFalse(store.hasRapidMLXConsent)
+        XCTAssertEqual(store.rapidMLXEndpoint?.absoluteString, "http://mac.local:8080/v1/audio/speech")
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockSpeechURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let wave = Self.makeMono16kWAVData(durationFrames: 800)
+        var connections = 0
+        MockSpeechURLProtocol.handler = { request in
+            connections += 1
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, wave)
+        }
+        defer { MockSpeechURLProtocol.handler = nil }
+
+        func assertDenied(_ store: IOSVoiceStore) async {
+            do {
+                _ = try await store.synthesize("Private reply", session: session)
+                XCTFail("The server received a request without consent")
+            } catch {
+                XCTAssertEqual(error as? IOSVoiceSynthesisError, .remoteVoicePermissionRequired)
+            }
+        }
+        await assertDenied(store)
+        XCTAssertEqual(connections, 0)
+        store.setRapidMLXConsent(true)
+        let restored = IOSVoiceStore(preferences: defaults)
+        XCTAssertTrue(restored.hasRapidMLXConsent)
+        _ = try await restored.synthesize("Authorized reply", session: session)
+        XCTAssertEqual(connections, 1)
+        restored.rapidMLXBaseURL = "http://mac.local:8080/other"
+        await assertDenied(restored)
+        restored.rapidMLXBaseURL = "http://mac.local:8080/v1"
+        await assertDenied(restored)
+        restored.setRapidMLXConsent(true)
+        restored.setRapidMLXConsent(false)
+        await assertDenied(restored)
+        XCTAssertEqual(connections, 1)
+        XCTAssertFalse(IOSVoiceStore(preferences: defaults).hasRapidMLXConsent)
+    }
+
     func testRapidMLXSynthesisParsesWAVAndSurfacesErrors() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockSpeechURLProtocol.self]
@@ -186,9 +235,11 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
             return (response, wavData)
         }
 
+        let endpoint = "https://voice.example.test/v1/audio/speech"
         let buffer = try await IOSVoiceSynthesis.rapidMLX(
             "Привет, проверка связи",
             baseURL: "https://voice.example.test/v1",
+            approvedEndpoint: endpoint,
             model: "qwen3-tts",
             description: "Calm",
             session: session
@@ -207,6 +258,7 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
             _ = try await IOSVoiceSynthesis.rapidMLX(
                 "Hello",
                 baseURL: "https://voice.example.test/v1",
+                approvedEndpoint: endpoint,
                 model: "qwen3-tts",
                 description: "",
                 session: session

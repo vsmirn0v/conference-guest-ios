@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import ConferenceCore
 import Foundation
 import NaturalLanguage
 
@@ -26,6 +27,7 @@ enum IOSVoiceSynthesisError: LocalizedError, Equatable {
     case system
     case server(Int, String?)
     case transport
+    case remoteVoicePermissionRequired
     case audio
     case personalUnsupported
     case personalDenied
@@ -53,6 +55,8 @@ enum IOSVoiceSynthesisError: LocalizedError, Equatable {
                 return base + " " + L("Provider says: %@", String(message.prefix(240)))
             }
             return base
+        case .remoteVoicePermissionRequired:
+            return L("Allow this server to generate speech in Transcription & voice settings first.")
         case .transport:
             return L("The voice server could not be reached. Check its address and network access.")
         case .audio:
@@ -245,20 +249,29 @@ enum IOSVoiceSynthesis {
         return buffer
     }
 
+    static func rapidMLXEndpoint(for baseURL: String) -> URL? {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil, components.fragment == nil,
+              components.query == nil, let base = components.url else { return nil }
+        return base.appendingPathComponent("audio/speech")
+    }
+
     static func rapidMLX(
         _ text: String,
         baseURL: String,
+        approvedEndpoint: String?,
         model: String,
         description: String,
         session: URLSession = .shared
     ) async throws -> AVAudioPCMBuffer {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { throw IOSVoiceSynthesisError.empty }
-        let trimmedURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let base = URL(string: trimmedURL), base.host != nil else {
-            throw IOSVoiceSynthesisError.transport
-        }
-        var request = URLRequest(url: base.appendingPathComponent("audio/speech"), timeoutInterval: 180)
+        guard let endpoint = rapidMLXEndpoint(for: baseURL) else { throw IOSVoiceSynthesisError.transport }
+        guard endpoint.absoluteString == approvedEndpoint else { throw IOSVoiceSynthesisError.remoteVoicePermissionRequired }
+        var request = URLRequest(url: endpoint, timeoutInterval: 180)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var body: [String: Any] = [
@@ -278,7 +291,7 @@ enum IOSVoiceSynthesis {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await MeetingAITransfer.send(request, using: session)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -369,6 +382,7 @@ final class IOSVoiceStore: ObservableObject {
         static let engine = "ios.voice.engine"
         static let systemVoiceID = "ios.voice.systemVoiceID"
         static let rapidMLXBaseURL = "ios.voice.rapidMLX.baseURL"
+        static let approvedRapidMLXEndpoint = "ios.voice.rapidMLX.approvedEndpoint"
         static let rapidMLXModel = "ios.voice.rapidMLX.model"
         static let rapidMLXDescription = "ios.voice.rapidMLX.description"
     }
@@ -380,7 +394,12 @@ final class IOSVoiceStore: ObservableObject {
         didSet { preferences.set(systemVoiceIdentifier, forKey: Keys.systemVoiceID) }
     }
     @Published var rapidMLXBaseURL: String {
-        didSet { preferences.set(rapidMLXBaseURL, forKey: Keys.rapidMLXBaseURL) }
+        didSet {
+            preferences.set(rapidMLXBaseURL, forKey: Keys.rapidMLXBaseURL)
+            if approvedRapidMLXEndpoint != rapidMLXEndpoint?.absoluteString {
+                setRapidMLXConsent(false)
+            }
+        }
     }
     @Published var rapidMLXModel: String {
         didSet { preferences.set(rapidMLXModel, forKey: Keys.rapidMLXModel) }
@@ -389,12 +408,26 @@ final class IOSVoiceStore: ObservableObject {
         didSet { preferences.set(rapidMLXDescription, forKey: Keys.rapidMLXDescription) }
     }
 
+    @Published private var approvedRapidMLXEndpoint: String?
     private let preferences: UserDefaults
+
+    var rapidMLXEndpoint: URL? { IOSVoiceSynthesis.rapidMLXEndpoint(for: rapidMLXBaseURL) }
+
+    var hasRapidMLXConsent: Bool {
+        guard let endpoint = rapidMLXEndpoint else { return false }
+        return approvedRapidMLXEndpoint == endpoint.absoluteString
+    }
+
+    func setRapidMLXConsent(_ allowed: Bool) {
+        approvedRapidMLXEndpoint = allowed ? rapidMLXEndpoint?.absoluteString : nil
+        preferences.set(approvedRapidMLXEndpoint, forKey: Keys.approvedRapidMLXEndpoint)
+    }
 
     init(preferences: UserDefaults = .standard) {
         self.preferences = preferences
         self.engine = preferences.string(forKey: Keys.engine).flatMap(IOSVoiceEngine.init(rawValue:)) ?? .system
         self.systemVoiceIdentifier = preferences.string(forKey: Keys.systemVoiceID) ?? ""
+        self.approvedRapidMLXEndpoint = preferences.string(forKey: Keys.approvedRapidMLXEndpoint)
         self.rapidMLXBaseURL = preferences.string(forKey: Keys.rapidMLXBaseURL) ?? ""
         self.rapidMLXModel = preferences.string(forKey: Keys.rapidMLXModel) ?? "Qwen/Qwen3-TTS-12Hz-0.6B-Base-8bit"
         self.rapidMLXDescription = preferences.string(forKey: Keys.rapidMLXDescription) ?? ""
@@ -415,6 +448,7 @@ final class IOSVoiceStore: ObservableObject {
             return try await IOSVoiceSynthesis.rapidMLX(
                 text,
                 baseURL: rapidMLXBaseURL,
+                approvedEndpoint: approvedRapidMLXEndpoint,
                 model: rapidMLXModel,
                 description: rapidMLXDescription,
                 session: session

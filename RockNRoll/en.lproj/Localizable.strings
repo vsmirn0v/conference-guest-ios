@@ -3468,3 +3468,9 @@
 "Some audio was skipped while this Mac was busy." = "Some audio was skipped while this Mac was busy.";
 "The speech model was unavailable during this period." = "The speech model was unavailable during this period.";
 "Next sync attempt at %@" = "Next sync attempt at %@";
+
+"Allow this server to generate speech in Transcription & voice settings first." = "Allow this server to generate speech in Transcription & voice settings first.";
+"Sends your typed reply as speech into the selected room. Your microphone stays muted." = "Sends your typed reply as speech into the selected room. Your microphone stays muted.";
+"For previews and meeting replies, including assistant replies, Rapid-MLX sends the text, language, model name and voice style notes to %@ to generate speech." = "For previews and meeting replies, including assistant replies, Rapid-MLX sends the text, language, model name and voice style notes to %@ to generate speech.";
+"Allow speech requests to this server" = "Allow speech requests to this server";
+"Enter an HTTP or HTTPS server address without credentials, a query or a fragment." = "Enter an HTTP or HTTPS server address without credentials, a query or a fragment.";

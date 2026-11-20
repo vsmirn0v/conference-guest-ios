@@ -3240,3 +3240,9 @@
 "Some audio was skipped while this Mac was busy." = "Ein Teil des Audios wurde übersprungen, während dieser Mac ausgelastet war.";
 "The speech model was unavailable during this period." = "Das Spracherkennungsmodell war in diesem Zeitraum nicht verfügbar.";
 "Next sync attempt at %@" = "Nächster Synchronisierungsversuch um %@";
+
+"Allow this server to generate speech in Transcription & voice settings first." = "Erlaube diesem Server zuerst in den Einstellungen für Transkription und Stimme, Sprache zu erzeugen.";
+"Sends your typed reply as speech into the selected room. Your microphone stays muted." = "Deine getippte Antwort wird im ausgewählten Raum gesprochen. Dein Mikrofon bleibt stumm.";
+"For previews and meeting replies, including assistant replies, Rapid-MLX sends the text, language, model name and voice style notes to %@ to generate speech." = "Für Hörproben und Antworten in Meetings, einschließlich Assistentenantworten, sendet Rapid-MLX den Text, die Sprache, den Modellnamen und die Stilangaben zur Spracherzeugung an %@.";
+"Allow speech requests to this server" = "Sprachanfragen an diesen Server erlauben";
+"Enter an HTTP or HTTPS server address without credentials, a query or a fragment." = "Gib eine HTTP- oder HTTPS-Serveradresse ohne Zugangsdaten, Abfrage oder Fragment ein.";
