@@ -44,6 +44,16 @@ struct CallFold: Equatable {
 /// Geometry belongs to the visible call window, independently of media providers.
 struct CallPresentationGeometry {
     static let singleRowWidth: CGFloat = 520
+
+    static func safeContentRect(bounds: CGRect, insets: UIEdgeInsets) -> CGRect {
+        let edges = UIEdgeInsets(top: insets.top + 4, left: insets.left + 8,
+            bottom: insets.bottom + 4, right: insets.right + 8)
+        return CGRect(
+            x: bounds.minX + min(edges.left, bounds.width),
+            y: bounds.minY + min(edges.top, bounds.height),
+            width: max(0, bounds.width - edges.left - edges.right),
+            height: max(0, bounds.height - edges.top - edges.bottom))
+    }
     let header: CGRect
     let toolbar: CGRect
     let stage: CGRect
@@ -66,7 +76,7 @@ struct CallPresentationGeometry {
             rail = visible.rail; compactHeader = statusOnly || visible.compactHeader
             return
         }
-        let safe = bounds.inset(by: insets).insetBy(dx: 8, dy: 4)
+        let safe = Self.safeContentRect(bounds: bounds, insets: insets)
         rail = fold == nil && allowsRail && safe.width > safe.height && safe.height < 480 && safe.height >= 284
         compactHeader = floating || (rail && !largeText) || statusOnly
         if statusOnly && hidden {

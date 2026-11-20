@@ -110,7 +110,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var hasDockedPanel: Bool { dockedConversation != nil || dockedParticipants != nil }
     private var activeFold: CallFold? {
         if #available(iOS 27.1, *) {
-            let safe = view.bounds.inset(by: view.safeAreaInsets).insetBy(dx: 8, dy: 4)
+            let safe = CallPresentationGeometry.safeContentRect(bounds: view.bounds, insets: view.safeAreaInsets)
             return view.reservedRegions(kind: .division).lazy.compactMap {
                 CallFold(safe: safe, division: $0.frame)
             }.first

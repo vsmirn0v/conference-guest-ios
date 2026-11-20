@@ -190,7 +190,7 @@ struct MeetingAccessGeometry {
     }
     init(base: CallPresentationGeometry, bounds: CGRect, insets: UIEdgeInsets, accessSize: CGSize, largeText: Bool,
          gallery: Bool = false) {
-        let safe = bounds.inset(by: insets).insetBy(dx: 8, dy: 4)
+        let safe = CallPresentationGeometry.safeContentRect(bounds: bounds, insets: insets)
         inline = base.fold == nil && !gallery && !base.rail && !largeText && accessSize.height <= 48 && safe.width >= 360 + accessSize.width + 8
         if let fold = base.fold {
             toolbar = base.toolbar
