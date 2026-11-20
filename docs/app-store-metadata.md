@@ -1,26 +1,44 @@
 # Rock’n’Roll submission copy
 
-Use this copy only with a build that passes the final device and service checks. It describes the same app available to all users and reviewers.
+## App Store listing
 
-- **Name:** Rock’n’Roll
-- **Subtitle:** Jam rooms for music groups
-- **Primary category:** Music
-- **Support URL:** https://rock.glowsoft.ru/support
-- **Marketing URL:** https://rock.glowsoft.ru/
-- **Privacy policy URL:** https://rock.glowsoft.ru/privacy
-- **Support and privacy email:** devcore@gmail.com
+- Name — Rock’n’Roll
+- Subtitle — Video meetings & voice replies
+- Primary category — Business
+- Secondary category — Productivity
+- Keywords — video call,meetings,conference,live transcript,voice reply,screen sharing,calendar,notes,tasks,jam
+- Support URL — https://rock.glowsoft.ru/support
+- Marketing URL — https://rock.glowsoft.ru/
+- Privacy policy URL — https://rock.glowsoft.ru/privacy
+- Support and privacy email — devcore@gmail.com
 
 ## Description
 
-Rock’n’Roll is a place for small music groups in Yerevan to meet between rehearsals. Open a shared jam link, choose a display name once and join live audio and video with your microphone and camera off. Keep favorite jams at the top of your recent list, chat with the group, talk through arrangements, share an idea or plan the next in-person session.
+Join a team call, a class or a rehearsal from one place. Paste your invitation link, enter the name you want people to see, and tap Join. Your microphone and camera start off. Rock’n’Roll is an independent conferencing app for iPhone and iPad.
 
-Choose your audio output, turn on your microphone or camera when you want to contribute, and leave at any time. See who is speaking and which musicians have audio, video or screen sharing on. Pin a camera or screen share, and pinch to zoom a shared screen. In Rock jam rooms, choose all video, screen shares only or audio only. The app can keep your jam connected while the screen is locked and resumes after a telephone call. It also opens compatible guest meeting invitations shared by your group. No account is required.
+One app for several meeting services
 
-The Catch up panel marks times when a call or network interruption may have caused you to miss audio. It displays transcript lines only when the room service actually supplies them; it does not record the call or create a recap of speech it could not receive.
+Join Rock’n’Roll rooms and other LiveKit rooms whose hosts support Rock’n’Roll-compatible invitations. The same invitation field accepts compatible enterprise guest invitations, including Yandex Telemost and TrueConf links. The host controls admission and which features are available. Try the public LiveKit room at rock.glowsoft.ru/jams/test.
 
-## TestFlight beta description
+During a meeting
 
-Rock’n’Roll is a jam room for small music groups in Yerevan. Join by link without an account, chat, see who is speaking, and pin or zoom a shared screen. Microphone and camera start off. Please test audio routes, background playback and call recovery with another participant.
+See who is speaking, chat, share your screen and pin or zoom a presentation. Switch between camera feeds, shared screens and audio-only listening. Stay connected to more than one meeting and choose which one receives your microphone. Check your camera and sound before joining, choose your audio output and keep listening with the screen locked. Recording controls are available when the meeting service and your role permit them.
+
+Speech and meeting notes
+
+Follow a live transcript with speech recognition in supported languages. Type a reply and send it as speech using a system voice, your authorized Personal Voice, or an optional voice model on a compatible device. A configurable voice server is also available. In supported meetings, the optional assistant can flag mentions, help draft chat or spoken replies, and generate summaries using the provider you configure. Let participants know before transcribing or recording.
+
+Between meetings
+
+Star invitations, find upcoming calls in calendars you choose, and set reminders. Keep meeting history, notes and tasks together. Optional iCloud sync makes selected meeting data available on devices using the same Apple Account.
+
+## Private App Review notes
+
+Rock’n’Roll is a multi-service conferencing client. Version 1.0 previously presented the app primarily as a music community. The third-party conferencing capability identified under Guideline 2.5.19 is a core feature available to every user through the Home screen’s Invitation link field. The app has built-in adapters for compatible LiveKit, Jazz, Yandex Telemost and TrueConf meetings. A meeting invitation selects the adapter. The same Home screen and code paths are used for all users.
+
+To test the LiveKit path, open Home, paste https://rock.glowsoft.ru/jams/test into Invitation link, enter a display name under Your name and tap Join. No Rock’n’Roll account or payment is required for this room. Join the same URL in a second browser under another name. Use its demo card or test tone to check screen sharing and active speaker, or exchange a chat message. The app starts with microphone and camera off. The same invitation field accepts guest links for the other supported services. Room access and features depend on the host.
+
+Open Settings > Transcription & voice to inspect speech recognition and voice generation. In a supported meeting, enter a voice reply and choose to send it. Optional voice models require a download and compatible hardware. In Settings > Assistant & summaries, configure optional assistance. Calendar access, iCloud sync and AI provider setup are optional for joining the public room.
 
 ## Build 0.2.0 (7): What to Test
 
@@ -37,23 +55,3 @@ Join a jam with a second participant sharing a screen or camera. Check that the 
 ## Build 0.2.0 (14): What to Test
 
 Join a compatible guest jam while another participant shares a moving screen. Send the app to Home and leave the floating video visible for at least two minutes, then switch to another app and back. The floating window should remain present and the shared screen should keep updating while the jam stays connected. Return to the jam and check that audio and share zoom still work. If the picture stops moving, report whether the floating window stayed visible or closed.
-
-## App Review notes
-
-Rock’n’Roll supports more than one jam engine. The public test jam exercises our self-hosted engine and is available in the same production build as every other supported link. No reviewer account, payment, or private access is needed.
-
-1. Launch the app, keep the suggested name or choose another, and tap **Try the test jam**, or paste `https://rock.glowsoft.ru/jams/test`.
-2. Tap **Join with mic and camera off**. The room is a public demo. Open the same URL in a second browser/device, enter a different name, and join there. Its **Share demo card** button publishes a sample screen without capturing private content; **Send test tone** briefly exercises the speaking indicator.
-3. In the app, open **Musicians** to inspect audio/video status and speaking activity. A screen share automatically becomes the main view. Pin its stream, pinch to zoom it, switch between all video, screen shares and audio only, and send chat. Turn on microphone and camera explicitly, select an audio output, then turn media off and leave. The joined jam appears in Recent jams and can be starred. On a physical iPhone, lock the screen to check background audio. During an ordinary incoming phone call, the jam is held and resumes after the call.
-4. Other compatible guest invitations can be pasted or passed with `conferenceguest://join?url=<encoded HTTPS invitation>`. A current guest invitation should be supplied privately in review notes when that engine is tested; do not put a private invitation in screenshots or public pages.
-5. The Catch up panel identifies possibly missed sections. The public test jam does not supply a transcript, so it accurately reports that no speech was recovered.
-
-Contact: devcore@gmail.com. Privacy: https://rock.glowsoft.ru/privacy.
-
-## Follow-ups before public App Store release
-
-- Public test room is reachable from the reviewer’s region and remains available during review.
-- All requested media, background and interruption behavior is retested for the new engine on the distribution build.
-- Privacy questionnaire covers both engines and their SDKs; third-party notices are included as required.
-- The guest-integration SDK’s service terms permit App Store distribution.
-- Screenshots come from the signed release build and contain no private invitations.
