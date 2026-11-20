@@ -1186,6 +1186,10 @@
 "Mute for me" = "可怜的我";
 "Unmute for me" = "对我无情";
 "Volume for me" = "对我来说,大小";
+"Search participants" = "搜索参会者";
+"No matching participants" = "未找到匹配的参会者";
+"No one is speaking" = "当前无人发言";
+"Clear search" = "清除搜索";
 "Muted for you" = "为你模特";
 "Volume for you: %d%%" = "您的数量: %d %%";
 "Volume for %@" = "%@ 的音量";

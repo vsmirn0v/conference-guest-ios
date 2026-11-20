@@ -563,7 +563,8 @@ public enum NativeDesktopGuestError: LocalizedError {
         try await currentNativeEngine?.setVisibleParticipantIDs(
             demand.visibleParticipantIDs,
             preferredScreenParticipantID: demand.preferredScreenParticipantID,
-            cameras: demand.receivesCameras
+            cameras: demand.receivesCameras,
+            prioritizesPresenterCamera: demand.prioritizesPresenterCamera
         )
     }
 
@@ -834,7 +835,8 @@ public enum NativeDesktopGuestError: LocalizedError {
         }
         engine.configureVideoDemand(videoDemand.visibleParticipantIDs,
                                     preferredScreenParticipantID: videoDemand.preferredScreenParticipantID,
-                                    cameras: videoDemand.receivesCameras)
+                                    cameras: videoDemand.receivesCameras,
+                                    prioritizesPresenterCamera: videoDemand.prioritizesPresenterCamera)
         engine.onCapturedMessages = { [weak self, weak engine] messages, transcript in
             guard let self, let engine, revision == token, currentNativeEngine === engine, !leaving else { return }
             onCapturedMessages?(messages, transcript)

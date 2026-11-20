@@ -152,6 +152,7 @@ public final class NativeGuestEngine {
     private var remoteParticipantIdentities: [String: String] = [:]
     private var visibleParticipantIDs: Set<String>?
     private var preferredScreenParticipantID: String?
+    private var prioritizesPresenterCamera = false
     private var receivesCameras = true
     private var leaveTask: Task<Bool, Never>?
     private var muteWaiters: [String: (Bool, GuestCompletion<Void>, Int)] = [:]
@@ -627,20 +628,26 @@ public final class NativeGuestEngine {
             guard let visibleParticipantIDs else { return true }
             return visibleParticipantIDs.contains(remoteParticipantIdentities[track.participant] ?? "")
         }
-        let activeVideoIDs = remoteTracks.filter { $0.value.type == "VIDEO" && !$0.value.muted && eligible($0.value) }
-            .map(\.key).sorted { lhs, rhs in
-                let leftShare = remoteTracks[lhs]?.source == "SCREEN_SHARE"
-                let rightShare = remoteTracks[rhs]?.source == "SCREEN_SHARE"
-                if leftShare != rightShare { return leftShare }
-                if leftShare, let preferredScreenParticipantID {
-                    let leftPreferred = remoteTracks[lhs].flatMap { remoteParticipantIdentities[$0.participant] } == preferredScreenParticipantID
-                    let rightPreferred = remoteTracks[rhs].flatMap { remoteParticipantIdentities[$0.participant] } == preferredScreenParticipantID
-                    if leftPreferred != rightPreferred { return leftPreferred }
-                }
-                let leftActive = subscriptions.contains(lhs)
-                let rightActive = subscriptions.contains(rhs)
-                return leftActive == rightActive ? lhs < rhs : leftActive
+        let activeVideos = remoteTracks.filter { $0.value.type == "VIDEO" && !$0.value.muted && eligible($0.value) }
+        let presenter = preferredScreenParticipantID.flatMap { id in
+            activeVideos.values.first { $0.source == "SCREEN_SHARE" && remoteParticipantIdentities[$0.participant] == id }?.participant
+        }
+        func videoPriority(_ track: GuestRemoteTrackState) -> Int {
+            let isScreen = track.source == "SCREEN_SHARE"
+            if track.participant == presenter {
+                if isScreen { return 0 }
+                if prioritizesPresenterCamera { return 1 }
             }
+            return isScreen ? 2 : 3
+        }
+        // Keep the focused screen and its camera ahead of competing shares.
+        // Camera eligibility still follows the viewport and display mode.
+        let activeVideoIDs = activeVideos.sorted { lhs, rhs in
+            let leftPriority = videoPriority(lhs.value), rightPriority = videoPriority(rhs.value)
+            if leftPriority != rightPriority { return leftPriority < rightPriority }
+            let leftActive = subscriptions.contains(lhs.key), rightActive = subscriptions.contains(rhs.key)
+            return leftActive == rightActive ? lhs.key < rhs.key : leftActive
+        }.map(\.key)
         let activeAudio = remoteTracks.values.contains { $0.type == "AUDIO" && !$0.muted }
         expectedVideoSubscriptions = Set(activeVideoIDs.prefix(6))
         activePublicationDemand = activeAudio || !expectedVideoSubscriptions.isEmpty
@@ -1764,17 +1771,20 @@ extension NativeGuestEngine {
     /// every audio track; a viewport only changes the bounded video demand.
     /// Without cameras only screen shares are subscribed or delivered.
     func setVisibleParticipantIDs(_ ids: Set<String>?, preferredScreenParticipantID: String? = nil,
-                                  cameras: Bool = true) async throws {
+                                  cameras: Bool = true, prioritizesPresenterCamera: Bool = false) async throws {
         try checkActive()
-        configureVideoDemand(ids, preferredScreenParticipantID: preferredScreenParticipantID, cameras: cameras)
+        configureVideoDemand(ids, preferredScreenParticipantID: preferredScreenParticipantID, cameras: cameras,
+                             prioritizesPresenterCamera: prioritizesPresenterCamera)
         onIncomingVideoChange?(incomingVideo)
         try await reconcileSubscriptions()
         onIncomingVideoChange?(incomingVideo)
     }
 
-    func configureVideoDemand(_ ids: Set<String>?, preferredScreenParticipantID: String?, cameras: Bool) {
+    func configureVideoDemand(_ ids: Set<String>?, preferredScreenParticipantID: String?, cameras: Bool,
+                              prioritizesPresenterCamera: Bool) {
         visibleParticipantIDs = ids
         self.preferredScreenParticipantID = preferredScreenParticipantID
+        self.prioritizesPresenterCamera = prioritizesPresenterCamera
         receivesCameras = cameras
     }
 

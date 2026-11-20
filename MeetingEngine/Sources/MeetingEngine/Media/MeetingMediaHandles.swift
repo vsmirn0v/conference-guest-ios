@@ -31,14 +31,17 @@ public struct MeetingVideoDemand: Equatable, Sendable {
     public var focusedParticipantID: String?
     public var preferredScreenParticipantID: String?
     public var receivesCameras = true
+    public var prioritizesPresenterCamera: Bool
 
     public init(visibleParticipantIDs: Set<String>? = nil,
                 focusedParticipantID: String? = nil,
                 preferredScreenParticipantID: String? = nil,
-                receivesCameras: Bool = true) {
+                receivesCameras: Bool = true,
+                prioritizesPresenterCamera: Bool = false) {
         self.visibleParticipantIDs = visibleParticipantIDs
         self.focusedParticipantID = focusedParticipantID
         self.preferredScreenParticipantID = preferredScreenParticipantID
         self.receivesCameras = receivesCameras
+        self.prioritizesPresenterCamera = prioritizesPresenterCamera
     }
 }

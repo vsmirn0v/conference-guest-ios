@@ -1186,6 +1186,10 @@
 "Mute for me" = "كتم الصوت من أجلي";
 "Unmute for me" = "أطلق العنان لي.";
 "Volume for me" = "حجم بالنسبة لي";
+"Search participants" = "البحث عن مشاركين";
+"No matching participants" = "لا يوجد مشاركون مطابقون";
+"No one is speaking" = "لا أحد يتحدث";
+"Clear search" = "مسح البحث";
 "Muted for you" = "كتمت من أجلك";
 "Volume for you: %d%%" = "حجم لك: %d %%";
 "Volume for %@" = "حجم %@";

@@ -1186,6 +1186,10 @@
 "Mute for me" = "मेरे लिए दुःख";
 "Unmute for me" = "मेरे लिए अनमोल";
 "Volume for me" = "मेरे लिए वॉल्यूम";
+"Search participants" = "प्रतिभागियों को खोजें";
+"No matching participants" = "कोई मेल खाने वाला प्रतिभागी नहीं मिला";
+"No one is speaking" = "कोई नहीं बोल रहा है";
+"Clear search" = "खोज साफ़ करें";
 "Muted for you" = "तुम्हारे लिए म्यूट";
 "Volume for you: %d%%" = "आपके लिए वॉल्यूम: %d %%";
 "Volume for %@" = "पदों की संख्या %@";

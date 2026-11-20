@@ -1186,6 +1186,10 @@
 "Mute for me" = "Mignon pour moi";
 "Unmute for me" = "Je ne peux pas.";
 "Volume for me" = "Volume pour moi";
+"Search participants" = "Rechercher des participants";
+"No matching participants" = "Aucun participant trouvé";
+"No one is speaking" = "Personne ne parle";
+"Clear search" = "Effacer la recherche";
 "Muted for you" = "Mutté pour toi";
 "Volume for you: %d%%" = "Volume pour vous: %d %%";
 "Volume for %@" = "Volume pour %@";

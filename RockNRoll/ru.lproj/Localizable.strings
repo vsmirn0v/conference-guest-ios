@@ -1359,6 +1359,10 @@
 "Mute for me" = "Выключить для меня";
 "Unmute for me" = "Включить для меня";
 "Volume for me" = "Громкость для меня";
+"Search participants" = "Поиск участников";
+"No matching participants" = "Участники не найдены";
+"No one is speaking" = "Никто не говорит";
+"Clear search" = "Очистить поиск";
 "Muted for you" = "Выключен для вас";
 "Volume for you: %d%%" = "Громкость для вас: %d%%";
 "Volume for %@" = "Громкость: %@";

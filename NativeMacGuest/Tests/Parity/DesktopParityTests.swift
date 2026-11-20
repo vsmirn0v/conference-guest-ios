@@ -962,6 +962,46 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertTrue(model.snapshot.playoutOn)
         _ = await model.leave()
     }
+    func testSharingRailAndRosterStayStableAcrossSpeakerHandoffs() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        try await model.connect()
+        var presenter = NativeDesktopParticipant(id: "presenter", name: "Sergey", cameraOn: true, sharing: true, speaking: true)
+        var guest = NativeDesktopParticipant(id: "guest", name: "Anya", cameraOn: true)
+        var other = NativeDesktopParticipant(id: "other", name: "Anya", cameraOn: true)
+        let local = NativeDesktopParticipant(id: "local", name: "Zoe", isLocal: true)
+        engine.snapshot.participants = [other, presenter, local, guest]
+        engine.onState?(engine.snapshot)
+        XCTAssertEqual(model.focusedSharePresenter?.id, presenter.id, "Reserve the slot before the share track arrives")
+        XCTAssertEqual(model.orderedParticipants.map(\.id), ["local", "guest", "other", "presenter"])
+        XCTAssertEqual(model.railParticipants.map(\.id), ["local", "guest", "other"])
+        model.setVisibleSpeakerTileIDs([guest.id, other.id])
+        try await spin { engine.demands.last?.ids == Set([presenter.id, guest.id, other.id]) }
+
+        presenter.speaking = false
+        guest.speaking = true
+        guest.sharing = true
+        engine.snapshot.participants = [guest, other, local, presenter]
+        engine.onState?(engine.snapshot)
+        XCTAssertEqual(model.activeSpeaker?.id, guest.id)
+        XCTAssertEqual(model.focusedSharePresenter?.id, presenter.id, "A new share or speaker should not replace the share already on stage")
+        XCTAssertEqual(model.orderedParticipants.map(\.id), ["local", "guest", "other", "presenter"])
+        XCTAssertEqual(model.railParticipants.map(\.id), ["local", "guest", "other"])
+
+        presenter.cameraOn = false
+        guest.speaking = false
+        engine.snapshot.participants = [presenter, local, other, guest]
+        engine.onState?(engine.snapshot)
+        XCTAssertNil(model.activeSpeaker)
+        XCTAssertEqual(model.focusedSharePresenter?.id, presenter.id, "The presenter keeps the slot even with their camera off")
+
+        presenter.sharing = false
+        other.speaking = true
+        engine.snapshot.participants = [other, presenter, guest, local]
+        engine.onState?(engine.snapshot)
+        XCTAssertEqual(model.focusedSharePresenter?.id, guest.id)
+        XCTAssertEqual(model.railParticipants.map(\.id), ["local", "other", "presenter"])
+        _ = await model.leave()
+    }
     func testFloatingMeetingRequestsOneVideoAndRestoresGalleryWithoutChangingAudioOnly() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)
         try await model.connect()

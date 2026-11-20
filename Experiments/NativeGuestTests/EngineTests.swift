@@ -585,6 +585,20 @@ import CoreMedia
             precondition(videos().contains("TR_video8"), "Visible spare capacity may keep a muted screen warm")
             try await engine.setVisibleParticipantIDs([])
             precondition(subscribed == audio(9) && engine.incomingVideo.isEmpty, "Empty demand must also retire a warm muted screen")
+
+            var presenter = participant(8, version: 3)
+            var presenterTracks = presenter["tracks"] as? [[String: Any]] ?? []
+            presenterTracks.append(["sid": "TR_video8-camera", "type": "VIDEO", "source": "CAMERA", "muted": false])
+            presenter["tracks"] = presenterTracks
+            try await update([presenter] + (10...14).map { participant($0) })
+            try await engine.setVisibleParticipantIDs(["remote8"], preferredScreenParticipantID: "remote8")
+            precondition(videos().count == 6 && !videos().contains("TR_video8-camera"), "Default demand still favors screen shares")
+            try await engine.setVisibleParticipantIDs(["remote8"], preferredScreenParticipantID: "remote8", prioritizesPresenterCamera: true)
+            precondition(videos().count == 6 && videos().isSuperset(of: ["TR_video8", "TR_video8-camera"]),
+                         "The pinned presenter gets both tracks even when several other shares are active")
+            try await engine.setVisibleParticipantIDs(["remote8"], preferredScreenParticipantID: "remote8",
+                                                      cameras: false, prioritizesPresenterCamera: true)
+            precondition(videos().count == 6 && !videos().contains("TR_video8-camera"), "Screen-only mode takes precedence")
         }
     }
 

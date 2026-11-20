@@ -602,7 +602,8 @@ struct NativeDesktopMeetingView: View {
         }
     }
     /// The participants panel already lists everyone; the rail would repeat it.
-    private var showsRail: Bool { !model.immersive && !railCollapsed && model.panel != .participants && model.participants.count > 1 }
+    private var canShowRail: Bool { !model.immersive && model.panel != .participants && model.participants.count > 1 }
+    private var showsRail: Bool { canShowRail && !railCollapsed }
     /// Beside a focused share or person: who is here, who is talking, one click to focus them.
     @ViewBuilder private var speakerRail: some View {
         if showsRail {
@@ -612,6 +613,10 @@ struct NativeDesktopMeetingView: View {
                     Spacer()
                     Button { railCollapsed = true } label: { Image(systemName: "sidebar.right") }
                         .buttonStyle(.plain).foregroundStyle(.secondary).help(L("Hide speakers")).accessibilityLabel(L("Hide speakers"))
+                }
+                if let presenter = model.focusedSharePresenter {
+                    shareSpeakerLabel
+                    presenterTile(presenter)
                 }
                 GeometryReader { viewport in
                     ScrollView {
@@ -638,11 +643,24 @@ struct NativeDesktopMeetingView: View {
         }
     }
     @ViewBuilder private var railRestoreButton: some View {
-        if railCollapsed && !model.immersive && model.panel != .participants && model.participants.count > 1 {
+        if canShowRail && railCollapsed {
             Button { railCollapsed = false } label: { Image(systemName: "person.2").frame(width: 30, height: 28) }
                 .buttonStyle(.plain).background(.black.opacity(0.6), in: Capsule()).padding(12)
                 .help(L("Show speakers")).accessibilityLabel(L("Show speakers"))
         }
+    }
+    private var shareSpeakerLabel: some View {
+        let speaker = model.activeSpeaker
+        let title = speaker.map { "\(L("Speaking")) · \($0.isLocal ? L("You") : $0.name)" } ?? L("No one is speaking")
+        return Label(title, systemImage: "waveform")
+            .font(.caption).foregroundStyle(speaker == nil ? Color.secondary : Color.primary)
+            .lineLimit(1).frame(height: 18, alignment: .leading).help(title)
+    }
+    private func presenterTile(_ person: NativeDesktopParticipant) -> some View {
+        participantTile(person, compact: true, presenter: true)
+            .frame(height: 112)
+            .id(person.id)
+            .accessibilityIdentifier("meeting.presenterTile.\(person.id)")
     }
     /// Who is talking, on top of the content, so nobody looks away from the share to find out.
     @ViewBuilder private var speakerChip: some View {
@@ -667,7 +685,11 @@ struct NativeDesktopMeetingView: View {
                         textFrame: textFrame, selectText: focused.source == .screen ? selectSharedText : nil,
                         immersive: model.immersive, onImmersive: { model.immersive.toggle() },
                         bottomOverlayInset: model.immersive && showsFooter ? Self.footerHeight : 0)
-                        .overlay(alignment: .topLeading) { speakerChip }
+                        .overlay(alignment: .topLeading) {
+                            if model.focusedSharePresenter == nil || (!showsRail && model.panel != .participants) {
+                                speakerChip
+                            }
+                        }
                         .overlay(alignment: .topTrailing) { railRestoreButton }
                 } else if let person = model.participants.first(where: { $0.id == focusedID }), !model.focusedVideoExpected {
                     participantTile(person, compact: false)
@@ -697,12 +719,14 @@ struct NativeDesktopMeetingView: View {
             }
         }
     }
-    private func participantTile(_ person: NativeDesktopParticipant, compact: Bool) -> some View {
-        ZStack(alignment: .bottomLeading) {
+    private func participantTile(_ person: NativeDesktopParticipant, compact: Bool, presenter: Bool = false) -> some View {
+        let source: NativeDesktopVideoSource = !presenter && model.display == .screenShares ? .screen : .camera
+        return ZStack(alignment: .bottomLeading) {
             Color(white: 0.11)
-            if person.isLocal, let track = model.localCamera { NativeDesktopVideoView(track: track, mirrored: true) }
-            else if let video = model.visibleVideos.first(where: {
-                $0.participantID == person.id && $0.source == (model.display == .screenShares ? .screen : .camera)
+            if person.isLocal, (!presenter || (model.receivesCameras && person.cameraOn != false)), let track = model.localCamera {
+                NativeDesktopVideoView(track: track, mirrored: true)
+            } else if let video = model.visibleVideos.first(where: {
+                $0.participantID == person.id && $0.source == source && (!presenter || person.cameraOn != false)
             }) {
                 NativeDesktopVideoView(track: video.track, crop: video.crop)
             } else {
@@ -712,12 +736,16 @@ struct NativeDesktopMeetingView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             HStack(spacing: 7) {
-                Text(person.name).lineLimit(1); Spacer(minLength: 4)
+                VStack(alignment: .leading, spacing: 1) {
+                    if presenter { Text(L("Presenting")).font(.caption2).foregroundStyle(.white.opacity(0.8)) }
+                    Text(person.name).lineLimit(1)
+                }
+                Spacer(minLength: 4)
                 if !person.isLocal, model.participantVolume(person.id) != 1 { NativeDesktopParticipantVolumeBadge(level: model.participantVolume(person.id)) }
                 if person.microphoneOn == false { Image(systemName: "mic.slash").accessibilityLabel(L("Microphone off")) }
                 else if person.speaking == true { NativeDesktopLevelMeter(level: person.isLocal ? model.snapshot.microphoneLevel ?? 0 : 0.7) }
             }.font(.caption).padding(10).background(.black.opacity(0.45))
-        }.clipShape(RoundedRectangle(cornerRadius: 14))
+        }.foregroundStyle(.white).clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(person.speaking == true ? Color.green : Color.white.opacity(0.12), lineWidth: person.speaking == true ? 2 : 1))
         .contextMenu {
             Button(L("Focus camera")) { model.focus(participantID: person.id, source: .camera) }
@@ -760,7 +788,14 @@ struct NativeDesktopMeetingView: View {
             HStack { Text(panel == .presenter ? L("Presenter studio") : L(panel.rawValue)).font(.headline); Spacer(); Button { model.panel = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help(L("Close")) }.padding(18)
             Divider()
             switch panel {
-            case .participants: NativeDesktopParticipantsList(model: model)
+            case .participants:
+                if let presenter = model.focusedSharePresenter {
+                    VStack(alignment: .leading, spacing: 6) {
+                        shareSpeakerLabel
+                        presenterTile(presenter)
+                    }.padding(.horizontal, 14).padding(.top, 10)
+                }
+                NativeDesktopParticipantsList(model: model)
             case .conversation: NativeDesktopConversationView(model: model, chat: model.chat)
             case .studio: NativeDesktopDeviceSettings(liveTrack: model.localCamera,
                 liveAudioAvailable: true,
@@ -1265,11 +1300,15 @@ struct NativeDesktopParticipantVolumeButton: View {
     let person: NativeDesktopParticipant
     @State private var open = false
     private var level: Double { model.participantVolume(person.id) }
+    private var percent: Int { Int((level * 100).rounded()) }
     var body: some View {
         Button { open.toggle() } label: {
-            Image(systemName: level == 0 ? "speaker.slash.fill" : level == 1 ? "speaker.wave.2" : "speaker.wave.2.fill")
-                .foregroundStyle(level == 0 ? Color.orange : level == 1 ? Color.secondary : Color.accentColor)
-        }.buttonStyle(.plain).help(L("Volume for me")).accessibilityLabel(L("Volume for %@", person.name))
+            Label("\(percent)%", systemImage: level == 0 ? "speaker.slash.fill" : "speaker.wave.2")
+                .font(.caption.monospacedDigit()).frame(minWidth: 52)
+                .foregroundStyle(level == 0 ? Color.orange : level == 1 ? Color.primary : Color.accentColor)
+        }.buttonStyle(.bordered).controlSize(.small)
+            .help(L("Volume for me")).accessibilityLabel(L("Volume for %@", person.name))
+            .accessibilityValue(L("Volume for you: %d%%", percent))
             .accessibilityIdentifier("participant.volume.\(person.id)")
             .popover(isPresented: $open, arrowEdge: .leading) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -1277,7 +1316,7 @@ struct NativeDesktopParticipantVolumeButton: View {
                     HStack(spacing: 8) {
                         Slider(value: Binding(get: { level }, set: { model.setParticipantVolume(($0 * 20).rounded() / 20, participantID: person.id) }), in: 0...2)
                             .accessibilityLabel(L("Volume for %@", person.name))
-                        Text("\(Int((level * 100).rounded()))%").font(.caption).monospacedDigit().frame(width: 42, alignment: .trailing)
+                        Text("\(percent)%").font(.caption).monospacedDigit().frame(width: 42, alignment: .trailing)
                     }
                     HStack {
                         Button(level == 0 ? L("Unmute for me") : L("Mute for me")) { model.setParticipantVolume(level == 0 ? 1 : 0, participantID: person.id) }
@@ -1654,26 +1693,47 @@ private struct NativeDesktopZoomIndicator: View {
     }
 }
 
-/// Speaking now first with live levels, then everyone else with when they last spoke.
 struct NativeDesktopParticipantsList: View {
     @ObservedObject var model: NativeDesktopMeetingModel
-    private static let relative: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short; return formatter
-    }()
+    @State private var search = ""
+    private let volumeColumnWidth: CGFloat = 108
+
     var body: some View {
-        let speaking = model.participants.filter { $0.speaking == true }
-        let others = model.participants.filter { $0.speaking != true }
-        List {
-            if !speaking.isEmpty { Section(L("Speaking now")) { ForEach(speaking) { row($0) } } }
-            Section(L("In meeting")) { ForEach(others) { row($0) } }
-        }.listStyle(.plain)
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let people = model.orderedParticipants.filter { query.isEmpty || $0.name.localizedStandardContains(query) }
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+                TextField(L("Search participants"), text: $search).textFieldStyle(.plain)
+                    .accessibilityIdentifier("meeting.participants.search")
+                if !search.isEmpty {
+                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel(L("Clear search"))
+                }
+            }.padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 14).padding(.vertical, 10)
+            if model.supportsParticipantVolume, people.contains(where: { !$0.isLocal }) {
+                Text(L("Volume for me")).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                    .frame(width: volumeColumnWidth)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.horizontal, 14).padding(.bottom, 4)
+            }
+            List(people) { person in
+                row(person).listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14))
+            }.listStyle(.plain)
+                .overlay {
+                    if people.isEmpty && !query.isEmpty {
+                        Text(L("No matching participants")).foregroundStyle(.secondary).allowsHitTesting(false)
+                    }
+                }
+        }
     }
     private func status(_ person: NativeDesktopParticipant) -> String {
-        if person.speaking == true { return L("Speaking") }
         var parts: [String] = []
         if person.sharing == true { parts.append(L("Presenting")) }
-        if let last = model.lastSpokeAt[person.id] { parts.append(L("Spoke %@", Self.relative.localizedString(for: last, relativeTo: Date()))) }
-        else if person.microphoneOn == false { parts.append(L("Muted")) }
+        if person.speaking == true { parts.append(L("Speaking")) }
+        else if let microphoneOn = person.microphoneOn { parts.append(L(microphoneOn ? "Microphone on" : "Microphone off")) }
         return parts.joined(separator: " · ")
     }
     private func row(_ person: NativeDesktopParticipant) -> some View {
@@ -1684,13 +1744,20 @@ struct NativeDesktopParticipantsList: View {
                 .overlay(Circle().stroke(speaking ? Color.green : .clear, lineWidth: 2))
             VStack(alignment: .leading, spacing: 1) {
                 Text(person.isLocal ? L("%@ (you)", person.name) : person.name).lineLimit(1)
-                let line = status(person)
-                if !line.isEmpty { Text(line).font(.caption).foregroundStyle(speaking ? Color.green : person.sharing == true ? Color.cyan : .secondary).lineLimit(1) }
+                Text(status(person)).font(.caption).foregroundStyle(speaking ? Color.green : .secondary)
+                    .lineLimit(1).frame(height: 15, alignment: .leading)
             }
             Spacer(minLength: 4)
-            if speaking { NativeDesktopLevelMeter(level: person.isLocal ? model.snapshot.microphoneLevel ?? 0.5 : 0.7) }
-            else if person.microphoneOn == false { Image(systemName: "mic.slash").foregroundStyle(.secondary).accessibilityLabel(L("Microphone off")) }
-            if !person.isLocal && model.supportsParticipantVolume { NativeDesktopParticipantVolumeButton(model: model, person: person) }
-        }.padding(.vertical, 2).accessibilityElement(children: .combine)
+            ZStack {
+                if speaking { NativeDesktopLevelMeter(level: person.isLocal ? model.snapshot.microphoneLevel ?? 0.5 : 0.7) }
+                else if person.microphoneOn == false { Image(systemName: "mic.slash").foregroundStyle(.secondary) }
+            }.frame(width: 20, height: 16).accessibilityHidden(true)
+            if model.supportsParticipantVolume {
+                ZStack {
+                    if person.isLocal { Color.clear.accessibilityHidden(true) }
+                    else { NativeDesktopParticipantVolumeButton(model: model, person: person) }
+                }.frame(width: volumeColumnWidth)
+            }
+        }.frame(height: 46).accessibilityElement(children: .contain)
     }
 }

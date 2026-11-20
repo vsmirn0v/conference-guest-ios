@@ -1361,6 +1361,10 @@
 "Mute for me" = "Mute for me";
 "Unmute for me" = "Unmute for me";
 "Volume for me" = "Volume for me";
+"Search participants" = "Search participants";
+"No matching participants" = "No matching participants";
+"No one is speaking" = "No one is speaking";
+"Clear search" = "Clear search";
 "Muted for you" = "Muted for you";
 "Volume for you: %d%%" = "Volume for you: %d%%";
 "Volume for %@" = "Volume for %@";

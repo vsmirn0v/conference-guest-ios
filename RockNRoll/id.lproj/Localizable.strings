@@ -1186,6 +1186,10 @@
 "Mute for me" = "Diam untuk saya";
 "Unmute for me" = "Lepaskan untukku.";
 "Volume for me" = "Volume bagi saya";
+"Search participants" = "Cari peserta";
+"No matching participants" = "Tidak ada peserta yang cocok";
+"No one is speaking" = "Tidak ada yang sedang berbicara";
+"Clear search" = "Hapus pencarian";
 "Muted for you" = "Dibisukan untuk Anda";
 "Volume for you: %d%%" = "Volume untuk Anda: %d %%";
 "Volume for %@" = "Volume untuk %@";

@@ -16,7 +16,11 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 xcrun --sdk macosx swiftc -swift-version 5 -D DEBUG -parse-as-library -O -target arm64-apple-macos13.0 \
     -F "$framework_dir" -framework LiveKitWebRTC -Xlinker -rpath -Xlinker "$framework_dir" \
     "$repo_dir/ConferenceCore/Sources/ConferenceCore/ProbeLog.swift" \
-    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/GuestAudioProfile.swift" "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/GuestAudioOwnerLease.swift" "${sources[@]}" "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/NativeVideoPixelBuffer.swift" "$tests_dir/EngineTests.swift" -o "$build_dir/engine-tests"
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/GuestAudioProfile.swift" \
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/GuestAudioOwnerLease.swift" \
+    "$repo_dir/MeetingEngine/Sources/MeetingEngine/Audio/SyntheticVoiceReplyPlayer.swift" \
+    "${sources[@]}" "$repo_dir/MeetingEngine/Sources/MeetingEngine/Media/NativeVideoPixelBuffer.swift" \
+    "$tests_dir/EngineTests.swift" -o "$build_dir/engine-tests"
 if "$build_dir/engine-tests" >"$build_dir/results.log" 2>&1; then
     tail -n 1 "$build_dir/results.log"
 else

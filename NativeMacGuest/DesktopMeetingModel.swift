@@ -1271,9 +1271,24 @@ import UniformTypeIdentifiers
     var activeSpeaker: NativeDesktopParticipant? {
         participants.first { $0.speaking == true && !$0.isLocal } ?? participants.first { $0.speaking == true }
     }
-    /// Beside a focused share: whoever is speaking first, then the roster order.
+    var orderedParticipants: [NativeDesktopParticipant] {
+        participants.sorted {
+            if $0.isLocal != $1.isLocal { return $0.isLocal }
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+    }
+    /// The tile follows the share on stage, including while its stream reconnects.
+    var focusedSharePresenter: NativeDesktopParticipant? {
+        guard showsFocus, display != .audioOnly, let id = focusedParticipantID,
+              let person = participants.first(where: { $0.id == id }), person.sharing != false else { return nil }
+        if focusedVideo?.source == .screen ||
+            (focusAffinity?.source == .screen && person.sharing == true) { return person }
+        return nil
+    }
     var railParticipants: [NativeDesktopParticipant] {
-        participants.filter { $0.speaking == true } + participants.filter { $0.speaking != true }
+        let presenterID = focusedSharePresenter?.id
+        return orderedParticipants.filter { $0.id != presenterID }
     }
     /// Automatic focuses a share only when it is received; Focus works in every mode.
     var showsFocus: Bool {
@@ -2032,8 +2047,12 @@ import UniformTypeIdentifiers
                 focusAffinity = (pinned.participantID, pinned.source)
             } else if focusAffinity?.participant != pinnedID { focusAffinity = (pinnedID, pinnedSource ?? .camera) }
         } else if viewMode != .gallery && display != .audioOnly,
-                  let screen = participants.first(where: { $0.sharing == true && !$0.isLocal }) { focusAffinity = (screen.id, .screen) }
-        else if viewMode == .gallery || (viewMode == .automatic && display == .audioOnly) { focusAffinity = nil }
+                  let screen = participants.first(where: { $0.sharing == true && !$0.isLocal }) {
+            if focusAffinity?.source != .screen ||
+                !participants.contains(where: { $0.id == focusAffinity?.participant && $0.sharing == true }) {
+                focusAffinity = (screen.id, .screen)
+            }
+        } else if viewMode == .gallery || (viewMode == .automatic && display == .audioOnly) { focusAffinity = nil }
         else if viewMode == .focused && display == .screenShares && !videoParticipants.isEmpty {
             if focusAffinity?.source != .screen || !videoParticipants.contains(where: { $0.id == focusAffinity?.participant }) {
                 focusAffinity = videoParticipants.first.map { ($0.id, .screen) }
@@ -2058,23 +2077,29 @@ import UniformTypeIdentifiers
             }
         }
         let focused = receivesVideo && singleVideo ? (showsFocus ? focusedParticipantID : floatingParticipantID) : nil
+        let presenter = focusedSharePresenter
+        let prioritizesPresenterCamera = receivesVideo && receivesCameras && mediaPresentation == .meeting
+            && presenter?.isLocal == false
         var shown = singleVideo ? [focused].compactMap { $0 } : galleryParticipants.map(\.id)
         if let focused, mediaPresentation == .meeting, receivesCameras,
            focusAffinity?.source == .screen || focusedVideo?.source == .screen {
-            // The Guest subscriber can receive six videos. Leave room for the
-            // focused share and request cameras for the visible speaker tiles.
+            // The focused participant already requests both tracks. Leave room
+            // for their screen and camera in the Guest subscriber's six slots.
+            let cameraSlots = prioritizesPresenterCamera && presenter?.cameraOn != false ? 4 : 5
             let cameraTiles = railParticipants.filter {
                 $0.id != focused && !$0.isLocal && $0.cameraOn != false && visibleSpeakerTileIDs.contains($0.id)
             }
-            shown += cameraTiles.prefix(5).map(\.id)
+            shown += cameraTiles.prefix(cameraSlots).map(\.id)
         }
         // Visible tiles stay; video is requested only for the ones this mode receives.
         let receivable = Set(videoParticipants.map(\.id))
         let ids = !receivesVideo ? Set<String>() : Set(shown.filter { display == .all || receivable.contains($0) })
         let floatingScreen = mediaPresentation == .floating && !showsFocus && participants.contains { $0.id == focused && $0.sharing == true }
-        let preferredScreen = receivesVideo && (focusAffinity?.source == .screen || floatingScreen) ? focused : nil
+        let preferredScreen = receivesVideo && (focusAffinity?.source == .screen || focusedVideo?.source == .screen || floatingScreen)
+            ? focused : nil
         let cameras = receivesCameras
-        let key = ids.sorted().joined(separator: "|") + "#" + (focused ?? "") + "#" + (preferredScreen ?? "") + "#" + (cameras ? "cameras" : "screens")
+        let key = [ids.sorted().joined(separator: "|"), focused ?? "", preferredScreen ?? "",
+                   cameras ? "cameras" : "screens", String(prioritizesPresenterCamera)].joined(separator: "#")
         guard demandKey != key, connected else { return }
         let previous = demandTask
         previous?.cancel()
@@ -2087,7 +2112,8 @@ import UniformTypeIdentifiers
             do {
                 if let session = engine as? MeetingSession {
                     try await session.setVideoDemand(.init(visibleParticipantIDs: ids, focusedParticipantID: focused,
-                                                           preferredScreenParticipantID: preferredScreen, receivesCameras: cameras))
+                                                           preferredScreenParticipantID: preferredScreen, receivesCameras: cameras,
+                                                           prioritizesPresenterCamera: prioritizesPresenterCamera))
                 } else { try await engine.setVisibleParticipantIDs(ids, focusedParticipantID: focused, cameras: cameras) }
             }
             catch { if !Task.isCancelled { demandKey = nil } }
