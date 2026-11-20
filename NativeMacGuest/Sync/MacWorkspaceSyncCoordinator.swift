@@ -287,7 +287,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
     func noteLocalSessionJoined(sessionID: UUID, joinedAt: Date, hasOutcomeWriter: Bool) {
         let id = canonicalSessionID(sessionID)
-        let active = activeLegsBySession[id]
+        let active = activeLegsBySession[id] ?? activeLegsBySession[sessionID]
         if let active, active.leftAt == nil, active.hasOutcomeWriter == hasOutcomeWriter { return }
         var leg = active ?? replica.localAttendance?[id] ?? DeviceParticipationLeg(
             deviceID: deviceID, deviceKind: .mac, joinedAt: joinedAt, updatedAt: joinedAt
@@ -306,7 +306,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     func noteLocalSessionLeft(sessionID: UUID, leftAt: Date) {
         let id = canonicalSessionID(sessionID)
         closeMicIntervalIfNeeded(sessionID: id, at: leftAt)
-        let previous = activeLegsBySession[id] ?? replica.localAttendance?[id]
+        let previous = activeLegsBySession[id] ?? activeLegsBySession[sessionID] ??
+            replica.localAttendance?[id] ?? replica.localAttendance?[sessionID]
         guard var leg = previous, leg.leftAt == nil else { return }
         leg.endInterval(at: leftAt)
         leg.leftAt = leftAt
