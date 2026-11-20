@@ -71,9 +71,11 @@ final class MeetingAccessUITests: XCTestCase {
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
             XCUIDevice.shared.orientation = orientation
             let gestureApp = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
-            let window = gestureApp.windows.firstMatch
             let viewport = gestureApp.scrollViews.matching(identifier: "share").firstMatch
             XCTAssertTrue(viewport.waitForExistence(timeout: 15))
+            // iPadOS can expose an empty system window before the call window.
+            let window = try XCTUnwrap(gestureApp.windows.containing(.scrollView, identifier: "share")
+                .allElementsBoundByIndex.first { !$0.frame.isEmpty })
             let fillsWindow = NSPredicate { _, _ in
                 let bounds = window.frame
                 return (bounds.width > bounds.height) == orientation.isLandscape && covers(viewport.frame, bounds)
@@ -86,9 +88,16 @@ final class MeetingAccessUITests: XCTestCase {
                 let fit = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "100%"), object: viewport)
                 XCTAssertEqual(XCTWaiter.wait(for: [fit], timeout: 5), .completed)
             }
-            window.pinch(withScale: 1.8, velocity: 1)
+            // A larger spread clears UIKit's touch threshold on regular-width iPads.
+            // The viewport was independently checked against the containing window.
+            viewport.pinch(withScale: 3, velocity: 1)
+            let magnified = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let value = viewport.value as? String,
+                      let percent = Int(value.replacingOccurrences(of: "%", with: "")) else { return false }
+                return percent > 110
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [magnified], timeout: 5), .completed)
             let zoom = try XCTUnwrap(viewport.value as? String)
-            XCTAssertNotEqual(zoom, "100%")
             let tap = window.coordinate(withNormalizedOffset: CGVector(dx: 0.32, dy: 0.55))
             tap.tap()
             // The stage waits for its double-tap zoom recognizer before hiding chrome.
