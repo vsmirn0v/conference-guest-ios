@@ -99,6 +99,65 @@ import XCTest
         }
     }
 
+    private func verifyGalleryScrolling(model: NativeDesktopMeetingModel, window: NSWindow) async throws {
+        let content = try XCTUnwrap(window.contentView)
+        let docked = content.bounds.width >= 1040
+        model.galleryPage = 0
+        model.controlsHidden = true
+        if docked { model.panel = .participants }
+        defer {
+            model.panel = nil
+            model.controlsHidden = false
+        }
+        try await Task.sleep(for: .milliseconds(300))
+
+        func scroll(at fraction: CGFloat = 0.22, y: Int32 = 0, x: Int32 = 0,
+                    phase: CGScrollPhase? = nil, momentum: CGMomentumScrollPhase = .none) async throws {
+            let center = CGPoint(x: content.bounds.width * fraction, y: content.bounds.midY)
+            // Retain a window-local event target when constructing the wheel event.
+            let target = NSEvent.mouseEvent(with: .mouseMoved, location: content.convert(center, to: nil),
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 0, pressure: 0)
+            let event = try XCTUnwrap(target?.cgEvent)
+            event.type = .scrollWheel
+            event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: Int64(y))
+            event.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: Int64(x))
+            if phase != nil || momentum != .none {
+                event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(y))
+                event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(x))
+                event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase?.rawValue ?? 0))
+                event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(momentum.rawValue))
+            }
+            NSApp.postEvent(try XCTUnwrap(NSEvent(cgEvent: event)), atStart: false)
+            try await Task.sleep(for: .milliseconds(200))
+        }
+
+        if docked {
+            try await scroll(at: 0.88, y: -3)
+            XCTAssertEqual(model.galleryPage, 0, "Scrolling the participants list must not page the gallery")
+        }
+        try await scroll(y: -3)
+        XCTAssertEqual(model.galleryPage, 1, "Scroll over the tiles to reach the last five participants")
+        XCTAssertEqual(model.galleryParticipants.map(\.id), Array(model.participants.suffix(5)).map(\.id))
+        try await scroll(y: 3)
+        XCTAssertEqual(model.galleryPage, 0)
+
+        model.controlsHidden = false
+        try await scroll(x: -12, phase: .began)
+        XCTAssertEqual(model.galleryPage, 0, "Tiny trackpad movements should not turn a page")
+        try await scroll(x: -24, phase: .changed)
+        XCTAssertEqual(model.galleryPage, 1)
+        try await scroll(x: 72, phase: .changed)
+        try await scroll(phase: .ended)
+        try await scroll(x: 72, momentum: .begin)
+        try await scroll(momentum: .end)
+        XCTAssertEqual(model.galleryPage, 1, "One gesture, including momentum, turns at most one page")
+        try await scroll(x: 48, phase: .began)
+        try await scroll(phase: .ended)
+        XCTAssertEqual(model.galleryPage, 0)
+    }
+
     private func verifyCompactFooter(model: NativeDesktopMeetingModel, window: NSWindow) async throws {
         func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
             var value: CFTypeRef?
@@ -141,6 +200,7 @@ import XCTest
             try await Task.sleep(for: .milliseconds(150))
             XCTAssertEqual(model.galleryPage, 1)
         }
+        try await verifyGalleryScrolling(model: model, window: window)
         let presenter = try XCTUnwrap(model.participants.first { $0.sharing == true })
         model.focus(participantID: presenter.id, source: .screen)
         try await Task.sleep(for: .milliseconds(400))

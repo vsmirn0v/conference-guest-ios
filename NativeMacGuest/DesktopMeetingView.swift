@@ -187,6 +187,46 @@ import SwiftUI
     }
 }
 
+/// Only wheel events hit this overlay. Clicks and context menus reach the tiles below.
+private struct GalleryPageScrollInput: NSViewRepresentable {
+    let changePage: (Int) -> Void
+
+    func makeNSView(context: Context) -> WheelView { WheelView() }
+
+    func updateNSView(_ view: WheelView, context: Context) { view.changePage = changePage }
+
+    final class WheelView: NSView {
+        var changePage: ((Int) -> Void)?
+        private var travel = CGSize.zero
+        private var didTurnPage = false
+        private var lastEventTime: TimeInterval = 0
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            NSApp.currentEvent?.type == .scrollWheel ? super.hitTest(point) : nil
+        }
+
+        override func scrollWheel(with event: NSEvent) {
+            // Momentum belongs to the gesture that already selected a page.
+            guard event.momentumPhase.isEmpty else { return }
+            guard !event.phase.contains(.ended), !event.phase.contains(.cancelled) else { return }
+            // Some precise wheels omit gesture phases. Start a new gesture after a pause.
+            let newBurst = event.phase.isEmpty && event.timestamp - lastEventTime > 0.18
+            if !event.hasPreciseScrollingDeltas || event.phase.contains(.began) || newBurst {
+                travel = .zero
+                didTurnPage = false
+            }
+            lastEventTime = event.timestamp
+            guard !didTurnPage else { return }
+            travel.width += event.scrollingDeltaX
+            travel.height += event.scrollingDeltaY
+            let delta = abs(travel.width) > abs(travel.height) ? travel.width : travel.height
+            guard abs(delta) >= (event.hasPreciseScrollingDeltas ? 32 : 0.1) else { return }
+            didTurnPage = true
+            changePage?(delta < 0 ? 1 : -1)
+        }
+    }
+}
+
 struct NativeDesktopMeetingView: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     let onMini: () -> Void
@@ -645,6 +685,9 @@ struct NativeDesktopMeetingView: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
                     ForEach(model.galleryParticipants) { person in participantTile(person, compact: height < 150).frame(height: height) }
                 }
+            }
+            .overlay {
+                if hasGalleryPages { GalleryPageScrollInput(changePage: changeGalleryPage(by:)) }
             }
         } else {
             VStack(spacing: 16) {
