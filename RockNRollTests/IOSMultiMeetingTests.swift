@@ -922,6 +922,38 @@ final class IOSMultiMeetingTests: XCTestCase {
         // Inspect the negotiated receiver, including its tap while local playout is muted.
         let received = try XCTUnwrap(subscriber.incomingAudioTracks.first?.track)
         audio.onLevelChange = { [weak listener] in listener?.reconcilePlaybackLevels() }
+        let processor = IPhoneSpeakerPlaybackProcessor()
+        defer { processor.setEnabled(false) }
+
+        // Compare the quiet, synthetic 440 Hz tone at the output mixer with the
+        // decoded track over the same interval, independently of sender-side AGC.
+        func measuredPlaybackGain(boosted: Bool) async throws -> Double {
+            processor.setEnabled(boosted)
+            let buffers = try XCTUnwrap(audio.playoutMeterEvidence["buffers"] as? Int)
+            try await waitUntil { (audio.playoutMeterEvidence["buffers"] as? Int ?? 0) >= buffers + 4 }
+            let before = audio.playoutMeterEvidence
+            let samplesBefore = try XCTUnwrap(before["samples"] as? Int)
+            let energyBefore = try XCTUnwrap(before["energy"] as? Double)
+            let decodedBefore = subscriber.pcmMeter.snapshot
+            try await waitUntil { (audio.playoutMeterEvidence["samples"] as? Int ?? 0) >= samplesBefore + 24_000 }
+            let after = audio.playoutMeterEvidence
+            let samples = try XCTUnwrap(after["samples"] as? Int) - samplesBefore
+            let energy = try XCTUnwrap(after["energy"] as? Double) - energyBefore
+            let decoded = subscriber.pcmMeter.snapshot.since(decodedBefore)
+            XCTAssertGreaterThanOrEqual(samples, 24_000)
+            XCTAssertGreaterThan(decoded.rms, 0)
+            XCTAssertFalse(audio.factory.audioDeviceModule.isRecording)
+            XCTAssertEqual(received.source.volume, 0.02, accuracy: 0.0001)
+            return sqrt(energy / Double(samples)) / decoded.rms
+        }
+        let baseline = try await measuredPlaybackGain(boosted: false)
+        let speaker = try await measuredPlaybackGain(boosted: true)
+        let restored = try await measuredPlaybackGain(boosted: false)
+        XCTAssertGreaterThan(baseline, 0)
+        print("WebRTC loopback playback relative to baseline: speaker=\(speaker / baseline) restored=\(restored / baseline)")
+        XCTAssertEqual(speaker / baseline, 1.5, accuracy: 0.15)
+        XCTAssertEqual(restored / baseline, 1, accuracy: 0.1)
+
         listener.setParticipantVolumes(["late-publisher": 0])
         XCTAssertEqual(received.source.volume, 0)
         listener.setParticipantVolumes(["late-publisher": 2])

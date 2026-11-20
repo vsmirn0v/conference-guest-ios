@@ -1113,6 +1113,8 @@
 "No text found. Try a clearer frame or return to Live." = "未找到文本。 尝试更清晰的框架或返回到 Live。";
 "Open Share" = "开放共享";
 "Screen share reconnecting…" = "屏幕共享重新连接中…";
+"Text" = "文本";
+
 "Select text" = "选择文本";
 "Selectable text · Live Text is unavailable on this device." = "可选择的文本 □ 现场文本无法在此设备上使用。";
 "Sending %@" = "正在发送 %@";
@@ -3219,3 +3221,9 @@
 "Combine meeting records?" = "合并会议记录？";
 "Separate records" = "拆分记录";
 "Linked meeting records" = "已关联的会议记录";
+
+/* Compact assistant status next to the meeting header symbol. */
+"assistant.compact.off" = "关";
+"assistant.compact.mentions" = "提及";
+"assistant.compact.follow" = "跟进";
+"assistant.compact.participating" = "参与";

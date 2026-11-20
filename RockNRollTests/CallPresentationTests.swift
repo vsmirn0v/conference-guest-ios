@@ -779,7 +779,10 @@ final class CallPresentationTests: XCTestCase {
         }
         call.view.layoutIfNeeded()
         XCTAssertEqual(video.displaySize, CGSize(width: 640, height: 360))
-        XCTAssertEqual(tile.layer.borderWidth, 1)
+        XCTAssertEqual(tile.layer.borderWidth, 0)
+        XCTAssertEqual(tile.layer.cornerRadius, 0)
+        XCTAssertEqual(zoom.convert(zoom.bounds, to: call.view), call.view.bounds)
+        XCTAssertEqual(video.convert(video.bounds, to: call.view), call.view.bounds)
         XCTAssertEqual(header.details.accessibilityValue, L("Speaking: %@", "Alex"))
         let headerCue = try XCTUnwrap(descendants(header).compactMap { $0 as? ActiveSpeakerIndicator }.first)
         XCTAssertTrue(headerCue.subviews.compactMap { $0 as? UILabel }.contains { $0.text == L("%@ is speaking", "Alex") })
@@ -787,9 +790,15 @@ final class CallPresentationTests: XCTestCase {
 
         header.focus.sendActions(for: .touchUpInside)
         XCTAssertTrue(header.isHidden)
-        XCTAssertFalse(cue.isHidden)
         let fitted = AVMakeRect(aspectRatio: video.displaySize, insideRect: video.bounds)
+        let safe = CallPresentationGeometry.safeContentRect(bounds: call.view.bounds, insets: call.view.safeAreaInsets)
+        XCTAssertFalse(cue.isHidden, "Share \(video.convert(fitted, to: call.view)), safe viewport \(safe), speaker \(String(describing: call.activeSpeaker.current))")
         XCTAssertLessThan(cue.frame.maxY, video.convert(fitted, to: call.view).minY)
+        XCTAssertTrue(safe.contains(cue.frame))
+        let letterbox = CGPoint(x: call.view.bounds.maxX - 2, y: header.frame.midY)
+        let touchTarget = try XCTUnwrap(call.view.hitTest(letterbox, with: nil))
+        XCTAssertTrue(touchTarget === zoom || touchTarget.isDescendant(of: zoom))
+        XCTAssertTrue(zoom.pinchGestureRecognizer?.isEnabled == true)
         XCTAssertFalse(cue.isUserInteractionEnabled)
         XCTAssertEqual(cue.accessibilityLabel, L("Speaking: %@", "Alex"))
 
@@ -805,6 +814,16 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(fill.actionHandler)(fill))
         try await Task.sleep(for: .milliseconds(450))
         XCTAssertTrue(cue.isHidden)
+        let scale = zoom.zoomScale
+        XCTAssertGreaterThan(scale, 1)
+        zoom.setContentOffset(CGPoint(x: zoom.contentOffset.x + 20, y: zoom.contentOffset.y), animated: false)
+        let offset = zoom.contentOffset
+        let show = try XCTUnwrap(zoom.accessibilityCustomActions?.first { $0.name == L("Show controls") })
+        XCTAssertTrue(try XCTUnwrap(show.actionHandler)(show))
+        XCTAssertEqual(zoom.contentOffset, offset)
+        header.focus.sendActions(for: .touchUpInside)
+        XCTAssertEqual(zoom.contentOffset, offset)
+        XCTAssertEqual(zoom.zoomScale, scale)
         zoom.setZoomScale(1, animated: false)
         XCTAssertFalse(cue.isHidden)
         listener.isSpeaking = false
@@ -961,17 +980,40 @@ final class CallPresentationTests: XCTestCase {
             meetingName: "Engineering design review", participantCount: 12, presenterName: "Sam")
         header.layoutIfNeeded()
         let identity = header.convert(header.details.bounds, from: header.details)
-        XCTAssertGreaterThan(identity.width, 280)
-        for button in [header.assistant, header.switcher, header.participants, header.conversation] {
+        let collapse = header.convert(header.minimize.bounds, from: header.minimize)
+        XCTAssertGreaterThan(identity.width, 240)
+        XCTAssertEqual(collapse.midY, identity.midY)
+        XCTAssertFalse(collapse.intersects(identity))
+        XCTAssertEqual(header.subviews.compactMap { $0 as? MeetingChromeContainer }.filter { !$0.isHidden }.count, 1)
+        let direct = [header.assistant, header.switcher, header.participants, header.conversation]
+        XCTAssertEqual(Set(direct.map { $0.bounds.width }).count, 1)
+        for button in direct {
             XCTAssertFalse(button.isHidden)
             let target = header.convert(button.bounds, from: button)
             XCTAssertGreaterThanOrEqual(target.width, 44)
-            XCTAssertLessThanOrEqual(target.maxY, identity.minY)
+            XCTAssertGreaterThanOrEqual(target.minY, identity.maxY)
+            XCTAssertGreaterThanOrEqual(target.height, 44)
             XCTAssertTrue(header.hitTest(CGPoint(x: target.midX, y: target.midY), with: nil) === button)
         }
         XCTAssertEqual(header.switcher.accessibilityValue, "1")
         XCTAssertEqual(header.assistant.configuration?.title, "Follow")
+        for (button, text) in [(header.assistant,"Follow"), (header.switcher,"1"), (header.participants,"12"), (header.conversation,"3")] {
+            button.layoutIfNeeded()
+            let status = try XCTUnwrap(button.subviews.compactMap { $0 as? UILabel }.first {
+                $0.text == text && !$0.isHidden && $0.alpha == 1 && $0.bounds.width > 0
+            })
+            XCTAssertTrue(button.bounds.contains(status.frame))
+            XCTAssertEqual(status.numberOfLines, 1)
+        }
         XCTAssertEqual(header.details.accessibilityValue, L("%@ is sharing", "Sam"))
+
+        header.frame.size = CGSize(width: 812, height: 44)
+        header.layoutIfNeeded()
+        XCTAssertNil(header.accessibilityElements)
+        XCTAssertNotEqual(header.minimize.superview, header.details.superview)
+        header.frame.size = CGSize(width: 304, height: 98)
+        header.layoutIfNeeded()
+        XCTAssertEqual(header.minimize.superview, header.details.superview)
     }
 
     func testDuoCallKeepsStageAndToolsOutsideBothDivisionOrientations() throws {
@@ -991,6 +1033,12 @@ final class CallPresentationTests: XCTestCase {
             XCTAssertTrue(fold.second.contains(access.toolbar))
             XCTAssertFalse(access.inline)
             XCTAssertFalse(access.stage.intersects(division))
+            let media = fold.mediaCanvas(in: bounds)
+            XCTAssertTrue(media.contains(fold.first))
+            XCTAssertEqual(media.origin, bounds.origin)
+            XCTAssertFalse(media.intersects(division.insetBy(dx: 1, dy: 1)))
+            XCTAssertEqual(fold.sideBySide ? media.height : media.width,
+                           fold.sideBySide ? bounds.height : bounds.width)
         }
     }
 }

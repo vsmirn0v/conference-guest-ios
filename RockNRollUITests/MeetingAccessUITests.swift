@@ -61,6 +61,57 @@ final class MeetingAccessUITests: XCTestCase {
         attach("Guest direct More and View")
     }
 
+    func testFocusedShareUsesWholeWindowForPinchAndRetainsZoomWhenControlsToggle() throws {
+        let app = launch(guest: true)
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        func covers(_ frame: CGRect, _ bounds: CGRect) -> Bool {
+            abs(frame.minX - bounds.minX) < 0.5 && abs(frame.minY - bounds.minY) < 0.5 &&
+                abs(frame.maxX - bounds.maxX) < 0.5 && abs(frame.maxY - bounds.maxY) < 0.5
+        }
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            let gestureApp = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+            let viewport = gestureApp.scrollViews.matching(identifier: "share").firstMatch
+            XCTAssertTrue(viewport.waitForExistence(timeout: 15))
+            // iPadOS can expose an empty system window before the call window.
+            let window = try XCTUnwrap(gestureApp.windows.containing(.scrollView, identifier: "share")
+                .allElementsBoundByIndex.first { !$0.frame.isEmpty })
+            let fillsWindow = NSPredicate { _, _ in
+                let bounds = window.frame
+                return (bounds.width > bounds.height) == orientation.isLandscape && covers(viewport.frame, bounds)
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: fillsWindow, object: nil)], timeout: 8), .completed)
+            let viewButton = gestureApp.buttons["call.view"]
+            XCTAssertTrue(viewButton.isHittable)
+            if viewport.value as? String != "100%" {
+                gestureApp.buttons["Shared screen scale"].tap()
+                let fit = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "100%"), object: viewport)
+                XCTAssertEqual(XCTWaiter.wait(for: [fit], timeout: 5), .completed)
+            }
+            // A larger spread clears UIKit's touch threshold on regular-width iPads.
+            // The viewport was independently checked against the containing window.
+            viewport.pinch(withScale: 3, velocity: 1)
+            let magnified = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let value = viewport.value as? String,
+                      let percent = Int(value.replacingOccurrences(of: "%", with: "")) else { return false }
+                return percent > 110
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [magnified], timeout: 5), .completed)
+            let zoom = try XCTUnwrap(viewport.value as? String)
+            let tap = window.coordinate(withNormalizedOffset: CGVector(dx: 0.32, dy: 0.55))
+            tap.tap()
+            // The stage waits for its double-tap zoom recognizer before hiding chrome.
+            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: viewButton)
+            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+            XCTAssertTrue(covers(viewport.frame, window.frame))
+            XCTAssertEqual(viewport.value as? String, zoom)
+            tap.tap()
+            XCTAssertTrue(viewButton.waitForExistence(timeout: 5))
+            XCTAssertEqual(viewport.value as? String, zoom)
+            attach("Full-window share with floating controls \(orientation.rawValue)")
+        }
+    }
+
     func testScreenSharingOnlyShowsParticipantsInGalleryAndFocus() {
         let app = launch(guest: false, gallery: true)
         defer { app.terminate() }

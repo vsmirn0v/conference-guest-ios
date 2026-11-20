@@ -57,11 +57,27 @@ final class MeetingAccessControls: UIView {
     let viewButton = UIButton(type: .system)
     let moreButton = UIButton(type: .system)
     let scaleButton = UIButton(type: .system)
+    let pinButton = UIButton(type: .system)
+    private let controls = UIView()
+    var sharesToolbarSurface = false {
+        didSet {
+            guard sharesToolbarSurface != oldValue else { return }
+            surface.isHidden = sharesToolbarSurface
+            (sharesToolbarSurface ? self : surface.contentView).addSubview(controls)
+            if !sharesToolbarSurface { controls.accessibilityElements = nil }
+            setNeedsLayout()
+        }
+    }
     var textButton: UIButton? {
         didSet {
             guard oldValue !== textButton else { return }
             oldValue?.removeFromSuperview()
-            if let textButton { surface.contentView.addSubview(textButton) }
+            if let textButton {
+                textButton.configuration?.imagePadding = 6
+                textButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
+                textButton.configuration?.titleTextAttributesTransformer = scaleButton.configuration?.titleTextAttributesTransformer
+                controls.addSubview(textButton)
+            }
             setNeedsLayout()
         }
     }
@@ -113,9 +129,11 @@ final class MeetingAccessControls: UIView {
         super.init(frame: frame)
         accessibilityIdentifier = "Meeting access controls"
         addSubview(surface)
+        surface.contentView.addSubview(controls)
         divider.backgroundColor = .separator
-        surface.contentView.addSubview(divider)
-        for button in [viewButton, moreButton, scaleButton, viewSizingButton] {
+        controls.addSubview(divider)
+        divider.isUserInteractionEnabled = false
+        for button in [viewButton, moreButton, scaleButton, pinButton, viewSizingButton] {
             button.configuration = .plain()
             button.configuration?.baseForegroundColor = .label
             button.configuration?.imagePadding = 6
@@ -128,10 +146,12 @@ final class MeetingAccessControls: UIView {
                 attributes.font = self?.font
                 return attributes
             }
-            surface.contentView.addSubview(button)
+            controls.addSubview(button)
         }
         viewSizingButton.isHidden = true
         scaleButton.isHidden = true
+        pinButton.isHidden = true
+        pinButton.accessibilityIdentifier = "call.share.pin"
         viewSizingButton.isUserInteractionEnabled = false
         viewSizingButton.isAccessibilityElement = false
         viewButton.accessibilityIdentifier = "call.view"
@@ -147,6 +167,26 @@ final class MeetingAccessControls: UIView {
         moreButton.addSubview(reminderIndicator)
     }
     required init?(coder: NSCoder) { nil }
+    func setSharePin(from source: UIButton?) {
+        if pinButton.isHidden != (source == nil) {
+            pinButton.isHidden = source == nil
+            setNeedsLayout()
+        }
+        guard let source else { return }
+        if pinButton.accessibilityLabel != source.accessibilityLabel || pinButton.configuration?.image != source.configuration?.image {
+            pinButton.configuration?.image = source.configuration?.image
+            pinButton.accessibilityLabel = source.accessibilityLabel
+            pinButton.largeContentTitle = source.accessibilityLabel
+            pinButton.accessibilityHint = source.accessibilityHint
+            setNeedsLayout()
+        }
+        pinButton.isEnabled = source.isEnabled
+    }
+    private var scaleZoomed = false
+    func configureScale(zoomed: Bool, available: Bool) {
+        SharedScreenScale.configure(scaleButton, zoomed: zoomed, available: available)
+        if zoomed != scaleZoomed { scaleZoomed = zoomed; setNeedsLayout() }
+    }
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         measuredViewWidth = nil
@@ -163,7 +203,16 @@ final class MeetingAccessControls: UIView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        surface.frame = bounds; surface.layoutIfNeeded()
+        surface.frame = bounds
+        surface.layoutIfNeeded()
+        controls.frame = bounds
+        divider.isHidden = sharesToolbarSurface
+        if sharesToolbarSurface {
+            layoutShareTools()
+            return
+        }
+        if textButton?.configuration?.title != nil { textButton?.configuration?.title = nil }
+        if scaleButton.configuration?.title != nil { scaleButton.configuration?.title = nil }
         textButton?.frame = CGRect(x: 0, y: 0, width: textWidth, height: bounds.height)
         scaleButton.frame = CGRect(x: textWidth, y: 0, width: scaleWidth, height: bounds.height)
         let leading = textWidth + scaleWidth
@@ -173,6 +222,37 @@ final class MeetingAccessControls: UIView {
         if viewButton.configuration?.title != title { viewButton.configuration?.title = title }
         divider.frame = CGRect(x: viewButton.frame.maxX, y: 10, width: 1, height: max(0, bounds.height - 20))
         reminderIndicator.frame = CGRect(x: 31, y: 10, width: 6, height: 6)
+    }
+
+    private func layoutShareTools() {
+        let buttons = [textButton, scaleButton, pinButton, viewButton, moreButton].compactMap { $0 }.filter { !$0.isHidden }
+        let inset: CGFloat = 4
+        var widths = Dictionary(uniqueKeysWithValues: buttons.map { (ObjectIdentifier($0), CGFloat(44)) })
+        var spare = max(0, bounds.width - 2 * inset - CGFloat(buttons.count) * 44)
+        // Keep at least a 44 pt target for each command. Drop captions that
+        // would truncate on narrow phones or at larger Dynamic Type sizes.
+        for (button, caption) in [(viewButton, L("View") + " ▾"), (scaleButton, scaleZoomed ? L("Fit") : L("Fill")), (textButton, L("Text"))] {
+            guard let button, !button.isHidden else { continue }
+            let textWidth = ceil((caption as NSString).size(withAttributes: [.font: font]).width)
+            let desiredWidth = max(44, textWidth + 42)
+            let extra = desiredWidth - 44
+            let title = extra <= spare ? caption : nil
+            if title != nil {
+                widths[ObjectIdentifier(button)] = desiredWidth
+                spare -= extra
+            }
+            if button.configuration?.title != title { button.configuration?.title = title }
+        }
+        var x = inset
+        let margin = spare / CGFloat(buttons.count)
+        for button in buttons {
+            let width = widths[ObjectIdentifier(button), default: 44] + margin
+            let leading = effectiveUserInterfaceLayoutDirection == .rightToLeft ? bounds.maxX - x - width : x
+            button.frame = CGRect(x: leading, y: 0, width: width, height: bounds.height)
+            x += width
+        }
+        controls.accessibilityElements = buttons
+        reminderIndicator.frame = CGRect(x: moreButton.bounds.midX + 9, y: 10, width: 6, height: 6)
     }
 }
 
@@ -184,15 +264,25 @@ struct MeetingAccessGeometry {
     let pagination: CGRect
     let stage: CGRect
     let inline: Bool
+    let combinedShareDock: Bool
     static func availableAccessWidth(base: CallPresentationGeometry, gallery: Bool) -> CGFloat {
         let width = gallery || base.rail ? base.stage.width : base.toolbar.width
         return max(88, width - (gallery ? 160 : 0))
     }
     init(base: CallPresentationGeometry, bounds: CGRect, insets: UIEdgeInsets, accessSize: CGSize, largeText: Bool,
-         gallery: Bool = false) {
+         gallery: Bool = false, focusedShare: Bool = false) {
         let safe = CallPresentationGeometry.safeContentRect(bounds: bounds, insets: insets)
-        inline = base.fold == nil && !gallery && !base.rail && !largeText && accessSize.height <= 48 && safe.width >= 360 + accessSize.width + 8
-        if let fold = base.fold {
+        combinedShareDock = focusedShare && !gallery && base.fold == nil && bounds.height > bounds.width &&
+            safe.width >= 228 && safe.width < CallPresentationGeometry.singleRowWidth
+        inline = !combinedShareDock && base.fold == nil && !gallery && !base.rail && !largeText && accessSize.height <= 48 && safe.width >= 360 + accessSize.width + 8
+        if combinedShareDock {
+            access = CGRect(x: base.toolbar.minX, y: base.toolbar.minY - accessSize.height,
+                width: base.toolbar.width, height: accessSize.height)
+            toolbar = base.toolbar.union(access)
+            pagination = .zero
+            stage = CGRect(x: base.stage.minX, y: base.stage.minY, width: base.stage.width,
+                height: max(0, access.minY - base.stage.minY - 8))
+        } else if let fold = base.fold {
             toolbar = base.toolbar
             let width = min(accessSize.width, fold.second.width)
             access = CGRect(x: fold.second.maxX - width, y: toolbar.minY - accessSize.height - 8,

@@ -2,9 +2,9 @@ import ConferenceCore
 import UIKit
 
 enum MeetingTileAppearance {
-    static func update(_ view: UIView, speaking: Bool) {
-        view.layer.cornerRadius = 14
-        view.layer.borderWidth = speaking ? 3 : 1
+    static func update(_ view: UIView, speaking: Bool, fullScreenShare: Bool = false) {
+        view.layer.cornerRadius = fullScreenShare ? 0 : 14
+        view.layer.borderWidth = fullScreenShare ? 0 : (speaking ? 3 : 1)
         view.layer.borderColor = (speaking ? UIColor.systemGreen : UIColor.separator).resolvedColor(with: view.traitCollection).cgColor
         view.clipsToBounds = true
     }

@@ -92,6 +92,73 @@ final class MeetingAccessTests: XCTestCase {
         }
     }
 
+    func testPortraitScreenShareUsesOneGlassDockAndKeepsEachActionHittable() throws {
+        let host = UIView()
+        let items = (0..<6).map { _ in UIButton(type: .system) }
+        let toolbar = CallToolbar(items: items)
+        let access = MeetingAccessControls()
+        host.addSubview(toolbar)
+        host.addSubview(access)
+        let text = UIButton(type: .system)
+        text.configuration = .plain()
+        access.textButton = text
+        access.scaleButton.isHidden = false
+        access.configureScale(zoomed: false, available: true)
+        let pin = UIButton(type: .system)
+        pin.configuration = .plain()
+        pin.configuration?.image = UIImage(systemName: "pin")
+        pin.accessibilityLabel = "Pin presenter screen"
+        access.setSharePin(from: pin)
+
+        func glass(around button: UIView) -> MeetingChromeContainer? {
+            sequence(first: button, next: { $0.superview }).compactMap { $0 as? MeetingChromeContainer }.first
+        }
+        for width: CGFloat in [320, 375, 440] {
+            host.frame = CGRect(x: 0, y: 0, width: width, height: 844)
+            let base = CallPresentationGeometry(bounds: host.bounds, insets: .zero, headerHeight: 98,
+                toolbarHeight: toolbar.preferredHeight, hidden: false, floating: true)
+            let accessSize = access.fittingSize(availableWidth: width)
+            let layout = MeetingAccessGeometry(base: base, bounds: host.bounds, insets: .zero,
+                accessSize: accessSize, largeText: false, focusedShare: true)
+            XCTAssertTrue(layout.combinedShareDock)
+            XCTAssertEqual(layout.toolbar.minY, layout.access.minY)
+            XCTAssertEqual(layout.toolbar.maxY, base.toolbar.maxY)
+            toolbar.frame = layout.toolbar
+            toolbar.placeAccessControls(access, geometry: layout, in: host)
+            host.layoutIfNeeded()
+            let surface = try XCTUnwrap(glass(around: items[0]))
+            for button in [text, access.scaleButton, access.pinButton, access.viewButton, access.moreButton] + items {
+                XCTAssertTrue(glass(around: button) === surface)
+                let rect = button.convert(button.bounds, to: host)
+                XCTAssertTrue(layout.toolbar.contains(rect))
+                XCTAssertGreaterThanOrEqual(rect.width, 44)
+                XCTAssertGreaterThanOrEqual(rect.height, 44)
+                let hit = host.hitTest(CGPoint(x: rect.midX, y: rect.midY), with: nil)
+                XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true)
+            }
+        }
+        access.configureScale(zoomed: true, available: true)
+        access.layoutIfNeeded()
+        XCTAssertEqual(access.scaleButton.configuration?.title, L("Fit"))
+        XCTAssertEqual(access.pinButton.accessibilityLabel, pin.accessibilityLabel)
+
+        host.frame = CGRect(x: 0, y: 0, width: 844, height: 390)
+        let base = CallPresentationGeometry(bounds: host.bounds, insets: .zero, headerHeight: 44,
+            toolbarHeight: toolbar.preferredHeight, hidden: false, floating: true)
+        let landscape = MeetingAccessGeometry(base: base, bounds: host.bounds, insets: .zero,
+            accessSize: access.fittingSize(availableWidth: 280), largeText: false, focusedShare: true)
+        XCTAssertFalse(landscape.combinedShareDock)
+        toolbar.arrange(rail: base.rail, largeText: false)
+        toolbar.frame = landscape.toolbar
+        toolbar.placeAccessControls(access, geometry: landscape, in: host)
+        access.setSharePin(from: nil)
+        host.layoutIfNeeded()
+        XCTAssertTrue(access.superview === host)
+        XCTAssertTrue(access.pinButton.isHidden)
+        XCTAssertNil(access.scaleButton.configuration?.title)
+        XCTAssertFalse(glass(around: access.viewButton) === glass(around: items[0]))
+    }
+
     func testRetiredOrUnmountedCallRejectsDeferredActions() throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene), host = UIViewController()

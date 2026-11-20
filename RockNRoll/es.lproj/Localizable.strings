@@ -1113,6 +1113,8 @@
 "No text found. Try a clearer frame or return to Live." = "No se ha encontrado ningún texto. Pruebe un marco más claro o vuelva a Live.";
 "Open Share" = "Abrir compartir";
 "Screen share reconnecting…" = "Compartir pantalla reconectando…";
+"Text" = "Texto";
+
 "Select text" = "Seleccionar texto";
 "Selectable text · Live Text is unavailable on this device." = "Texto seleccionable · Texto en vivo no está disponible en este dispositivo.";
 "Sending %@" = "Enviando %@";
@@ -3219,3 +3221,9 @@
 "Combine meeting records?" = "¿Combinar los registros de la reunión?";
 "Separate records" = "Separar registros";
 "Linked meeting records" = "Registros de reunión vinculados";
+
+/* Compact assistant status next to the meeting header symbol. */
+"assistant.compact.off" = "Desact.";
+"assistant.compact.mentions" = "Mención";
+"assistant.compact.follow" = "Seguir";
+"assistant.compact.participating" = "Participar";

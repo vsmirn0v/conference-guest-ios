@@ -1267,6 +1267,8 @@
 "No text found. Try a clearer frame or return to Live." = "Текст не найден. Попробуйте более чёткий кадр или вернитесь к трансляции.";
 "Open Share" = "Открыть трансляцию";
 "Screen share reconnecting…" = "Восстанавливаем трансляцию…";
+"Text" = "Текст";
+
 "Select text" = "Выделить текст";
 "Selectable text · Live Text is unavailable on this device." = "Текст для выделения · Live Text недоступен на этом устройстве.";
 "Sending %@" = "Отправка %@";
@@ -3446,3 +3448,9 @@
 "Combine meeting records?" = "Объединить записи встречи?";
 "Separate records" = "Разделить записи";
 "Linked meeting records" = "Связанные записи встреч";
+
+/* Compact assistant status next to the meeting header symbol. */
+"assistant.compact.off" = "Выкл.";
+"assistant.compact.mentions" = "Упом.";
+"assistant.compact.follow" = "Следить";
+"assistant.compact.participating" = "Участие";

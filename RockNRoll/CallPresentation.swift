@@ -26,6 +26,14 @@ struct CallFold: Equatable {
     let second: CGRect
     let sideBySide: Bool
 
+    /// The share can draw under system chrome up to the edge of its pane.
+    func mediaCanvas(in bounds: CGRect) -> CGRect {
+        var pane = bounds
+        if sideBySide { pane.size.width = max(0, min(bounds.maxX, first.maxX) - bounds.minX) }
+        else { pane.size.height = max(0, min(bounds.maxY, first.maxY) - bounds.minY) }
+        return pane
+    }
+
     init?(safe: CGRect, division: CGRect) {
         let gap = division.intersection(safe)
         guard !gap.isNull, !gap.isEmpty else { return nil }
@@ -222,6 +230,8 @@ final class CallToolbar: UIView {
     private let surface = MeetingChromeContainer(radius: 28)
     private let endSurface = MeetingChromeContainer(radius: 28)
     private let leaveDivider = UIView()
+    private let shareDivider = UIView()
+    private var shareRowHeight: CGFloat = 0
     var separatesLast = false { didSet { if oldValue != separatesLast { setNeedsLayout() } } }
     var inlineAccessWidth: CGFloat = 0 { didSet { if oldValue != inlineAccessWidth { setNeedsLayout() } } }
     private let items: [UIView]
@@ -244,6 +254,10 @@ final class CallToolbar: UIView {
         leaveDivider.isUserInteractionEnabled = false
         leaveDivider.isAccessibilityElement = false
         surface.contentView.addSubview(leaveDivider)
+        shareDivider.backgroundColor = leaveDivider.backgroundColor
+        shareDivider.isHidden = true
+        shareDivider.isUserInteractionEnabled = false
+        surface.contentView.addSubview(shareDivider)
         items.forEach { $0.translatesAutoresizingMaskIntoConstraints = true; surface.contentView.addSubview($0) }
         accessibilityElements = items
         layer.cornerRadius = 28
@@ -256,6 +270,24 @@ final class CallToolbar: UIView {
         self.init(items: [share, camera, audio, microphone, reactions, leave])
     }
     func arrange(rail: Bool, largeText: Bool) { self.rail = rail; self.largeText = largeText }
+    func placeAccessControls(_ access: MeetingAccessControls, geometry: MeetingAccessGeometry, in host: UIView) {
+        access.sharesToolbarSurface = geometry.combinedShareDock
+        let height = geometry.combinedShareDock ? geometry.access.height : 0
+        if shareRowHeight != height {
+            shareRowHeight = height
+            shareDivider.isHidden = height == 0
+            accessibilityElements = height > 0 ? [access] + items : items
+            setNeedsLayout()
+        }
+        if geometry.combinedShareDock {
+            if access.superview !== surface.contentView { surface.contentView.addSubview(access) }
+            access.frame = CGRect(origin: .zero, size: geometry.access.size)
+            access.setNeedsLayout()
+        } else {
+            if access.superview !== host { host.insertSubview(access, aboveSubview: self) }
+            access.frame = geometry.access
+        }
+    }
     override func layoutSubviews() {
         super.layoutSubviews()
         let separated = separatesLast && !rail && !largeText && items.count > 1
@@ -278,9 +310,10 @@ final class CallToolbar: UIView {
             return
         }
         surface.frame = bounds; surface.layoutIfNeeded()
+        shareDivider.frame = CGRect(x: 12, y: shareRowHeight, width: max(0, bounds.width - 24), height: 1)
         let columns = rail ? (largeText ? 2 : 1) : largeText ? 2 : items.count
         let rows = (items.count + columns - 1) / columns
-        let area = bounds.insetBy(dx: 4, dy: 5)
+        let area = bounds.inset(by: UIEdgeInsets(top: shareRowHeight + 5, left: 4, bottom: 5, right: 4))
         let extent = rail ? area.height : area.width
         let gap: CGFloat = !largeText && items.count > 1 && extent >= CGFloat(items.count) * 44 + 6 ? 6 : 0
         let width = (area.width - (rail ? 0 : gap)) / CGFloat(columns)
@@ -317,19 +350,77 @@ final class CallToolbar: UIView {
 }
 
 /// A stable floating row for meeting identity and actions at every window size.
+/// The same button keeps its action and accessibility identity as the call resizes.
+final class MeetingHeaderShortcut: MeetingMenuButton {
+    private let symbol = UIImageView()
+    private let value = UILabel()
+    private let caption = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        symbol.contentMode = .scaleAspectFit
+        for label in [value, caption] {
+            label.adjustsFontSizeToFitWidth = true
+            label.minimumScaleFactor = 0.8
+            label.textAlignment = .center
+            label.isAccessibilityElement = false
+        }
+        for item in [symbol, value, caption] {
+            item.isUserInteractionEnabled = false
+            item.isHidden = true
+            addSubview(item)
+        }
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func setPortraitCaption(_ title: String?, value text: String? = nil) {
+        guard caption.text != title || value.text != text else { return }
+        caption.text = title
+        value.text = text
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let portrait = caption.text != nil
+        imageView?.isHidden = portrait
+        titleLabel?.isHidden = portrait
+        symbol.isHidden = !portrait
+        caption.isHidden = !portrait
+        value.isHidden = !portrait || value.text == nil
+        guard portrait else { return }
+        let font = MeetingControlMetrics.captionFont(for: traitCollection)
+        caption.font = font
+        value.font = UIFont.monospacedDigitSystemFont(ofSize: font.pointSize, weight: .medium)
+        symbol.image = configuration?.image?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 18, weight: .medium))
+        symbol.tintColor = configuration?.baseForegroundColor ?? .label
+        caption.textColor = .secondaryLabel
+        value.textColor = .label
+        let gap: CGFloat = value.isHidden ? 0 : 4
+        let width = value.isHidden ? 0 : min(ceil(value.intrinsicContentSize.width), max(0, bounds.width - 24 - gap))
+        let left = floor((bounds.width - 18 - gap - width) / 2)
+        let mirrored = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        let textHeight = min(21, ceil(font.lineHeight))
+        let top = floor((bounds.height - 20 - 2 - textHeight) / 2)
+        symbol.frame = CGRect(x: mirrored ? left + width + gap : left, y: top, width: 18, height: 20)
+        value.frame = CGRect(x: mirrored ? left : left + 18 + gap, y: top, width: width, height: 20)
+        caption.frame = CGRect(x: 2, y: top + 22, width: max(0, bounds.width - 4), height: textHeight)
+    }
+}
+
 final class CompactCallHeader: UIView {
     let minimize = MeetingMenuButton(type: .system)
     let details = MeetingMenuButton(type: .system)
-    let assistant = MeetingMenuButton(type: .system)
-    let switcher = MeetingMenuButton(type: .system)
+    let assistant = MeetingHeaderShortcut(type: .system)
+    let switcher = MeetingHeaderShortcut(type: .system)
     let previous = MeetingMenuButton(type: .system)
     let nextStream = MeetingMenuButton(type: .system)
     let automatic = MeetingMenuButton(type: .system)
     let pin = MeetingMenuButton(type: .system)
     let layoutButton = MeetingMenuButton(type: .system)
-    let participants = MeetingMenuButton(type: .system)
+    let participants = MeetingHeaderShortcut(type: .system)
     let missed = MeetingMenuButton(type: .system)
-    let conversation = MeetingMenuButton(type: .system)
+    let conversation = MeetingHeaderShortcut(type: .system)
     let focus = MeetingMenuButton(type: .system)
     private let overflow = MeetingMenuButton(type: .system)
     var onMenuVisibilityChanged: ((Bool) -> Void)? {
@@ -350,6 +441,7 @@ final class CompactCallHeader: UIView {
     private let minimizeSurface = MeetingChromeContainer(radius: 22)
     private let identitySurface = MeetingChromeContainer(radius: 22)
     private let actionsSurface = MeetingChromeContainer(radius: 22)
+    private let rowDivider = UIView()
     private var identityTitle = ""
     private var fallbackSubtitle: String?
     var division: CGRect? { didSet { if oldValue != division { setNeedsLayout() } } }
@@ -431,6 +523,10 @@ final class CompactCallHeader: UIView {
         MeetingControlMetrics.boundSymbol(in: details)
         details.accessibilityIdentifier = "Meeting details"
         identitySurface.contentView.addSubview(details)
+        rowDivider.backgroundColor = .separator
+        rowDivider.isUserInteractionEnabled = false
+        rowDivider.isHidden = true
+        identitySurface.contentView.addSubview(rowDivider)
         sourceLabel.font = .systemFont(ofSize: 11)
         sourceLabel.textColor = .secondaryLabel
         sourceLabel.lineBreakMode = .byTruncatingTail
@@ -677,21 +773,39 @@ final class CompactCallHeader: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let showMinimize = minimizeAvailable && !disclosureOnly && bounds.width >= 156
-        minimizeSurface.isHidden = !showMinimize
+        let splitAcrossFold = actionRowOffset > 0
+        let portrait = bounds.height >= 94 && division == nil && !splitAcrossFold && !disclosureOnly
+        let available = disclosureOnly ? [] : actions.filter {
+            $0 === layoutButton ? layoutAvailable : availableActions.contains(ObjectIdentifier($0))
+        }
+        let minimizeHost = portrait ? identitySurface.contentView : minimizeSurface.contentView
+        if minimize.superview !== minimizeHost {
+            minimizeHost.addSubview(minimize)
+            let actionHost = portrait ? identitySurface.contentView : actionsSurface.contentView
+            for button in actions + [overflow] { actionHost.addSubview(button) }
+            for badge in [assistantBadge, switcherBadge, participantsBadge, chatBadge] {
+                badge.alpha = portrait ? 0 : 1
+            }
+            if !portrait {
+                accessibilityElements = nil
+                for button in [assistant, switcher, participants, conversation] { button.setPortraitCaption(nil) }
+            }
+        }
+        rowDivider.isHidden = !portrait
         minimize.isHidden = !showMinimize
+        if portrait {
+            layoutPortrait(available: available, showMinimize: showMinimize)
+            return
+        }
+        minimizeSurface.isHidden = !showMinimize
         if showMinimize {
             minimizeSurface.frame = CGRect(x: 4, y: 0, width: 44, height: 44)
             minimizeSurface.layoutIfNeeded()
             minimize.frame = minimizeSurface.contentView.bounds
         }
-        let splitAcrossFold = actionRowOffset > 0
-        let stacked = bounds.height >= 94 && !disclosureOnly && !splitAcrossFold
-        let identityStart: CGFloat = showMinimize && !stacked ? 52 : 4
-        let available = disclosureOnly ? [] : actions.filter {
-            $0 === layoutButton ? layoutAvailable : availableActions.contains(ObjectIdentifier($0))
-        }
+        let identityStart: CGFloat = showMinimize ? 52 : 4
         let showsIdentity = bounds.width >= 104 || available.isEmpty
-        let reserved: CGFloat = showsIdentity && !stacked && !splitAcrossFold ?
+        let reserved: CGFloat = showsIdentity && !splitAcrossFold ?
             (showMinimize ? 164 : 128) : (showMinimize && !splitAcrossFold ? 56 : 8)
         let actionWidth = division.map { bounds.maxX - $0.maxX - 8 } ?? (bounds.width - reserved)
         let capacity = max(1, Int(max(0, actionWidth) / 44))
@@ -718,22 +832,15 @@ final class CompactCallHeader: UIView {
         let start = bounds.maxX - CGFloat(visible.count) * 44 - 4
         details.isHidden = !showsIdentity
         identitySurface.isHidden = !showsIdentity
-        let textEnd = stacked || splitAcrossFold ? bounds.maxX - 2 : (division?.minX ?? start) - 8
+        let textEnd = splitAcrossFold ? bounds.maxX - 2 : (division?.minX ?? start) - 8
         let identityWidth = max(0, textEnd - identityStart)
-        identitySurface.frame = CGRect(x: identityStart, y: stacked ? 50 : 0,
-            width: min(stacked || division != nil ? identityWidth : 440, identityWidth), height: stacked ? 48 : 44)
+        identitySurface.frame = CGRect(x: identityStart, y: 0,
+            width: min(division != nil ? identityWidth : 440, identityWidth), height: 44)
         identitySurface.layoutIfNeeded(); details.frame = identitySurface.contentView.bounds
         actionsSurface.isHidden = visible.isEmpty
         actionsSurface.frame = CGRect(x: start - 2, y: actionRowOffset, width: CGFloat(visible.count) * 44 + 6, height: 44)
         actionsSurface.layoutIfNeeded()
-        let textX: CGFloat = 40
-        let textWidth = max(0, details.bounds.width - textX - 14)
-        let twoLines = !speakerIndicator.isHidden || !secondaryLabel.isHidden
-        sourceLabel.font = UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .semibold), maximumPointSize: 20)
-        sourceLabel.frame = CGRect(x: textX, y: twoLines ? 2 : 8, width: textWidth, height: twoLines ? 20 : 28)
-        privacyIcon.frame = CGRect(x: 14, y: 12, width: 18, height: 20)
-        speakerIndicator.frame = CGRect(x: textX, y: 23, width: textWidth, height: 20)
-        secondaryLabel.frame = speakerIndicator.frame
+        layoutIdentity(textX: 40, rightInset: 14, iconX: 14)
         for (index, button) in visible.enumerated() {
             button.frame = actionsSurface.contentView.convert(CGRect(x: start + CGFloat(index) * 44,
                 y: actionRowOffset, width: 44, height: 44), from: self)
@@ -742,6 +849,55 @@ final class CompactCallHeader: UIView {
             let width = min(22, max(14, ceil(badge.intrinsicContentSize.width) + 6))
             badge.frame = CGRect(x: 39 - width, y: 6, width: width, height: 14)
         }
+    }
+
+    private func layoutPortrait(available: [UIButton], showMinimize: Bool) {
+        minimizeSurface.isHidden = true
+        actionsSurface.isHidden = true
+        identitySurface.isHidden = false
+        identitySurface.frame = bounds
+        identitySurface.layoutIfNeeded()
+
+        let shortcuts = [assistant, switcher, participants, conversation].filter { available.contains($0) }
+        let extra = available.filter { button in !shortcuts.contains(where: { $0 === button }) }
+        for button in actions { button.isHidden = !shortcuts.contains(where: { $0 === button }) }
+        overflow.isHidden = extra.isEmpty
+        if !extra.isEmpty { updateOverflow(extra) }
+        let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        let topHeight: CGFloat = 48
+        let leading: CGFloat = showMinimize ? 48 : 8
+        let trailing: CGFloat = extra.isEmpty ? 8 : 48
+        minimize.frame = CGRect(x: rtl ? bounds.width - 48 : 4, y: 2, width: 44, height: 44)
+        overflow.frame = CGRect(x: rtl ? 4 : bounds.width - 48, y: 2, width: 44, height: 44)
+        details.isHidden = false
+        details.frame = CGRect(x: rtl ? trailing : leading, y: 2,
+            width: max(0, bounds.width - leading - trailing), height: 44)
+        layoutIdentity(textX: rtl ? 25 : 4, rightInset: rtl ? 4 : 25, iconX: rtl ? 2 : details.bounds.width - 20)
+        rowDivider.frame = CGRect(x: 12, y: topHeight, width: max(0, bounds.width - 24),
+            height: 1 / max(1, traitCollection.displayScale))
+
+        let assistantCaption = assistantAlertCount > 0 ? L("Assistant") + " · " + (assistantBadge.text ?? "") : L("Assistant")
+        assistant.setPortraitCaption(assistantCaption, value: assistant.configuration?.title)
+        switcher.setPortraitCaption(L("Meetings"), value: switcherBadge.isHidden ? nil : switcherBadge.text)
+        participants.setPortraitCaption(L("Participants"), value: participantsBadge.isHidden ? nil : participantsBadge.text)
+        conversation.setPortraitCaption(L("Chat"), value: chatBadge.isHidden ? nil : chatBadge.text)
+        let width = (bounds.width - 8) / CGFloat(max(1, shortcuts.count))
+        for (index, button) in shortcuts.enumerated() {
+            let column = rtl ? shortcuts.count - 1 - index : index
+            button.frame = CGRect(x: 4 + CGFloat(column) * width, y: topHeight + 1,
+                width: width, height: bounds.height - topHeight - 2)
+        }
+        accessibilityElements = ([minimize, details, overflow] + shortcuts).filter { !$0.isHidden }
+    }
+
+    private func layoutIdentity(textX: CGFloat, rightInset: CGFloat, iconX: CGFloat) {
+        let textWidth = max(0, details.bounds.width - textX - rightInset)
+        let twoLines = !speakerIndicator.isHidden || !secondaryLabel.isHidden
+        sourceLabel.font = UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .semibold), maximumPointSize: 20)
+        sourceLabel.frame = CGRect(x: textX, y: twoLines ? 2 : 8, width: textWidth, height: twoLines ? 20 : 28)
+        privacyIcon.frame = CGRect(x: iconX, y: 12, width: 18, height: 20)
+        speakerIndicator.frame = CGRect(x: textX, y: 23, width: textWidth, height: 20)
+        secondaryLabel.frame = speakerIndicator.frame
     }
     private func updateOverflow(_ buttons: [UIButton]) {
         let items = buttons.map { button in

@@ -1269,6 +1269,8 @@
 "No text found. Try a clearer frame or return to Live." = "No text found. Try a clearer frame or return to Live.";
 "Open Share" = "Open Share";
 "Screen share reconnecting…" = "Screen share reconnecting…";
+"Text" = "Text";
+
 "Select text" = "Select text";
 "Selectable text · Live Text is unavailable on this device." = "Selectable text · Live Text is unavailable on this device.";
 "Sending %@" = "Sending %@";
@@ -3447,3 +3449,9 @@
 "Combine meeting records?" = "Combine meeting records?";
 "Separate records" = "Separate records";
 "Linked meeting records" = "Linked meeting records";
+
+/* Compact assistant status next to the meeting header symbol. */
+"assistant.compact.off" = "Off";
+"assistant.compact.mentions" = "Mentions";
+"assistant.compact.follow" = "Follow";
+"assistant.compact.participating" = "Engage";
