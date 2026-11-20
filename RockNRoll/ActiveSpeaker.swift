@@ -7,6 +7,7 @@ struct CallSpeaker: Equatable {
     let isLocal: Bool
     var title: String { isLocal ? L("You") : name.isEmpty ? L("Musician") : name }
     var accessibilityLabel: String { L("Speaking: %@", title) }
+    var speakingTitle: String { isLocal ? accessibilityLabel : L("%@ is speaking", title) }
 }
 
 /// Speaker metadata has its own lifetime; it never selects or rebuilds video.
@@ -55,7 +56,7 @@ final class ActiveSpeakerStore {
     }
 }
 
-/// A passive, one-line indicator shared by the compact header and PiP.
+/// A passive, one-line indicator for the call header, stage, and PiP.
 final class ActiveSpeakerIndicator: UIView {
     private let icon = UIImageView(image: UIImage(systemName: "waveform"))
     private let name = UILabel()
@@ -77,10 +78,11 @@ final class ActiveSpeakerIndicator: UIView {
     }
     required init?(coder: NSCoder) { nil }
 
-    func setSpeaker(_ speaker: CallSpeaker?) {
-        guard displayed != speaker else { return }
+    func setSpeaker(_ speaker: CallSpeaker?, showsSpeakingText: Bool = false) {
+        let text = showsSpeakingText ? speaker?.speakingTitle : speaker?.title
+        guard displayed != speaker || name.text != text else { return }
         displayed = speaker
-        name.text = speaker?.title
+        name.text = text
         accessibilityLabel = speaker?.accessibilityLabel
         isHidden = speaker == nil
         invalidateIntrinsicContentSize()

@@ -87,6 +87,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var stageApplicationActive = UIApplication.shared.applicationState == .active
     private var stageVisibilityObservers: [NSObjectProtocol] = []
     private let shareReconnectNotice = UILabel()
+    private let shareSpeakerCue = ActiveSpeakerIndicator(font: .systemFont(ofSize: 13, weight: .medium))
     private var thumbnailSources: [String: (key: String, track: CallVideoSource, mirrored: Bool)] = [:]
     private var thumbnailViews: [String: ParticipantPreview] = [:]
     private var galleryPage = 0
@@ -353,6 +354,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         view.addSubview(layoutControls); view.addSubview(participantStrip)
         layoutControls.navigationOnly = true
         view.addSubview(accessControls)
+        shareSpeakerCue.accessibilityIdentifier = "Shared screen active speaker"
+        shareSpeakerCue.contentInset = 10
+        shareSpeakerCue.backgroundColor = .secondarySystemBackground
+        shareSpeakerCue.layer.cornerRadius = 13
+        shareSpeakerCue.layer.cornerCurve = .continuous
+        view.addSubview(shareSpeakerCue)
         view.addSubview(reactionOverlay)
         sourceSelector.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         layoutControls.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
@@ -702,6 +709,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         shareReconnectNotice.isHidden = !sharing || !reconnectingShares.contains(currentPrimaryTarget?.participantID ?? "")
         shareReconnectNotice.frame = CGRect(x: stage.midX - min(150, stage.width / 2), y: stage.minY + 8,
             width: min(300, stage.width), height: 44)
+        updateShareSpeakerCue()
         for entry in videoTiles.values {
             entry.zoom.isAccessibilityElement = true
             var accessible = focus.hidden ? [focus.restoreAccessibilityAction()] : []
@@ -744,6 +752,42 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             if hasDockedPanel { view.bringSubviewToFront(conversationHost) }
             header.isHidden = true; compactHeader.isHidden = true; compactTalkHereButton.isHidden = true; accessControls.isHidden = true
         }
+    }
+
+    private func updateShareSpeakerCue() {
+        guard focus.hidden, textCapture == nil, effectiveLayoutMode == .speaker,
+              currentPrimaryTarget?.isScreenShare == true, shareReconnectNotice.isHidden,
+              let speaker = activeSpeaker.current, let key = currentPrimaryKey,
+              let entry = videoTiles[key], !entry.video.bounds.isEmpty,
+              entry.video.displaySize.width > 0, entry.video.displaySize.height > 0 else {
+            shareSpeakerCue.setSpeaker(nil)
+            return
+        }
+        let viewport = streamScroll.frame.intersection(entry.zoom.convert(entry.zoom.bounds, to: view))
+        let fitted = AVMakeRect(aspectRatio: entry.video.displaySize, insideRect: entry.video.bounds)
+        let pixels = entry.video.convert(fitted, to: view).intersection(viewport)
+        let margin: CGFloat = 8
+        let availableWidth = viewport.width - 2 * margin
+        let height = shareSpeakerCue.intrinsicContentSize.height
+        guard !pixels.isEmpty, availableWidth >= 96, pixels.minY - viewport.minY >= height + 2 * margin else {
+            shareSpeakerCue.setSpeaker(nil)
+            return
+        }
+        shareSpeakerCue.setSpeaker(speaker, showsSpeakingText: true)
+        let width = min(availableWidth, shareSpeakerCue.intrinsicContentSize.width)
+        let left = viewport.minX + margin
+        let right = viewport.maxX - margin - width
+        let positions = view.effectiveUserInterfaceLayoutDirection == .rightToLeft ? [right, left] : [left, right]
+        let y = floor(pixels.minY - margin - height)
+        let companion = presenterCompanion.isHidden ? CGRect.null : presenterCompanion.frame
+        for x in positions {
+            let frame = CGRect(x: x, y: y, width: width, height: height)
+            if !frame.intersects(companion) {
+                shareSpeakerCue.frame = frame
+                return
+            }
+        }
+        shareSpeakerCue.setSpeaker(nil)
     }
 
     @objc private func tappedStage(_ gesture: UITapGestureRecognizer) {
@@ -808,8 +852,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         if let studio { floatingVideo?.bindMicrophoneActivity(studio.microphoneActivity) }
         activeSpeaker.$current.sink { [weak self] speaker in
-            self?.compactHeader.setSpeaker(speaker)
-            guard let self, self.layoutMode == .speaker, self.pinnedStream == nil, self.browsedStream == nil else { return }
+            guard let self else { return }
+            self.compactHeader.setSpeaker(speaker)
+            if self.focus.hidden { self.view.setNeedsLayout() }
+            guard self.layoutMode == .speaker, self.pinnedStream == nil, self.browsedStream == nil else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self, let snapshot = self.displayedSnapshot else { return }
                 self.render(snapshot: snapshot)
@@ -1633,7 +1679,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                                isShare: isShare, primary: primary, key: key)
             videoTiles[key] = cached
             participantBadges[participant.id, default: []].append(cached.badge)
-            speakingTiles[participant.id, default: []].append(cached.tile)
+            if !isShare { speakingTiles[participant.id, default: []].append(cached.tile) }
             tileOrder[ObjectIdentifier(cached.tile)] = participant.id + (isShare ? ".screen" : ".camera")
             return cached.tile
         }
@@ -1688,7 +1734,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         pin.largeContentTitle = pin.accessibilityLabel
         pin.translatesAutoresizingMaskIntoConstraints = false
         tile.addSubview(pin)
-        speakingTiles[participant.id, default: []].append(tile)
+        if !isShare { speakingTiles[participant.id, default: []].append(tile) }
         participantBadges[participant.id, default: []].append(badge)
         tileOrder[ObjectIdentifier(tile)] = participant.id + (isShare ? ".screen" : ".camera")
         let fitting = [
@@ -2452,7 +2498,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
             scrollView.accessibilityValue = "\(Int((scrollView.zoomScale * 100).rounded()))%"
             rememberZoom(scrollView)
-            if !restoringZoom && scrollView === primaryZoom { updateShareScaleControl() }
+            if !restoringZoom && scrollView === primaryZoom {
+                updateShareScaleControl()
+                if focus.hidden { updateShareSpeakerCue() }
+            }
         }
     }
 
@@ -2460,6 +2509,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         if scrollView === streamScroll {
             onVideoDemandChanged?()
         }
+        if !restoringZoom && focus.hidden && scrollView === primaryZoom { updateShareSpeakerCue() }
         rememberZoom(scrollView)
     }
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {

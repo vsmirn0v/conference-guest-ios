@@ -661,7 +661,7 @@ final class CompactCallHeader: UIView {
         sourceLabel.text = identityTitle
         sourceLabel.textColor = .label
         sourceLabel.isHidden = false
-        speakerIndicator.setSpeaker(visible)
+        speakerIndicator.setSpeaker(visible, showsSpeakingText: fallbackSubtitle != nil)
         secondaryLabel.text = fallbackSubtitle
         secondaryLabel.textColor = callStatus == nil ? .secondaryLabel : .systemOrange
         secondaryLabel.isHidden = visible != nil || fallbackSubtitle == nil

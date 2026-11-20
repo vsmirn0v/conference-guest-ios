@@ -746,6 +746,78 @@ final class CallPresentationTests: XCTestCase {
         let header = try XCTUnwrap(descendants(call.view).compactMap { $0 as? CompactCallHeader }.first)
         XCTAssertEqual(header.focus.accessibilityLabel, L("Hide controls"))
     }
+    func testSharedScreenSpeakerUsesHeaderOrLetterboxWithoutHighlightingTheTile() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let call = RockCallViewController(title: "Architecture review", catchUp: CatchUpStore(), chat: ChatStore())
+        window.rootViewController = call
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let track = await LocalVideoTrack.createBufferTrack(name: "Share", source: .screenShareVideo,
+            options: BufferCaptureOptions(dimensions: .h720_169, fps: 30))
+        try await track.capturer.startCapture()
+        let capture = try XCTUnwrap(track.capturer as? BufferCapturer)
+        var presenter = CallParticipant(id: "presenter", name: "Alex", isLocal: false,
+            microphoneOn: true, cameraOn: false, screenShareOn: true, isSpeaking: true,
+            videoTracks: [.init(id: "share", source: .screenShareVideo, track: .room(track))])
+        var listener = CallParticipant(id: "listener", name: "Sam", isLocal: false,
+            microphoneOn: true, cameraOn: false, screenShareOn: false, isSpeaking: false, videoTracks: [])
+        call.render(snapshot: .init(participants: [presenter, listener]))
+        window.layoutIfNeeded()
+        let views = descendants(call.view)
+        let header = try XCTUnwrap(views.compactMap { $0 as? CompactCallHeader }.first)
+        let zoom = try XCTUnwrap(views.compactMap { $0 as? UIScrollView }.first { $0.accessibilityIdentifier == "share" })
+        let tile = try XCTUnwrap(zoom.superview)
+        let video = try XCTUnwrap(descendants(zoom).compactMap { $0 as? CallVideoView }.first)
+        let cue = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "Shared screen active speaker" })
+        let sample = try shareSample(width: 640, height: 360)
+        let pixels = try XCTUnwrap(CMSampleBufferGetImageBuffer(sample))
+        for _ in 0..<15 {
+            capture.capture(pixels)
+            try await Task.sleep(for: .milliseconds(34))
+        }
+        call.view.layoutIfNeeded()
+        XCTAssertEqual(video.displaySize, CGSize(width: 640, height: 360))
+        XCTAssertEqual(tile.layer.borderWidth, 1)
+        XCTAssertEqual(header.details.accessibilityValue, L("Speaking: %@", "Alex"))
+        let headerCue = try XCTUnwrap(descendants(header).compactMap { $0 as? ActiveSpeakerIndicator }.first)
+        XCTAssertTrue(headerCue.subviews.compactMap { $0 as? UILabel }.contains { $0.text == L("%@ is speaking", "Alex") })
+        XCTAssertTrue(cue.isHidden)
+
+        header.focus.sendActions(for: .touchUpInside)
+        XCTAssertTrue(header.isHidden)
+        XCTAssertFalse(cue.isHidden)
+        let fitted = AVMakeRect(aspectRatio: video.displaySize, insideRect: video.bounds)
+        XCTAssertLessThan(cue.frame.maxY, video.convert(fitted, to: call.view).minY)
+        XCTAssertFalse(cue.isUserInteractionEnabled)
+        XCTAssertEqual(cue.accessibilityLabel, L("Speaking: %@", "Alex"))
+
+        presenter.isSpeaking = false
+        listener.isSpeaking = true
+        call.refreshSpeaking(snapshot: .init(participants: [presenter, listener]))
+        try await Task.sleep(for: .milliseconds(415))
+        call.view.layoutIfNeeded()
+        XCTAssertEqual(cue.accessibilityLabel, L("Speaking: %@", "Sam"))
+        XCTAssertTrue(zoom.superview === tile)
+        XCTAssertEqual(call.primarySourceForTesting, "presenter.screen")
+        let fill = try XCTUnwrap(zoom.accessibilityCustomActions?.first { $0.name == L("Fill screen") })
+        XCTAssertTrue(try XCTUnwrap(fill.actionHandler)(fill))
+        try await Task.sleep(for: .milliseconds(450))
+        XCTAssertTrue(cue.isHidden)
+        zoom.setZoomScale(1, animated: false)
+        XCTAssertFalse(cue.isHidden)
+        listener.isSpeaking = false
+        call.refreshSpeaking(snapshot: .init(participants: [presenter, listener]))
+        call.view.layoutIfNeeded()
+        XCTAssertTrue(cue.isHidden)
+        let restore = try XCTUnwrap(zoom.accessibilityCustomActions?.first { $0.name == L("Show controls") })
+        XCTAssertTrue(try XCTUnwrap(restore.actionHandler)(restore))
+        XCTAssertFalse(header.isHidden)
+        XCTAssertEqual(header.details.accessibilityValue, L("%@ is sharing", "Alex"))
+        try await track.capturer.stopCapture()
+    }
+
     func testNativeFallbackRetainsRealDimensionsForFillAndResize() async throws {
         let track = await LocalVideoTrack.createBufferTrack(name: "Fallback geometry", source: .camera,
             options: BufferCaptureOptions(dimensions: .h720_169, fps: 30))
