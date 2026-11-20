@@ -36,6 +36,7 @@ struct IOSMeetingDetailView: View {
     @State private var selectedVersion: SyncedOutcomeVersionSnapshot?
 
     @State private var showingAddTask = false
+    @State private var editingTask: IOSMeetingTaskItem?
     @State private var newTaskText = ""
     @State private var newTaskOwner = ""
     @State private var newTaskDue = ""
@@ -132,6 +133,7 @@ struct IOSMeetingDetailView: View {
         .onDisappear {
             Task { await workspace.flushNotesNow() }
         }
+        .sheet(item: $editingTask) { task in IOSMeetingTaskEditor(workspace: workspace, task: task) }
         .sheet(isPresented: $showingAddTask) {
             NavigationStack {
                 Form {
@@ -404,6 +406,10 @@ struct IOSMeetingDetailView: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
+                            Spacer()
+                            Button(L("Edit")) { editingTask = task }
+                                .font(.caption)
+                                .buttonStyle(.borderless)
                         }
                     }
                 }

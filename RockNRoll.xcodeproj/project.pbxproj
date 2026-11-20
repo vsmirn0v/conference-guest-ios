@@ -324,6 +324,9 @@
 		FD504DE1027F7EF3521DDD09 /* NameEntryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B3E7D53DBEAD7F16EFFDF8 /* NameEntryUITests.swift */; };
 		FF3E800C2CDA0B6EBD9EF3E2 /* SampleBufferImageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95635E9D486B37EDF5A04411 /* SampleBufferImageRenderer.swift */; };
 		FFC4A1925ECAA3B891F5CF89 /* CalendarReminderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F19560B700C02EAD8861B3A /* CalendarReminderTests.swift */; };
+		49F2C7765FCEA9182E36763C /* IOSPersonalTasksQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05FC2756BF5ECDEDF1059C88 /* IOSPersonalTasksQuery.swift */; };
+		A8E1D158AB7C55307ACBFF70 /* IOSMeetingTaskEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6178F1CF88C0B041BB281B6 /* IOSMeetingTaskEditor.swift */; };
+		AFFE255EA7297A33EEDC976D /* IOSPersonalTasksTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7167467FBF15420A0FC0E89F /* IOSPersonalTasksTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -729,6 +732,9 @@
 		FE377E3F013CC98891447FFA /* StudioAudioPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioAudioPolicy.swift; sourceTree = "<group>"; };
 		FE3CCAD5DAEC3B948515641C /* BroadcastLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BroadcastLifecycleTests.swift; sourceTree = "<group>"; };
 		FFF3FA62D4A10B20FBA17732 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ar.lproj/Localizable.strings; sourceTree = "<group>"; };
+		05FC2756BF5ECDEDF1059C88 /* IOSPersonalTasksQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSPersonalTasksQuery.swift; sourceTree = "<group>"; };
+		A6178F1CF88C0B041BB281B6 /* IOSMeetingTaskEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSMeetingTaskEditor.swift; sourceTree = "<group>"; };
+		7167467FBF15420A0FC0E89F /* IOSPersonalTasksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSPersonalTasksTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -900,6 +906,8 @@
 				4144D4A5B318797223E904FC /* IOSInCallNotesView.swift */,
 				634C30896C11822601CFBFA4 /* IOSMeetingDetailView.swift */,
 				7DFB7DF77E8CDDC8A654DF2E /* IOSPersonalTasksView.swift */,
+				A6178F1CF88C0B041BB281B6 /* IOSMeetingTaskEditor.swift */,
+				05FC2756BF5ECDEDF1059C88 /* IOSPersonalTasksQuery.swift */,
 				9C933CF131AACC960EEFBB8B /* IOSWorkspaceCoordinator.swift */,
 				AD98891C6528B42F3FE21869 /* IOSWorkspaceHubView.swift */,
 				7DD0C656AA69D8C696A5B5DB /* IOSWorkspaceStore.swift */,
@@ -1130,6 +1138,7 @@
 				51E69EB969FD513C7C9B24DB /* IOSMultiMeetingTests.swift */,
 				2B85B36EC73686DEFC3D9B6C /* IOSWorkspaceAudioCoordinatorTests.swift */,
 				C5691273D94C8770D950071A /* IOSWorkspaceSyncTests.swift */,
+				7167467FBF15420A0FC0E89F /* IOSPersonalTasksTests.swift */,
 				C9ECBC97504D70EFB9B2E28C /* JamServiceTests.swift */,
 				FA168A3D03A334A948E4FFCB /* LiveTranscriptPanelTests.swift */,
 				1600A9E0BF3A6BF03758B6EB /* LiveTranscriptTimelineTests.swift */,
@@ -1569,6 +1578,8 @@
 				186D17B9B2CCE657A1EADD5C /* IOSMeetingDetailView.swift in Sources */,
 				A203AD68C562A8F57D2EFEF6 /* IOSMeetingSessionController.swift in Sources */,
 				83363219906BDFA94359B00C /* IOSPersonalTasksView.swift in Sources */,
+				A8E1D158AB7C55307ACBFF70 /* IOSMeetingTaskEditor.swift in Sources */,
+				49F2C7765FCEA9182E36763C /* IOSPersonalTasksQuery.swift in Sources */,
 				479150F8710E3CC566B3C7C8 /* IOSScreenShareCapture.swift in Sources */,
 				B9DB4DD60A8C2A84362BFD29 /* IOSVoiceActivityDetector.swift in Sources */,
 				7640207F80390B7C009B8C94 /* IOSVoiceAndTranscriptionViews.swift in Sources */,
@@ -1767,6 +1778,7 @@
 				5D7D0FC0980D60BB15992594 /* IOSMultiMeetingTests.swift in Sources */,
 				AD2B0F55365B191CD81A34EE /* IOSWorkspaceAudioCoordinatorTests.swift in Sources */,
 				DB9855AA9726026F68345AE1 /* IOSWorkspaceSyncTests.swift in Sources */,
+				AFFE255EA7297A33EEDC976D /* IOSPersonalTasksTests.swift in Sources */,
 				8F43AA9F0044B87E68E3646E /* JamServiceTests.swift in Sources */,
 				2CDA982C69D485A68E84B9C5 /* LiveTranscriptPanelTests.swift in Sources */,
 				95A72A1D469695EAA675458B /* LiveTranscriptTimelineTests.swift in Sources */,

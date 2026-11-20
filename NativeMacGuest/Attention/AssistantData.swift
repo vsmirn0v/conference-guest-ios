@@ -332,6 +332,7 @@ private struct AssistantDataDocument: Codable {
     private var clearedDuringLoad = false
     private var retentionChangedDuringLoad = false
     private var deletedOutcomeIDs: Set<UUID> = []
+    private var taskOnlyOutcomeIDs: Set<UUID> = []
     private var deletedMemoryIDs: Set<UUID> = []
     private var deletedSuggestionIDs: Set<UUID> = []
     private var pendingOutcomeSave: Task<Void, Never>?
@@ -509,6 +510,9 @@ private struct AssistantDataDocument: Codable {
     }
 
     func applyEffectiveTitles(_ cards: [MeetingLibraryCard]) {
+        // Task containers remain available for editing, but are not previous
+        // meeting summaries until outcome generation has actually started.
+        taskOnlyOutcomeIDs = Set(cards.compactMap { $0.outcomeState == .notStarted ? $0.outcomeID : nil })
         let titles = Dictionary(uniqueKeysWithValues: cards.compactMap { card in
             card.outcomeID.map { ($0, card.title) }
         })
@@ -555,7 +559,7 @@ private struct AssistantDataDocument: Codable {
 
     func latestOutcome(invitation: URL? = nil, series: String? = nil, before: Date = .distantFuture) -> MeetingOutcome? {
         outcomes.first { outcome in
-            guard outcome.endedAt < before else { return false }
+            guard !taskOnlyOutcomeIDs.contains(outcome.id), outcome.endedAt < before else { return false }
             let match = Self.matchesRoomOrSeries(invitation: invitation, series: series,
                                                  candidateInvitation: outcome.invitation, candidateSeries: outcome.seriesID)
             return match.seriesMatch || match.roomMatch
@@ -564,6 +568,7 @@ private struct AssistantDataDocument: Codable {
 
     func seriesOutcomes(invitation: URL? = nil, series: String? = nil) -> [MeetingOutcome] {
         outcomes.filter { outcome in
+            guard !taskOnlyOutcomeIDs.contains(outcome.id) else { return false }
             let match = Self.matchesRoomOrSeries(invitation: invitation, series: series,
                                                  candidateInvitation: outcome.invitation, candidateSeries: outcome.seriesID)
             return match.seriesMatch || match.roomMatch

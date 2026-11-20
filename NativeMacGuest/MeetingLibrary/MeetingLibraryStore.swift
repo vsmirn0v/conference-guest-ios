@@ -641,7 +641,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
 
     func outcomes() async throws -> [MeetingOutcome] {
         let db = try db()
-        return try db.rows("SELECT outcome_id FROM meeting_outcomes WHERE state='ready' ORDER BY updated_at DESC")
+        return try db.rows("SELECT outcome_id FROM meeting_outcomes WHERE state IN ('ready','notStarted') ORDER BY updated_at DESC")
             .compactMap { row in
                 guard let id = row.text(0).flatMap(UUID.init(uuidString:)) else { return nil }
                 return try Self.storedOutcome(db: db, id: id)

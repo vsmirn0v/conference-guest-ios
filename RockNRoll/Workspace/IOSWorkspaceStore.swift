@@ -89,7 +89,7 @@ struct IOSTaskProfile: Codable, Equatable, Sendable {
     }
 
     static func normalized(_ name: String) -> String {
-        cleanedAlias(name).workspaceFolded
+        cleanedAlias(name).folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
 
     static func confirmedAliases(_ raw: String) -> [String] {
@@ -116,21 +116,11 @@ struct IOSTaskProfile: Codable, Equatable, Sendable {
     }
 
     func owns(_ task: IOSMeetingTaskItem) -> Bool {
-        if let myID = assigneeID?.trimmingCharacters(in: .whitespacesAndNewlines), !myID.isEmpty {
-            if let taskAssignee = task.assigneeID?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !taskAssignee.isEmpty,
-               taskAssignee.workspaceFolded == myID.workspaceFolded {
-                return true
-            }
+        if let assignment = task.assigneeID, !assignment.isEmpty {
+            return assignment == assigneeID
         }
-        let ownerFolded = task.owner.trimmingCharacters(in: .whitespacesAndNewlines).workspaceFolded
-        guard !ownerFolded.isEmpty else { return false }
-        var candidates = aliases
-        if let myID = assigneeID, !myID.isEmpty { candidates.append(myID) }
-        return candidates.contains {
-            let clean = $0.trimmingCharacters(in: .whitespacesAndNewlines).workspaceFolded
-            return !clean.isEmpty && (ownerFolded == clean || ownerFolded.contains(clean))
-        }
+        let owner = Self.normalized(task.owner)
+        return !owner.isEmpty && aliases.contains { Self.normalized($0) == owner }
     }
 }
 
@@ -637,6 +627,12 @@ actor IOSWorkspaceStore {
             bindOptionalInt(stmt, task.completedAt?.syncMilliseconds, at: 13)
             bindInt(stmt, task.updatedAt.syncMilliseconds, at: 14)
         }
+    }
+
+    func deleteTask(_ taskID: UUID) throws {
+        try prepare()
+        try run("DELETE FROM tasks WHERE task_id=?") { bindText($0, taskID.uuidString, at: 1) }
+        try run("DELETE FROM task_archive WHERE task_id=?") { bindText($0, taskID.uuidString, at: 1) }
     }
 
     func applyRemoteOutcomeAndTasks(

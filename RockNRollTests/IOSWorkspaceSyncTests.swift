@@ -123,7 +123,9 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         libraryCloud: MockZoneTransport<MeetingLibrarySyncRecord>,
         transcriptCloud: MockZoneTransport<MeetingTranscriptSyncRecord>,
         scheduleCloud: MockZoneTransport<MeetingScheduleSyncRecord>,
-        scheduledNotificationIDs: Box<[UUID]>
+        scheduledNotificationIDs: Box<[UUID]>,
+        reopenWorkspace: @MainActor () -> IOSWorkspaceCoordinator,
+        preferences: UserDefaults
     ) {
         let suiteName = "IOSWorkspaceSyncTests.\(UUID().uuidString)"
         let prefs = UserDefaults(suiteName: suiteName)!
@@ -168,7 +170,7 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         let archiveStore = TranscriptArchiveStore(root: temp.appendingPathComponent("Archive", isDirectory: true), preferences: prefs)
         let scheduledIDs = Box<[UUID]>([])
 
-        let ws = IOSWorkspaceCoordinator(
+        @MainActor func openWorkspace() -> IOSWorkspaceCoordinator { IOSWorkspaceCoordinator(
             store: store,
             calendar: calendar,
             syncPreferences: roomSync,
@@ -182,11 +184,12 @@ final class IOSWorkspaceSyncTests: XCTestCase {
             macGraceOverrideSeconds: graceOverride,
             scheduleTaskNotification: { task in scheduledIDs.value.append(task.id) },
             cancelTaskNotification: { _ in }
-        )
+        ) }
+        let ws = openWorkspace()
         self.coordinator = ws
         ws.start()
         try await Task.sleep(for: .milliseconds(50))
-        return (ws, store, calendar, roomSync, writer, libraryCloud, transcriptCloud, scheduleCloud, scheduledIDs)
+        return (ws, store, calendar, roomSync, writer, libraryCloud, transcriptCloud, scheduleCloud, scheduledIDs, openWorkspace, prefs)
     }
 
     private final class Box<T> {
@@ -854,4 +857,149 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         XCTAssertTrue(seededNew)
         XCTAssertEqual(ws.taskProfile.aliases, ["Виталий Смирнов", "V. Smirnov"])
     }
+
+    private func localTask(sessionID: UUID, text: String = "Offline action") -> IOSMeetingTaskItem {
+        IOSMeetingTaskItem(id: UUID(), sessionID: sessionID, outcomeID: UUID(), ordinal: 0,
+            text: text, owner: "Vlad", assigneeID: nil, dueDay: nil, dueAt: nil,
+            reminderAt: nil, done: false, completedAt: nil, updatedAt: Date())
+    }
+
+    func testLegacySQLiteOnlyTaskUploadsAfterRelaunch() async throws {
+        let f = try await makeCoordinator()
+        f.roomSync.setEnabled(false)
+        await f.workspace.synchronizeNow() // Cancel/drain the old startup sync before relaunch.
+        let task = localTask(sessionID: UUID())
+        try await f.store.upsertTask(task)
+        // Older versions left this task only in SQLite after an offline app exit.
+        let reopened = f.reopenWorkspace()
+        f.roomSync.setEnabled(true)
+        await reopened.synchronizeNow()
+        guard case .task(let uploaded)? = f.libraryCloud.records["task:" + task.id.uuidString] else {
+            return XCTFail("SQLite-only task was never uploaded")
+        }
+        XCTAssertEqual(uploaded.text.value, task.text)
+        XCTAssertNotNil(f.libraryCloud.records["session:" + task.sessionID.uuidString])
+    }
+
+    func testOfflineTaskEditsAndDeletionRemainDurableAcrossRelaunch() async throws {
+        let f = try await makeCoordinator()
+        f.roomSync.setEnabled(false)
+        await f.workspace.synchronizeNow() // Cancel/drain the old startup sync before relaunch.
+        let sid = UUID()
+        await f.workspace.addTask(sessionID: sid, text: "Created offline", owner: "Vlad", dueDay: nil, reminderAt: nil)
+        var task = try XCTUnwrap(f.workspace.tasks.first)
+        task.text = "Edited offline"
+        task.assigneeID = "confirmed-id"
+        task.updatedAt = Date()
+        let updated = await f.workspace.updateTask(task)
+        XCTAssertTrue(updated)
+        let reopened = f.reopenWorkspace()
+        f.roomSync.setEnabled(true)
+        await reopened.synchronizeNow()
+        guard case .task(let uploaded)? = f.libraryCloud.records["task:" + task.id.uuidString] else {
+            return XCTFail("Missing offline task")
+        }
+        XCTAssertEqual(uploaded.text.value, "Edited offline")
+        XCTAssertEqual(uploaded.assigneeID.value, "confirmed-id")
+        XCTAssertNotNil(f.libraryCloud.records["session:" + sid.uuidString], "Locally created tasks must publish their legacy parent session")
+        f.roomSync.setEnabled(false)
+        await reopened.synchronizeNow()
+        await reopened.reloadFromStore()
+        let deleted = await reopened.deleteTask(task.id)
+        XCTAssertTrue(deleted)
+        let afterDelete = f.reopenWorkspace()
+        f.roomSync.setEnabled(true)
+        await afterDelete.synchronizeNow()
+        guard case .task(let tombstone)? = f.libraryCloud.records["task:" + task.id.uuidString] else {
+            return XCTFail("Missing durable deletion")
+        }
+        XCTAssertTrue(tombstone.isDeleted.value)
+        let remaining = try await f.store.allTasks()
+        XCTAssertTrue(remaining.isEmpty)
+    }
+
+    func testTaskOwnershipMatchesExplicitIdentityAndExactConfirmedAlias() {
+        var task = localTask(sessionID: UUID())
+        let profile = IOSTaskProfile(assigneeID: "me", aliases: ["Vlad Smirnov"])
+        task.owner = "  VLAD   Smirnov "
+        XCTAssertTrue(profile.owns(task))
+        task.owner = "Vlad Smirnov Jr"
+        XCTAssertFalse(profile.owns(task))
+        task.owner = "Vlad Smirnov"
+        task.assigneeID = "someone-else"
+        XCTAssertFalse(profile.owns(task))
+        task.assigneeID = "me"
+        XCTAssertTrue(profile.owns(task))
+    }
+
+
+    func testLegacyPhoneProfileNameBecomesAliasButMacIdentityDoesNot() async throws {
+        let f = try await makeCoordinator()
+        f.roomSync.setEnabled(false)
+        await f.workspace.synchronizeNow()
+        await f.workspace.saveTaskProfile(IOSTaskProfile(assigneeID: "Vlad Primary", aliases: ["Vlad"]))
+        try await f.workspace.persistReplicaCheckpoint()
+        f.preferences.removeObject(forKey: "ios.workspace.taskProfileNameAliasMigrated")
+        let reopened = f.reopenWorkspace()
+        reopened.start()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !f.preferences.bool(forKey: "ios.workspace.taskProfileNameAliasMigrated"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(reopened.taskProfile.aliases.contains("Vlad Primary"))
+        XCTAssertEqual(reopened.taskProfile.assigneeID, "Vlad Primary")
+        await reopened.synchronizeNow()
+
+        f.roomSync.setEnabled(true)
+        let v = SyncVersion(counter: 500, device: "mac")
+        let remote = SyncedTaskProfile(profileID: reopened.taskProfile.profileID, assigneeID: SyncValue("opaque-identity", version: v),
+            aliases: SyncValue(["Confirmed Mac Name"], version: v))
+        f.libraryCloud.records[MeetingLibrarySyncRecord.taskProfile(remote).syncRecordID] = .taskProfile(remote)
+        await reopened.synchronizeNow()
+        try await reopened.persistReplicaCheckpoint()
+        f.roomSync.setEnabled(false)
+        await reopened.synchronizeNow()
+        f.preferences.removeObject(forKey: "ios.workspace.taskProfileNameAliasMigrated")
+        let imported = f.reopenWorkspace()
+        imported.start()
+        let remoteDeadline = ContinuousClock.now + .seconds(2)
+        while !f.preferences.bool(forKey: "ios.workspace.taskProfileNameAliasMigrated"), ContinuousClock.now < remoteDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(imported.taskProfile.assigneeID, "opaque-identity")
+        XCTAssertEqual(imported.taskProfile.aliases, ["Confirmed Mac Name"])
+        await imported.synchronizeNow()
+    }
+
+
+    func testReceivedTaskBeforeParentDoesNotUploadPlaceholderSession() async throws {
+        let f = try await makeCoordinator()
+        let sid = UUID()
+        let id = UUID()
+        let v = SyncVersion(counter: 100, device: "mac")
+        let task = SyncedMeetingTask(id: id, sessionID: sid, outcomeID: UUID(),
+            ordinal: SyncValue(0, version: v), text: SyncValue("Mac action", version: v),
+            owner: SyncValue("Vlad", version: v), assigneeID: SyncValue(nil, version: v),
+            dueDay: SyncValue(nil, version: v), dueAt: SyncValue(nil, version: v),
+            reminderAt: SyncValue(nil, version: v), done: SyncValue(false, version: v),
+            completedAt: SyncValue(nil, version: v), isDeleted: SyncValue(false, version: v), updatedAt: Date())
+        f.libraryCloud.records["task:" + id.uuidString] = .task(task)
+        await f.workspace.synchronizeNow()
+        await f.workspace.synchronizeNow()
+        XCTAssertEqual(f.workspace.tasks.first?.id, id)
+        XCTAssertNil(f.libraryCloud.records["session:" + sid.uuidString])
+        let start = Date(timeIntervalSince1970: 1_795_000_000)
+        let parent = SyncedMeetingSession(id: sid, occurrenceKey: "mac-late-parent", title: SyncValue("Ongoing", version: v),
+            hasTitleOverride: SyncValue(false, version: v), invitation: SyncValue(nil, version: v), roomIdentity: "",
+            startedAt: start, endedAt: SyncValue(nil, version: v), timeZoneID: "UTC", state: SyncValue("active", version: v),
+            isDeleted: SyncValue(false, version: v), createdAt: start, updatedAt: start)
+        f.libraryCloud.records["session:" + sid.uuidString] = .session(parent)
+        await f.workspace.synchronizeNow()
+        let imported = try await f.store.session(sid)
+        XCTAssertEqual(imported?.startedAt, start)
+        XCTAssertEqual(imported?.state, "active")
+        XCTAssertNil(imported?.endedAt)
+        XCTAssertEqual(f.workspace.tasks.first?.id, id)
+    }
+
 }

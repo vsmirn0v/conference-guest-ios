@@ -87,6 +87,8 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         var acknowledgedLibrary: [String: MeetingLibrarySyncRecord] = [:]
         var acknowledgedTranscripts: [String: MeetingTranscriptSyncRecord] = [:]
         var acknowledgedSchedule: [String: MeetingScheduleSyncRecord] = [:]
+        var pendingCloudSessions: Set<UUID>?
+        var pendingCloudSettings: Set<String>?
     }
 
     init(
@@ -161,8 +163,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     }
 
     func taskArchivedAt(_ task: IOSMeetingTaskItem) -> Date? {
-        if task.done { return task.completedAt ?? task.updatedAt }
-        return taskArchiveDates[task.id]
+        taskProfile.owns(task) ? taskArchiveDates[task.id] : nil
     }
 
     func start() {
@@ -198,6 +199,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.reloadFromStore()
+            await self.migrateLegacyTaskProfileName()
             await self.seedTaskProfileWithMeetingName(self.preferences.string(forKey: "savedDisplayName") ?? "")
             await self.refreshArchiveStats()
             if !self.syncPreferences.enabled || !self.syncPreferences.shareCalendar {
@@ -820,7 +822,8 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
         let now = Date()
-        let outcomeID = outcomesBySession[sid]?.outcomeID ?? UUID()
+        let outcomeID = outcomesBySession[sid]?.outcomeID
+            ?? tasks.first(where: { $0.sessionID == sid })?.outcomeID ?? UUID()
         let nextOrdinal = (tasks.filter { $0.sessionID == sid }.map(\.ordinal).max() ?? -1) + 1
         let item = IOSMeetingTaskItem(
             id: UUID(),
@@ -837,22 +840,50 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             completedAt: nil,
             updatedAt: now
         )
-        try? await store.upsertTask(item)
+        do {
+            try await store.upsertTask(item)
+            // Explicit local creation owns its parent metadata, including a
+            // legacy session which has not yet reached the sync replica.
+            if let session = try await store.session(sid), replica.workspaceDoc.sessions[sid] == nil {
+                upsertSessionIntoDoc(session, fieldChanges: .all)
+            }
+        } catch { syncError = error.localizedDescription; return }
         let v = replica.workspaceDoc.nextVersion()
         let syncedTask = toSyncedTask(item, version: v)
         replica.workspaceDoc.upsertTask(syncedTask)
+        do { try await persistReplicaCheckpoint() }
+        catch { syncError = error.localizedDescription }
         await reloadFromStore()
         await reconcileTaskNotifications()
         scheduleSync(delayMilliseconds: 250)
     }
 
-    func updateTask(_ task: IOSMeetingTaskItem) async {
-        try? await store.upsertTask(task)
+    @discardableResult
+    func updateTask(_ task: IOSMeetingTaskItem) async -> Bool {
+        let needsLocalParent = replica.workspaceDoc.tasks[task.id] == nil
+        do {
+            try await store.upsertTask(task)
+            let sid = replica.workspaceDoc.resolveCanonicalSessionID(for: task.sessionID)
+            if needsLocalParent, let session = try await store.session(sid), replica.workspaceDoc.sessions[sid] == nil {
+                upsertSessionIntoDoc(session, fieldChanges: .all)
+            }
+        } catch { syncError = error.localizedDescription; return false }
+        updateTaskInDocument(task)
+        do { try await persistReplicaCheckpoint() }
+        catch { syncError = error.localizedDescription; return false }
+        await reloadFromStore()
+        await reconcileTaskNotifications()
+        scheduleSync(delayMilliseconds: 250)
+        return true
+    }
+
+    private func updateTaskInDocument(_ task: IOSMeetingTaskItem) {
         let existing = replica.workspaceDoc.tasks[task.id]
         if let existing {
             var synced = existing
             if synced.text.value != task.text { synced.text = SyncValue(task.text, version: replica.workspaceDoc.nextVersion()) }
             if synced.owner.value != task.owner { synced.owner = SyncValue(task.owner, version: replica.workspaceDoc.nextVersion()) }
+            if synced.assigneeID.value != task.assigneeID { synced.assigneeID = SyncValue(task.assigneeID, version: replica.workspaceDoc.nextVersion()) }
             if synced.dueDay.value != task.dueDay { synced.dueDay = SyncValue(task.dueDay, version: replica.workspaceDoc.nextVersion()) }
             if synced.dueAt.value != task.dueAt { synced.dueAt = SyncValue(task.dueAt, version: replica.workspaceDoc.nextVersion()) }
             if synced.reminderAt.value != task.reminderAt { synced.reminderAt = SyncValue(task.reminderAt, version: replica.workspaceDoc.nextVersion()) }
@@ -865,19 +896,56 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             let syncedTask = toSyncedTask(task, version: v)
             replica.workspaceDoc.upsertTask(syncedTask)
         }
+    }
+
+    @discardableResult
+    func deleteTask(_ taskID: UUID) async -> Bool {
+        guard let task = tasks.first(where: { $0.id == taskID }) else { return true }
+        let previous = replica.workspaceDoc.tasks[taskID]
+        let version = replica.workspaceDoc.nextVersion()
+        var synced = previous ?? toSyncedTask(task, version: version)
+        synced.isDeleted = SyncValue(true, version: replica.workspaceDoc.nextVersion())
+        synced.updatedAt = Date()
+        replica.workspaceDoc.upsertTask(synced)
+        do {
+            // Persist the tombstone before removing the last local copy of the task.
+            try await persistReplicaCheckpoint()
+        } catch {
+            // Roll back only this failed deletion. Keep any fields changed while
+            // the checkpoint was in flight, and preserve an older tombstone.
+            if previous?.isDeleted.value != true,
+               var current = replica.workspaceDoc.tasks[taskID], current.isDeleted == synced.isDeleted {
+                current.isDeleted = SyncValue(false, version: replica.workspaceDoc.nextVersion())
+                replica.workspaceDoc.upsertTask(current)
+            }
+            syncError = error.localizedDescription
+            return false
+        }
+        do { try await store.deleteTask(taskID) }
+        catch {
+            // The durable deletion is retried by recovery; do not resurrect it.
+            syncError = error.localizedDescription
+            return false
+        }
+        cancelTaskNotification(taskID)
         await reloadFromStore()
-        await reconcileTaskNotifications()
         scheduleSync(delayMilliseconds: 250)
+        return true
     }
 
     func setTaskArchived(_ taskID: UUID, archived: Bool) async {
+        guard let task = tasks.first(where: { $0.id == taskID }), taskProfile.owns(task) else { return }
         let profileKey = taskProfile.profileID.isEmpty ? "default" : taskProfile.profileID
-        let archivedDate = (try? await store.setTaskArchived(taskID: taskID, profileID: profileKey, archived: archived)) ?? nil
+        let archivedDate: Date?
+        do { archivedDate = try await store.setTaskArchived(taskID: taskID, profileID: profileKey, archived: archived) }
+        catch { syncError = error.localizedDescription; return }
         if var synced = replica.workspaceDoc.tasks[taskID] {
             synced.archivedByProfile[profileKey] = SyncValue(archivedDate, version: replica.workspaceDoc.nextVersion())
             synced.updatedAt = Date()
             replica.workspaceDoc.upsertTask(synced)
         }
+        do { try await persistReplicaCheckpoint() }
+        catch { syncError = error.localizedDescription }
         await reloadFromStore()
         await reconcileTaskNotifications()
         scheduleSync(delayMilliseconds: 250)
@@ -902,6 +970,21 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         }
         await reloadFromStore()
         scheduleSync(delayMilliseconds: 250)
+    }
+
+    private func migrateLegacyTaskProfileName() async {
+        let key = "ios.workspace.taskProfileNameAliasMigrated"
+        guard !preferences.bool(forKey: key) else { return }
+        let profileID = taskProfile.profileID.isEmpty ? "default" : taskProfile.profileID
+        // The old phone editor stored its primary name in assigneeID. Only migrate
+        // a field authored on this phone; a Mac identity can be an opaque ID.
+        if let stored = replica.workspaceDoc.taskProfiles[profileID],
+           stored.assigneeID.version.device == deviceID,
+           let name = stored.assigneeID.value, !name.isEmpty {
+            var profile = taskProfile
+            if profile.appendAliasIfMissing(name) { await saveTaskProfile(profile) }
+        }
+        preferences.set(true, forKey: key)
     }
 
     func saveTaskProfile(_ profile: IOSTaskProfile, lowPriorityInitialSeed: Bool = false) async {
@@ -1183,6 +1266,8 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     // MARK: - Sync Engine
 
     func scheduleSync(delayMilliseconds: Int = 500) {
+        // Local edits must survive relaunch even when iCloud is disabled or offline.
+        persistReplica()
         guard syncPreferences.enabled else { return }
         let remainingMs = max(0, Int(ceil(cloudBackoffUntil.timeIntervalSinceNow * 1000)))
         let effectiveDelay = max(delayMilliseconds, remainingMs)
@@ -1320,7 +1405,46 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         } while needsAnotherPass && !Task.isCancelled
     }
 
+    private func recoverPersistedTasks() async throws {
+        // Older versions saved edits only in SQLite until a cloud pass succeeded.
+        // Rehydrate missing/newer task fields without retimestamping unchanged ones.
+        let storedTasks = try await store.allTasks()
+        let storedSessions = try await store.allSessions()
+        for task in storedTasks {
+            if replica.workspaceDoc.tasks[task.id]?.isDeleted.value == true {
+                try await store.deleteTask(task.id)
+                continue
+            }
+            let sid = replica.workspaceDoc.resolveCanonicalSessionID(for: task.sessionID)
+            guard replica.workspaceDoc.sessions[sid]?.isDeleted.value != true else { continue }
+            let saved = replica.workspaceDoc.tasks[task.id]
+            if let saved, saved.updatedAt >= task.updatedAt { continue }
+            // Recover a legacy local task's parent only when the task itself was
+            // absent. A received task can precede its real parent; its SQLite
+            // placeholder must never be uploaded as a newly ended meeting.
+            if saved == nil, replica.workspaceDoc.sessions[sid] == nil,
+               let session = storedSessions.first(where: { $0.id == sid }) {
+                upsertSessionIntoDoc(session, fieldChanges: .all)
+            }
+            updateTaskInDocument(task)
+        }
+        try await persistReplicaCheckpoint()
+    }
+
+    private func applyPendingCloudChanges() async throws {
+        guard let sessions = replica.pendingCloudSessions else { return }
+        var report = MeetingWorkspaceSyncDocument.LibraryMergeOutcome()
+        report.changedSessions = sessions
+        report.changedSettingsKeys = replica.pendingCloudSettings ?? []
+        try await applyReportToLocalStore(report)
+        replica.pendingCloudSessions = nil
+        replica.pendingCloudSettings = nil
+        try await persistReplicaCheckpoint()
+    }
+
     private func syncLibraryPass() async throws {
+        try await applyPendingCloudChanges()
+        try await recoverPersistedTasks()
         let session = try await connectZone(name: "library", transport: libraryTransport) {
             self.replica.libraryToken = nil
             self.replica.acknowledgedLibrary.removeAll()
@@ -1352,7 +1476,10 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         if !report.changedSessions.isEmpty || !report.changedTaskIDs.isEmpty ||
             !report.changedProfileIDs.isEmpty || !report.changedSettingsKeys.isEmpty ||
             !changes.records.isEmpty {
-            try await applyReportToLocalStore(report)
+            replica.pendingCloudSessions = report.changedSessions
+            replica.pendingCloudSettings = report.changedSettingsKeys
+            try await persistReplicaCheckpoint()
+            try await applyPendingCloudChanges()
         }
 
         let pending = replica.workspaceDoc.pendingLibraryRecords(acknowledged: replica.acknowledgedLibrary)
@@ -1708,6 +1835,21 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     private func persistOutcomeConfig() {
         guard let data = try? JSONEncoder().encode(outcomeConfig) else { return }
         preferences.set(data, forKey: Self.outcomeConfigDefaultsKey)
+    }
+
+    func persistReplicaCheckpoint() async throws {
+        let snapshot = replica
+        let url = replicaURL
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            replicaIOQueue.async {
+                do {
+                    let data = try JSONEncoder().encode(snapshot)
+                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try data.write(to: url, options: .atomic)
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
     }
 
     private func persistReplica() {

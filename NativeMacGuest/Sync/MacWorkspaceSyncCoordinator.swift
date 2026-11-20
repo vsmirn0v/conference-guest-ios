@@ -65,6 +65,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         var calendarLinks: [UUID: SyncValue<MeetingCalendarAssociation?>]?
         var historyGroups: [UUID: SyncValue<UUID?>]?
         var pendingHistoryApply: Set<UUID>?
+        var pendingCloudSessions: Set<UUID>?
+        var pendingCloudSettings: Set<String>?
         var lastExportedNoteMarkdown: [UUID: String] = [:]
         var lastExportedOutcomes: [UUID: ExportedOutcomeSnapshot] = [:]
         var lastExportedTaskIDs: [UUID: Set<UUID>] = [:]
@@ -507,6 +509,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
         repeat {
             needsAnotherPass = false
+            if replica.pendingCloudSessions != nil { localHistoryNeedsReconciliation = true }
             if localHistoryNeedsReconciliation {
                 // Clear before awaiting so edits arriving during reconciliation retain a follow-up.
                 localHistoryNeedsReconciliation = false
@@ -601,6 +604,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     private func reconcileLocalHistory() async throws {
         localReconciliationCount += 1
         await meetingLibrary.prepare()
+        try await applyPendingCloudChanges()
         if let pending = replica.pendingHistoryApply, !pending.isEmpty {
             guard !pending.contains(where: { notes.draft(sessionID: $0)?.isDirty == true }) else {
                 throw DeferredHistoryMerge.unsavedNotes
@@ -616,7 +620,20 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             persistReplica()
             for id in Set(pending.map(canonicalSessionID)) { onTranscriptChanged?(id) }
         }
-        let snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
+        var snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
+        // Repair tasks consumed by older versions which required a summary record.
+        // They are already in the replica, so a CloudKit delta will not resend them.
+        var missingTasks = MeetingWorkspaceSyncDocument.LibraryMergeOutcome()
+        missingTasks.changedSessions = Set(replica.workspaceDoc.tasks.values.compactMap { task in
+            let sid = replica.workspaceDoc.resolveCanonicalSessionID(for: task.sessionID)
+            let localIDs = Set(snapshot.outcomesBySession[sid]?.outcome.tasks.map(\.id) ?? [])
+            let wasExportedLocally = replica.lastExportedTaskIDs[sid]?.contains(task.id) == true
+            return !task.isDeleted.value && !localIDs.contains(task.id) && !wasExportedLocally ? sid : nil
+        })
+        if !missingTasks.changedSessions.isEmpty {
+            try await applyRemoteLibraryReport(missingTasks)
+            snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
+        }
         ingestLocalSnapshotIntoDocument(snapshot)
         ingestLocalContextSettings()
         exportLocalTranscriptsAndArchive(snapshot: snapshot)
@@ -645,6 +662,17 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         replica.pendingHistoryApply = nil
         persistReplica()
         for redirect in redirects { onTranscriptChanged?(redirect.winner) }
+    }
+
+    private func applyPendingCloudChanges() async throws {
+        guard let sessions = replica.pendingCloudSessions else { return }
+        var report = MeetingWorkspaceSyncDocument.LibraryMergeOutcome()
+        report.changedSessions = sessions
+        report.changedSettingsKeys = replica.pendingCloudSettings ?? []
+        try await applyRemoteLibraryReport(report)
+        replica.pendingCloudSessions = nil
+        replica.pendingCloudSettings = nil
+        try await persistReplicaCheckpoint()
     }
 
     private func syncWorkspacePass() async throws -> CloudZoneSession? {
@@ -684,6 +712,14 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             report.changedSessions.insert(redirect.loser)
         }
 
+        let requiresApply = !report.changedSessions.isEmpty || !report.changedTaskIDs.isEmpty ||
+            !report.changedProfileIDs.isEmpty || !report.changedSettingsKeys.isEmpty || !changes.records.isEmpty
+        if requiresApply {
+            replica.pendingCloudSessions = report.changedSessions
+            replica.pendingCloudSettings = report.changedSettingsKeys
+            try await persistReplicaCheckpoint()
+        }
+
         // Transcript records arrive in a different zone. Import them before creating
         // export jobs for the incoming meetings, including phone-initiated saves.
         var prefetchedTranscripts: CloudZoneSession?
@@ -695,10 +731,9 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         }
 
         if !report.changedSessions.isEmpty { objectWillChange.send() }
-        if !report.changedSessions.isEmpty || !report.changedTaskIDs.isEmpty ||
-            !report.changedProfileIDs.isEmpty || !report.changedSettingsKeys.isEmpty ||
-            !changes.records.isEmpty {
-            try await applyRemoteLibraryReport(report)
+        if requiresApply {
+            // A failed/partial SQLite apply is replayed before the next local export.
+            try await applyPendingCloudChanges()
         }
 
         // Export Obsidian (both after incoming remote changes and after local changes), then push updated receipts.
@@ -824,6 +859,12 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             let hasTitleOverride = snapshot.titleOverrides.contains(session.id)
             let externalSeries = externalSeriesID(for: session)
             let existing = replica.workspaceDoc.sessions[sid]
+            // A task may arrive before its parent session. Do not turn the local
+            // foreign-key placeholder into an authoritative meeting record.
+            if existing == nil, session.startProvenance == .unknown,
+               replica.workspaceDoc.tasks.values.contains(where: { $0.sessionID == sid }) {
+                continue
+            }
             let receipt = snapshot.obsidianReceipts[session.id]
             var legs = existing?.legs ?? [:]
             if let localLeg = replica.localAttendance?[session.id] ?? replica.localAttendance?[sid] {
@@ -961,11 +1002,12 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             let existing = replica.workspaceDoc.outcomes[canonicalID]
             let wasHumanEdit = (prev?.stateRaw == MeetingOutcomePersistenceState.ready.rawValue && entry.state == .ready)
 
-            if existing == nil || prev != snap ||
+            let tasksOnly = existing == nil && entry.state == .notStarted
+            if !tasksOnly && (existing == nil || prev != snap ||
                 existing?.summary.value != entry.outcome.summary ||
                 existing?.decisions.value != entry.outcome.decisions ||
                 existing?.openQuestions.value != entry.outcome.openQuestions ||
-                existing?.state.value != entry.state.rawValue {
+                existing?.state.value != entry.state.rawValue) {
                 let fallbackV = replica.workspaceDoc.nextVersion()
                 let reviewSnaps = entry.outcome.taskReviewCandidates.map {
                     SyncedTaskSnapshot(

@@ -811,4 +811,163 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         let restoredOld = await f.archiveStore.loadTranscript(sessionID: oldID)
         XCTAssertEqual(restoredOld?.map(\.text), ["Archived line"])
     }
+
+    private func phoneTask(sessionID: UUID, text: String = "Phone action") -> SyncedMeetingTask {
+        let v = SyncVersion(counter: 20, device: "phone")
+        return SyncedMeetingTask(id: UUID(), sessionID: sessionID, outcomeID: UUID(),
+            ordinal: SyncValue(0, version: v), text: SyncValue(text, version: v),
+            owner: SyncValue("Vlad", version: v), assigneeID: SyncValue(nil, version: v),
+            dueDay: SyncValue("2026-12-01", version: v), dueAt: SyncValue(nil, version: v),
+            reminderAt: SyncValue(nil, version: v), done: SyncValue(false, version: v),
+            completedAt: SyncValue(nil, version: v), isDeleted: SyncValue(false, version: v), updatedAt: Date())
+    }
+
+    func testPhoneTaskWithoutSummaryAppearsAndDoesNotPublishBlankOutcome() async throws {
+        let f = try await makeFixture()
+        let session = MeetingSessionRecord(title: "In progress", startedAt: Date(), state: .active)
+        try await f.library.store.upsertSession(session)
+        let task = phoneTask(sessionID: session.id)
+        f.libraryCloud.records["task:" + task.id.uuidString] = .task(task)
+
+        await f.sync.synchronizeNow()
+        XCTAssertNil(f.sync.syncError)
+        XCTAssertEqual(f.assistant.outcomes.flatMap(\.tasks).map(\.id), [task.id])
+        XCTAssertNil(f.libraryCloud.records["outcome:" + session.id.uuidString])
+        let storedSession = try await f.library.store.session(session.id)
+        XCTAssertEqual(storedSession?.state, .active)
+        XCTAssertNil(storedSession?.endedAt)
+
+        // Editing the imported task on Mac must not claim a generated summary.
+        let localOutcome = try XCTUnwrap(f.assistant.outcomes.first(where: { $0.meetingID == session.id }))
+        _ = try await f.library.store.changeTask(outcomeID: localOutcome.id, taskID: task.id) { $0.text = "Edited on Mac" }
+        await f.sync.synchronizeNow()
+        XCTAssertNil(f.libraryCloud.records["outcome:" + session.id.uuidString])
+        var deleted = task
+        deleted.isDeleted = SyncValue(true, version: SyncVersion(counter: 100, device: "phone"))
+        f.libraryCloud.records["task:" + task.id.uuidString] = .task(deleted)
+        await f.sync.synchronizeNow(localChanges: false)
+        XCTAssertTrue(f.assistant.outcomes.flatMap(\.tasks).isEmpty)
+    }
+
+    func testPhoneTaskUpdatesKeepLaterSummaryAndCompletion() async throws {
+        let f = try await makeFixture()
+        let sid = UUID()
+        var task = phoneTask(sessionID: sid)
+        f.libraryCloud.records["task:" + task.id.uuidString] = .task(task)
+        await f.sync.synchronizeNow()
+        let v = SyncVersion(counter: 100, device: "phone")
+        let outcome = SyncedMeetingOutcome(outcomeID: UUID(), sessionID: sid,
+            state: SyncValue("ready", version: v), summary: SyncValue("The real summary", version: v),
+            decisions: SyncValue(["Ship"], version: v), openQuestions: SyncValue([], version: v),
+            writerTier: 1, reviewCandidates: SyncValue([], version: v), updatedAt: Date(),
+            isDeleted: SyncValue(false, version: v))
+        task.done = SyncValue(true, version: v)
+        task.completedAt = SyncValue(Date(), version: v)
+        task.text = SyncValue("Edited on phone", version: v)
+        f.libraryCloud.records["task:" + task.id.uuidString] = .task(task)
+        f.libraryCloud.records["outcome:" + sid.uuidString] = .outcome(outcome)
+        await f.sync.synchronizeNow(localChanges: false)
+        let saved = try XCTUnwrap(f.assistant.outcomes.first(where: { $0.meetingID == sid }))
+        XCTAssertEqual(saved.summary, "The real summary")
+        XCTAssertEqual(saved.tasks.first?.text, "Edited on phone")
+        XCTAssertEqual(saved.tasks.first?.done, true)
+        await f.sync.synchronizeNow()
+        guard case .outcome(let uploaded)? = f.libraryCloud.records["outcome:" + sid.uuidString] else {
+            return XCTFail("Missing real summary")
+        }
+        XCTAssertEqual(uploaded.summary.value, "The real summary")
+    }
+
+    func testAlreadyConsumedPhoneTaskIsRecoveredFromReplicaAfterUpgrade() async throws {
+        var f = try await makeFixture()
+        await f.sync.synchronizeNow()
+        try await f.sync.persistReplicaCheckpoint()
+        let sid = UUID()
+        let task = phoneTask(sessionID: sid)
+        let url = temp.appendingPathComponent("AppSupport/workspace-sync-replica.json")
+        var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let encoded = try JSONSerialization.data(withJSONObject: raw["workspaceDoc"]!)
+        var document = try JSONDecoder().decode(MeetingWorkspaceSyncDocument.self, from: encoded)
+        document.upsertTask(task)
+        raw["workspaceDoc"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(document))
+        try JSONSerialization.data(withJSONObject: raw).write(to: url, options: .atomic)
+        f.libraryCloud.records.removeAll()
+        coordinators.removeAll()
+        f.sync = f.reopenSync()
+        await f.sync.synchronizeNow()
+        XCTAssertNil(f.sync.syncError)
+        XCTAssertEqual(f.assistant.outcomes.flatMap(\.tasks).map(\.id), [task.id])
+        XCTAssertNil(f.libraryCloud.records["outcome:" + sid.uuidString])
+    }
+
+    func testCloudProjectionCheckpointReplaysWithoutAnotherCloudDelta() async throws {
+        var f = try await makeFixture()
+        await f.sync.synchronizeNow()
+        try await f.sync.persistReplicaCheckpoint()
+        let sid = UUID()
+        let task = phoneTask(sessionID: sid)
+        let url = temp.appendingPathComponent("AppSupport/workspace-sync-replica.json")
+        var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let encoded = try JSONSerialization.data(withJSONObject: raw["workspaceDoc"]!)
+        var document = try JSONDecoder().decode(MeetingWorkspaceSyncDocument.self, from: encoded)
+        document.upsertTask(task)
+        raw["workspaceDoc"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(document))
+        raw["pendingCloudSessions"] = [sid.uuidString]
+        try JSONSerialization.data(withJSONObject: raw).write(to: url, options: .atomic)
+        f.libraryCloud.records.removeAll()
+        coordinators.removeAll()
+        f.sync = f.reopenSync()
+        await f.sync.synchronizeNow(localChanges: false)
+        XCTAssertNil(f.sync.syncError)
+        XCTAssertEqual(f.assistant.outcomes.flatMap(\.tasks).map(\.id), [task.id])
+        let replayed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        XCTAssertNil(replayed["pendingCloudSessions"])
+    }
+
+
+    func testTaskOnlyContainerKeepsDetailTasksWithoutMaskingPreviousSummary() async throws {
+        let f = try await makeFixture()
+        let url = try XCTUnwrap(URL(string: "https://rock.glowsoft.ru/jams/tasks-context"))
+        let old = MeetingSessionRecord(title: "Previous", invitation: url, startedAt: Date() - 3600, endedAt: Date() - 1800, state: .ended)
+        let current = MeetingSessionRecord(title: "Current", invitation: url, startedAt: Date(), state: .active)
+        try await f.library.store.upsertSession(old)
+        try await f.library.store.upsertSession(current)
+        let ready = MeetingOutcome(meetingID: old.id, meetingTitle: old.title, invitation: url, endedAt: old.endedAt!, summary: "Previous real summary")
+        _ = try await f.library.store.saveOutcome(ready, state: .ready)
+        let task = phoneTask(sessionID: current.id)
+        f.libraryCloud.records["task:" + task.id.uuidString] = .task(task)
+        await f.sync.synchronizeNow()
+        f.assistant.applyEffectiveTitles(f.library.cards)
+        XCTAssertEqual(f.assistant.latestOutcome(invitation: url)?.id, ready.id)
+        XCTAssertEqual(f.assistant.seriesOutcomes(invitation: url).map(\.id), [ready.id])
+        XCTAssertEqual(f.assistant.outcomes.first(where: { $0.meetingID == current.id })?.tasks.map(\.id), [task.id])
+    }
+
+
+    func testTaskBeforeParentDoesNotPublishFabricatedSession() async throws {
+        let f = try await makeFixture()
+        let sid = UUID()
+        let task = phoneTask(sessionID: sid)
+        f.libraryCloud.records["task:" + task.id.uuidString] = .task(task)
+        await f.sync.synchronizeNow()
+        await f.sync.synchronizeNow()
+        XCTAssertNil(f.libraryCloud.records["session:" + sid.uuidString])
+        let placeholder = try await f.library.store.session(sid)
+        XCTAssertEqual(placeholder?.startProvenance, .unknown)
+        XCTAssertNil(placeholder?.recordedStart)
+        let v = SyncVersion(counter: 200, device: "phone")
+        let start = Date(timeIntervalSince1970: 1_795_000_000)
+        let parent = SyncedMeetingSession(id: sid, occurrenceKey: "phone-late-parent", title: SyncValue("Still meeting", version: v),
+            hasTitleOverride: SyncValue(false, version: v), invitation: SyncValue(nil, version: v), roomIdentity: "", startedAt: start,
+            endedAt: SyncValue(nil, version: v), timeZoneID: "UTC", state: SyncValue("active", version: v),
+            isDeleted: SyncValue(false, version: v), createdAt: start, updatedAt: start)
+        f.libraryCloud.records["session:" + sid.uuidString] = .session(parent)
+        await f.sync.synchronizeNow(localChanges: false)
+        let imported = try await f.library.store.session(sid)
+        XCTAssertEqual(imported?.startedAt, start)
+        XCTAssertEqual(imported?.state, .active)
+        XCTAssertNil(imported?.endedAt)
+        XCTAssertEqual(f.assistant.outcomes.first(where: { $0.meetingID == sid })?.tasks.map(\.id), [task.id])
+    }
+
 }

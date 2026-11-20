@@ -352,17 +352,27 @@ extension MeetingLibraryStore {
             }
             return true
         }
-        guard let syncedOutcome = outcome else { return false }
+        // Tasks are independent CloudKit records: a phone can create one before
+        // generating a summary, or its outcome can arrive in a later batch.
+        let existingRow = try db.one("SELECT outcome_id,state,revision FROM meeting_outcomes WHERE session_id=?", bind: {
+            try Self.bindText($0, sessionID.uuidString, at: 1)
+        })
+        let firstTask = tasks.filter { !$0.isDeleted.value }.min { $0.id.uuidString < $1.id.uuidString }
+        guard let canonicalOutcomeID = existingRow?.text(0).flatMap(UUID.init(uuidString:))
+            ?? outcome?.outcomeID ?? firstTask?.outcomeID else { return false }
+        let existingOutcome = try Self.storedOutcome(db: db, id: canonicalOutcomeID)
+        let targetState = outcome.flatMap { MeetingOutcomePersistenceState(rawValue: $0.state.value) }
+            ?? existingRow?.text(1).flatMap(MeetingOutcomePersistenceState.init(rawValue:)) ?? .notStarted
 
         return try db.transaction {
-            try Self.ensureSessionExists(db: db, sessionID: sessionID)
+            try Self.ensureSessionExists(db: db, sessionID: sessionID, provisional: outcome == nil)
             let sessionRow = try db.one("SELECT title,invitation,calendar_series_id,ended_at,export_revision FROM meeting_sessions WHERE session_id=?", bind: {
                 try Self.bindText($0, sessionID.uuidString, at: 1)
             })
             let title = sessionRow?.text(0) ?? L("Meeting")
             let invitation = sessionRow?.text(1).flatMap(URL.init(string:))
             let seriesID = sessionRow?.text(2)
-            let endedAt = Self.date(sessionRow?.integer(3)) ?? syncedOutcome.updatedAt
+            let endedAt = Self.date(sessionRow?.integer(3)) ?? outcome?.updatedAt ?? firstTask?.updatedAt ?? existingOutcome?.endedAt ?? Date()
 
             let activeTasks = tasks
                 .filter { !$0.isDeleted.value }
@@ -381,7 +391,7 @@ extension MeetingLibraryStore {
                     )
                 }
 
-            let reviewCandidates = syncedOutcome.reviewCandidates.value.map { snap in
+            let reviewCandidates = outcome?.reviewCandidates.value.map { snap in
                 MeetingOutcomeTask(
                     id: snap.id,
                     text: snap.text,
@@ -395,13 +405,6 @@ extension MeetingLibraryStore {
                 )
             }
 
-            let existingRow = try db.one("SELECT outcome_id,state,revision FROM meeting_outcomes WHERE session_id=?", bind: {
-                try Self.bindText($0, sessionID.uuidString, at: 1)
-            })
-            let canonicalOutcomeID = existingRow?.text(0).flatMap(UUID.init(uuidString:)) ?? syncedOutcome.outcomeID
-            let existingOutcome = try Self.storedOutcome(db: db, id: canonicalOutcomeID)
-            let targetState = MeetingOutcomePersistenceState(rawValue: syncedOutcome.state.value) ?? .ready
-
             var mapped = MeetingOutcome(
                 id: canonicalOutcomeID,
                 meetingID: sessionID,
@@ -409,12 +412,12 @@ extension MeetingLibraryStore {
                 invitation: invitation,
                 seriesID: seriesID,
                 endedAt: endedAt,
-                summary: syncedOutcome.summary.value,
-                decisions: syncedOutcome.decisions.value,
+                summary: outcome?.summary.value ?? existingOutcome?.summary ?? "",
+                decisions: outcome?.decisions.value ?? existingOutcome?.decisions ?? [],
                 tasks: activeTasks,
-                openQuestions: syncedOutcome.openQuestions.value
+                openQuestions: outcome?.openQuestions.value ?? existingOutcome?.openQuestions ?? []
             )
-            mapped.taskReviewCandidates = reviewCandidates
+            mapped.taskReviewCandidates = reviewCandidates ?? existingOutcome?.taskReviewCandidates ?? []
             mapped.taskReviewMatches = existingOutcome?.taskReviewMatches ?? [:]
             if let existingOutcome {
                 if existingOutcome.summary == mapped.summary, existingOutcome.decisions == mapped.decisions,
@@ -449,7 +452,7 @@ extension MeetingLibraryStore {
                 try Self.replaceTasks(db: db, outcome: mapped)
             }
 
-            for version in syncedOutcome.versions {
+            for version in outcome?.versions ?? [] {
                 var snapOutcome = mapped
                 snapOutcome.summary = version.summary
                 snapOutcome.decisions = version.decisions
@@ -672,7 +675,7 @@ extension MeetingLibraryStore {
         return result
     }
 
-    private static func ensureSessionExists(db: MeetingSQLiteConnection, sessionID: UUID) throws {
+    private static func ensureSessionExists(db: MeetingSQLiteConnection, sessionID: UUID, provisional: Bool = false) throws {
         guard try db.one("SELECT 1 FROM meeting_sessions WHERE session_id=?", bind: {
             try bindText($0, sessionID.uuidString, at: 1)
         }) == nil else { return }
@@ -682,16 +685,17 @@ extension MeetingLibraryStore {
                 session_id,title,title_folded,invitation,room_identity,calendar_series_id,
                 continuation_id,started_at,ended_at,time_zone_id,state,export_revision,
                 created_at,updated_at,start_provenance,outcome_end_fallback
-            ) VALUES(?,?,?,NULL,'',NULL,NULL,?,NULL,?,'ended',0,?,?,'recorded',NULL)
+            ) VALUES(?,?,?,NULL,'',NULL,NULL,?,NULL,?,'ended',0,?,?,?,NULL)
             """) {
             try bindText($0, sessionID.uuidString, at: 1)
             let placeholder = L("Meeting")
             try bindText($0, placeholder, at: 2)
             try bindText($0, MeetingTextNormalization.folded(placeholder), at: 3)
-            try bindInt($0, now.syncMilliseconds, at: 4)
+            try bindInt($0, (provisional ? Date.distantPast : now).syncMilliseconds, at: 4)
             try bindText($0, TimeZone.current.identifier, at: 5)
             try bindInt($0, now.syncMilliseconds, at: 6)
             try bindInt($0, now.syncMilliseconds, at: 7)
+            try bindText($0, provisional ? "unknown" : "recorded", at: 8)
         }
     }
 
