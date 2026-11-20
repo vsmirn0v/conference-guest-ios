@@ -224,6 +224,48 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertTrue(labels.contains(waitingMessage))
     }
 
+    func testScreenSharesOnlyKeepsRosterThroughShareStartAndStop() throws {
+        let factory = LKRTCPeerConnectionFactory()
+        let source = factory.videoSource()
+        let camera = factory.videoTrack(with: source, trackId: "camera")
+        let share = factory.videoTrack(with: source, trackId: "share")
+        let call = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
+        call.loadViewIfNeeded()
+        let tiles = try XCTUnwrap(descendants(call.view).compactMap { $0 as? CallTileContainer }.first)
+        let layout = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingLayoutControls }.first)
+        let strip = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingParticipantStrip }.first)
+        func render(sharing: Bool) {
+            call.render(snapshot: .init(participants: [
+                .init(id: "alice", name: "Alice", isLocal: false, microphoneOn: true,
+                      cameraOn: true, screenShareOn: false, isSpeaking: false,
+                      videoTracks: [.init(id: "camera", source: .camera, track: .native(camera))]),
+                .init(id: "bob", name: "Bob", isLocal: false, microphoneOn: true,
+                      cameraOn: false, screenShareOn: sharing, isSpeaking: false,
+                      videoTracks: sharing ? [.init(id: "share", source: .screenShareVideo, track: .native(share))] : [])
+            ]))
+        }
+        func tileIDs() -> [String?] { tiles.arrangedSubviews.map(\.accessibilityIdentifier) }
+        render(sharing: false)
+        call.setDisplayMode(.screenShares)
+        XCTAssertEqual(tileIDs(), ["camera-off.alice", "camera-off.bob"])
+        XCTAssertFalse(call.videoSubscriptionDemand(foreground: true, wantsVideo: false).receivesCameras)
+        layout.onLayout?(.speaker)
+        XCTAssertEqual(tileIDs(), ["camera-off.alice"])
+        render(sharing: true)
+        XCTAssertEqual(tileIDs(), ["share"])
+        render(sharing: false)
+        XCTAssertEqual(tileIDs(), ["camera-off.alice"])
+        layout.onLayout?(.grid)
+        render(sharing: true)
+        XCTAssertEqual(tileIDs(), ["camera-off.alice", "camera-off.bob", "share"])
+        render(sharing: false)
+        strip.onSelect?("bob.camera")
+        XCTAssertEqual(tileIDs(), ["camera-off.bob"])
+        render(sharing: false)
+        XCTAssertEqual(tileIDs(), ["camera-off.bob"])
+        XCTAssertTrue(call.visibleVideoQualities(foreground: true, wantsVideo: false).isEmpty)
+    }
+
     func testNativeScreenOnlyDiscardsCameraSelectionAndShowsAvailableShare() throws {
         let factory = LKRTCPeerConnectionFactory()
         let source = factory.videoSource()
@@ -491,7 +533,7 @@ final class CallPresentationTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(button.frame.width, 44)
                 if button.isEnabled { XCTAssertNotNil(header.hitTest(button.center, with: nil), button.accessibilityLabel ?? "button") }
             }
-            if width == 1024 { XCTAssertNil(header.hitTest(CGPoint(x: 300, y: 22), with: nil)) }
+            if width == 1024 { XCTAssertNil(header.hitTest(CGPoint(x: 490, y: 22), with: nil)) }
         }
     }
     func testZoomControlsExpireWithoutLayoutRefreshesExtendingTheirLifetime() async throws {
@@ -813,7 +855,7 @@ final class CallPresentationTests: XCTestCase {
 
         let header = try XCTUnwrap(descendants(call.view).compactMap { $0 as? CompactCallHeader }.first)
         XCTAssertFalse(header.isHidden)
-        XCTAssertEqual(header.frame.height, 44)
+        XCTAssertEqual(header.frame.height, 98)
         XCTAssertFalse(header.minimize.isHidden)
         XCTAssertFalse(header.assistant.isHidden)
         XCTAssertFalse(header.switcher.isHidden)
@@ -835,5 +877,48 @@ final class CallPresentationTests: XCTestCase {
 
         header.assistant.sendActions(for: .touchUpInside)
         XCTAssertTrue(openedAssistant)
+    }
+
+    func testPortraitHeaderKeepsRoomAndFourShortcutsOnSeparateRows() throws {
+        let header = CompactCallHeader(frame: CGRect(x: 0, y: 0, width: 304, height: 98))
+        header.setCallWorkspaceControls(minimizeAvailable: true, assistantAvailable: true,
+            assistantSymbol: "sparkles", assistantColor: .systemOrange, assistantLabel: "Assistant mode: Follow",
+            assistantAlertCount: 1, switcherAvailable: true, activeMeetingCount: 1, assistantModeTitle: "Follow")
+        header.update(name: "Sam · Screen", navigation: false, browsing: false, pinned: false, pinLabel: nil,
+            participantsLabel: "Musicians, 12", chatValue: "3 unread", chatCount: 3, status: nil, focusAvailable: false,
+            meetingName: "Engineering design review", participantCount: 12, presenterName: "Sam")
+        header.layoutIfNeeded()
+        let identity = header.convert(header.details.bounds, from: header.details)
+        XCTAssertGreaterThan(identity.width, 280)
+        for button in [header.assistant, header.switcher, header.participants, header.conversation] {
+            XCTAssertFalse(button.isHidden)
+            let target = header.convert(button.bounds, from: button)
+            XCTAssertGreaterThanOrEqual(target.width, 44)
+            XCTAssertLessThanOrEqual(target.maxY, identity.minY)
+            XCTAssertTrue(header.hitTest(CGPoint(x: target.midX, y: target.midY), with: nil) === button)
+        }
+        XCTAssertEqual(header.switcher.accessibilityValue, "1")
+        XCTAssertEqual(header.assistant.configuration?.title, "Follow")
+        XCTAssertEqual(header.details.accessibilityValue, L("%@ is sharing", "Sam"))
+    }
+
+    func testDuoCallKeepsStageAndToolsOutsideBothDivisionOrientations() throws {
+        let cases = [
+            (CGSize(width: 890, height: 626), CGRect(x: 429, y: 0, width: 32, height: 626)),
+            (CGSize(width: 626, height: 890), CGRect(x: 0, y: 429, width: 626, height: 32))
+        ]
+        for (size, division) in cases {
+            let bounds = CGRect(origin: .zero, size: size)
+            let fold = try XCTUnwrap(CallFold(safe: bounds.insetBy(dx: 8, dy: 4), division: division))
+            let geometry = CallPresentationGeometry(bounds: bounds, insets: .zero, headerHeight: 80,
+                hidden: false, floating: true, adaptiveHeader: true, fold: fold)
+            let access = MeetingAccessGeometry(base: geometry, bounds: bounds, insets: .zero,
+                accessSize: CGSize(width: 220, height: 48), largeText: false)
+            XCTAssertTrue(fold.first.contains(access.stage))
+            XCTAssertTrue(fold.second.contains(access.access))
+            XCTAssertTrue(fold.second.contains(access.toolbar))
+            XCTAssertFalse(access.inline)
+            XCTAssertFalse(access.stage.intersects(division))
+        }
     }
 }

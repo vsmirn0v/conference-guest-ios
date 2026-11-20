@@ -37,8 +37,10 @@ shared by the native room adapters and the isolated guest integration.
 - Browsing in guest Focus enables **Follow speaker**, even without an explicit
   pin. **View share** enters Focus immediately, and its shortcut remains
   reachable from Gallery. A later pin result cannot undo a newer Gallery choice.
-- **Screen sharing only** discards camera selections and presents an available
-  share, or the no-sharing message when none is live.
+- In **Screen sharing only**, Gallery shows participant names and mic states
+  alongside available shares. Focus follows a live share or shows a participant
+  by name when sharing stops. Selecting a participant focuses their identity
+  card while camera reception stays off.
 
 ## Implementation boundaries
 

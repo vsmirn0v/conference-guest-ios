@@ -61,6 +61,21 @@ final class MeetingAccessUITests: XCTestCase {
         attach("Guest direct More and View")
     }
 
+    func testScreenSharingOnlyShowsParticipantsInGalleryAndFocus() {
+        let app = launch(guest: false, gallery: true)
+        defer { app.terminate() }
+        choose(app, "meeting.view.receive.shares")
+        let tile = app.otherElements["camera-off.person-1"]
+        XCTAssertTrue(tile.isHittable)
+        choose(app, "meeting.view.layout.focus")
+        let name = app.staticTexts.matching(identifier: "Participant name").firstMatch
+        XCTAssertTrue(name.isHittable)
+        app.buttons["Focus participant.person-1.camera"].tap()
+        XCTAssertEqual(name.label, "Полина")
+        choose(app, "meeting.view.layout.gallery")
+        XCTAssertTrue(tile.isHittable)
+    }
+
     func testNativeDirectToolsAndRotationRemainReachable() {
         let app = launch(guest: false)
         defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }

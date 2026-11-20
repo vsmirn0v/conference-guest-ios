@@ -3401,3 +3401,4 @@
 "database requires a newer version of Rock’n’Roll" = "для базы данных требуется более новая версия Rock’n’Roll";
 "database is closed" = "база данных закрыта";
 "task is no longer assigned to this profile" = "задача больше не назначена этому профилю";
+"%@ is sharing" = "%@ транслирует экран";

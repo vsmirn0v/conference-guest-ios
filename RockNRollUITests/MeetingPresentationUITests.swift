@@ -592,7 +592,7 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(window.contains(toolbar.frame), "The entire control rail must remain inside the window")
         let header = app.otherElements["Compact meeting header"]
         XCTAssertTrue(header.exists)
-        XCTAssertEqual(header.frame.height, 44)
+        XCTAssertTrue([44, 98].contains(header.frame.height))
         let reactions = app.buttons["call.reactions"]
         XCTAssertEqual(reactions.label, language == "ru" ? "Реакции" : "Reactions", "The full action name must remain accessible")
         let source = app.buttons["Shared stream selector"]

@@ -684,14 +684,12 @@ final class ConferenceMediaUITests: XCTestCase {
         app.launch()
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
-        let sharing = app.buttons.matching(NSPredicate(format: "value == %@", "A screen is being shared"))
-            .firstMatch
-        XCTAssertTrue(sharing.waitForExistence(timeout: 20))
+        let viewport = app.scrollViews["Pinch to zoom screen share"].firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 20))
         app.openMeetingMore(.view)
         let shares = app.buttons["Screen sharing only"]
         XCTAssertTrue(shares.isEnabled)
         shares.tap()
-        let viewport = app.scrollViews["Shared screen viewport"].firstMatch
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         viewport.pinch(withScale: 2, velocity: 1)
         XCTAssertNotEqual(viewport.value as? String, "100%")
@@ -705,33 +703,30 @@ final class ConferenceMediaUITests: XCTestCase {
         attachScreenshot(of: app, named: "Guest shared screen landscape")
         XCUIDevice.shared.orientation = .portrait
 
-        let empty = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@",
-            "No screen share is live.")).firstMatch
+        let identity = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "camera-off.")).firstMatch
         print("GUEST_SHARE_TEST_AWAITING_STOP")
-        XCTAssertTrue(empty.waitForExistence(timeout: 60),
+        XCTAssertTrue(identity.waitForExistence(timeout: 60),
                       "Stop the synthetic browser share while this test waits.")
-        attachScreenshot(of: app, named: "Guest waiting for a screen share")
+        XCTAssertFalse(viewport.exists)
+        attachScreenshot(of: app, named: "Guest participants after sharing stops")
         XCTAssertTrue(app.buttons["Leave"].isHittable)
         app.openMeetingMore(.view)
         app.meetingActionButton("All video").tap()
-        XCTAssertFalse(empty.exists)
+        XCTAssertTrue(app.scrollViews["Video stream"].firstMatch.waitForExistence(timeout: 10))
         attachScreenshot(of: app, named: "Guest camera view restored")
 
         app.openMeetingMore(.view)
         app.meetingActionButton("Screen sharing only").tap()
-        XCTAssertTrue(empty.waitForExistence(timeout: 10))
+        XCTAssertTrue(identity.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.scrollViews["Video stream"].firstMatch.exists)
         print("GUEST_SHARE_TEST_AWAITING_RESTART")
-        XCTAssertTrue(sharing.waitForExistence(timeout: 60),
+        XCTAssertTrue(viewport.waitForExistence(timeout: 60),
                       "Restart the synthetic browser share while this test waits.")
-        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
-                                               object: empty)
-        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 10), .completed)
-        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         XCTAssertEqual(viewport.value as? String, "100%", "A new share must start fitted")
         attachScreenshot(of: app, named: "Guest screen share resumed")
     }
 
-    func testGuestScreenShareEmptyStateFitsAfterRotation() throws {
+    func testGuestScreenShareOnlyParticipantTilesFitAfterRotation() throws {
         guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
             throw XCTSkip("Provide a guest room with a camera participant and no live share.")
         }
@@ -749,24 +744,22 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
         app.openMeetingMore(.view)
         app.meetingActionButton("Screen sharing only").tap()
-        let empty = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@",
-            "No screen share is live.")).firstMatch
-        XCTAssertTrue(empty.waitForExistence(timeout: 15))
+        let identity = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "camera-off.")).firstMatch
+        XCTAssertTrue(identity.waitForExistence(timeout: 15))
         for orientation: UIDeviceOrientation in [.landscapeLeft, .portrait, .landscapeRight, .portrait] {
             XCUIDevice.shared.orientation = orientation
             Thread.sleep(forTimeInterval: 2)
             assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
                                                     "Musicians", "call.reactions", "Chat"])
-            XCTAssertTrue(empty.isHittable)
-            attachScreenshot(of: app, named: "Guest share-only empty \(orientation.rawValue)")
+            XCTAssertTrue(identity.isHittable)
+            attachScreenshot(of: app, named: "Guest share-only participants \(orientation.rawValue)")
         }
         app.openMeetingMore(.view)
         app.meetingActionButton("Audio only").tap()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Audio only"))
-            .firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(identity.isHittable)
         app.openMeetingMore(.view)
         app.meetingActionButton("All video").tap()
-        XCTAssertFalse(empty.exists)
+        XCTAssertTrue(app.scrollViews["Video stream"].firstMatch.waitForExistence(timeout: 10))
         attachScreenshot(of: app, named: "Guest video after audio-only")
     }
 

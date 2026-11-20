@@ -3174,3 +3174,4 @@
 "database requires a newer version of Rock’n’Roll" = "base de datos requiere una versión más reciente de Rock’n’Roll";
 "database is closed" = "la base de datos está cerrada";
 "task is no longer assigned to this profile" = "tarea ya no se asigna a este perfil";
+"%@ is sharing" = "%@ está compartiendo la pantalla";

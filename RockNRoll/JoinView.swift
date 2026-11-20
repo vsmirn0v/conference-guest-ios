@@ -50,14 +50,28 @@ struct JoinView: View {
     private var favorites: [RecentRoom] { history.rooms.filter(\.isStarred) }
     private var recent: [RecentRoom] { history.rooms.filter { !$0.isStarred } }
 
+    private func homeFold(in window: GeometryProxy) -> CallFold? {
+        if #available(iOS 27.1, *) {
+            return window.reservedRegions(kind: .division).lazy.compactMap {
+                CallFold(safe: CGRect(origin: .zero, size: window.size), division: $0.frame)
+            }.first
+        }
+        return nil
+    }
+
     var body: some View {
-        GeometryReader { window in
-          NavigationStack {
-            HStack(spacing: 0) {
-                let wide = window.size.width >= 820 && !textSize.isAccessibilitySize
+        NavigationStack {
+          GeometryReader { window in
+            let fold = homeFold(in: window)
+            let vertical = fold?.sideBySide == false
+            let wide = fold != nil || (window.size.width >= 620 && !textSize.isAccessibilitySize)
+            let gap = fold.map { $0.sideBySide ? $0.second.minX - $0.first.maxX : $0.second.minY - $0.first.maxY } ?? 0
+            let layout = vertical ? AnyLayout(VStackLayout(spacing: gap)) : AnyLayout(HStackLayout(spacing: gap))
+            let libraryWidth = vertical ? window.size.width : (fold?.first.width ?? min(320, window.size.width * 0.32))
+            layout {
                 if wide {
                     Form { library(wide: true) }
-                        .frame(width: min(320, window.size.width * 0.32))
+                        .frame(width: libraryWidth, height: vertical ? fold?.first.height : nil)
                         .scrollContentBackground(.hidden)
                         .background(Color(uiColor: .secondarySystemGroupedBackground))
                         .accessibilityIdentifier("home.library")
@@ -73,7 +87,7 @@ struct JoinView: View {
                     )
                     urgentSection
                     Section {
-                        joinPanel(width: window.size.width - (wide ? min(320, window.size.width * 0.32) : 0))
+                        joinPanel(width: window.size.width - (wide && !vertical ? libraryWidth + gap : 0))
                             .homeAnchor("join")
                             .background(HomeScrollReference(state: homeInteraction))
                     }
@@ -89,8 +103,10 @@ struct JoinView: View {
                 .scrollContentBackground(.hidden)
                 .background(Color(uiColor: .systemGroupedBackground))
                 .accessibilityIdentifier("home.main")
+                .frame(height: vertical ? fold?.second.height : nil)
                 .onPreferenceChange(HomeRowFrames.self) { homeInteraction.layoutChanged($0) }
             }
+          }
             .background(HomeInteractionProbe(state: homeInteraction))
             .navigationTitle("Rock’n’Roll")
             .navigationBarTitleDisplayMode(.inline)
@@ -309,7 +325,6 @@ struct JoinView: View {
                 }
                 Button(L("Cancel"), role: .cancel) { model.dismissPending() }
             }
-          }
         }
         .tint(linkAccent)
     }

@@ -106,6 +106,21 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let conversationHost = UIView()
     private var conversationWidth: NSLayoutConstraint?
     private var dockedConversation: ConversationPanelViewController?
+    private var dockedParticipants: UINavigationController?
+    private var hasDockedPanel: Bool { dockedConversation != nil || dockedParticipants != nil }
+    private var activeFold: CallFold? {
+        if #available(iOS 27.1, *) {
+            let safe = view.bounds.inset(by: view.safeAreaInsets).insetBy(dx: 8, dy: 4)
+            return view.reservedRegions(kind: .division).lazy.compactMap {
+                CallFold(safe: safe, division: $0.frame)
+            }.first
+        }
+        return nil
+    }
+    private var canDockPanel: Bool {
+        activeFold != nil || (view.bounds.inset(by: view.safeAreaInsets).width >= 680 &&
+            traitCollection.verticalSizeClass != .compact)
+    }
     private let microphone = AlignedCallButton(frame: .zero)
     private let camera = AlignedCallButton(frame: .zero)
     private let flipCamera = UIButton(type: .system)
@@ -301,6 +316,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     required init?(coder: NSCoder) { nil }
     deinit { stageVisibilityObservers.forEach(NotificationCenter.default.removeObserver) }
 
+    override func loadView() {
+        view = FoldAwareMeetingView()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         reminderHost.changed()
@@ -328,7 +347,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         focus.canHide = { [weak self] in
             guard let self else { return false }
-            return !self.isHeld && self.mediaStatus == nil && self.presentedViewController == nil && self.dockedConversation == nil
+            return !self.isHeld && self.mediaStatus == nil && self.presentedViewController == nil && !self.hasDockedPanel
         }
         view.insertSubview(streamScroll, at: 0)
         view.addSubview(layoutControls); view.addSubview(participantStrip)
@@ -429,10 +448,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             button.addAction(UIAction { [weak action] _ in action?.sendActions(for: .touchUpInside) }, for: .touchUpInside)
         }
         compactHeader.focus.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            if self.effectiveLayoutMode == .speaker && self.currentPrimaryKey.flatMap({ self.streamPinTargets[$0]?.isScreenShare }) == true { self.toggleShareScale() }
-            else { self.focus.hide() }
+            self?.focus.hide()
         }, for: .touchUpInside)
+        accessControls.scaleButton.addAction(UIAction { [weak self] _ in self?.toggleShareScale() }, for: .touchUpInside)
         compactHeader.details.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             var quickActions: [(String, () -> Void)] = []
@@ -477,13 +495,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let headerHeight = max(80, identityHeight + statusHeight + 8)
         let geometry = CallPresentationGeometry(bounds: view.bounds, insets: view.safeAreaInsets,
             headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: false,
-            largeText: large, allowsRail: dockedConversation == nil, floating: true)
+            largeText: large, allowsRail: !hasDockedPanel, floating: true, adaptiveHeader: true, fold: activeFold)
         toolbar.arrange(rail: geometry.rail, largeText: large)
         header.frame = geometry.header.insetBy(dx: 4, dy: 0)
         header.frame.size.height = max(0, geometry.header.height - statusHeight - 8)
         let gallery = effectiveLayoutMode == .grid && displayMode != .audioOnly
         let sharedKey = currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare == true ? $0 : nil }
+        let sharing = effectiveLayoutMode == .speaker && currentPrimaryTarget?.isScreenShare == true
         selectTextButton.isHidden = sharedKey == nil || effectiveLayoutMode != .speaker || focus.hidden || textCapture != nil
+        accessControls.scaleButton.isHidden = selectTextButton.isHidden || primaryZoom == nil
         accessControls.textButton = selectTextButton
         accessControls.capturedTextMode = textCapture != nil
         let accessWidth = MeetingAccessGeometry.availableAccessWidth(base: geometry, gallery: gallery)
@@ -501,13 +521,22 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         accessControls.update(MeetingViewState(layout: layoutMode, display: displayMode,
             manualFocus: pinnedStream != nil || browsedStream != nil, effectiveLayout: effectiveLayoutMode))
         var stage = access.stage
+        let foldedPanel = geometry.fold.map { fold in
+            let top = fold.sideBySide ? geometry.header.maxY + 6 : fold.second.minY + 50
+            return CGRect(x: fold.second.minX, y: top, width: fold.second.width,
+                height: max(0, access.access.minY - top - 8))
+        }
 
         var canvas = view.bounds
-        if dockedConversation != nil {
-            let width = view.bounds.width >= 700 ? min(400, max(320, view.bounds.width * 0.36)) : stage.width
-            conversationHost.frame = CGRect(x: stage.maxX - width, y: stage.minY, width: width, height: stage.height)
-            stage.size.width = max(0, stage.width - width - 8)
-            canvas.size.width = max(0, conversationHost.frame.minX - canvas.minX - 8)
+        if hasDockedPanel {
+            if let foldedPanel {
+                conversationHost.frame = foldedPanel
+            } else {
+                let width = canDockPanel ? min(400, stage.width * 0.44) : stage.width
+                conversationHost.frame = CGRect(x: stage.maxX - width, y: stage.minY, width: width, height: stage.height)
+                stage.size.width = max(0, stage.width - width - 8)
+                canvas.size.width = max(0, conversationHost.frame.minX - canvas.minX - 8)
+            }
         }
         textCapture?.frame = canvas
         textCapture?.layoutChrome(status: geometry.header.offsetBy(dx: -canvas.minX, dy: -canvas.minY),
@@ -516,16 +545,18 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         for entry in videoTiles.values where entry.zoom.window != nil { rememberZoom(entry.zoom) }
         restoringZoom = true
         let layoutAvailable = displayedSnapshot?.remoteParticipants.isEmpty == false && displayMode != .audioOnly
-        let sharing = effectiveLayoutMode == .speaker && currentPrimaryTarget?.isScreenShare == true
         let stripBottom = max(stage.minY, stage.maxY - 48)
         var imageFit = stage
         sourceSelector.isHidden = !sharing || orderedStreams.filter { $0.isScreenShare }.count <= 1 || focus.hidden
         sourceSelector.frame = CGRect(x: stage.minX + 4, y: stage.minY + 4,
             width: min(280, max(0, stage.width - 8)), height: 44)
-        if sharing { imageFit = canvas }
         let canShowStrip = stage.height >= 240
         participantStrip.isHidden = effectiveLayoutMode == .grid || !layoutAvailable || focus.hidden || sharing || !canShowStrip
-        if effectiveLayoutMode == .speaker && layoutAvailable && !sharing && canShowStrip {
+        if let foldedPanel, !hasDockedPanel, layoutAvailable, !focus.hidden {
+            participantStrip.isHidden = false
+            participantStrip.vertical = geometry.fold?.sideBySide == true
+            participantStrip.frame = foldedPanel
+        } else if effectiveLayoutMode == .speaker && layoutAvailable && !sharing && canShowStrip && geometry.fold == nil {
             participantStrip.vertical = stage.width >= 800
             if participantStrip.vertical {
                 participantStrip.frame = CGRect(x: stage.maxX - 172, y: stage.minY,
@@ -539,7 +570,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             }
         }
         let gridStage = effectiveLayoutMode == .grid ? imageFit : stage
-        streamScroll.frame = effectiveLayoutMode == .grid ? gridStage : canvas
+        let viewport = effectiveLayoutMode == .grid ? gridStage : (sharing || geometry.fold != nil ? stage : canvas)
+        streamScroll.frame = viewport
         tiles.arrange(size: streamScroll.bounds.size, mode: effectiveLayoutMode)
         if effectiveLayoutMode != .grid { restoreGalleryPage = true }
         if effectiveLayoutMode == .grid, let pagination = tiles.pagination {
@@ -569,7 +601,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         var resized: [String] = []
         for (key, var entry) in videoTiles where entry.tile.superview != nil {
             let fitted = effectiveLayoutMode == .speaker
-                ? imageFit.offsetBy(dx: -canvas.minX, dy: -canvas.minY) : CGRect(origin: .zero, size: entry.zoom.bounds.size)
+                ? imageFit.offsetBy(dx: -viewport.minX, dy: -viewport.minY) : CGRect(origin: .zero, size: entry.zoom.bounds.size)
             if entry.fittedFrame != fitted || entry.viewportSize != entry.zoom.bounds.size { resized.append(key) }
             let values = [fitted.minX, fitted.minY, fitted.width, fitted.height]
             for (constraint, value) in zip(entry.fitting, values) { constraint.constant = value }
@@ -598,6 +630,17 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         header.isHidden = focus.hidden || geometry.compactHeader; toolbar.isHidden = focus.hidden
         meetingStatusButton.accessibilityLabel = [titleLabel.text, countLabel.text, routeLabel.text].compactMap { $0 }.joined(separator: ", ")
         compactHeader.frame = geometry.header
+        if let fold = geometry.fold, !fold.sideBySide {
+            compactHeader.actionRowOffset = fold.second.minY - geometry.header.minY
+            compactHeader.frame.size.height = compactHeader.actionRowOffset + 44
+        } else {
+            compactHeader.actionRowOffset = 0
+        }
+        compactHeader.division = geometry.fold.flatMap { fold in
+            guard fold.sideBySide else { return nil }
+            return CGRect(x: fold.first.maxX - geometry.header.minX, y: 0,
+                width: fold.second.minX - fold.first.maxX, height: geometry.header.height)
+        }
         compactHeader.isHidden = focus.hidden || !geometry.compactHeader
         let pin = currentPrimaryKey.flatMap { videoTiles[$0]?.pin }
         let sourceName = (primaryName ?? titleLabel.text ?? L("Jam")) +
@@ -609,8 +652,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             chatValue: chat.unreadCount > 0 ? conversationButton.accessibilityLabel : nil,
             chatCount: chat.unreadCount, missedCount: store.timeline.unreadCount,
             status: isHeld || mediaStatus != nil ? statusLabel.text : nil,
-            speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil, chatAvailable: true,
-            meetingName: titleLabel.text)
+            speaking: activeSpeaker.current, focusAvailable: false, chatAvailable: true,
+            meetingName: titleLabel.text, participantCount: displayedSnapshot?.participants.count,
+            presenterName: sharing ? primaryName : nil)
         // Layout and receive filtering have one stable, visible entry in the dock.
         compactHeader.setLayout(mode: effectiveLayoutMode, available: false, choose: { _ in })
         syncCompactWorkspaceControls()
@@ -679,7 +723,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             }
             entry.zoom.accessibilityCustomActions = accessible.isEmpty ? nil : accessible
             entry.badge.alpha = focus.hidden || effectiveLayoutMode == .speaker ? 0 : 1
-            entry.pin.alpha = focus.hidden || (geometry.compactHeader && entry.zoom === primaryZoom && effectiveLayoutMode != .grid) ? 0 : 1
+            entry.pin.alpha = focus.hidden ? 0 : 1
             entry.pin.isUserInteractionEnabled = entry.pin.alpha > 0
             entry.pin.accessibilityElementsHidden = entry.pin.alpha == 0
         }
@@ -697,7 +741,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         if let textCapture {
             view.bringSubviewToFront(textCapture)
             view.bringSubviewToFront(toolbar)
-            if dockedConversation != nil { view.bringSubviewToFront(conversationHost) }
+            if hasDockedPanel { view.bringSubviewToFront(conversationHost) }
             header.isHidden = true; compactHeader.isHidden = true; compactTalkHereButton.isHidden = true; accessControls.isHidden = true
         }
     }
@@ -718,7 +762,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
     private func browse(_ step: Int) {
         guard let snapshot = displayedSnapshot, orderedStreams.count > 1 else { return }
-        let selected = pinnedStream ?? browsedStream ?? currentPrimaryKey.flatMap { streamPinTargets[$0] }
+        let selected = pinnedStream ?? browsedStream ?? currentPrimaryTarget
         let index = orderedStreams.firstIndex { $0 == selected } ?? 0
         browsedStream = orderedStreams[(index + step + orderedStreams.count) % orderedStreams.count]
         cameraFocusShare = nil
@@ -991,7 +1035,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.participantsPanel = panel
             panel.update(statuses, pinnedKey: self.pinnedStreamKey)
             let navigation = UINavigationController(rootViewController: panel)
-            self.presentCallSheet(navigation)
+            if self.canDockPanel {
+                self.closeDockedPanel()
+                panel.onClose = { [weak self] in self?.closeDockedPanel() }
+                self.dockedParticipants = navigation
+                self.dockPanel(navigation)
+            } else {
+                self.presentCallSheet(navigation)
+            }
         }, for: .touchUpInside)
         leave.addAction(UIAction { [weak self] _ in self?.onLeave?() }, for: .touchUpInside)
         workspace.openReactions = { [weak self] anchor, visibility in
@@ -1136,24 +1187,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private func openConversation(_ requestedMode: ConversationMode) {
         let selected: ConversationMode = (!supportsChat && requestedMode == .chat) ? .liveText : requestedMode
         guard presentedViewController == nil else { return }
-        if view.bounds.width >= 700 {
+        if canDockPanel {
             if dockedConversation != nil { return }
+            closeDockedPanel()
             let panel = ConversationPanelViewController(catchUp: store, chat: chat,
                 initialMode: selected, call: workspace, docked: true, chatAvailable: supportsChat)
-            panel.onClose = { [weak self] in self?.closeDockedConversation() }
-            addChild(panel)
-            conversationHost.addSubview(panel.view)
-            panel.view.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                panel.view.leadingAnchor.constraint(equalTo: conversationHost.leadingAnchor),
-                panel.view.trailingAnchor.constraint(equalTo: conversationHost.trailingAnchor),
-                panel.view.topAnchor.constraint(equalTo: conversationHost.topAnchor),
-                panel.view.bottomAnchor.constraint(equalTo: conversationHost.bottomAnchor)
-            ])
-            panel.didMove(toParent: self)
+            panel.onClose = { [weak self] in self?.closeDockedPanel() }
             dockedConversation = panel
-            conversationHost.isHidden = false
-            view.setNeedsLayout()
+            dockPanel(panel)
             return
         }
         present(ConversationPanelViewController(catchUp: store, chat: chat,
@@ -1161,12 +1202,29 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 animated: true)
     }
 
-    private func closeDockedConversation() {
-        guard let panel = dockedConversation else { return }
+    private func dockPanel(_ panel: UIViewController) {
+        focus.show()
+        addChild(panel)
+        conversationHost.addSubview(panel.view)
+        panel.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            panel.view.leadingAnchor.constraint(equalTo: conversationHost.leadingAnchor),
+            panel.view.trailingAnchor.constraint(equalTo: conversationHost.trailingAnchor),
+            panel.view.topAnchor.constraint(equalTo: conversationHost.topAnchor),
+            panel.view.bottomAnchor.constraint(equalTo: conversationHost.bottomAnchor)
+        ])
+        panel.didMove(toParent: self)
+        conversationHost.isHidden = false
+        view.setNeedsLayout()
+    }
+
+    private func closeDockedPanel() {
+        guard let panel = (dockedConversation as UIViewController?) ?? dockedParticipants else { return }
         panel.willMove(toParent: nil)
         panel.view.removeFromSuperview()
         panel.removeFromParent()
         dockedConversation = nil
+        dockedParticipants = nil
         conversationWidth?.constant = 0
         conversationHost.isHidden = true
         view.setNeedsLayout()
@@ -1184,7 +1242,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let content = currentPrimaryKey.flatMap { videoTiles[$0]?.video.displaySize } ?? .zero
         let fill = SharedScreenScale.fill(content: content, viewport: zoom.bounds.size)
         if let fill { zoom.maximumZoomScale = max(5, zoom.zoomScale, fill) }
-        SharedScreenScale.configure(compactHeader.focus, zoomed: zoom.zoomScale > 1.01,
+        SharedScreenScale.configure(accessControls.scaleButton, zoomed: zoom.zoomScale > 1.01,
             available: zoom.zoomScale > 1.01 || (fill ?? 1) > 1.01)
     }
     private func toggleShareScale() {
@@ -1376,10 +1434,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         var streams: [(CallParticipant, CallVideoStream, CallVideoSource)] = []
         orderedStreams = []
         for participant in participants {
-            if displayMode != .screenShares { orderedStreams.append(PinnedStream(participantID: participant.id, isScreenShare: false)) }
-            for publication in participant.videoTracks where !publication.isMuted &&
-                !(participant.isLocal && publication.source == .screenShareVideo) && displayMode != .audioOnly &&
-                displayMode == .all && publication.source != .screenShareVideo && participant.cameraOn {
+            orderedStreams.append(PinnedStream(participantID: participant.id, isScreenShare: false))
+            for publication in participant.videoTracks where displayMode == .all && participant.cameraOn &&
+                !publication.isMuted && publication.source != .screenShareVideo {
                 streams.append((participant, publication, publication.track))
             }
             if !participant.isLocal && participant.screenShareOn && displayMode != .audioOnly {
@@ -1400,7 +1457,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 }
             }
         }
-        if displayMode == .screenShares, pinnedStream?.isScreenShare == false { pinnedStream = nil; cameraFocusShare = nil }
         if let browsedStream, !orderedStreams.contains(browsedStream) { self.browsedStream = nil }
         let activeKeys = Set(streams.map { $0.1.id })
         videoTiles = videoTiles.filter { activeKeys.contains($0.key) }
@@ -1466,9 +1522,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 placeholder.accessibilityIdentifier = currentPrimaryTarget.map(streamID)
                 tiles.addArrangedSubview(placeholder)
             }
-            else if displayMode == .all, let owner = participants.first(where: { $0.id == requested?.participantID }) ??
+            else if let owner = participants.first(where: { $0.id == requested?.participantID }) ??
                 participants.first(where: { $0.id == activeSpeaker.current?.id }) ?? snapshot.remoteParticipants.first {
-                primaryName = owner.name; tiles.addArrangedSubview(audioTile(for: owner))
+                currentPrimaryTarget = PinnedStream(participantID: owner.id, isScreenShare: false)
+                primaryName = owner.name
+                tiles.addArrangedSubview(audioTile(for: owner))
             }
         } else if !snapshot.remoteParticipants.isEmpty || !streams.isEmpty {
             for target in orderedStreams {
@@ -1488,7 +1546,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 status.numberOfLines = 0
                 tiles.addArrangedSubview(status)
             }
-        } else if displayMode == .screenShares && streams.isEmpty && currentPrimaryTarget?.isScreenShare != true {
+        } else if displayMode == .screenShares && tiles.arrangedSubviews.isEmpty {
             let empty = UILabel(); empty.text = L("No screen share is live. Audio continues.")
             empty.textColor = .lightGray; empty.textAlignment = .center; empty.numberOfLines = 0
             tiles.addArrangedSubview(empty)
@@ -1747,6 +1805,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     func setDisplayMode(_ mode: ConferenceDisplayMode) {
+        if mode == .screenShares && mode != displayMode {
+            if pinnedStream?.isScreenShare == false { pinnedStream = nil }
+            if browsedStream?.isScreenShare == false { browsedStream = nil }
+            cameraFocusShare = nil
+        }
         displayMode = mode
         if let snapshot = displayedSnapshot { render(snapshot: snapshot) }
         onDisplayMode?(mode)
@@ -2196,7 +2259,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             assistantLabel: label,
             assistantAlertCount: currentAssistantAlertCount,
             switcherAvailable: switcherAvailable,
-            activeMeetingCount: activeCount
+            activeMeetingCount: activeCount,
+            assistantModeTitle: currentAssistantMode.shortTitle
         )
     }
 
@@ -2424,5 +2488,20 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         zoom.contentOffset = CGPoint(
             x: min(max(0, center.x - zoom.bounds.width / 2), max(0, zoom.contentSize.width - zoom.bounds.width)),
             y: min(max(0, center.y - zoom.bounds.height / 2), max(0, zoom.contentSize.height - zoom.bounds.height)))
+    }
+}
+
+private final class FoldAwareMeetingView: UIView {
+    private var divisions: [CGRect] = []
+
+    override func updateConstraints() {
+        if #available(iOS 27.1, *) {
+            let frames = reservedRegions(kind: .division).map(\.frame)
+            if frames != divisions {
+                divisions = frames
+                setNeedsLayout()
+            }
+        }
+        super.updateConstraints()
     }
 }

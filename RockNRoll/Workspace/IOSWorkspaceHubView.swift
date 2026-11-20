@@ -28,7 +28,7 @@ struct IOSWorkspaceHubView: View {
 
     @State private var selectedTab: IOSWorkspaceHubTab
     @State private var selectedSessionID: UUID?
-    @State private var pushedSessionID: UUID?
+    @State private var compactColumn: NavigationSplitViewColumn = .sidebar
     @State private var showingSettings = false
     @State private var renamingSession: IOSMeetingSessionItem?
     @State private var renameDraft = ""
@@ -49,32 +49,19 @@ struct IOSWorkspaceHubView: View {
     }
 
     var body: some View {
-        Group {
-            if sizeClass == .regular && selectedTab == .history {
-                NavigationSplitView {
-                    hubContent
-                        .navigationTitle(L("Assistant"))
-                        .toolbar { hubToolbar }
-                } detail: {
-                    if let selectedID = selectedSessionID ?? workspace.sessions.first?.id {
-                        IOSMeetingDetailView(workspace: workspace, sync: sync, sessionID: selectedID)
-                    } else {
-                        ContentUnavailableView(
-                            L("No Meetings Yet"),
-                            systemImage: "note.text",
-                            description: Text(L("Recorded meetings, summaries, notes, and tasks synced from your Mac and iPhone appear here."))
-                        )
-                    }
-                }
+        NavigationSplitView(preferredCompactColumn: $compactColumn) {
+            hubContent
+                .navigationTitle(L("Assistant"))
+                .toolbar { hubToolbar }
+        } detail: {
+            if let selectedID = selectedSessionID ?? workspace.sessions.first?.id {
+                IOSMeetingDetailView(workspace: workspace, sync: sync, sessionID: selectedID)
             } else {
-                NavigationStack {
-                    hubContent
-                        .navigationTitle(L("Assistant"))
-                        .toolbar { hubToolbar }
-                        .navigationDestination(item: $pushedSessionID) { sessionID in
-                            IOSMeetingDetailView(workspace: workspace, sync: sync, sessionID: sessionID)
-                        }
-                }
+                ContentUnavailableView(
+                    L("No Meetings Yet"),
+                    systemImage: "note.text",
+                    description: Text(L("Recorded meetings, summaries, notes, and tasks synced from your Mac and iPhone appear here."))
+                )
             }
         }
         .sheet(isPresented: $showingSettings) {
@@ -343,11 +330,7 @@ struct IOSWorkspaceHubView: View {
     }
 
     private func openMeeting(_ sessionID: UUID) {
-        if sizeClass == .regular && selectedTab == .history {
-            selectedSessionID = sessionID
-        } else {
-            selectedTab = .history
-            pushedSessionID = sessionID
-        }
+        selectedSessionID = sessionID
+        compactColumn = .detail
     }
 }

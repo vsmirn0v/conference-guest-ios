@@ -3174,3 +3174,4 @@
 "database requires a newer version of Rock’n’Roll" = "डाटाबेस के लिए Rock’n’Roll का नया संस्करण चाहिए";
 "database is closed" = "डेटाबेस बंद";
 "task is no longer assigned to this profile" = "इस प्रोफ़ाइल को अब कार्य आबंटित नहीं है";
+"%@ is sharing" = "%@ स्क्रीन शेयर कर रहे हैं";

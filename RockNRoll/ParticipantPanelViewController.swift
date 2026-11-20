@@ -19,6 +19,7 @@ struct ParticipantVolumeControls {
 
 final class ParticipantPanelViewController: UIViewController {
     var onDismiss: (() -> Void)?
+    var onClose: (() -> Void)?
     var onPin: ((String?) -> Void)?
     var onMoreControls: (() -> Void)?
     var volumeControls: ParticipantVolumeControls?
@@ -245,5 +246,8 @@ final class ParticipantPanelViewController: UIViewController {
         return button
     }
 
-    @objc private func close() { dismiss(animated: true) }
+    @objc private func close() {
+        if let onClose { onClose() }
+        else { dismiss(animated: true) }
+    }
 }

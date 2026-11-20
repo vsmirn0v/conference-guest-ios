@@ -56,6 +56,7 @@ final class MeetingPanelOwner {
 final class MeetingAccessControls: UIView {
     let viewButton = UIButton(type: .system)
     let moreButton = UIButton(type: .system)
+    let scaleButton = UIButton(type: .system)
     var textButton: UIButton? {
         didSet {
             guard oldValue !== textButton else { return }
@@ -66,6 +67,7 @@ final class MeetingAccessControls: UIView {
     }
     var capturedTextMode = false
     private var textWidth: CGFloat { textButton?.isHidden == false ? 44 : 0 }
+    private var scaleWidth: CGFloat { scaleButton.isHidden ? 0 : 44 }
     private let viewSizingButton = UIButton(type: .system)
     private var measuredViewWidth: CGFloat?
     private let reminderIndicator = UIView()
@@ -104,7 +106,8 @@ final class MeetingAccessControls: UIView {
     }
     func fittingSize(availableWidth: CGFloat) -> CGSize {
         if capturedTextMode { return CGSize(width: 264, height: 48) }
-        return CGSize(width: min(max(88 + textWidth, availableWidth), viewWidth + 44 + textWidth), height: 48)
+        let extras = textWidth + scaleWidth
+        return CGSize(width: min(max(88 + extras, availableWidth), viewWidth + 44 + extras), height: 48)
     }
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -112,7 +115,7 @@ final class MeetingAccessControls: UIView {
         addSubview(surface)
         divider.backgroundColor = .separator
         surface.contentView.addSubview(divider)
-        for button in [viewButton, moreButton, viewSizingButton] {
+        for button in [viewButton, moreButton, scaleButton, viewSizingButton] {
             button.configuration = .plain()
             button.configuration?.baseForegroundColor = .label
             button.configuration?.imagePadding = 6
@@ -128,6 +131,7 @@ final class MeetingAccessControls: UIView {
             surface.contentView.addSubview(button)
         }
         viewSizingButton.isHidden = true
+        scaleButton.isHidden = true
         viewSizingButton.isUserInteractionEnabled = false
         viewSizingButton.isAccessibilityElement = false
         viewButton.accessibilityIdentifier = "call.view"
@@ -161,7 +165,9 @@ final class MeetingAccessControls: UIView {
         super.layoutSubviews()
         surface.frame = bounds; surface.layoutIfNeeded()
         textButton?.frame = CGRect(x: 0, y: 0, width: textWidth, height: bounds.height)
-        viewButton.frame = CGRect(x: textWidth, y: 0, width: max(44, bounds.width - 44 - textWidth), height: bounds.height)
+        scaleButton.frame = CGRect(x: textWidth, y: 0, width: scaleWidth, height: bounds.height)
+        let leading = textWidth + scaleWidth
+        viewButton.frame = CGRect(x: leading, y: 0, width: max(44, bounds.width - 44 - leading), height: bounds.height)
         moreButton.frame = CGRect(x: viewButton.frame.maxX, y: 0, width: 44, height: bounds.height)
         let title = viewButton.bounds.width >= viewWidth ? L("View") + " ▾" : nil
         if viewButton.configuration?.title != title { viewButton.configuration?.title = title }
@@ -185,8 +191,17 @@ struct MeetingAccessGeometry {
     init(base: CallPresentationGeometry, bounds: CGRect, insets: UIEdgeInsets, accessSize: CGSize, largeText: Bool,
          gallery: Bool = false) {
         let safe = bounds.inset(by: insets).insetBy(dx: 8, dy: 4)
-        inline = !gallery && !base.rail && !largeText && accessSize.height <= 48 && safe.width >= 360 + accessSize.width + 8
-        if gallery {
+        inline = base.fold == nil && !gallery && !base.rail && !largeText && accessSize.height <= 48 && safe.width >= 360 + accessSize.width + 8
+        if let fold = base.fold {
+            toolbar = base.toolbar
+            let width = min(accessSize.width, fold.second.width)
+            access = CGRect(x: fold.second.maxX - width, y: toolbar.minY - accessSize.height - 8,
+                width: width, height: accessSize.height)
+            pagination = CGRect(x: base.stage.minX, y: base.stage.maxY - accessSize.height,
+                width: base.stage.width, height: accessSize.height)
+            stage = gallery ? CGRect(x: base.stage.minX, y: base.stage.minY, width: base.stage.width,
+                height: max(0, pagination.minY - base.stage.minY - 8)) : base.stage
+        } else if gallery {
             toolbar = base.toolbar
             let y = base.rail ? safe.maxY - accessSize.height : toolbar.minY - accessSize.height - 8
             access = CGRect(x: base.stage.maxX - accessSize.width, y: y, width: accessSize.width, height: accessSize.height)

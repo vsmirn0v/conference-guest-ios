@@ -1,0 +1,3256 @@
+<!doctype html>
+<html lang="en" data-visualize-standalone>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/charts/; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>iPhone Duo · Rock’n’Roll design review</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+
+</head>
+<body>
+<iframe id="codex-visualization" sandbox="allow-scripts" referrerpolicy="no-referrer" title="iPhone Duo · Rock’n’Roll design review" data-srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot; data-visualize-standalone&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/charts/; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;iPhone Duo · Rock’n’Roll design review&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 16px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: light-dark(rgb(51 156 255), rgb(131 195 255));
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans:
+    -apple-system-body, ui-sans-serif, -apple-system, system-ui, &quot;Segoe UI&quot;,
+    Helvetica, &quot;Apple Color Emoji&quot;, Arial, sans-serif, &quot;Segoe UI Emoji&quot;,
+    &quot;Segoe UI Symbol&quot;;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --icon-size: 16px;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --corner-shape: round;
+  --radius: var(--border-radius-lg, 8px);
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: calc(var(--radius) * 0.75);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 2);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: var(--visualize-paint-gutter, 0px);
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans) !important;
+  -webkit-font-smoothing: antialiased;
+  font-size: var(--font-size-base);
+  line-height: calc(var(--font-size-base) * 1.625);
+  font-weight: var(--font-weight-normal);
+}
+
+.cursor-interaction {
+  cursor: var(--cursor-interaction, pointer);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: var(--cursor-interaction, pointer);
+  text-decoration: none;
+  text-underline-offset: 2px;
+  font-weight: inherit;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+li,
+.table {
+  font-family: var(--font-sans);
+}
+
+h1 {
+  font-size: calc(var(--font-size-base) * 1.5);
+  line-height: 1.3333333333;
+}
+
+h2 {
+  font-size: calc(var(--font-size-base) * 1.25);
+  line-height: 1.4;
+}
+h3 {
+  font-size: calc(var(--font-size-base) * 1.125);
+  line-height: 1.5555555556;
+}
+h4 {
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+h5,
+h6 {
+  font-size: var(--font-size-base);
+  line-height: calc(var(--font-size-base) * 1.625);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+b,
+strong,
+th {
+  font-weight: 600;
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: var(--corner-shape);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+pre,
+pre code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: calc(var(--font-size-base) * 0.875);
+  line-height: calc(var(--font-size-base) * 1.625);
+  font-family: var(--font-sans);
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+.table :is(th, td):not(:last-child) {
+  padding-inline-end: calc(var(--font-size-base) * 1.5);
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead :is(th, td) {
+  border-bottom-color: var(--border-strong, var(--input));
+  padding-block: calc(var(--font-size-base) / 2);
+  line-height: var(--font-size-base);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+.table tbody :is(th, td) {
+  padding-block: calc(var(--font-size-base) * 0.625);
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 8px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: var(--corner-shape);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+.widget {
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  box-shadow: 0 0 0 0.5px var(--border-strong, var(--border));
+  color: var(--foreground);
+  background: var(--background);
+}
+
+#widget &gt; :not(.card, .widget, .progress) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  border: 1px solid var(--border);
+  corner-shape: var(--corner-shape);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+  font-family: var(--font-sans);
+  padding: 5px 12px;
+  border-color: color-mix(
+    in oklab,
+    light-dark(var(--primary-foreground), var(--foreground)) 5%,
+    transparent
+  );
+  border-radius: var(--radius-2xl);
+  color: light-dark(var(--primary-foreground), var(--foreground));
+  background: light-dark(var(--foreground), var(--popover));
+  box-shadow: 0 8px 18px rgb(15 23 42 / 20%);
+  letter-spacing: -0.15px;
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+hr {
+  width: 100%;
+  height: 1px;
+  margin-block: 6px;
+  border: 0;
+  background: var(--border);
+}
+
+.nav {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.progress {
+  display: flex;
+  height: 8px;
+  margin-block: calc((var(--line-height-normal, 1.5em) - 8px) / 2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+
+.progress-bar:only-child {
+  border-radius: var(--radius-full);
+}
+
+.progress-bar {
+  height: 100%;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--viz-series-1);
+}
+
+.viz-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: color-mix(in srgb, var(--foreground) 40%, var(--muted-foreground));
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+  font-family: var(--font-sans);
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: var(--font-weight-normal);
+  line-height: 1;
+}
+
+small,
+.text-small {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.nav-link,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+/* Match inline alignment without overriding a containing flex or grid layout. */
+.btn,
+.nav-link,
+.form-control,
+.form-select,
+.form-range,
+.form-check {
+  vertical-align: middle;
+}
+
+.btn,
+.nav-link {
+  --btn-size: calc(12px + 2 * var(--control-spacing, 12px));
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  corner-shape: var(--corner-shape);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: inherit;
+  font-family: var(--font-sans);
+  height: fit-content;
+  min-height: var(--btn-size);
+  padding-inline: var(--control-spacing, 12px);
+  border-color: transparent;
+  border-radius: var(--radius-full);
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: var(--font-weight-normal);
+  line-height: 18px;
+}
+
+.btn {
+  border-color: var(--border);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+}
+
+/* Codex Button size=&quot;compact&quot;; appearance stays with the button variant. */
+.btn-sm {
+  --btn-size: 24px;
+  padding-inline: 8px;
+  font-size: calc(var(--font-size-base) * 12 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 12 / 16), 1px);
+  line-height: 16px;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: var(--cursor-interaction, pointer);
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: light-dark(
+    color-mix(in srgb, var(--foreground) 5.5%, transparent),
+    color-mix(in srgb, var(--foreground) 8%, transparent)
+  );
+}
+
+.nav-link:not(:disabled):not([aria-disabled=&quot;true&quot;]):hover {
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.btn-primary {
+  border-color: var(--border);
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: border-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: border-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--muted-foreground);
+  background: light-dark(
+    color-mix(in srgb, var(--foreground) 5.5%, transparent),
+    color-mix(in srgb, var(--foreground) 8%, transparent)
+  );
+}
+
+.nav-pills .nav-link {
+  min-width: 0;
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.nav-justified .nav-link {
+  flex: 1 1 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.nav-pills .nav-link.active {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+/* Shared preview chrome; product styles stay inside each variant. */
+.viz-dotted-background {
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--foreground) 14%, transparent) 0.8px,
+    transparent 0.8px
+  );
+  background-position: center;
+  background-size: 16px 16px;
+}
+
+.viz-carousel {
+  position: relative;
+  min-width: 0;
+}
+
+.viz-carousel:has(&gt; .viz-carousel-controls) {
+  min-height: calc(60px + var(--viz-carousel-picker-height, 0px));
+  padding-bottom: 60px;
+}
+
+.viz-carousel &gt; [data-variant][hidden] {
+  display: none !important;
+}
+
+.viz-carousel &gt; [data-variant] {
+  isolation: isolate;
+}
+
+.viz-carousel-controls {
+  --viz-carousel-hover: light-dark(
+    color-mix(in srgb, var(--foreground) 5.4%, transparent),
+    color-mix(in srgb, var(--foreground) 7.8%, transparent)
+  );
+  position: absolute;
+  z-index: 2;
+  bottom: 8px;
+  left: 50%;
+  display: flex;
+  width: max-content;
+  /* Leave room for the host&#x27;s design-controls launcher at the trailing edge. */
+  max-width: calc(100% - 96px);
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-sans);
+  /* Match the settings dropdown chrome independently of the content font size. */
+  font-size: 13px;
+  font-weight: var(--font-weight-normal);
+  line-height: 18px;
+  transform: translateX(-50%);
+  user-select: none;
+}
+
+/* Keep authored mockup button styles out of the shared carousel chrome. */
+.viz-carousel-controls button,
+.viz-carousel-picker &gt; summary {
+  display: flex !important;
+  height: auto !important;
+  min-height: 30px;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px;
+  padding: 0 6px !important;
+  -webkit-app-region: no-drag;
+  border: 0 !important;
+  border-radius: 14px !important;
+  color: inherit !important;
+  background: transparent !important;
+  font: inherit !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.viz-carousel-controls &gt; button,
+.viz-carousel-picker &gt; summary {
+  position: relative;
+  isolation: isolate;
+}
+
+.viz-carousel-controls &gt; button {
+  --icon-size: 16px;
+  width: 30px !important;
+  padding: 0 !important;
+}
+
+.viz-carousel-picker &gt; summary {
+  padding-inline: 12px !important;
+}
+
+.viz-carousel-controls .viz-carousel-caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin: 0;
+  color: inherit;
+  transform: rotate(180deg);
+}
+
+.viz-carousel-controls &gt; button &gt; svg,
+.viz-carousel-controls .viz-carousel-caret,
+.viz-carousel-count {
+  opacity: 0.5;
+}
+
+.viz-carousel-controls &gt; button::before,
+.viz-carousel-picker &gt; summary::before {
+  position: absolute;
+  z-index: -1;
+  inset: 3px;
+  border-radius: 12px;
+  content: &quot;&quot;;
+  pointer-events: none;
+}
+
+.viz-carousel-controls &gt; button:hover::before,
+.viz-carousel-picker &gt; summary:hover::before {
+  background: var(--viz-carousel-hover);
+}
+
+.viz-carousel-controls &gt; button,
+.viz-carousel-controls [data-lucide],
+.viz-carousel-controls .lucide {
+  flex-shrink: 0;
+}
+
+.viz-carousel-picker {
+  min-width: 0;
+}
+
+.viz-carousel-picker &gt; summary {
+  min-width: 0;
+  list-style: none;
+}
+
+.viz-carousel-picker &gt; summary::-webkit-details-marker {
+  display: none;
+}
+
+.viz-carousel-count {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.viz-carousel-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viz-carousel-options {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  max-height: 240px;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  box-shadow: 0 4px 12px light-dark(rgb(0 0 0 / 6%), rgb(0 0 0 / 25%));
+}
+
+.viz-carousel-options &gt; button {
+  border-radius: max(0px, calc(var(--radius-lg) - 5px)) !important;
+  width: 100% !important;
+  min-height: 28px;
+  justify-content: flex-start !important;
+  padding: 4px 8px !important;
+  font-size: var(--font-size-small) !important;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.viz-carousel-options &gt; [aria-current=&quot;true&quot;],
+.viz-carousel-options &gt; button:hover {
+  background: var(--viz-carousel-hover) !important;
+}
+
+.btn:disabled,
+.nav-link:disabled,
+.nav-link[aria-disabled=&quot;true&quot;] {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  height: calc(12px + 2 * var(--control-spacing, 12px));
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  padding-inline: calc(4px + var(--control-spacing, 12px) / 2);
+  border-color: var(--input);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--popover) 96%, transparent);
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: var(--font-weight-normal);
+  line-height: 1.4285714286;
+}
+.form-control:is(
+  [type=&quot;file&quot;],
+  [type=&quot;date&quot;],
+  [type=&quot;datetime-local&quot;],
+  [type=&quot;month&quot;],
+  [type=&quot;week&quot;],
+  [type=&quot;color&quot;]
+) {
+  height: calc(12px + 2 * var(--control-spacing, 12px));
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  line-height: 18px;
+}
+.form-control:is(
+  [type=&quot;date&quot;],
+  [type=&quot;datetime-local&quot;],
+  [type=&quot;month&quot;],
+  [type=&quot;week&quot;]
+) {
+  padding-inline: var(--control-spacing, 12px);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+  padding: 0;
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+  min-height: calc(10px + 2 * var(--control-spacing, 12px));
+  padding-inline: var(--control-spacing, 12px);
+  margin-inline-end: var(--control-spacing, 12px);
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: calc(12px + 2 * var(--control-spacing, 12px));
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: var(--corner-shape);
+}
+
+textarea.form-control {
+  height: auto;
+  resize: vertical;
+  min-height: 96px;
+  padding: 8px 10px;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: none;
+}
+.form-control:disabled {
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+  opacity: 1;
+}
+.form-control[aria-invalid=&quot;true&quot;] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 20%, transparent);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: fit-content;
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  margin: 0;
+  /* The secondary icon role is 14px at compact density and 16px at web density. */
+  --icon-size: calc(10px + var(--control-spacing, 12px) / 2);
+  /* Settings dropdowns retain a 12px inset and a 4px text-to-chevron gap. */
+  padding: 0 calc(16px + var(--icon-size)) 0 12px;
+  outline: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 0.6px),
+      var(--muted-foreground) calc(50% - 0.6px) calc(50% + 0.6px),
+      transparent calc(50% + 0.6px)
+    ),
+    linear-gradient(
+      135deg,
+      transparent calc(50% - 0.6px),
+      var(--muted-foreground) calc(50% - 0.6px) calc(50% + 0.6px),
+      transparent calc(50% + 0.6px)
+    );
+  background-position:
+    calc(100% - 12px - var(--icon-size) / 2) 50%,
+    calc(100% - 12px - var(--icon-size) * 0.18) 50%;
+  background-repeat: no-repeat;
+  background-size: calc(var(--icon-size) * 0.32) calc(var(--icon-size) * 0.32);
+  cursor: var(--cursor-interaction, default);
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: var(--font-weight-normal);
+  line-height: 18px;
+}
+
+.form-select :is(option, optgroup) {
+  color: var(--popover-foreground);
+  background-color: var(--popover);
+}
+
+.form-select :is(option, optgroup):disabled {
+  color: var(--muted-foreground);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: light-dark(
+    color-mix(in srgb, var(--foreground) 5.5%, transparent),
+    color-mix(in srgb, var(--foreground) 8%, transparent)
+  );
+}
+
+.form-select:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.form-select:disabled {
+  opacity: 0.4;
+}
+
+.form-check {
+  display: flex;
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  corner-shape: round;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  width: calc(10px + var(--control-spacing, 12px) / 2);
+  height: calc(10px + var(--control-spacing, 12px) / 2);
+  border-color: var(--border-strong, var(--input));
+  border-radius: calc(var(--radius-sm) / 2);
+  background-color: transparent;
+  color: var(--foreground);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:is(:checked, :indeterminate) {
+  border-color: var(--border-strong, var(--input));
+  background-color: color-mix(in srgb, var(--popover) 96%, transparent);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+  background-color: var(--foreground);
+}
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:indeterminate::before {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 65%;
+  height: 6.65%;
+  margin: auto;
+  border-radius: var(--radius-full);
+  background: var(--foreground);
+  mask: none;
+  content: &quot;&quot;;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  border-radius: var(--radius-full);
+  width: 16px;
+  height: 16px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--input);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 0;
+  background: radial-gradient(
+    circle,
+    var(--primary-foreground) 0 3px,
+    var(--foreground) 3px
+  );
+  box-shadow: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:focus-visible {
+  border-color: var(--ring);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+.form-check:not(.form-switch) .form-check-input[type=&quot;radio&quot;]:disabled,
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;radio&quot;]:disabled
+  + .form-check-label {
+  opacity: 0.5;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+  border-color: #fff;
+  background: #fff;
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--blue);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+  outline: none;
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  accent-color: var(--primary);
+  height: calc(12px + 2 * var(--control-spacing, 12px));
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  outline: none;
+  border-radius: var(--radius-full);
+  color: var(--foreground);
+  background: transparent;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  background: var(--form-range-track, var(--border));
+  height: 2px;
+  border-radius: var(--radius-full);
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  margin-top: -9px;
+  border-color: transparent;
+  background: currentColor;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Outline the native track and thumb, preserving the larger input hit area. */
+.form-range:focus-visible::-webkit-slider-runnable-track {
+  outline: 2px auto Highlight;
+  outline-color: -webkit-focus-ring-color;
+}
+
+.form-range::-moz-range-track {
+  background: var(--form-range-track, var(--border));
+  height: 2px;
+  border-radius: var(--radius-full);
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  border-color: transparent;
+  background: currentColor;
+  box-shadow: var(--shadow-sm);
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
+}
+
+.form-range:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+  [aria-pressed=&quot;true&quot;],
+  [aria-selected=&quot;true&quot;],
+  .is-selected
+) {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--blue);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible,
+.nav-link:focus-visible {
+  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.viz-carousel-controls :is(button, summary):focus-visible {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: 2px !important;
+}
+
+/* Web recipes are the default, including on renderers without inline style queries. */
+@supports (border-radius: if(style(--corner-shape: round): 1px; else: 2px)) {
+  /* Match the host&#x27;s proportional text-sm scale at every text preference. */
+  .tooltip,
+  .viz-badge,
+  .btn,
+  .nav-link,
+  .form-control,
+  .form-select {
+    font-size: if(
+      style(--corner-shape: round): round(
+          nearest,
+          calc(var(--font-size-base) * 14 / 16),
+          1px
+        );
+        else: round(nearest, calc(var(--font-size-base) * 13 / 14), 1px)
+    );
+  }
+
+  .btn-sm {
+    font-size: if(
+      style(--corner-shape: round): round(
+          nearest,
+          calc(var(--font-size-base) * 12 / 16),
+          1px
+        );
+        else: round(nearest, calc(var(--font-size-base) * 12 / 14), 1px)
+    );
+  }
+
+  .btn,
+  .nav-link,
+  .form-select {
+    border-radius: if(
+      style(--corner-shape: round): var(--radius-full); else: var(--radius-lg)
+    );
+  }
+
+  .form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+    border-radius: if(
+      style(--corner-shape: round): calc(var(--radius-sm) / 2);
+        else: calc(var(--radius-lg) * 0.4)
+    );
+  }
+
+  .tooltip {
+    font-weight: if(
+      style(--corner-shape: round): 600; else: var(--font-weight-normal)
+    );
+  }
+}
+
+@media (pointer: coarse) {
+  .viz-carousel:has(&gt; .viz-carousel-controls) {
+    min-height: calc(76px + var(--viz-carousel-picker-height, 0px));
+    padding-bottom: 76px;
+  }
+
+  .btn,
+  .nav-link,
+  .viz-carousel-controls button,
+  .viz-carousel-picker &gt; summary,
+  .form-control,
+  .form-select {
+    --btn-size: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Keep small-screen WebKit from zooming when a text field receives focus. */
+  .form-control,
+  .form-select {
+    font-size: max(16px, calc(var(--font-size-base) * 14 / 16));
+    font-size: max(
+      16px,
+      round(nearest, calc(var(--font-size-base) * 14 / 16), 1px)
+    );
+  }
+  .form-control:is(
+    [type=&quot;file&quot;],
+    [type=&quot;date&quot;],
+    [type=&quot;datetime-local&quot;],
+    [type=&quot;month&quot;],
+    [type=&quot;week&quot;],
+    [type=&quot;time&quot;],
+    [type=&quot;color&quot;]
+  ) {
+    height: 44px;
+    min-height: 44px;
+    font-size: max(16px, calc(var(--font-size-base) * 14 / 16));
+    font-size: max(
+      16px,
+      round(nearest, calc(var(--font-size-base) * 14 / 16), 1px)
+    );
+  }
+
+  .form-control[type=&quot;file&quot;]::file-selector-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .form-control-color[type=&quot;color&quot;] {
+    width: 44px;
+    height: 44px;
+  }
+
+  .form-control:is(
+    [type=&quot;date&quot;],
+    [type=&quot;datetime-local&quot;],
+    [type=&quot;month&quot;],
+    [type=&quot;time&quot;],
+    [type=&quot;week&quot;]
+  ) {
+    min-width: 0;
+    max-width: 100%;
+    padding-block: 8px;
+  }
+
+  .form-check {
+    min-height: 44px;
+    padding-inline: 15px;
+  }
+
+  .form-check-input {
+    position: relative;
+  }
+
+  .form-check-input::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    content: &quot;&quot;;
+    transform: translate(-50%, -50%);
+  }
+
+  .form-check-label {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .form-range {
+    height: 44px;
+    touch-action: pan-y;
+  }
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: var(--icon-size) !important;
+  height: var(--icon-size) !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;script type=&quot;application/json&quot; id=&quot;codex-visualization-widget-state&quot;&gt;__CODEX_VISUALIZATION_WIDGET_STATE__&lt;/script&gt;
+&lt;script&gt;(() =&gt; {
+  const root = document.documentElement;
+  const mediaQuery = globalThis.matchMedia(&quot;(prefers-color-scheme: dark)&quot;);
+  const apply = Reflect.apply;
+  const isArray = Array.isArray;
+  const hasOwn = Object.hasOwn;
+  const parentWindow = globalThis.parent;
+  const stringify = JSON.stringify;
+  const parse = JSON.parse;
+  const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
+  const initialStateElement = document.getElementById(
+    &quot;codex-visualization-widget-state&quot;,
+  );
+  const initialGlobals = parse(initialStateElement?.textContent ?? &quot;{}&quot;);
+  initialStateElement?.remove();
+  /** @type {Record&lt;string, unknown&gt; | null} */
+  let state = initialGlobals.widgetState ?? null;
+  const statePersistence = initialGlobals.statePersistence ?? &quot;none&quot;;
+  let nextStateRequestId = 0;
+  /** @type {Map&lt;number, { resolve: () =&gt; void; reject: (error: Error) =&gt; void; timeout: ReturnType&lt;typeof globalThis.setTimeout&gt;; serializedState: string }&gt;} */
+  const pendingStateWrites = new Map();
+  const persistenceError = () =&gt;
+    Object.assign(
+      new Error(&quot;The host could not persist the widget state update&quot;),
+      {
+        code: -32000,
+        data: { code: &quot;widget_state_persistence_failed&quot;, retryable: false },
+      },
+    );
+  /**
+   * @param {object} prototype
+   * @param {string} property
+   */
+  const getPrototypeGetter = (prototype, property) =&gt; {
+    // oxlint-disable-next-line typescript/unbound-method -- invoked through captured Reflect.apply
+    const getter = Object.getOwnPropertyDescriptor(prototype, property)?.get;
+    if (getter == null) {
+      throw new Error(`Missing ${property} getter`);
+    }
+    return getter;
+  };
+  const getMessageData = getPrototypeGetter(MessageEvent.prototype, &quot;data&quot;);
+  const getMessagePorts = getPrototypeGetter(MessageEvent.prototype, &quot;ports&quot;);
+  const getMessageSource = getPrototypeGetter(MessageEvent.prototype, &quot;source&quot;);
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const addHostMessageListener = MessagePort.prototype.addEventListener;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const postHostMessage = MessagePort.prototype.postMessage;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const startHostPort = MessagePort.prototype.start;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const stopMessagePropagation = Event.prototype.stopImmediatePropagation;
+  /** @type {MessagePort | null} */
+  let hostPort = null;
+  const postToHost = (type, payload) =&gt; {
+    if (hostPort != null) {
+      apply(postHostMessage, hostPort, [{ type, ...payload }]);
+    }
+  };
+  const openExternal = ({ href }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost(&quot;open-external&quot;, { href });
+    }
+  };
+  const sendFollowUpMessage = ({ context, prompt, title }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost(&quot;follow-up&quot;, { context, prompt, title });
+    }
+    return Promise.resolve();
+  };
+  /**
+   * @param {Record&lt;string, unknown&gt; | ((previous: Record&lt;string, unknown&gt; | null) =&gt; Record&lt;string, unknown&gt;)} next
+   * @returns {Promise&lt;void&gt;}
+   */
+  const setWidgetState = async (next) =&gt; {
+    const nextState = typeof next === &quot;function&quot; ? next(state) : next;
+    if (
+      nextState == null ||
+      typeof nextState !== &quot;object&quot; ||
+      isArray(nextState)
+    ) {
+      throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+    }
+    const inputState = stringify(
+      nextState,
+      (_key, /** @type {unknown} */ value) =&gt; {
+        if (
+          typeof value === &quot;undefined&quot; ||
+          typeof value === &quot;function&quot; ||
+          typeof value === &quot;symbol&quot; ||
+          (typeof value === &quot;number&quot; &amp;&amp; !Number.isFinite(value))
+        ) {
+          throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+        }
+        return value;
+      },
+    );
+    const parsedState = parse(inputState);
+    if (
+      parsedState == null ||
+      typeof parsedState !== &quot;object&quot; ||
+      isArray(parsedState)
+    ) {
+      throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+    }
+    const storedState = {
+      modelContent: null,
+      privateContent: null,
+      ...parsedState,
+    };
+    const serializedState = stringify(storedState);
+    if (encode(serializedState).length &gt; 16 * 1024) {
+      throw new TypeError(
+        &quot;Widget state must be a JSON object of at most 16 KiB&quot;,
+      );
+    }
+    if (
+      hasOwn(storedState, &quot;imageIds&quot;) &amp;&amp;
+      (!isArray(storedState.imageIds) ||
+        storedState.imageIds.some(
+          (/** @type {unknown} */ id) =&gt; typeof id !== &quot;string&quot;,
+        ))
+    ) {
+      throw new TypeError(&quot;Widget state imageIds must be an array of strings&quot;);
+    }
+    if (storedState.imageIds?.length &gt; 0) {
+      throw Object.assign(
+        new TypeError(&quot;Visualization state does not support image attachments&quot;),
+        { code: -32602, data: { code: &quot;images_unsupported&quot; } },
+      );
+    }
+    state = storedState;
+    globalThis.openai.widgetState = state;
+    globalThis.dispatchEvent(
+      new CustomEvent(&quot;openai:set_globals&quot;, {
+        detail: { globals: { widgetState: state } },
+      }),
+    );
+    if (statePersistence === &quot;none&quot;) {
+      throw persistenceError();
+    }
+    const id = ++nextStateRequestId;
+    return new Promise((resolve, reject) =&gt; {
+      const timeout = globalThis.setTimeout(() =&gt; {
+        pendingStateWrites.delete(id);
+        reject(persistenceError());
+      }, 30_000);
+      pendingStateWrites.set(id, { resolve, reject, timeout, serializedState });
+      postToHost(&quot;widget-state-write&quot;, { id, state: serializedState });
+    });
+  };
+  const bindingElement = document.getElementById(&quot;codex-visualization-bindings&quot;);
+  const mockElement = document.getElementById(&quot;codex-connector-mocks&quot;);
+  const fileElement = document.getElementById(&quot;codex-preview-files&quot;);
+  const connectorGlobals = {};
+  if (bindingElement != null || mockElement != null || fileElement != null) {
+    const bindings = parse(bindingElement?.textContent ?? &quot;{}&quot;);
+    bindingElement?.remove();
+    const values = new Map();
+    for (const [name, binding] of Object.entries(bindings)) {
+      if (binding.type === &quot;json&quot;) values.set(name, structuredClone(binding.value));
+    }
+    const pending = [bindings];
+    while (pending.length) {
+      const object = pending.pop();
+      Object.freeze(object);
+      for (const child of Object.values(object)) {
+        if (child !== null &amp;&amp; typeof child === &quot;object&quot;) pending.push(child);
+      }
+    }
+    const updates = [];
+    if (mockElement != null) {
+      const mocks = Object.entries(parse(mockElement.textContent));
+      mockElement.remove();
+      for (const [name, value] of mocks) {
+        values.set(name, value);
+        updates.push({ name, revision: 1, state: &quot;ready&quot;, value: { type: &quot;json&quot;, value } });
+      }
+    }
+    if (fileElement != null) {
+      const files = parse(fileElement.textContent);
+      fileElement.remove();
+      const blobs = new Map();
+      const urls = [];
+      for (const [name, binding] of Object.entries(bindings)) {
+        if (binding.type !== &quot;file&quot; || !hasOwn(files, binding.path)) continue;
+        const file = files[binding.path];
+        let blob = blobs.get(binding.path);
+        if (blob == null) {
+          const bytes = Uint8Array.fromBase64?.(file.base64) ??
+            Uint8Array.from(atob(file.base64), (char) =&gt; char.charCodeAt(0));
+          blob = new Blob([bytes], { type: file.mimeType });
+          blobs.set(binding.path, blob);
+        }
+        const url = URL.createObjectURL(blob);
+        urls.push(url);
+        values.set(name, { name: file.name, blob, url });
+        updates.push({ name, revision: 1, state: &quot;ready&quot;, value: { type: &quot;file&quot;, ...file } });
+      }
+      globalThis.addEventListener(&quot;pagehide&quot;, (event) =&gt; {
+        // A persisted pagehide can restore this same document and its subscriptions.
+        if (event.persisted) return;
+        for (const url of urls) URL.revokeObjectURL(url);
+        urls.length = 0;
+      });
+    }
+    if (mockElement != null || fileElement != null) connectorGlobals.visualizationData = { updates };
+    connectorGlobals.visualization = {
+      get bindings() {
+        return bindings;
+      },
+      /** @param {string} name @param {(value: unknown) =&gt; void} callback */
+      onData(name, callback) {
+        if (typeof callback !== &quot;function&quot;) {
+          throw new TypeError(&quot;onData requires a callback&quot;);
+        }
+        try {
+          callback(values.get(name));
+        } catch (error) {
+          // oxlint-disable-next-line no-console -- Keep authored callback failures local.
+          console.error(&quot;Live visualization data callback failed&quot;, error);
+        }
+        // A static preview delivers the current value once per subscription.
+        return () =&gt; {};
+      },
+    };
+  }
+  const syncTheme = () =&gt; {
+    const theme = mediaQuery.matches ? &quot;dark&quot; : &quot;light&quot;;
+    root.dataset.theme = theme;
+    globalThis.openai = {
+      ...globalThis.openai,
+      ...connectorGlobals,
+      openExternal,
+      sendFollowUpMessage,
+      setWidgetState,
+      theme,
+      visualizationStyleVariables: {},
+      visualizationTheme: theme,
+      widgetState: state,
+      statePersistence,
+      stateModelContext: &quot;none&quot;,
+    };
+    globalThis.dispatchEvent(
+      new CustomEvent(&quot;openai:set_globals&quot;, {
+        detail: { globals: globalThis.openai },
+      }),
+    );
+  };
+  const sendHeight = () =&gt; {
+    postToHost(&quot;height&quot;, {
+      height: Math.ceil(
+        Math.max(
+          document.body.scrollHeight,
+          document.body.getBoundingClientRect().height,
+        ),
+      ),
+    });
+  };
+
+  globalThis.addEventListener(
+    &quot;message&quot;,
+    (event) =&gt; {
+      const data = apply(getMessageData, event, []);
+      const ports = apply(getMessagePorts, event, []);
+      const source = apply(getMessageSource, event, []);
+      if (
+        hostPort != null ||
+        source !== parentWindow ||
+        typeof data !== &quot;object&quot; ||
+        data?.type !== &quot;codex-visualization-initialize&quot; ||
+        !isArray(ports) ||
+        ports.length !== 1
+      ) {
+        return;
+      }
+      apply(stopMessagePropagation, event, []);
+      const nextHostPort = ports[0];
+      try {
+        apply(addHostMessageListener, nextHostPort, [
+          &quot;message&quot;,
+          (event) =&gt; {
+            const data = apply(getMessageData, event, []);
+            if (typeof data === &quot;object&quot; &amp;&amp; data?.type === &quot;measure&quot;) {
+              sendHeight();
+            } else if (
+              typeof data === &quot;object&quot; &amp;&amp;
+              data?.type === &quot;widget-state-result&quot;
+            ) {
+              /** @type {unknown} */
+              const id = data.id;
+              if (typeof id !== &quot;number&quot;) {
+                return;
+              }
+              const pending = pendingStateWrites.get(id);
+              if (pending != null) {
+                pendingStateWrites.delete(id);
+                globalThis.clearTimeout(pending.timeout);
+                if (data.ok === true) {
+                  pending.resolve();
+                } else {
+                  pending.reject(persistenceError());
+                }
+              }
+            }
+          },
+        ]);
+        apply(startHostPort, nextHostPort, []);
+      } catch {
+        return;
+      }
+      hostPort = nextHostPort;
+      for (const [id, { serializedState }] of pendingStateWrites) {
+        postToHost(&quot;widget-state-write&quot;, { id, state: serializedState });
+      }
+      sendHeight();
+    },
+    { capture: true },
+  );
+  document.currentScript?.remove();
+  mediaQuery.addEventListener(&quot;change&quot;, syncTheme);
+  globalThis.addEventListener(&quot;click&quot;, (event) =&gt; {
+    if (event.defaultPrevented) {
+      return;
+    }
+    let element = null;
+    if (event.target instanceof globalThis.Element) {
+      element = event.target;
+    } else if (event.target instanceof globalThis.Node) {
+      element = event.target.parentElement;
+    }
+    const link = element?.closest(&quot;a[href]&quot;);
+    const href = link?.getAttribute(&quot;href&quot;);
+    if (href == null) {
+      return;
+    }
+    if (href.startsWith(&quot;#&quot;)) {
+      let id;
+      try {
+        id = decodeURIComponent(href.slice(1));
+      } catch {
+        return;
+      }
+      const target = id.length === 0 ? root : document.getElementById(id);
+      if (
+        target == null ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      event.preventDefault();
+      postToHost(&quot;scroll-to&quot;, {
+        top: target.getBoundingClientRect().top + globalThis.scrollY,
+      });
+      return;
+    }
+    event.preventDefault();
+    openExternal({ href });
+  });
+  new ResizeObserver(sendHeight).observe(document.body);
+  syncTheme();
+})();
+&lt;/script&gt;
+&lt;style&gt;
+#duo-design { color-scheme:light dark; font-family:-apple-system,BlinkMacSystemFont,&quot;Helvetica Neue&quot;,sans-serif }
+#duo-design .pickers { display:flex; flex-wrap:wrap; gap:8px 16px; margin:4px 0 14px; align-items:center; justify-content:center }
+#duo-design .pickers label { display:flex; gap:7px; align-items:center; font-size:13px }
+#duo-design .pickers select { max-width:min(260px,72vw); font:inherit; padding:7px; border-radius:8px }
+#duo-design .bench { position:relative; width:100%; overflow:hidden }
+#duo-design .device { --bg:#101013; --cell:#202024; --line:#36363b; --faint:#b7b7c0; --accent:#ffb77c;
+ position:absolute; top:2px; left:50%; transform-origin:top center; transform:translateX(-50%) scale(var(--zoom,1));
+ width:var(--w); height:var(--h); overflow:hidden; isolation:isolate; color-scheme:dark; color:#f8f8fa; background:var(--bg);
+ border-radius:30px; box-shadow:0 0 0 1px #626267; font:16px/1.35 -apple-system,BlinkMacSystemFont,sans-serif; text-align:left }
+#duo-design .device * { box-sizing:border-box }
+#duo-design .device button,#duo-design .device input,#duo-design .device textarea,#duo-design .device select { font:inherit; color:inherit }
+#duo-design .device button { cursor:pointer; border:0; background:transparent; text-align:inherit }
+#duo-design .device button:focus-visible,#duo-design .device input:focus-visible { outline:2px solid #87baff; outline-offset:-2px }
+#duo-design .device [hidden] { display:none!important }
+#duo-design .sys { height:28px; padding:5px 21px; font-size:12px; font-weight:650; display:flex; justify-content:space-between }
+#duo-design .sys span:last-child { color:#cacacf }
+#duo-design .shell { position:absolute; inset:30px 8px 16px; display:grid; grid-template-columns:minmax(0,1fr); gap:12px; overflow:hidden }
+#duo-design .wide .shell { grid-template-columns: minmax(215px,31%) minmax(0,1fr) }
+#duo-design .book .shell { grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px }
+#duo-design .table .shell { grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) minmax(0,1fr); gap:36px; inset:30px 12px 30px }
+#duo-design .table::after,#duo-design .book::after { content:&quot;&quot;; position:absolute; pointer-events:none; z-index:9; background:linear-gradient(to right,transparent,#0007,transparent); left:calc(50% - 6px); top:0; bottom:0; width:12px }
+#duo-design .table::after { inset:calc(50% - 6px) 0 auto; width:100%; height:12px; background:linear-gradient(to bottom,transparent,#0006,transparent) }
+#duo-design .side,#duo-design .page { overflow:auto; min-width:0; scrollbar-width:thin; scrollbar-color:#56565c transparent; padding:14px 16px 22px }
+#duo-design .side { background:#19191d; border-radius:17px }
+#duo-design .side-title { font-size:22px; font-weight:680; letter-spacing:-.6px; margin:5px 0 18px }
+#duo-design .side button { display:flex; align-items:center; min-height:44px; width:100%; padding:8px 10px; border-radius:9px; gap:9px; font-size:15px }
+#duo-design .side .sel { background:#383332; color:#ffd3b1 }
+#duo-design .device h2 { font-size:29px; letter-spacing:-1px; line-height:1.1; margin:8px 0 20px; font-weight:710 }
+#duo-design .device h3 { text-transform:none; font-size:13px; letter-spacing:.1px; color:var(--faint); margin:19px 0 7px 4px; font-weight:600 }
+#duo-design .device h3:first-child { margin-top:3px }
+#duo-design .crumb { display:flex; align-items:center; gap:4px; color:var(--accent)!important; min-height:44px; padding:0 3px; font-size:15px!important }
+#duo-design .block { border-radius:14px; background:var(--cell); overflow:hidden }
+#duo-design .r { width:100%; display:flex; align-items:center; text-align:left; min-height:47px; gap:10px; padding:10px 13px; border-bottom:1px solid var(--line)!important }
+#duo-design .r:last-child { border-bottom:0!important }
+#duo-design .r .label { flex:1; min-width:0; overflow-wrap:anywhere }
+#duo-design .r small { max-width:55%; text-align:right; font-size:13px; color:var(--faint); overflow-wrap:anywhere }
+#duo-design .r .icon,.side .icon,.crumb .icon { width:17px;height:17px;flex:none;color:var(--accent) }
+#duo-design .r .arrow { color:#8f8f98 }
+#duo-design .r input:not([type=checkbox]),#duo-design .r textarea,#duo-design .r select { border:0; background:#151518; border-radius:8px; padding:9px; min-width:0; width:100%; }
+#duo-design .r.edit { flex-direction:column; align-items:stretch }
+#duo-design .r.edit .label { color:var(--faint); font-size:13px }
+#duo-design .r textarea { min-height:100px; resize:vertical }
+#duo-design .r input[type=checkbox] { accent-color:#69ce8d; width:20px;height:20px }
+#duo-design .primary { margin:12px 0 0; width:100%; min-height:44px; border-radius:12px; padding:9px 13px; background:var(--accent)!important; color:#28190f!important; text-align:center!important; font-weight:650!important }
+#duo-design .home-hero { border-radius:17px; background:linear-gradient(120deg,#48362e,#2c2929); padding:16px 18px; border:1px solid #614738; }
+#duo-design .home-hero .time { display:flex; gap:7px; color:#ffc899; font-size:13px; align-items:center }
+#duo-design .home-hero strong { display:block; font-size:23px; margin:8px 0 2px; letter-spacing:-.5px }
+#duo-design .home-hero small { color:#d9c9bf }
+#duo-design .systemhome { position:absolute; bottom:5px; left:50%; transform:translateX(-50%); width:95px;height:4px;background:#ddd;border-radius:5px }
+#duo-design .call { position:absolute; inset:25px 8px 17px; display:flex; flex-direction:column; gap:7px }
+#duo-design .incall { background:#050506 }
+#duo-design .head { display:grid; grid-template-columns:44px 1fr 44px; gap:6px; align-items:center }
+#duo-design .head .identity { grid-column:1/-1; grid-row:2; display:grid; justify-content:start; min-height:44px; padding-left:7px }
+#duo-design .identity b { font-size:17px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap }
+#duo-design .identity small { color:#d1d1d6;font-size:13px; }
+#duo-design .identity small::before { content:&#x27;▥&#x27;; margin-right:5px; color:#73dc9b }
+#duo-design .device .glass { background:#242427; border:1px solid #39393e; border-radius:20px; }
+#duo-design .round,#duo-design .shortcut,#duo-design .dock button,#duo-design .tool { display:flex; align-items:center; justify-content:center; min-height:44px; min-width:44px }
+#duo-design .shortcuts { display:flex; padding:1px 3px; justify-content:space-evenly; }
+#duo-design .shortcut { flex:1; flex-direction:column; border-radius:18px; padding:1px 3px!important; }
+#duo-design .shortcut span { display:flex;align-items:center; gap:4px; font-size:13px; font-weight:600 }
+#duo-design .shortcut:first-child span { color:#ffb77c }
+#duo-design .shortcut small,#duo-design .dock small {font-size:11px;color:#ddd}
+#duo-design .icon { width:18px;height:18px;display:inline-block; flex:none }
+#duo-design .wide .head,#duo-design .outer-land .head {grid-template-columns:44px minmax(0,1fr) 215px 44px}
+#duo-design .wide .identity,#duo-design .outer-land .identity {grid-column:2;grid-row:1; min-width:0}
+#duo-design .middle {flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr); align-items:stretch; gap:9px}
+#duo-design .wide .middle.with-panel {grid-template-columns:minmax(0,1fr) minmax(258px,37%)}
+#duo-design .visual {display:grid; min-height:0; min-width:0; position:relative; place-items:center; container-type:size; overflow:hidden; border-radius:9px}
+#duo-design .sharepic { width:min(100cqw,calc(100cqh * 2.714)); aspect-ratio:589/217; background:#faf9f6; }
+#duo-design .roster {display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px; width:100%;height:100%; }
+#duo-design .tile { background:linear-gradient(140deg,#282b31,#1b1c20); border-radius:13px; display:grid; place-content:center; justify-items:center; gap:6px; color:#eee; font-size:15px }
+#duo-design .tile:first-child {box-shadow:inset 0 0 0 2px #70d999}
+#duo-design .avatar {background:#584941; color:#ffdbbf; display:grid;place-items:center; width:45px;height:45px;border-radius:50%; font-weight:600}
+#duo-design .tile:nth-child(2n) .avatar {background:#364f54;color:#c2eff5}
+#duo-design .pane {min-height:0; overflow:auto; background:#17171a; padding:9px 13px 16px; border-radius:16px;}
+#duo-design .pane h2 {font-size:21px;margin:6px 0 11px;}
+#duo-design .panelhead {display:flex; align-items:center;justify-content:space-between; gap:6px}
+#duo-design .panelhead button {height:44px;min-width:44px;text-align:center}
+#duo-design .phone-size .middle.with-panel .visual {display:none}
+#duo-design .footer {display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:6px}
+#duo-design .tools,#duo-design .dock {display:flex;align-items:center;justify-content:space-around;padding:2px;}
+#duo-design .dock { flex:1; max-width:430px}
+#duo-design .dock button { flex:1; gap:4px; flex-direction:column; padding:3px; }
+#duo-design .dock button:last-child {color:#ff777c}
+#duo-design .phone-size .footer {justify-content:flex-end}
+#duo-design .phone-size .dock {flex:1 0 100%; max-width:none}
+#duo-design .outer-land .call {inset:8px 10px 12px 24px;}
+#duo-design .outer-land .head {grid-template-columns:44px minmax(0,1fr) 184px 44px}
+#duo-design .outer-land .identity b {font-size:15px}
+#duo-design .outer-land .footer {flex-wrap:nowrap}
+#duo-design .outer-land .dock {flex:1}
+#duo-design .book .call {display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr auto;column-gap:28px}
+#duo-design .book .head,#duo-design .table .head {display:contents}
+#duo-design .book .shortcuts {grid-column:2;grid-row:1;margin-right:50px}
+#duo-design .book .head .round:first-child {grid-column:1;grid-row:1;justify-self:start}
+#duo-design .book .head .round:last-child {grid-column:2;grid-row:1;justify-self:end}
+#duo-design .book .head .identity {grid-column:1;grid-row:1;margin-left:50px}
+#duo-design .book .middle {display:contents}
+#duo-design .book .visual {grid-column:1;grid-row:2/4}
+#duo-design .book .pane {grid-column:2;grid-row:2}
+#duo-design .book .footer {grid-column:2;grid-row:3;flex-direction:column;align-items:stretch}
+#duo-design .table .call {display:grid;grid-template-columns:44px minmax(0,1fr) 44px;grid-template-rows:48px calc(50% - 79px) 34px 48px minmax(0,1fr) auto;inset:30px 12px 30px}
+#duo-design .table .head .round:first-child {grid-area:1/1}
+#duo-design .table .head .identity {grid-area:1/2}
+#duo-design .table .head .round:last-child {grid-area:1/3}
+#duo-design .table .shortcuts {grid-row:4;grid-column:1/-1;justify-self:center;min-width:225px}
+#duo-design .table .middle {display:contents}
+#duo-design .table .visual {grid-row:2;grid-column:1/-1}
+#duo-design .table .pane {grid-row:5;grid-column:1/-1}
+#duo-design .table .footer {grid-row:6;grid-column:1/-1}
+#duo-design .device [data-current=true] {color:var(--accent)}
+#duo-design .message {background:#34343a;margin:6px 0 8px;padding:10px 12px;border-radius:12px;max-width:90%}
+#duo-design .message small {display:block;font-size:12px;color:#ffbd89;margin-bottom:3px}
+#duo-design .preview {aspect-ratio:16/8;display:grid;place-items:center;background:#101113;color:#c8c8ce;border:1px solid #38383c;border-radius:12px;margin:8px 0;}
+#duo-design .meter {height:8px; margin:10px 15px 16px;border-radius:5px;background:linear-gradient(to right,#76d998 58%,#414146 58%)}
+#duo-design .sharepic {color:#192b33;container-type:inline-size;overflow:hidden;background:#fbfaf6;box-shadow:inset 0 0 0 1px #c4c6bd}
+#duo-design .docbar {display:flex;justify-content:space-between;align-items:center;height:4.6cqw;background:#263b43;color:#f6f5f2;padding:0 2.5cqw;font-size:1.65cqw}
+#duo-design .docbody {padding:2.1cqw 4cqw;display:grid;grid-template-columns:1fr 1fr;gap:3.5cqw}
+#duo-design .docbody b {font-size:3.7cqw;letter-spacing:-.14cqw;display:block;margin-bottom:1.2cqw}
+#duo-design .docbody p {font-size:1.9cqw;line-height:1.35;margin:0}
+#duo-design .doclist {padding-top:.9cqw}
+#duo-design .doclist div {font-size:1.95cqw;padding:1.15cqw 0;border-bottom:1px solid #d4d7ce}
+#duo-design .sharepic.zoomed {width:100%;height:100%;display:grid;align-content:center;transform:scale(1.3);transform-origin:center}
+#duo-design .os {position:absolute;inset:30px 14px 19px;border-radius:18px;padding:20px;background:linear-gradient(145deg,#343c51,#202332 55%,#101116);overflow:auto}
+#duo-design .os time {display:block;text-align:center;font-size:68px;font-weight:650;margin:7% 0 10%}
+#duo-design .os-card {max-width:390px;margin:auto;background:#191a20e8;padding:18px;border-radius:21px}
+#duo-design .os-card strong {display:block;font-size:21px;margin:9px 0}
+#duo-design .os-card small {color:#c5c5ce}
+#duo-design .activity-meta {display:flex;align-items:center;justify-content:space-between;color:var(--accent);font-weight:600}
+#duo-design .pipbox {position:absolute;top:18px;right:18px;width:44%;aspect-ratio:16/10;background:#101115;border:1px solid #69696e;border-radius:14px;display:grid;place-items:center;container-type:size;overflow:hidden}
+#duo-design .r .icon + .label {color:inherit}
+&lt;/style&gt;
+&lt;div id=&quot;duo-design&quot;&gt;
+  &lt;div class=&quot;pickers&quot;&gt;&lt;label&gt;Screen &lt;select id=&quot;duo-page&quot;&gt;&lt;/select&gt;&lt;/label&gt;&lt;label&gt;Display &lt;select id=&quot;duo-pose&quot;&gt;
+    &lt;option value=&quot;outer&quot;&gt;Outer · portrait&lt;/option&gt;&lt;option value=&quot;outer-land&quot;&gt;Outer · landscape&lt;/option&gt;
+    &lt;option value=&quot;inner&quot; selected&gt;Inner · landscape&lt;/option&gt;&lt;option value=&quot;inner-tall&quot;&gt;Inner · portrait&lt;/option&gt;
+    &lt;option value=&quot;book&quot;&gt;Partially open · book&lt;/option&gt;&lt;option value=&quot;table&quot;&gt;Partially open · tabletop&lt;/option&gt;
+  &lt;/select&gt;&lt;/label&gt;&lt;/div&gt;
+  &lt;div class=&quot;bench viz-dotted-background&quot;&gt;&lt;div class=&quot;device&quot; role=&quot;group&quot; aria-label=&quot;iPhone Duo design preview&quot;&gt;
+    &lt;div class=&quot;sys&quot; aria-hidden=&quot;true&quot;&gt;&lt;span&gt;10:39&lt;/span&gt;&lt;span&gt;5G ▰&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;&lt;div class=&quot;systemhome&quot;&gt;&lt;/div&gt;
+  &lt;/div&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;script&gt;
+(() =&gt; {
+const root = document.getElementById(&#x27;duo-design&#x27;);
+const screenPicker = root.querySelector(&#x27;#duo-page&#x27;), posePicker = root.querySelector(&#x27;#duo-pose&#x27;);
+const device = root.querySelector(&#x27;.device&#x27;), app = root.querySelector(&#x27;.app&#x27;), bench = root.querySelector(&#x27;.bench&#x27;);
+const catalogue = new Map();
+let group;
+function page(id,title,sections,icon=&#x27;chevron-right&#x27;) { catalogue.set(id,{id,title,sections,group,icon}); }
+const section=(title,...items)=&gt;({title,items});
+const link=(label,to,detail=&#x27;&#x27;)=&gt;({label,to,detail});
+const info=(label,detail=&#x27;&#x27;)=&gt;({label,detail});
+const input=(label,value=&#x27;&#x27;,kind=&#x27;text&#x27;)=&gt;({label,value,kind});
+const check=(label,value=false)=&gt;({label,value,kind:&#x27;check&#x27;});
+const choice=(label,options)=&gt;({label,options,kind:&#x27;select&#x27;});
+const special=kind=&gt;({kind});
+const review=&#x27;Engineering design review&#x27;, planning=&#x27;Release planning&#x27;, speaker=&#x27;Alex Morgan&#x27;, presenter=&#x27;Sam Rivera&#x27;;
+const calls=&#x27;Live meeting&#x27;, tools=&#x27;Studio &amp; sharing&#x27;, work=&#x27;Meeting workspace&#x27;, calendar=&#x27;Calendar &amp; reminders&#x27;, settings=&#x27;Settings&#x27;, entry=&#x27;Home &amp; joining&#x27;;
+group=entry;
+page(&#x27;home&#x27;,&#x27;Rock’n’Roll&#x27;,[
+ section(&#x27;Active meeting&#x27;,special(&#x27;hero&#x27;)), section(&#x27;Join a jam&#x27;,input(&#x27;Invitation link&#x27;),input(&#x27;Your name&#x27;,&#x27;Jamie&#x27;),link(&#x27;Join jam&#x27;,&#x27;connecting&#x27;),link(&#x27;Camera &amp; sound&#x27;,&#x27;camera&#x27;)),
+ section(&#x27;Library&#x27;,link(&#x27;Favorites&#x27;,&#x27;rooms&#x27;),link(&#x27;Recent jams&#x27;,&#x27;recent&#x27;),link(&#x27;Upcoming meetings&#x27;,&#x27;agenda&#x27;)),
+ section(&#x27;Meetings &amp; Tasks&#x27;,link(&#x27;Assistant&#x27;,&#x27;history&#x27;),link(&#x27;Other devices&#x27;,&#x27;devices&#x27;),link(&#x27;Catch up&#x27;,&#x27;saved-catch&#x27;),link(&#x27;Settings&#x27;,&#x27;settings&#x27;))],&#x27;house&#x27;);
+page(&#x27;rooms&#x27;,&#x27;Favorites&#x27;,[section(&#x27;Saved invitations&#x27;,link(review,&#x27;join&#x27;,&#x27;Work&#x27;),link(planning,&#x27;join&#x27;)),section(&#x27;Room&#x27;,link(&#x27;Name this jam&#x27;,&#x27;rename&#x27;))],&#x27;star&#x27;);
+page(&#x27;recent&#x27;,&#x27;Recent jams&#x27;,[section(&#x27;Today&#x27;,link(review,&#x27;join&#x27;,&#x27;10:00&#x27;)),section(&#x27;Yesterday&#x27;,link(planning,&#x27;join&#x27;,&#x27;14:30&#x27;),link(&#x27;Name this jam&#x27;,&#x27;rename&#x27;))],&#x27;clock&#x27;);
+page(&#x27;rename&#x27;,&#x27;Name this jam&#x27;,[section(&#x27;Room&#x27;,input(&#x27;Name&#x27;,review),link(&#x27;Save&#x27;,&#x27;rooms&#x27;))]);
+page(&#x27;join&#x27;,&#x27;Join a jam&#x27;,[section(&#x27;Meeting&#x27;,input(&#x27;Invitation link&#x27;,&#x27;https://meeting.example.test/design&#x27;),input(&#x27;Your name&#x27;,&#x27;Jamie&#x27;),link(&#x27;Join jam&#x27;,&#x27;connecting&#x27;)),section(&#x27;Before joining&#x27;,link(&#x27;Camera &amp; sound&#x27;,&#x27;camera&#x27;),link(&#x27;Meeting website&#x27;,&#x27;site&#x27;))],&#x27;log-in&#x27;);
+page(&#x27;site&#x27;,&#x27;Meeting website&#x27;,[section(&#x27;Saved websites&#x27;,link(&#x27;Team meetings&#x27;,&#x27;join&#x27;,&#x27;meeting.example.test&#x27;)),section(&#x27;Another website&#x27;,input(&#x27;HTTPS website address&#x27;),link(&#x27;Continue&#x27;,&#x27;join&#x27;))]);
+page(&#x27;connecting&#x27;,&#x27;Joining meeting&#x27;,[section(review,info(&#x27;Connecting audio…&#x27;),link(&#x27;Continue to meeting&#x27;,&#x27;gallery&#x27;),link(&#x27;Cancel&#x27;,&#x27;home&#x27;))]);
+page(&#x27;lobby&#x27;,&#x27;Waiting for admission&#x27;,[section(review,info(&#x27;Waiting for the host&#x27;),info(&#x27;Microphone&#x27;,&#x27;Off&#x27;),info(&#x27;Camera&#x27;,&#x27;Off&#x27;),link(&#x27;Leave&#x27;,&#x27;home&#x27;))]);
+page(&#x27;devices&#x27;,&#x27;Other devices&#x27;,[section(&#x27;Continue a jam&#x27;,link(review,&#x27;handoff&#x27;,&#x27;Mac&#x27;),info(&#x27;Last active&#x27;,&#x27;Just now&#x27;))],&#x27;laptop&#x27;);
+page(&#x27;handoff&#x27;,&#x27;Continue a jam&#x27;,[section(review,info(&#x27;Current device&#x27;,&#x27;Mac&#x27;),info(&#x27;Microphone and camera&#x27;,&#x27;Start off&#x27;),link(&#x27;Connect on this device&#x27;,&#x27;connecting&#x27;))]);
+page(&#x27;saved-catch&#x27;,&#x27;Saved catch up&#x27;,[section(review,info(&#x27;Alex Morgan&#x27;,&#x27;Desktop readability review&#x27;),info(&#x27;Sam Rivera&#x27;,&#x27;Follow up after the test&#x27;),link(&#x27;Open meeting notes&#x27;,&#x27;notes&#x27;))]);
+group=calendar;
+page(&#x27;agenda&#x27;,&#x27;Upcoming meetings&#x27;,[section(&#x27;Today&#x27;,link(review,&#x27;event&#x27;,&#x27;10:00–10:45&#x27;),link(planning,&#x27;event&#x27;,&#x27;14:30–15:00&#x27;)),section(&#x27;Calendars&#x27;,link(&#x27;Choose calendars&#x27;,&#x27;calendar-list&#x27;))],&#x27;calendar-days&#x27;);
+page(&#x27;event&#x27;,&#x27;Calendar meeting&#x27;,[section(review,info(&#x27;Today&#x27;,&#x27;10:00–10:45&#x27;),info(&#x27;Calendar&#x27;,&#x27;Work&#x27;),link(&#x27;Join meeting&#x27;,&#x27;join&#x27;),link(&#x27;Choose room&#x27;,&#x27;bind&#x27;),link(&#x27;Reminders&#x27;,&#x27;occurrence&#x27;))]);
+page(&#x27;bind&#x27;,&#x27;Choose room&#x27;,[section(&#x27;Saved rooms&#x27;,link(review,&#x27;event&#x27;,&#x27;Selected&#x27;),link(planning,&#x27;event&#x27;))]);
+page(&#x27;setup&#x27;,&#x27;Meeting setup · Calendar&#x27;,[section(&#x27;Your meetings, ready to join&#x27;,check(&#x27;Show calendar meetings&#x27;,true),link(&#x27;Choose calendars&#x27;,&#x27;calendar-list&#x27;),link(&#x27;Continue&#x27;,&#x27;setup-reminder&#x27;))]);
+page(&#x27;setup-reminder&#x27;,&#x27;Meeting setup · Reminders&#x27;,[section(&#x27;A reminder at the right time&#x27;,check(&#x27;Meeting reminders&#x27;,true),link(&#x27;Customize reminders&#x27;,&#x27;reminders&#x27;),link(&#x27;Continue&#x27;,&#x27;setup-cloud&#x27;))]);
+page(&#x27;setup-cloud&#x27;,&#x27;Meeting setup · Devices&#x27;,[section(&#x27;Your meetings across devices&#x27;,check(&#x27;Use private iCloud storage&#x27;),link(&#x27;More iCloud options&#x27;,&#x27;sync&#x27;),link(&#x27;Finish&#x27;,&#x27;home&#x27;))]);
+page(&#x27;calendars&#x27;,&#x27;Calendars&#x27;,[section(&#x27;Calendar access&#x27;,check(&#x27;Show calendar meetings&#x27;,true),link(&#x27;Choose calendars&#x27;,&#x27;calendar-list&#x27;)),section(&#x27;Joining&#x27;,link(&#x27;Automatic join&#x27;,&#x27;auto-join&#x27;),link(&#x27;Meeting reminders&#x27;,&#x27;reminders&#x27;))]);
+page(&#x27;calendar-list&#x27;,&#x27;Choose calendars&#x27;,[section(&#x27;iCloud&#x27;,check(&#x27;Work&#x27;,true),check(&#x27;Personal&#x27;)),section(&#x27;On this device&#x27;,check(&#x27;Rehearsals&#x27;))]);
+page(&#x27;auto-join&#x27;,&#x27;Automatic join&#x27;,[section(&#x27;Calendar meetings&#x27;,check(&#x27;Automatically join supported meetings&#x27;),info(&#x27;Calendar&#x27;,&#x27;Work&#x27;))]);
+page(&#x27;reminders&#x27;,&#x27;Meeting reminders&#x27;,[section(&#x27;This device&#x27;,check(&#x27;On this device&#x27;,true)),section(&#x27;Timing&#x27;,link(&#x27;Before start&#x27;,&#x27;before&#x27;,&#x27;5 minutes&#x27;),check(&#x27;At start&#x27;,true),link(&#x27;After start&#x27;,&#x27;after&#x27;,&#x27;Off&#x27;)),section(&#x27;Joining from notifications&#x27;,check(&#x27;Join audio from notifications&#x27;)),section(&#x27;Delivery&#x27;,link(&#x27;Delivery and privacy&#x27;,&#x27;delivery&#x27;))],&#x27;bell&#x27;);
+page(&#x27;before&#x27;,&#x27;Before start&#x27;,[section(&#x27;Remind me&#x27;,choice(&#x27;Time&#x27;,[&#x27;5 minutes&#x27;,&#x27;10 minutes&#x27;,&#x27;15 minutes&#x27;,&#x27;Custom&#x27;,&#x27;Off&#x27;]))]);
+page(&#x27;after&#x27;,&#x27;After start&#x27;,[section(&#x27;Follow-up&#x27;,choice(&#x27;Mode&#x27;,[&#x27;Off&#x27;,&#x27;If not joined&#x27;]),link(&#x27;Delay&#x27;,&#x27;delay&#x27;))]);
+page(&#x27;delay&#x27;,&#x27;Follow-up delay&#x27;,[section(&#x27;Time&#x27;,choice(&#x27;Delay&#x27;,[&#x27;5 minutes&#x27;,&#x27;10 minutes&#x27;,&#x27;Custom&#x27;]))]);
+page(&#x27;delivery&#x27;,&#x27;Delivery and privacy&#x27;,[section(&#x27;Notifications&#x27;,check(&#x27;Show meeting title&#x27;,true),check(&#x27;Suppress when active on another device&#x27;,true))]);
+page(&#x27;occurrence&#x27;,&#x27;Reminders for this meeting&#x27;,[section(review,check(&#x27;Use default reminder timing&#x27;,true),link(&#x27;Before start&#x27;,&#x27;before&#x27;),check(&#x27;At start&#x27;),link(&#x27;After start&#x27;,&#x27;after&#x27;))]);
+page(&#x27;notification&#x27;,&#x27;Meeting reminder&#x27;,[section(review,info(&#x27;Starts&#x27;,&#x27;10:00&#x27;),link(&#x27;Join meeting&#x27;,&#x27;join&#x27;),link(&#x27;Reminders&#x27;,&#x27;occurrence&#x27;))]);
+group=calls;
+page(&#x27;share&#x27;,&#x27;Shared screen&#x27;,[],&#x27;monitor&#x27;); page(&#x27;gallery&#x27;,&#x27;Gallery&#x27;,[],&#x27;layout-grid&#x27;); page(&#x27;focus&#x27;,&#x27;Focus&#x27;,[],&#x27;user-round&#x27;);
+page(&#x27;audio-only&#x27;,&#x27;Audio only&#x27;,[],&#x27;headphones&#x27;); page(&#x27;share-idle&#x27;,&#x27;Waiting for a share&#x27;,[],&#x27;monitor-off&#x27;);
+page(&#x27;empty&#x27;,&#x27;Waiting for others&#x27;,[]); page(&#x27;recovery&#x27;,&#x27;Reconnecting&#x27;,[]);
+const attendees=[speaker,presenter,&#x27;Jamie (you)&#x27;,&#x27;Casey Park&#x27;,&#x27;Dana Lin&#x27;,&#x27;Noah Lee&#x27;,&#x27;Robin Chen&#x27;,&#x27;Taylor Reed&#x27;,&#x27;Maya Hill&#x27;,&#x27;Chris Park&#x27;,&#x27;Jules Kim&#x27;,&#x27;Avery Cole&#x27;];
+page(&#x27;people&#x27;,&#x27;Participants&#x27;,[section(&#x27;In this meeting&#x27;,...attendees.map((name,i)=&gt;link(name,&#x27;person&#x27;,i===0?&#x27;Speaking&#x27;:i===1?&#x27;Sharing screen&#x27;:&#x27;Mic off&#x27;)))],&#x27;users&#x27;);
+page(&#x27;person&#x27;,&#x27;Participant controls&#x27;,[section(&#x27;Sam Rivera&#x27;,info(&#x27;Microphone&#x27;,&#x27;On&#x27;),choice(&#x27;Volume&#x27;,[&#x27;100%&#x27;,&#x27;75%&#x27;,&#x27;50%&#x27;]),link(&#x27;Focus participant&#x27;,&#x27;focus&#x27;),link(&#x27;View screen&#x27;,&#x27;share&#x27;))]);
+page(&#x27;meetings&#x27;,&#x27;Active meetings&#x27;,[section(&#x27;Connected&#x27;,info(review,&#x27;Current · Talk&#x27;),link(&#x27;Join another meeting…&#x27;,&#x27;join&#x27;)),section(&#x27;This meeting&#x27;,link(&#x27;Meeting details&#x27;,&#x27;details&#x27;),link(&#x27;Return to Home&#x27;,&#x27;home&#x27;))],&#x27;layers&#x27;);
+page(&#x27;details&#x27;,&#x27;Meeting details&#x27;,[section(review,info(&#x27;Speaking&#x27;,speaker),info(&#x27;Sharing screen&#x27;,presenter),info(&#x27;Audio&#x27;,&#x27;iPhone speaker&#x27;),link(&#x27;Participants&#x27;,&#x27;people&#x27;),link(&#x27;Active meetings&#x27;,&#x27;meetings&#x27;))]);
+page(&#x27;assistant&#x27;,&#x27;Assistant Mode&#x27;,[section(review,choice(&#x27;Mode&#x27;,[&#x27;Follow&#x27;,&#x27;Off&#x27;,&#x27;Mentions&#x27;,&#x27;Participate&#x27;]),check(&#x27;Ask before sending replies&#x27;,true)),section(&#x27;Alerts&#x27;,link(&#x27;Review alert&#x27;,&#x27;alert&#x27;),link(&#x27;Assistant settings&#x27;,&#x27;assistant-settings&#x27;))],&#x27;sparkles&#x27;);
+page(&#x27;alert&#x27;,&#x27;Assistant alert&#x27;,[section(review,info(&#x27;Alex mentioned you&#x27;,&#x27;Can you check the new layout?&#x27;),input(&#x27;Draft reply&#x27;,&#x27;I’ll check the compact layout.&#x27;,&#x27;memo&#x27;),link(&#x27;Open chat&#x27;,&#x27;chat&#x27;),link(&#x27;Voice reply&#x27;,&#x27;voice-reply&#x27;))]);
+page(&#x27;chat&#x27;,&#x27;Chat&#x27;,[section(&#x27;&#x27;,special(&#x27;chat&#x27;)),section(&#x27;Message&#x27;,input(&#x27;Chat message&#x27;,&#x27;&#x27;,&#x27;memo&#x27;),link(&#x27;Voice reply&#x27;,&#x27;voice-reply&#x27;)),section(&#x27;Conversation&#x27;,link(&#x27;Live text&#x27;,&#x27;live-text&#x27;),link(&#x27;Catch up&#x27;,&#x27;catch&#x27;),link(&#x27;Reaction history&#x27;,&#x27;reaction-history&#x27;))],&#x27;message-circle&#x27;);
+page(&#x27;live-text&#x27;,&#x27;Live text&#x27;,[section(&#x27;10:39&#x27;,info(speaker,&#x27;Can everyone see the screen?&#x27;),info(presenter,&#x27;Yes, the desktop is visible.&#x27;)),section(&#x27;Transcript&#x27;,link(&#x27;Load meeting transcript&#x27;,&#x27;transcript&#x27;),link(&#x27;Catch up&#x27;,&#x27;catch&#x27;))],&#x27;captions&#x27;);
+page(&#x27;catch&#x27;,&#x27;Catch up&#x27;,[section(&#x27;While you were away&#x27;,info(&#x27;10:36 · Alex Morgan&#x27;,&#x27;Reviewed the portrait layout.&#x27;),info(&#x27;10:38 · Sam Rivera&#x27;,&#x27;Shared the desktop.&#x27;),link(&#x27;Open chat&#x27;,&#x27;chat&#x27;))]);
+page(&#x27;voice-reply&#x27;,&#x27;Voice reply&#x27;,[section(&#x27;Target room&#x27;,info(review,&#x27;Current&#x27;)),section(&#x27;Message to speak&#x27;,input(&#x27;Message&#x27;,&#x27;I can see the shared screen.&#x27;,&#x27;memo&#x27;),info(&#x27;Preview voice&#x27;,&#x27;System voice&#x27;),info(&#x27;Send voice reply&#x27;))]);
+page(&#x27;reactions&#x27;,&#x27;Reactions&#x27;,[section(&#x27;Send a reaction&#x27;,special(&#x27;reactions&#x27;)),section(&#x27;History&#x27;,link(&#x27;Reaction history&#x27;,&#x27;reaction-history&#x27;))],&#x27;smile&#x27;);
+page(&#x27;reaction-history&#x27;,&#x27;Reaction history&#x27;,[section(review,info(&#x27;Sam Rivera&#x27;,&#x27;👍  10:38&#x27;),info(&#x27;Alex Morgan&#x27;,&#x27;❤️  10:37&#x27;),link(&#x27;Open chat&#x27;,&#x27;chat&#x27;))]);
+page(&#x27;view&#x27;,&#x27;View&#x27;,[section(&#x27;Layout&#x27;,link(&#x27;Gallery&#x27;,&#x27;gallery&#x27;),link(&#x27;Focus&#x27;,&#x27;focus&#x27;)),section(&#x27;Receive video&#x27;,link(&#x27;All video&#x27;,&#x27;gallery&#x27;),link(&#x27;Screen sharing only&#x27;,&#x27;share&#x27;),link(&#x27;Audio only&#x27;,&#x27;audio-only&#x27;))],&#x27;panels-top-left&#x27;);
+page(&#x27;more&#x27;,&#x27;More&#x27;,[section(&#x27;Meeting controls&#x27;,link(&#x27;Camera &amp; sound&#x27;,&#x27;camera&#x27;),link(&#x27;Share &amp; Presenter&#x27;,&#x27;presenter&#x27;),link(&#x27;Invite people&#x27;,&#x27;invite&#x27;),link(&#x27;Meeting details&#x27;,&#x27;details&#x27;),link(&#x27;In-call notes&#x27;,&#x27;in-notes&#x27;),link(&#x27;Reactions&#x27;,&#x27;reactions&#x27;))],&#x27;ellipsis&#x27;);
+page(&#x27;invite&#x27;,&#x27;Invite people&#x27;,[section(review,info(&#x27;Invitation link&#x27;,&#x27;meeting.example.test/design&#x27;),info(&#x27;Copy link&#x27;),info(&#x27;Share invitation…&#x27;))]);
+page(&#x27;shared-text&#x27;,&#x27;Select shared text&#x27;,[section(&#x27;&#x27;,special(&#x27;shared&#x27;)),section(&#x27;Selected text&#x27;,input(&#x27;Text&#x27;,&#x27;Design review&#x27;,&#x27;memo&#x27;),info(&#x27;Copy selection&#x27;))]);
+page(&#x27;in-notes&#x27;,&#x27;In-call notes&#x27;,[section(review,input(&#x27;Notes&#x27;,&#x27;Keep participant identities visible when camera reception is off.&#x27;,&#x27;memo&#x27;)),section(&#x27;Meeting&#x27;,link(&#x27;Saved meeting notes&#x27;,&#x27;notes&#x27;))],&#x27;notebook-pen&#x27;);
+page(&#x27;local-share&#x27;,&#x27;Local share preview&#x27;,[section(&#x27;Your shared screen&#x27;,special(&#x27;shared&#x27;)),section(&#x27;Controls&#x27;,link(&#x27;Change shared content&#x27;,&#x27;presenter&#x27;),link(&#x27;Return to meeting&#x27;,&#x27;share&#x27;))]);
+page(&#x27;pip&#x27;,&#x27;Picture in Picture&#x27;,[section(&#x27;Floating video&#x27;,special(&#x27;shared&#x27;),info(&#x27;Speaking&#x27;,speaker),link(&#x27;Return to meeting&#x27;,&#x27;share&#x27;))]);
+page(&#x27;activity&#x27;,&#x27;Meeting Live Activity&#x27;,[section(review,info(&#x27;Connected&#x27;,&#x27;Microphone off&#x27;),info(&#x27;Speaking&#x27;,speaker),link(&#x27;Open meeting&#x27;,&#x27;share&#x27;))]);
+page(&#x27;leave&#x27;,&#x27;Leave meeting?&#x27;,[section(review,link(&#x27;Leave meeting&#x27;,&#x27;home&#x27;),link(&#x27;Stay in meeting&#x27;,&#x27;share&#x27;))]);
+group=tools;
+page(&#x27;camera&#x27;,&#x27;Camera &amp; sound · Camera&#x27;,[section(&#x27;Private preview&#x27;,special(&#x27;preview&#x27;)),section(&#x27;Camera&#x27;,choice(&#x27;Camera&#x27;,[&#x27;Front&#x27;,&#x27;Back&#x27;]),link(&#x27;Camera effects&#x27;,&#x27;effects&#x27;)),section(&#x27;Studio&#x27;,link(&#x27;Sound&#x27;,&#x27;sound&#x27;),link(&#x27;Share &amp; Presenter&#x27;,&#x27;presenter&#x27;))],&#x27;video&#x27;);
+page(&#x27;effects&#x27;,&#x27;Camera effects&#x27;,[section(&#x27;Private preview&#x27;,special(&#x27;preview&#x27;)),section(&#x27;Background&#x27;,choice(&#x27;Effect&#x27;,[&#x27;None&#x27;,&#x27;Blur&#x27;,&#x27;Image&#x27;]),info(&#x27;Choose background…&#x27;))]);
+page(&#x27;sound&#x27;,&#x27;Camera &amp; sound · Sound&#x27;,[section(&#x27;Microphone input&#x27;,special(&#x27;meter&#x27;),link(&#x27;Sound check&#x27;,&#x27;sound-check&#x27;)),section(&#x27;Sound profile&#x27;,choice(&#x27;Profile&#x27;,[&#x27;Conversation&#x27;,&#x27;Music&#x27;]),link(&#x27;Audio devices&#x27;,&#x27;audio-devices&#x27;))],&#x27;mic&#x27;);
+page(&#x27;sound-check&#x27;,&#x27;Private sound check&#x27;,[section(&#x27;Microphone&#x27;,special(&#x27;meter&#x27;),info(&#x27;Test microphone&#x27;),info(&#x27;Playback&#x27;,&#x27;Private&#x27;))]);
+page(&#x27;audio&#x27;,&#x27;Audio&#x27;,[section(&#x27;Meeting sound&#x27;,check(&#x27;Meeting sound&#x27;,true),choice(&#x27;Meeting volume&#x27;,[&#x27;100%&#x27;,&#x27;75%&#x27;,&#x27;50%&#x27;])),section(&#x27;Devices&#x27;,link(&#x27;Audio output&#x27;,&#x27;audio-devices&#x27;))],&#x27;volume-2&#x27;);
+page(&#x27;audio-devices&#x27;,&#x27;Audio devices&#x27;,[section(&#x27;Output&#x27;,choice(&#x27;Output&#x27;,[&#x27;iPhone speaker&#x27;,&#x27;iPhone receiver&#x27;])),section(&#x27;Microphone&#x27;,choice(&#x27;Input&#x27;,[&#x27;Automatic&#x27;,&#x27;iPhone microphone&#x27;]),link(&#x27;Microphone levels and effects&#x27;,&#x27;sound&#x27;))]);
+page(&#x27;presenter&#x27;,&#x27;Share &amp; Presenter&#x27;,[section(&#x27;Preview&#x27;,special(&#x27;shared&#x27;)),section(&#x27;Content&#x27;,link(&#x27;Screen / other apps&#x27;,&#x27;broadcast&#x27;),link(&#x27;Choose slide or background&#x27;,&#x27;background&#x27;),link(&#x27;Blank canvas&#x27;,&#x27;canvas&#x27;)),section(&#x27;Recording&#x27;,link(&#x27;Recording&#x27;,&#x27;recording&#x27;))],&#x27;presentation&#x27;);
+page(&#x27;broadcast&#x27;,&#x27;Share screen&#x27;,[section(&#x27;Screen / other apps&#x27;,info(&#x27;Broadcast destination&#x27;,&#x27;Rock’n’Roll&#x27;),info(&#x27;Start broadcast&#x27;),link(&#x27;Share preview&#x27;,&#x27;local-share&#x27;))]);
+page(&#x27;background&#x27;,&#x27;Presenter background&#x27;,[section(&#x27;Slide&#x27;,special(&#x27;shared&#x27;)),section(&#x27;Background&#x27;,choice(&#x27;Image framing&#x27;,[&#x27;Fit&#x27;,&#x27;Fill&#x27;]),info(&#x27;Choose image…&#x27;),link(&#x27;Open canvas&#x27;,&#x27;canvas&#x27;))]);
+page(&#x27;canvas&#x27;,&#x27;Canvas&#x27;,[section(&#x27;Shared composition&#x27;,special(&#x27;shared&#x27;)),section(&#x27;Layout&#x27;,choice(&#x27;Placement&#x27;,[&#x27;Corner&#x27;,&#x27;Side by side&#x27;]),check(&#x27;Include camera&#x27;,true),link(&#x27;Change shared content&#x27;,&#x27;presenter&#x27;))]);
+page(&#x27;recording&#x27;,&#x27;Recording&#x27;,[section(&#x27;Meeting recording&#x27;,info(&#x27;Status&#x27;,&#x27;Ready&#x27;),info(&#x27;Start recording&#x27;),link(&#x27;Return to Share&#x27;,&#x27;presenter&#x27;))]);
+group=work;
+page(&#x27;history&#x27;,&#x27;Meeting history&#x27;,[section(&#x27;Today&#x27;,link(review,&#x27;summary&#x27;,&#x27;10:00 · 45 min&#x27;)),section(&#x27;Yesterday&#x27;,link(planning,&#x27;summary&#x27;,&#x27;14:30 · 30 min&#x27;)),section(&#x27;Workspace&#x27;,link(&#x27;Tasks&#x27;,&#x27;tasks&#x27;),link(&#x27;Search&#x27;,&#x27;search&#x27;),link(&#x27;Assistant &amp; Sync&#x27;,&#x27;assistant-settings&#x27;))],&#x27;notebook&#x27;);
+page(&#x27;search&#x27;,&#x27;Search meetings&#x27;,[section(&#x27;Search&#x27;,input(&#x27;Search meetings&#x27;,&#x27;design&#x27;)),section(&#x27;Results&#x27;,link(review,&#x27;summary&#x27;,&#x27;Summary&#x27;),link(&#x27;Compact layout&#x27;,&#x27;notes&#x27;,&#x27;Notes&#x27;))],&#x27;search&#x27;);
+page(&#x27;summary&#x27;,&#x27;Meeting summary&#x27;,[section(review,info(&#x27;Summary&#x27;,&#x27;Reviewed the phone and tablet layouts and agreed on one-tap meeting controls.&#x27;)),section(&#x27;Decisions&#x27;,info(&#x27;Keep Assistant, Meetings and People visible.&#x27;)),section(&#x27;Open questions&#x27;,info(&#x27;How does the layout adapt when folded?&#x27;)),section(&#x27;Meeting&#x27;,link(&#x27;Notes&#x27;,&#x27;notes&#x27;),link(&#x27;Transcript&#x27;,&#x27;transcript&#x27;),link(&#x27;Meeting settings&#x27;,&#x27;context&#x27;)),section(&#x27;Outcome&#x27;,link(&#x27;Edit summary&#x27;,&#x27;edit-summary&#x27;),link(&#x27;Previous version&#x27;,&#x27;version&#x27;),link(&#x27;New Task&#x27;,&#x27;new-task&#x27;))]);
+page(&#x27;edit-summary&#x27;,&#x27;Edit summary&#x27;,[section(review,input(&#x27;Summary&#x27;,&#x27;Reviewed the phone and tablet layouts.&#x27;,&#x27;memo&#x27;),input(&#x27;Decisions&#x27;,&#x27;Keep meeting shortcuts visible.&#x27;,&#x27;memo&#x27;),input(&#x27;Open questions&#x27;,&#x27;&#x27;,&#x27;memo&#x27;),link(&#x27;Save&#x27;,&#x27;summary&#x27;))]);
+page(&#x27;version&#x27;,&#x27;Previous Version&#x27;,[section(&#x27;Summary&#x27;,info(&#x27;Earlier summary&#x27;,&#x27;Reviewed the first portrait concept.&#x27;)),section(&#x27;Decisions&#x27;,info(&#x27;Keep participant status visible.&#x27;)),section(&#x27;Versions&#x27;,link(&#x27;Current summary&#x27;,&#x27;summary&#x27;))]);
+page(&#x27;notes&#x27;,&#x27;Meeting notes&#x27;,[section(review,input(&#x27;Notes&#x27;,&#x27;Test the outer display with larger text.&#x27;,&#x27;memo&#x27;),link(&#x27;Preview notes&#x27;,&#x27;note-preview&#x27;)),section(&#x27;Obsidian on Mac&#x27;,info(&#x27;Export status&#x27;,&#x27;Pending&#x27;))],&#x27;notebook-pen&#x27;);
+page(&#x27;note-preview&#x27;,&#x27;Notes preview&#x27;,[section(review,info(&#x27;Test the outer display with larger text.&#x27;),link(&#x27;Edit notes&#x27;,&#x27;notes&#x27;))]);
+page(&#x27;transcript&#x27;,&#x27;Meeting transcript&#x27;,[section(&#x27;Transcript&#x27;,input(&#x27;Search transcript&#x27;)),section(&#x27;10:39&#x27;,info(speaker,&#x27;Can everyone see the screen?&#x27;),info(presenter,&#x27;Yes, the desktop is visible.&#x27;))]);
+page(&#x27;context&#x27;,&#x27;Meeting settings&#x27;,[section(&#x27;Back-to-back in this meeting&#x27;,choice(&#x27;When the next meeting starts&#x27;,[&#x27;Ask&#x27;,&#x27;Continue&#x27;])),section(&#x27;Assistant Context&#x27;,input(&#x27;Meeting context&#x27;,&#x27;Weekly product review&#x27;,&#x27;memo&#x27;)),section(&#x27;Private Guidance&#x27;,input(&#x27;Guidance&#x27;,&#x27;&#x27;,&#x27;memo&#x27;))]);
+page(&#x27;tasks&#x27;,&#x27;Personal tasks&#x27;,[section(&#x27;Open&#x27;,check(&#x27;Review the compact layout&#x27;),link(&#x27;Task reminder&#x27;,&#x27;task-reminder&#x27;)),section(&#x27;Tasks&#x27;,link(&#x27;New Task&#x27;,&#x27;new-task&#x27;),link(&#x27;Task Profile&#x27;,&#x27;task-profile&#x27;),link(&#x27;Source meeting&#x27;,&#x27;summary&#x27;))],&#x27;list-checks&#x27;);
+page(&#x27;new-task&#x27;,&#x27;New Task&#x27;,[section(&#x27;Task&#x27;,input(&#x27;What needs to be done?&#x27;),input(&#x27;Owner&#x27;,&#x27;Jamie&#x27;),input(&#x27;Due date&#x27;),check(&#x27;Reminder&#x27;),link(&#x27;Save&#x27;,&#x27;tasks&#x27;))]);
+page(&#x27;task-profile&#x27;,&#x27;Task Profile&#x27;,[section(&#x27;Names&#x27;,input(&#x27;Your name&#x27;,&#x27;Jamie&#x27;),input(&#x27;Aliases&#x27;),link(&#x27;Save&#x27;,&#x27;tasks&#x27;))]);
+page(&#x27;task-reminder&#x27;,&#x27;Task Reminder&#x27;,[section(&#x27;Review the compact layout&#x27;,input(&#x27;Remind me&#x27;,&#x27;Today, 15:00&#x27;),link(&#x27;Save&#x27;,&#x27;tasks&#x27;),link(&#x27;Clear Reminder&#x27;,&#x27;tasks&#x27;))]);
+group=settings;
+page(&#x27;settings&#x27;,&#x27;Settings&#x27;,[section(&#x27;Meetings&#x27;,link(&#x27;Meeting setup&#x27;,&#x27;setup&#x27;),link(&#x27;Calendars&#x27;,&#x27;calendars&#x27;),link(&#x27;Meeting reminders&#x27;,&#x27;reminders&#x27;)),section(&#x27;Assistant&#x27;,link(&#x27;Assistant &amp; summaries&#x27;,&#x27;assistant-settings&#x27;),link(&#x27;Transcription &amp; voice&#x27;,&#x27;voice&#x27;)),section(&#x27;Devices&#x27;,link(&#x27;Across your devices&#x27;,&#x27;sync&#x27;),link(&#x27;Phone calls&#x27;,&#x27;phone&#x27;),link(&#x27;Meeting websites&#x27;,&#x27;websites&#x27;)),section(&#x27;App&#x27;,link(&#x27;Diagnostics&#x27;,&#x27;diagnostics&#x27;),link(&#x27;About&#x27;,&#x27;about&#x27;))],&#x27;settings&#x27;);
+page(&#x27;assistant-settings&#x27;,&#x27;Assistant &amp; Sync&#x27;,[section(&#x27;Live Meeting Assistant&#x27;,choice(&#x27;Mode&#x27;,[&#x27;Follow&#x27;,&#x27;Off&#x27;,&#x27;Mentions&#x27;,&#x27;Participate&#x27;]),check(&#x27;Ask before sending replies&#x27;,true)),section(&#x27;Summaries&#x27;,check(&#x27;Generate summaries automatically after meetings&#x27;,true),link(&#x27;Summary provider and model&#x27;,&#x27;model&#x27;)),section(&#x27;Same-room meetings&#x27;,link(&#x27;Meeting context&#x27;,&#x27;context&#x27;))]);
+page(&#x27;model&#x27;,&#x27;Summary model&#x27;,[section(&#x27;Provider&#x27;,choice(&#x27;Provider&#x27;,[&#x27;Apple Intelligence&#x27;,&#x27;Custom&#x27;]),input(&#x27;Model&#x27;),input(&#x27;Base URL&#x27;))]);
+page(&#x27;voice&#x27;,&#x27;Transcription &amp; voice&#x27;,[section(&#x27;Transcription&#x27;,choice(&#x27;Recognition&#x27;,[&#x27;System&#x27;,&#x27;GigaAM v3&#x27;]),link(&#x27;GigaAM v3 · Offline CoreML&#x27;,&#x27;speech-model&#x27;)),section(&#x27;Voice replies&#x27;,choice(&#x27;Voice&#x27;,[&#x27;System voice&#x27;,&#x27;Personal Voice&#x27;,&#x27;VoxCPM2&#x27;,&#x27;Rapid MLX&#x27;]),link(&#x27;Clone your voice&#x27;,&#x27;clone&#x27;))]);
+page(&#x27;speech-model&#x27;,&#x27;Offline transcription model&#x27;,[section(&#x27;GigaAM v3&#x27;,info(&#x27;On-device model&#x27;,&#x27;Not installed&#x27;),info(&#x27;Download model&#x27;))]);
+page(&#x27;clone&#x27;,&#x27;Clone your voice&#x27;,[section(&#x27;Voice sample&#x27;,info(&#x27;Choose audio file…&#x27;),info(&#x27;Record sample&#x27;)),section(&#x27;Voice&#x27;,input(&#x27;Voice name&#x27;),info(&#x27;Preview voice&#x27;))]);
+page(&#x27;sync&#x27;,&#x27;Across your devices&#x27;,[section(&#x27;Private iCloud storage&#x27;,check(&#x27;Sync across devices&#x27;,true),info(&#x27;Sync now&#x27;)),section(&#x27;Transcripts&#x27;,link(&#x27;Transcript backup folder&#x27;,&#x27;backup&#x27;)),section(&#x27;Saved name&#x27;,link(&#x27;Resolve saved name&#x27;,&#x27;name-conflict&#x27;)),section(&#x27;Devices&#x27;,link(&#x27;Other devices&#x27;,&#x27;devices&#x27;))],&#x27;cloud&#x27;);
+page(&#x27;backup&#x27;,&#x27;Transcript backup folder&#x27;,[section(&#x27;Storage&#x27;,info(&#x27;Folder&#x27;,&#x27;On this device&#x27;),info(&#x27;Choose…&#x27;),info(&#x27;Use device storage only&#x27;))]);
+page(&#x27;name-conflict&#x27;,&#x27;Choose saved name&#x27;,[section(&#x27;Use for future joins&#x27;,choice(&#x27;Name&#x27;,[&#x27;Jamie · this device&#x27;,&#x27;Jamie Cole · iCloud&#x27;]),link(&#x27;Save&#x27;,&#x27;sync&#x27;))]);
+page(&#x27;phone&#x27;,&#x27;Phone calls&#x27;,[section(&#x27;Calls&#x27;,check(&#x27;System call controls&#x27;)),section(&#x27;Meeting status&#x27;,check(&#x27;Meeting status outside the app&#x27;,true),check(&#x27;Show meeting title&#x27;,true),link(&#x27;Preview Live Activity&#x27;,&#x27;activity&#x27;))]);
+page(&#x27;websites&#x27;,&#x27;Meeting websites&#x27;,[section(&#x27;Compatible meeting website&#x27;,input(&#x27;HTTPS website address&#x27;,&#x27;https://meeting.example.test&#x27;))]);
+page(&#x27;diagnostics&#x27;,&#x27;Diagnostics&#x27;,[section(&#x27;Support&#x27;,info(&#x27;Share diagnostics…&#x27;),info(&#x27;Includes&#x27;,&#x27;App version, audio route and connection events&#x27;))]);
+page(&#x27;about&#x27;,&#x27;About&#x27;,[section(&#x27;Rock’n’Roll&#x27;,info(&#x27;Community&#x27;),info(&#x27;Privacy policy&#x27;),info(&#x27;Support&#x27;),info(&#x27;Third-party notices&#x27;))]);
+const groups=[entry,calendar,calls,tools,work,settings];
+const roots={ [entry]:&#x27;home&#x27;,[calendar]:&#x27;agenda&#x27;,[calls]:&#x27;share&#x27;,[tools]:&#x27;camera&#x27;,[work]:&#x27;history&#x27;,[settings]:&#x27;settings&#x27; };
+const stagePages=new Set([&#x27;share&#x27;,&#x27;gallery&#x27;,&#x27;focus&#x27;,&#x27;audio-only&#x27;,&#x27;share-idle&#x27;,&#x27;empty&#x27;,&#x27;recovery&#x27;]);
+const systemPages=new Set([&#x27;activity&#x27;,&#x27;pip&#x27;]);
+const sizes={outer:[466,678],&#x27;outer-land&#x27;:[678,466],inner:[890,626],&#x27;inner-tall&#x27;:[626,890],book:[890,626],table:[626,890]};
+const session={screen:&#x27;home&#x27;,stage:&#x27;share&#x27;,assistant:&#x27;Follow&#x27;,meetings:1,room:review,people:12,muted:true,video:false,drafts:new Map(),scroll:new Map(),trail:[]};
+const navLists={
+ [entry]:[&#x27;home&#x27;,&#x27;join&#x27;,&#x27;rooms&#x27;,&#x27;recent&#x27;,&#x27;agenda&#x27;,&#x27;history&#x27;,&#x27;devices&#x27;,&#x27;settings&#x27;],
+ [calendar]:[&#x27;agenda&#x27;,&#x27;calendars&#x27;,&#x27;reminders&#x27;,&#x27;setup&#x27;,&#x27;devices&#x27;],
+ [tools]:[&#x27;camera&#x27;,&#x27;sound&#x27;,&#x27;audio-devices&#x27;,&#x27;presenter&#x27;,&#x27;canvas&#x27;,&#x27;recording&#x27;],
+ [work]:[&#x27;history&#x27;,&#x27;tasks&#x27;,&#x27;search&#x27;,&#x27;summary&#x27;,&#x27;notes&#x27;,&#x27;transcript&#x27;,&#x27;context&#x27;,&#x27;assistant-settings&#x27;],
+ [settings]:[&#x27;settings&#x27;,&#x27;setup&#x27;,&#x27;calendars&#x27;,&#x27;reminders&#x27;,&#x27;assistant-settings&#x27;,&#x27;voice&#x27;,&#x27;sync&#x27;,&#x27;phone&#x27;,&#x27;websites&#x27;,&#x27;diagnostics&#x27;,&#x27;about&#x27;]
+};
+const pose=()=&gt;posePicker.value;
+const folded=()=&gt;pose()===&#x27;book&#x27;||pose()===&#x27;table&#x27;;
+const wide=()=&gt;![&#x27;outer&#x27;,&#x27;outer-land&#x27;].includes(pose());
+function node(tag,cls,text) {
+  const e=document.createElement(tag); if(cls)e.className=cls; if(text!=null)e.textContent=text; return e;
+}
+function icon(name) { const i=node(&#x27;i&#x27;,&#x27;icon&#x27;); i.setAttribute(&#x27;data-lucide&#x27;,name); i.setAttribute(&#x27;aria-hidden&#x27;,&#x27;true&#x27;);return i; }
+function button(cls,label,fn) {
+  const b=node(&#x27;button&#x27;,cls+&#x27; cursor-interaction&#x27;);b.type=&#x27;button&#x27;;b.setAttribute(&#x27;aria-label&#x27;,label);b.onclick=fn;return b;
+}
+function chip(label,symbol,fn,cls=&#x27;round glass&#x27;) {const b=button(cls,label,fn);b.append(icon(symbol));return b;}
+function go(id,remember=true) {
+  if(!catalogue.has(id))return;
+  const group=catalogue.get(id).group;
+  if(group!==tools)session.studioInCall=group===calls&amp;&amp;!systemPages.has(id);
+  if(remember &amp;&amp; session.screen!==id) session.trail.push(session.screen);
+  session.screen=id; if(stagePages.has(id)) session.stage=id;
+  screenPicker.value=id; render();
+}
+function back() {
+  const parent=roots[catalogue.get(session.screen).group];
+  go(session.trail.pop() || (parent===session.screen?&#x27;home&#x27;:parent),false);
+}
+function field(item,id) {
+  const key=id+&#x27;|&#x27;+item.label;
+  const value=session.drafts.has(key)?session.drafts.get(key):item.value;
+  const row=node(&#x27;label&#x27;,item.kind===&#x27;check&#x27;||item.kind===&#x27;select&#x27;?&#x27;r&#x27;:&#x27;r edit&#x27;);
+  row.append(node(&#x27;span&#x27;,&#x27;label&#x27;,item.label));
+  let ctl;
+  if(item.kind===&#x27;select&#x27;){
+    ctl=node(&#x27;select&#x27;);item.options.forEach(v=&gt;ctl.add(new Option(v,v)));
+    ctl.value=id===&#x27;assistant&#x27;&amp;&amp;item.label===&#x27;Mode&#x27;?session.assistant:(value??item.options[0]);
+  }else if(item.kind===&#x27;memo&#x27;){ctl=node(&#x27;textarea&#x27;);ctl.value=value??&#x27;&#x27;;}
+  else{ctl=node(&#x27;input&#x27;);ctl.type=item.kind===&#x27;check&#x27;?&#x27;checkbox&#x27;:&#x27;text&#x27;;if(item.kind===&#x27;check&#x27;)ctl.checked=value;else ctl.value=value??&#x27;&#x27;;}
+  ctl.oninput=()=&gt;{session.drafts.set(key,item.kind===&#x27;check&#x27;?ctl.checked:ctl.value);
+    if(id===&#x27;assistant&#x27;&amp;&amp;item.label===&#x27;Mode&#x27;){session.assistant=ctl.value;const m=app.querySelector(&#x27;.mode&#x27;);if(m)m.textContent=ctl.value;}
+  };row.append(ctl);return row;
+}
+function tile(name,focusable=true){
+  const t=focusable?button(&#x27;tile&#x27;,name,()=&gt;{session.person=name;go(&#x27;focus&#x27;);}):node(&#x27;div&#x27;,&#x27;tile&#x27;);
+  t.append(node(&#x27;span&#x27;,&#x27;avatar&#x27;,name.split(&#x27; &#x27;).map(n=&gt;n[0]).slice(0,2).join(&#x27;&#x27;)),node(&#x27;b&#x27;,&#x27;&#x27;,name));
+  return t;
+}
+function desktop(){
+  const d=node(&#x27;div&#x27;,&#x27;sharepic&#x27;);d.setAttribute(&#x27;role&#x27;,&#x27;img&#x27;);d.setAttribute(&#x27;aria-label&#x27;,&#x27;Shared document: Engineering design review agenda&#x27;);
+  const bar=node(&#x27;div&#x27;,&#x27;docbar&#x27;),body=node(&#x27;div&#x27;,&#x27;docbody&#x27;),summary=node(&#x27;div&#x27;),list=node(&#x27;div&#x27;,&#x27;doclist&#x27;);
+  bar.append(node(&#x27;span&#x27;,&#x27;&#x27;,&#x27;Team workspace   /   Meeting notes&#x27;),node(&#x27;span&#x27;,&#x27;&#x27;,&#x27;Today&#x27;));
+  summary.append(node(&#x27;b&#x27;,&#x27;&#x27;,&#x27;Design review&#x27;),node(&#x27;p&#x27;,&#x27;&#x27;,&#x27;Review the meeting view at each display size, then walk through joining and taking notes.&#x27;));
+  [&#x27;01   Joining the meeting&#x27;,&#x27;02   Shared screen and controls&#x27;,&#x27;03   Notes and follow-up&#x27;].forEach(s=&gt;list.append(node(&#x27;div&#x27;,&#x27;&#x27;,s)));
+  body.append(summary,list);d.append(bar,body);return d;
+}
+function specialView(kind) {
+  if(kind===&#x27;hero&#x27;){
+    const box=node(&#x27;div&#x27;,&#x27;home-hero&#x27;),line=node(&#x27;div&#x27;,&#x27;time&#x27;);line.append(icon(&#x27;audio-lines&#x27;),&#x27;Connected · Talk&#x27;);
+    box.append(line,node(&#x27;strong&#x27;,&#x27;&#x27;,session.room),node(&#x27;small&#x27;,&#x27;&#x27;,speaker+&#x27; speaking&#x27;));
+    const action=button(&#x27;primary&#x27;,&#x27;Return to meeting&#x27;,()=&gt;go(&#x27;share&#x27;));action.textContent=&#x27;Return to meeting&#x27;;box.append(action);return box;
+  }
+  if(kind===&#x27;shared&#x27;){const d=node(&#x27;div&#x27;,&#x27;visual&#x27;);d.style.height=&#x27;145px&#x27;;d.append(desktop());return d;}
+  if(kind===&#x27;preview&#x27;){const d=node(&#x27;div&#x27;,&#x27;preview&#x27;);d.append(icon(&#x27;video-off&#x27;),node(&#x27;span&#x27;,&#x27;&#x27;,&#x27;Private camera preview&#x27;));return d;}
+  if(kind===&#x27;chat&#x27;){const box=node(&#x27;div&#x27;);for(const [n,t] of [[speaker,&#x27;Can everyone see the shared window?&#x27;],[presenter,&#x27;Yes. The controls are readable.&#x27;]]){
+    const m=node(&#x27;div&#x27;,&#x27;message&#x27;);m.append(node(&#x27;small&#x27;,&#x27;&#x27;,n),t);box.append(m);}return box;}
+  if(kind===&#x27;meter&#x27;){const d=node(&#x27;div&#x27;);d.append(node(&#x27;div&#x27;,&#x27;r&#x27;,&#x27;Input level&#x27;),node(&#x27;div&#x27;,&#x27;meter&#x27;));return d;}
+  const d=node(&#x27;div&#x27;,&#x27;r&#x27;);[&#x27;👍&#x27;,&#x27;❤️&#x27;,&#x27;👏&#x27;,&#x27;🎉&#x27;,&#x27;✋&#x27;].forEach(r=&gt;{const b=button(&#x27;tool&#x27;,r,()=&gt;{b.setAttribute(&#x27;aria-pressed&#x27;,b.getAttribute(&#x27;aria-pressed&#x27;)!==&#x27;true&#x27;?&#x27;true&#x27;:&#x27;false&#x27;);});
+    b.textContent=r;d.append(b);});return d;
+}
+function rowFor(item,id) {
+  if(item.kind) return [&#x27;memo&#x27;,&#x27;text&#x27;,&#x27;select&#x27;,&#x27;check&#x27;].includes(item.kind)?field(item,id):specialView(item.kind);
+  let onTap;
+  if(item.to)onTap=()=&gt;{
+    if([review,planning].includes(item.label))session.selectedTitle=item.label;
+    go(item.to);
+  };
+  if(id===&#x27;people&#x27;&amp;&amp;item.to===&#x27;person&#x27;)onTap=()=&gt;{session.person=item.label;go(&#x27;person&#x27;);};
+  if(id===&#x27;meetings&#x27;&amp;&amp;item.to===&#x27;join&#x27;)onTap=()=&gt;{session.joiningSecond=true;go(&#x27;join&#x27;);};
+  if(id===&#x27;join&#x27;&amp;&amp;item.to===&#x27;connecting&#x27;)onTap=()=&gt;{if(session.joiningSecond){session.meetings=2;session.room=planning;session.joiningSecond=false;}go(&#x27;connecting&#x27;);};
+  const row=onTap?button(&#x27;r&#x27;,item.label,onTap):node(&#x27;div&#x27;,&#x27;r&#x27;);
+  if(item.to &amp;&amp; catalogue.get(item.to).icon!==&#x27;chevron-right&#x27;)row.append(icon(catalogue.get(item.to).icon));
+  row.append(node(&#x27;span&#x27;,&#x27;label&#x27;,item.label));if(item.detail)row.append(node(&#x27;small&#x27;,&#x27;&#x27;,item.detail));if(onTap)row.append(node(&#x27;span&#x27;,&#x27;arrow&#x27;,&#x27;›&#x27;));return row;
+}
+function content(container,id) {
+  const data=catalogue.get(id);
+  data.sections.forEach(s=&gt;{
+    if(s.title)container.append(node(&#x27;h3&#x27;,&#x27;&#x27;,id===&#x27;person&#x27;?(session.person||presenter):
+      s.title===review&amp;&amp;[entry,work,calendar].includes(data.group)?(session.selectedTitle||review):s.title));
+    const block=node(&#x27;div&#x27;,&#x27;block&#x27;);s.items.forEach(item=&gt;block.append(rowFor(item,id)));container.append(block);
+  });
+  if(id===&#x27;meetings&#x27; &amp;&amp; session.meetings&gt;1){
+    const other=session.room===review?planning:review;
+    const b=button(&#x27;primary&#x27;,other,()=&gt;{session.room=other;go(session.stage);});b.textContent=&#x27;Switch to &#x27;+other;container.prepend(b);
+  }
+}
+function trackScroll(el,key){
+  el.scrollTop=session.scroll.get(key)||0;
+  el.onscroll=()=&gt;{session.scroll.set(key,el.scrollTop);};
+}
+function regularPage(data){
+  const shell=node(&#x27;div&#x27;,&#x27;shell&#x27;),pageBody=node(&#x27;div&#x27;,&#x27;page&#x27;); app.append(shell);
+  if(wide()){
+    const side=node(&#x27;nav&#x27;,&#x27;side&#x27;);side.setAttribute(&#x27;aria-label&#x27;,&#x27;Related screens&#x27;);shell.append(side);
+    side.append(node(&#x27;div&#x27;,&#x27;side-title&#x27;,data.group===entry?&#x27;Library&#x27;:data.group===work?&#x27;Assistant&#x27;:data.group));
+    for(const id of navLists[data.group]||[&#x27;home&#x27;,&#x27;share&#x27;,&#x27;gallery&#x27;,&#x27;people&#x27;,&#x27;settings&#x27;]){
+      const p=catalogue.get(id),b=button(data.id===id?&#x27;sel&#x27;:&#x27;&#x27;,p.title,()=&gt;go(id));b.append(icon(p.icon),p.title);side.append(b);
+    }
+    if([entry,work,calendar].includes(data.group)){
+      side.append(node(&#x27;h3&#x27;,&#x27;&#x27;,data.group===entry?&#x27;Favorites&#x27;:data.group===calendar?&#x27;Today&#x27;:&#x27;Recent meetings&#x27;));
+      for(const title of [review,planning]){
+        const target=data.group===entry?&#x27;join&#x27;:data.group===calendar?&#x27;event&#x27;:&#x27;summary&#x27;;
+        const b=button(&#x27;&#x27;,title,()=&gt;{session.selectedTitle=title;go(target);});b.append(icon(data.group===entry?&#x27;star&#x27;:&#x27;calendar&#x27;),title);side.append(b);
+      }
+    }
+    trackScroll(side,&#x27;nav-&#x27;+data.group);
+  }
+  shell.append(pageBody);
+  if(data.id!==&#x27;home&#x27;){const b=button(&#x27;crumb&#x27;,&#x27;Back&#x27;,back);b.append(icon(&#x27;chevron-left&#x27;),session.trail.length?catalogue.get(session.trail[session.trail.length-1]).title:&#x27;Home&#x27;);pageBody.append(b);}
+  pageBody.append(node(&#x27;h2&#x27;,&#x27;&#x27;,data.title));content(pageBody,data.id);trackScroll(pageBody,data.id);
+}
+function callHeader(call){
+  const h=node(&#x27;header&#x27;,&#x27;head&#x27;);
+  const identity=button(&#x27;identity&#x27;,session.room+&#x27;, &#x27;+speaker+&#x27; speaking&#x27;,()=&gt;go(&#x27;details&#x27;));
+  identity.append(node(&#x27;b&#x27;,&#x27;&#x27;,session.room),node(&#x27;small&#x27;,&#x27;&#x27;,speaker+&#x27; speaking&#x27;));
+  const bar=node(&#x27;div&#x27;,&#x27;shortcuts glass&#x27;);
+  for(const [id,symbol,count,name] of [[&#x27;assistant&#x27;,&#x27;sparkles&#x27;,&#x27;1&#x27;,session.assistant],[&#x27;meetings&#x27;,session.meetings===1?&#x27;app-window&#x27;:&#x27;layers&#x27;,session.meetings,&#x27;Meetings&#x27;],[&#x27;people&#x27;,&#x27;users&#x27;,session.people,&#x27;People&#x27;]]){
+    const b=button(&#x27;shortcut&#x27;,name+&#x27; &#x27;+count,()=&gt;go(id)), line=node(&#x27;span&#x27;);
+    line.append(icon(symbol),String(count));b.append(line,node(&#x27;small&#x27;,id===&#x27;assistant&#x27;?&#x27;mode&#x27;:&#x27;&#x27;,name));bar.append(b);
+  }
+  const minimize=chip(&#x27;Return to Home&#x27;,&#x27;chevron-down&#x27;,()=&gt;go(&#x27;home&#x27;));
+  // Order remains stable with explicit grid placement on each display.
+  h.append(minimize,identity,bar,chip(&#x27;Chat&#x27;,&#x27;message-circle&#x27;,()=&gt;go(&#x27;chat&#x27;)));call.append(h);
+}
+function stageVisual(){
+  const v=node(&#x27;div&#x27;,&#x27;visual&#x27;);
+  if(session.stage===&#x27;share&#x27;){const d=desktop();d.classList.toggle(&#x27;zoomed&#x27;,!!session.zoomed);v.append(d);return v;}
+  if(session.stage===&#x27;empty&#x27;||session.stage===&#x27;recovery&#x27;){v.append(node(&#x27;strong&#x27;,&#x27;&#x27;,session.stage===&#x27;empty&#x27;?&#x27;You’re connected. Waiting for others.&#x27;:&#x27;Restoring meeting media…&#x27;));return v;}
+  const grid=node(&#x27;div&#x27;,&#x27;roster&#x27;);
+  const names=session.stage===&#x27;focus&#x27;?[session.person||speaker]:[speaker,presenter,&#x27;Jamie&#x27;,&#x27;Casey Park&#x27;];
+  if(names.length===1)grid.style.gridTemplateColumns=&#x27;1fr&#x27;;
+  names.forEach(n=&gt;grid.append(tile(n)));v.append(grid);return v;
+}
+function footer(call) {
+  const f=node(&#x27;div&#x27;,&#x27;footer&#x27;),t=node(&#x27;div&#x27;,&#x27;tools glass&#x27;),dock=node(&#x27;div&#x27;,&#x27;dock glass&#x27;);
+  if(session.stage===&#x27;share&#x27;)t.append(chip(&#x27;Select text&#x27;,&#x27;scan-text&#x27;,()=&gt;go(&#x27;shared-text&#x27;),&#x27;tool&#x27;),
+    chip(session.zoomed?&#x27;Fit whole share&#x27;:&#x27;Fill screen&#x27;,session.zoomed?&#x27;minimize-2&#x27;:&#x27;maximize-2&#x27;,()=&gt;{session.zoomed=!session.zoomed;render();},&#x27;tool&#x27;));
+  const vb=chip(&#x27;View&#x27;,&#x27;panels-top-left&#x27;,()=&gt;go(&#x27;view&#x27;),&#x27;tool&#x27;);vb.append(&#x27;View&#x27;);t.append(vb,chip(&#x27;More&#x27;,&#x27;ellipsis&#x27;,()=&gt;go(&#x27;more&#x27;),&#x27;tool&#x27;));
+  for(const [label,symbol,fn] of [
+    [&#x27;Share&#x27;,&#x27;copy&#x27;,()=&gt;go(&#x27;presenter&#x27;)],[&#x27;Video&#x27;,session.video?&#x27;video&#x27;:&#x27;video-off&#x27;,()=&gt;{session.video=!session.video;render();}],
+    [&#x27;Sound&#x27;,&#x27;volume-2&#x27;,()=&gt;go(&#x27;audio&#x27;)],[&#x27;Mic&#x27;,session.muted?&#x27;mic-off&#x27;:&#x27;mic&#x27;,()=&gt;{session.muted=!session.muted;render();}],
+    [&#x27;Reactions&#x27;,&#x27;smile&#x27;,()=&gt;go(&#x27;reactions&#x27;)],[&#x27;Leave&#x27;,&#x27;phone-off&#x27;,()=&gt;go(&#x27;leave&#x27;)]]){
+    const b=chip(label,symbol,fn,&#x27;&#x27;);b.append(node(&#x27;small&#x27;,&#x27;&#x27;,label));dock.append(b);
+  }f.append(t,dock);call.append(f);
+}
+function callPage(data) {
+  const call=node(&#x27;div&#x27;,&#x27;call&#x27;);app.append(call);callHeader(call);
+  const paneID=stagePages.has(data.id)?(folded()?&#x27;people&#x27;:null):data.id;
+  const middle=node(&#x27;div&#x27;,&#x27;middle&#x27;+(paneID?&#x27; with-panel&#x27;:&#x27;&#x27;));middle.append(stageVisual());call.append(middle);
+  if(paneID){
+    const pane=node(&#x27;section&#x27;,&#x27;pane&#x27;),head=node(&#x27;div&#x27;,&#x27;panelhead&#x27;);
+    head.append(node(&#x27;h2&#x27;,&#x27;&#x27;,catalogue.get(paneID).title));
+    if(!stagePages.has(data.id))head.append(chip(&#x27;Close panel&#x27;,&#x27;x&#x27;,()=&gt;go(session.stage),&#x27;&#x27;));
+    pane.append(head);content(pane,paneID);middle.append(pane);trackScroll(pane,paneID);
+  }
+  footer(call);
+}
+function scale(){
+  const [w,h]=sizes[pose()], z=Math.min(1,(bench.clientWidth-6)/w,730/h);
+  device.style.setProperty(&#x27;--w&#x27;,w+&#x27;px&#x27;);device.style.setProperty(&#x27;--h&#x27;,h+&#x27;px&#x27;);device.style.setProperty(&#x27;--zoom&#x27;,String(z));
+  const height=Math.ceil(h*z+5)+&#x27;px&#x27;;if(bench.style.height!==height)bench.style.height=height;
+}
+function systemPreview(id){
+  if(id===&#x27;pip&#x27;){
+    regularPage(catalogue.get(&#x27;home&#x27;));const pip=button(&#x27;pipbox&#x27;,&#x27;Return to meeting&#x27;,()=&gt;go(&#x27;share&#x27;));pip.append(desktop());app.append(pip);return;
+  }
+  const os=node(&#x27;div&#x27;,&#x27;os&#x27;),card=node(&#x27;article&#x27;,&#x27;os-card&#x27;),meta=node(&#x27;div&#x27;,&#x27;activity-meta&#x27;),open=button(&#x27;primary&#x27;,&#x27;Open meeting&#x27;,()=&gt;go(&#x27;share&#x27;));
+  meta.append(node(&#x27;span&#x27;,&#x27;&#x27;,&#x27;Rock’n’Roll&#x27;),icon(&#x27;mic-off&#x27;));open.textContent=&#x27;Open meeting&#x27;;
+  card.append(meta,node(&#x27;strong&#x27;,&#x27;&#x27;,session.room),node(&#x27;small&#x27;,&#x27;&#x27;,&#x27;Connected · iPhone speaker&#x27;),open);
+  os.append(node(&#x27;time&#x27;,&#x27;&#x27;,&#x27;10:39&#x27;),card);app.append(os);
+}
+function render(){
+  const p=pose(), data=catalogue.get(session.screen);
+  const inCall=data.group===calls&amp;&amp;!systemPages.has(data.id) || data.group===tools&amp;&amp;session.studioInCall;
+  device.className=&#x27;device &#x27;+p+&#x27; &#x27;+(wide()?&#x27;wide&#x27;:&#x27;phone-size&#x27;)+(inCall?&#x27; incall&#x27;:&#x27;&#x27;);app.replaceChildren();scale();
+  if(systemPages.has(data.id))systemPreview(data.id);else if(inCall)callPage(data);else regularPage(data);
+  if(globalThis.lucide)globalThis.lucide.createIcons();
+}
+for(const g of groups){const og=document.createElement(&#x27;optgroup&#x27;);og.label=g;
+  for(const p of catalogue.values())if(p.group===g)og.append(new Option(p.title,p.id));screenPicker.append(og);}
+screenPicker.value=session.screen;
+screenPicker.onchange=()=&gt;{session.trail=[];session.studioInCall=false;go(screenPicker.value,false);};posePicker.onchange=render;
+render();new ResizeObserver(scale).observe(bench);
+})();
+&lt;/script&gt;
+
+&lt;script&gt;
+(() =&gt; {
+  let positioningReady = window.FloatingUIDOM
+    ? Promise.resolve(window.FloatingUIDOM)
+    : null;
+  const loadScript = (src) =&gt; new Promise((resolve, reject) =&gt; {
+    const script = document.createElement(&quot;script&quot;);
+    script.src = src;
+    script.onload = resolve;
+    script.onerror = () =&gt; {
+      script.remove();
+      reject(new Error(&quot;Could not load tooltip positioning&quot;));
+    };
+    document.head.appendChild(script);
+  });
+  const loadPositioning = async () =&gt; {
+    const domUrl = &quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;;
+    const preload = document.createElement(&quot;link&quot;);
+    preload.rel = &quot;preload&quot;;
+    preload.as = &quot;script&quot;;
+    preload.href = domUrl;
+    document.head.appendChild(preload);
+    try {
+      if (window.FloatingUICore == null) {
+        await loadScript(&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;);
+      }
+      await loadScript(domUrl);
+      return window.FloatingUIDOM;
+    } finally {
+      preload.remove();
+    }
+  };
+  const getPositioning = () =&gt; positioningReady ??= loadPositioning().catch((error) =&gt; {
+    positioningReady = null;
+    throw error;
+  });
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+  let lastPointerWasTouch = false;
+  let pinnedByTouch = false;
+
+  const getTrigger = (event) =&gt; {
+    for (const target of event.composedPath()) {
+      if (target?.nodeType === Node.ELEMENT_NODE) {
+        const trigger = target.closest(&quot;[data-tooltip]&quot;);
+        if (trigger) return trigger;
+      }
+    }
+    return null;
+  };
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    pinnedByTouch = false;
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating, { computePosition, flip, offset, shift, size }) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    const request = positionRequest;
+    void getPositioning().then((positioning) =&gt; {
+      if (request !== positionRequest || !trigger.isConnected) return;
+      autoUpdateCleanup = positioning.autoUpdate(trigger, floating, () =&gt; {
+        updatePosition(trigger, floating, positioning);
+      });
+    }).catch(() =&gt; {
+      if (request === positionRequest) closeTooltip(false);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handlePointer = (event) =&gt; {
+    lastPointerWasTouch =
+      event.type === &quot;pointerdown&quot; &amp;&amp; event.pointerType === &quot;touch&quot;;
+  };
+  const handleTouchClick = (event) =&gt; {
+    const isTouch = event.pointerType === &quot;touch&quot; || lastPointerWasTouch;
+    lastPointerWasTouch = false;
+    if (!isTouch || event.detail === 0) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (
+      trigger == null ||
+      !trigger.isConnected ||
+      getContent(trigger).length === 0 ||
+      (pinnedByTouch &amp;&amp; activeTrigger === trigger)
+    ) {
+      if (pinnedByTouch) {
+        closeTooltip();
+      }
+      return;
+    }
+    openTooltip(trigger);
+    pinnedByTouch = activeTrigger === trigger;
+    window.setTimeout(() =&gt; {
+      if (activeTrigger === trigger &amp;&amp; !trigger.isConnected) {
+        closeTooltip(false);
+      }
+    }, 0);
+  };
+  const handleLeave = (event) =&gt; {
+    if (pinnedByTouch) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    lastPointerWasTouch = false;
+    const trigger = getTrigger(event);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handlers = {
+    pointerover: handlePointerOpen,
+    pointerdown: handlePointer,
+    pointercancel: handlePointer,
+    click: handleTouchClick,
+    pointerout: handleLeave,
+    focusin: handleFocusIn,
+    focusout: handleLeave,
+    keydown: handleKeyDown,
+    contextmenu: handleContextMenu,
+  };
+  const roots = new Map();
+  const handledEvents = new WeakSet();
+  const handleEvent = (event) =&gt; {
+    if (handledEvents.has(event)) return;
+    handledEvents.add(event);
+    handlers[event.type](event);
+  };
+  const discoverRoots = (node) =&gt; {
+    if (node.shadowRoot) listen(node.shadowRoot);
+    for (const element of node.querySelectorAll(&quot;*&quot;)) {
+      if (element.shadowRoot) listen(element.shadowRoot);
+    }
+  };
+  const listen = (root) =&gt; {
+    if (roots.has(root)) return;
+    for (const type of Object.keys(handlers)) root.addEventListener(type, handleEvent);
+    const observer = new window.MutationObserver((records) =&gt; {
+      for (const { addedNodes } of records) {
+        for (const node of addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) discoverRoots(node);
+        }
+      }
+      for (const [root, cleanup] of roots) {
+        if (root.host &amp;&amp; !root.host.isConnected) {
+          cleanup();
+          roots.delete(root);
+        }
+      }
+      if (activeTrigger &amp;&amp; !activeTrigger.isConnected) closeTooltip(false);
+    });
+    observer.observe(root, { childList: true, subtree: true });
+    roots.set(root, () =&gt; {
+      observer.disconnect();
+      for (const type of Object.keys(handlers)) root.removeEventListener(type, handleEvent);
+    });
+    discoverRoots(root);
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    lastPointerWasTouch = false;
+    for (const cleanup of roots.values()) cleanup();
+    roots.clear();
+    tooltip = null;
+  };
+
+  // Events between children of one shadow root never reach the document.
+  listen(document);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-tabs&quot;&gt;
+(() =&gt; {
+  const selector = &#x27;.nav[role=&quot;tablist&quot;] [role=&quot;tab&quot;]&#x27;;
+  const disabled = &#x27;:disabled,[aria-disabled=&quot;true&quot;]&#x27;;
+  const selectTab = (selected) =&gt; {
+    const panelId = selected.getAttribute(&quot;aria-controls&quot;);
+    for (const tab of selected.closest(&#x27;[role=&quot;tablist&quot;]&#x27;).querySelectorAll(&#x27;[role=&quot;tab&quot;]&#x27;)) {
+      const active = tab === selected;
+      tab.classList.toggle(&quot;active&quot;, active);
+      tab.setAttribute(&quot;aria-selected&quot;, String(active));
+      const id = tab.getAttribute(&quot;aria-controls&quot;);
+      const panel = id &amp;&amp; document.getElementById(id);
+      if (panel != null) {
+        panel.hidden = id !== panelId;
+        if (!panel.hidden &amp;&amp; selected.id) {
+          panel.setAttribute(&quot;aria-labelledby&quot;, selected.id);
+        }
+      }
+    }
+  };
+  const interact = (event) =&gt; {
+    const tab = event.target?.closest?.(selector);
+    if (event.defaultPrevented || tab == null || tab.matches(disabled)) {
+      return;
+    }
+    if (event.type === &quot;click&quot;) {
+      selectTab(tab);
+      return;
+    }
+    const tabs = Array.from(
+      tab.closest(&#x27;[role=&quot;tablist&quot;]&#x27;).querySelectorAll(&#x27;[role=&quot;tab&quot;]&#x27;),
+    ).filter((candidate) =&gt; !candidate.matches(disabled));
+    const current = tabs.indexOf(tab);
+    let next;
+    if (event.key === &quot;ArrowRight&quot; || event.key === &quot;ArrowDown&quot;) {
+      next = (current + 1) % tabs.length;
+    } else if (event.key === &quot;ArrowLeft&quot; || event.key === &quot;ArrowUp&quot;) {
+      next = (current + tabs.length - 1) % tabs.length;
+    } else if (event.key === &quot;Home&quot;) {
+      next = 0;
+    } else if (event.key === &quot;End&quot;) {
+      next = tabs.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    tabs[next].focus();
+    selectTab(tabs[next]);
+  };
+
+  for (const list of document.querySelectorAll(&#x27;.nav[role=&quot;tablist&quot;]&#x27;)) {
+    const selected =
+      list.querySelector(&#x27;[role=&quot;tab&quot;][aria-selected=&quot;true&quot;]&#x27;) ??
+      list.querySelector(&#x27;[role=&quot;tab&quot;].active&#x27;) ??
+      list.querySelector(&#x27;[role=&quot;tab&quot;]&#x27;);
+    if (selected != null) {
+      selectTab(selected);
+    }
+  }
+  document.addEventListener(&quot;click&quot;, interact);
+  document.addEventListener(&quot;keydown&quot;, interact);
+  window.addEventListener(&quot;pagehide&quot;, () =&gt; {
+    document.removeEventListener(&quot;click&quot;, interact);
+    document.removeEventListener(&quot;keydown&quot;, interact);
+  }, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-carousel&quot;&gt;
+  (() =&gt; {
+    for (const root of document.querySelectorAll(&quot;.viz-carousel&quot;)) {
+      const panels = Array.from(
+        root.querySelectorAll(&quot;:scope &gt; [data-variant]&quot;),
+      );
+      if (panels.length === 0) {
+        continue;
+      }
+      root.setAttribute(&quot;role&quot;, &quot;group&quot;);
+      panels.forEach((panel, index) =&gt; {
+        panel.hidden = index !== 0;
+        panel.setAttribute(&quot;role&quot;, &quot;group&quot;);
+        if (!panel.hasAttribute(&quot;aria-label&quot;)) {
+          panel.setAttribute(&quot;aria-label&quot;, panel.dataset.variant);
+        }
+      });
+      root.dataset.activeVariant = panels[0].dataset.variant;
+      if (panels.length === 1) {
+        continue;
+      }
+
+      const controls = document.createElement(&quot;div&quot;);
+      controls.className = &quot;viz-carousel-controls&quot;;
+      // Portable copy of the settings dropdown&#x27;s legacy glyph; no 14px icon-package preset matches it.
+      // https://github.com/openai/openai/blob/master/codex/codex-apps/webview/src/icons/chevron.svg
+      controls.innerHTML = `
+      &lt;button type=&quot;button&quot; class=&quot;viz-carousel-previous cursor-interaction&quot;&gt;&lt;i data-lucide=&quot;chevron-left&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;
+      &lt;details class=&quot;viz-carousel-picker&quot;&gt;
+        &lt;summary class=&quot;cursor-interaction&quot;&gt;
+          &lt;span class=&quot;viz-carousel-count tabular-nums&quot;&gt;&lt;/span&gt;
+          &lt;span class=&quot;viz-carousel-name&quot;&gt;&lt;/span&gt;
+          &lt;svg class=&quot;viz-carousel-caret&quot; width=&quot;14&quot; height=&quot;14&quot; viewBox=&quot;0 0 20 21&quot; fill=&quot;none&quot; aria-hidden=&quot;true&quot; focusable=&quot;false&quot;&gt;
+            &lt;path d=&quot;M15.2793 7.71101C15.539 7.45131 15.961 7.45131 16.2207 7.71101C16.4804 7.97071 16.4804 8.39272 16.2207 8.65242L10.4707 14.4024C10.211 14.6621 9.78902 14.6621 9.52932 14.4024L3.77932 8.65242L3.69436 8.54792C3.52385 8.28979 3.55205 7.93828 3.77932 7.71101C4.00659 7.48374 4.3581 7.45554 4.61623 7.62605L4.72073 7.71101L10 12.9903L15.2793 7.71101Z&quot; fill=&quot;currentColor&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;0.6&quot; /&gt;
+          &lt;/svg&gt;
+        &lt;/summary&gt;
+        &lt;div class=&quot;viz-carousel-options&quot;&gt;&lt;/div&gt;
+      &lt;/details&gt;
+      &lt;button type=&quot;button&quot; class=&quot;viz-carousel-next cursor-interaction&quot;&gt;&lt;i data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;`;
+      const previous = controls.querySelector(&quot;.viz-carousel-previous&quot;);
+      const next = controls.querySelector(&quot;.viz-carousel-next&quot;);
+      const picker = controls.querySelector(&quot;.viz-carousel-picker&quot;);
+      const summary = picker.querySelector(&quot;summary&quot;);
+      const count = controls.querySelector(&quot;.viz-carousel-count&quot;);
+      const name = controls.querySelector(&quot;.viz-carousel-name&quot;);
+      const options = controls.querySelector(&quot;.viz-carousel-options&quot;);
+      const status = document.createElement(&quot;span&quot;);
+      status.className = &quot;sr-only&quot;;
+      status.setAttribute(&quot;role&quot;, &quot;status&quot;);
+      status.setAttribute(&quot;aria-live&quot;, &quot;polite&quot;);
+      status.setAttribute(&quot;aria-atomic&quot;, &quot;true&quot;);
+      previous.setAttribute(
+        &quot;aria-label&quot;,
+        root.dataset.previousLabel ?? &quot;Previous variant&quot;,
+      );
+      next.setAttribute(&quot;aria-label&quot;, root.dataset.nextLabel ?? &quot;Next variant&quot;);
+
+      let active = 0;
+      let mousePointerId = null;
+      let summaryPointerHandled = false;
+      summary.addEventListener(&quot;pointerdown&quot;, (event) =&gt; {
+        summaryPointerHandled =
+          event.pointerType === &quot;mouse&quot; &amp;&amp; event.button === 0 &amp;&amp; !event.ctrlKey;
+        if (!summaryPointerHandled) {
+          return;
+        }
+        event.preventDefault();
+        summary.focus({ preventScroll: true });
+        picker.open = !picker.open;
+        mousePointerId = picker.open ? event.pointerId : null;
+      });
+      summary.addEventListener(&quot;click&quot;, (event) =&gt; {
+        if (summaryPointerHandled &amp;&amp; event.detail &gt; 0) {
+          event.preventDefault();
+        }
+      });
+      const choices = panels.map((panel, index) =&gt; {
+        const choice = document.createElement(&quot;button&quot;);
+        choice.type = &quot;button&quot;;
+        choice.className = &quot;cursor-interaction&quot;;
+        choice.textContent = panel.dataset.variant;
+        choice.addEventListener(&quot;click&quot;, () =&gt; {
+          select(index);
+          summary.focus();
+        });
+        choice.addEventListener(&quot;pointerup&quot;, (event) =&gt; {
+          if (
+            picker.open &amp;&amp;
+            event.pointerType === &quot;mouse&quot; &amp;&amp;
+            event.button === 0 &amp;&amp;
+            event.pointerId === mousePointerId
+          ) {
+            choice.click();
+          }
+        });
+        options.appendChild(choice);
+        return choice;
+      });
+      const select = (index) =&gt; {
+        const changed = active !== index;
+        active = index;
+        panels.forEach((panel, position) =&gt; {
+          panel.hidden = position !== active;
+          choices[position].setAttribute(
+            &quot;aria-current&quot;,
+            String(position === active),
+          );
+        });
+        root.dataset.activeVariant = panels[active].dataset.variant;
+        count.textContent = `${active + 1} / ${panels.length}`;
+        name.textContent = panels[active].dataset.variant;
+        picker.open = false;
+        mousePointerId = null;
+        if (changed) {
+          status.textContent = `${count.textContent}: ${name.textContent}`;
+        }
+      };
+      previous.addEventListener(&quot;click&quot;, () =&gt;
+        select((active + panels.length - 1) % panels.length),
+      );
+      next.addEventListener(&quot;click&quot;, () =&gt;
+        select((active + 1) % panels.length),
+      );
+      picker.addEventListener(&quot;keydown&quot;, (event) =&gt; {
+        if (event.key === &quot;Escape&quot; &amp;&amp; picker.open) {
+          event.preventDefault();
+          picker.open = false;
+          mousePointerId = null;
+          summary.focus();
+          return;
+        }
+        if (event.altKey || event.ctrlKey || event.metaKey) {
+          return;
+        }
+        const index = choices.indexOf(document.activeElement);
+        let nextIndex;
+        if (event.key === &quot;ArrowDown&quot;) {
+          nextIndex = index &lt; 0 ? active : (index + 1) % choices.length;
+        } else if (event.key === &quot;ArrowUp&quot;) {
+          nextIndex = index &lt; 0 ? active : (index + choices.length - 1) % choices.length;
+        } else if (picker.open &amp;&amp; event.key === &quot;Home&quot;) {
+          nextIndex = 0;
+        } else if (picker.open &amp;&amp; event.key === &quot;End&quot;) {
+          nextIndex = choices.length - 1;
+        } else {
+          return;
+        }
+        event.preventDefault();
+        picker.open = true;
+        choices[nextIndex].focus();
+      });
+      picker.addEventListener(&quot;focusout&quot;, (event) =&gt; {
+        if (!picker.contains(event.relatedTarget)) {
+          picker.open = false;
+          mousePointerId = null;
+        }
+      });
+      const dismiss = (event) =&gt; {
+        if (!summary.contains(event.target)) {
+          mousePointerId = null;
+        }
+        if (!picker.contains(event.target)) {
+          picker.open = false;
+        }
+      };
+      const endPointerSelection = () =&gt; {
+        mousePointerId = null;
+      };
+      const sizePicker = () =&gt; {
+        root.style.setProperty(
+          &quot;--viz-carousel-picker-height&quot;,
+          `${picker.open ? options.offsetHeight : 0}px`,
+        );
+      };
+      picker.addEventListener(&quot;toggle&quot;, sizePicker);
+      window.addEventListener(&quot;resize&quot;, sizePicker);
+      document.addEventListener(&quot;pointerdown&quot;, dismiss);
+      document.addEventListener(&quot;pointerup&quot;, endPointerSelection);
+      document.addEventListener(&quot;pointercancel&quot;, endPointerSelection);
+      window.addEventListener(&quot;blur&quot;, endPointerSelection);
+      window.addEventListener(
+        &quot;pagehide&quot;,
+        () =&gt; {
+          document.removeEventListener(&quot;pointerdown&quot;, dismiss);
+          document.removeEventListener(&quot;pointerup&quot;, endPointerSelection);
+          document.removeEventListener(&quot;pointercancel&quot;, endPointerSelection);
+          window.removeEventListener(&quot;blur&quot;, endPointerSelection);
+          window.removeEventListener(&quot;resize&quot;, sizePicker);
+        },
+        { once: true },
+      );
+      root.append(controls, status);
+      select(0);
+    }
+  })();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+
+<script>(() => {
+  const frame = document.getElementById("codex-visualization");
+  if (!(frame instanceof HTMLIFrameElement)) {
+    return;
+  }
+  const isShare = document.documentElement.classList.contains(
+    "visualization-share-root",
+  );
+  let viewportHeight = globalThis.innerHeight;
+  let sizeFingerprint = null;
+  let sizeWriteTimeout;
+  let lastSize = null;
+  let pendingSize = null;
+  const storageKey = `codex:visualization-widget-state-v2:${JSON.stringify([
+    globalThis.location.pathname,
+    globalThis.location.search,
+  ])}`;
+  const sizeStorageKey = `${storageKey}:share-size-v1`;
+  const parseState = (serializedState) => {
+    if (
+      typeof serializedState !== "string" ||
+      new TextEncoder().encode(serializedState).length > 16 * 1024
+    ) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    /** @type {unknown} */
+    const state = JSON.parse(serializedState);
+    if (
+      state == null ||
+      typeof state !== "object" ||
+      Array.isArray(state) ||
+      ("imageIds" in state &&
+        (!Array.isArray(state.imageIds) || state.imageIds.length > 0))
+    ) {
+      throw new TypeError("Widget state must be a JSON object");
+    }
+    const storedState = { modelContent: null, privateContent: null, ...state };
+    const canonicalState = JSON.stringify(
+      storedState,
+      (_key, /** @type {unknown} */ value) => {
+        if (typeof value === "number" && !Number.isFinite(value)) {
+          throw new TypeError("Widget state must contain finite numbers");
+        }
+        return value;
+      },
+    );
+    if (new TextEncoder().encode(canonicalState).length > 16 * 1024) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    return storedState;
+  };
+  let storage = null;
+  let state = null;
+  try {
+    const localStorage = globalThis.localStorage;
+    const probeKey = `${storageKey}:probe`;
+    localStorage.setItem(probeKey, "1");
+    localStorage.removeItem(probeKey);
+    storage = localStorage;
+    const savedState = storage.getItem(storageKey);
+    if (savedState != null) {
+      try {
+        state = parseState(savedState);
+      } catch {
+        // Invalid saved state does not disable future writes.
+      }
+    }
+  } catch {
+    storage = null;
+  }
+  const persistSize = () => {
+    globalThis.clearTimeout(sizeWriteTimeout);
+    if (pendingSize == null) {
+      return;
+    }
+    try {
+      storage?.setItem(sizeStorageKey, pendingSize);
+    } catch {
+      // A denied or full cache must not affect the visualization.
+    }
+    pendingSize = null;
+  };
+  if (isShare) {
+    globalThis.addEventListener("pagehide", persistSize);
+  }
+  const initialGlobals = {
+    widgetState: state,
+    statePersistence: storage == null ? "none" : "local",
+  };
+
+  const channel = new MessageChannel();
+  channel.port1.addEventListener("message", (event) => {
+    const data = event.data;
+    if (typeof data !== "object" || data == null) {
+      return;
+    }
+    if (data.type === "widget-state-write") {
+      if (!Number.isSafeInteger(data.id) || data.id <= 0) {
+        return;
+      }
+      let ok = false;
+      try {
+        if (storage != null) {
+          const state = parseState(data.state);
+          storage.setItem(storageKey, JSON.stringify(state));
+          ok = true;
+        }
+      } catch {
+        // Storage denial, quota limits, and invalid state return a failed receipt.
+      }
+      channel.port1.postMessage({
+        type: "widget-state-result",
+        id: data.id,
+        ok,
+      });
+      return;
+    }
+    if (data.type === "height") {
+      const height = data.height;
+      if (
+        typeof height !== "number" ||
+        !Number.isFinite(height) ||
+        height < 0
+      ) {
+        return;
+      }
+      if (height <= 10_000) {
+        const width = isShare && storage != null ? frame.clientWidth : null;
+        frame.style.height = Math.ceil(height) + "px";
+        if (isShare && storage != null) {
+          const size = JSON.stringify({
+            fingerprint: sizeFingerprint,
+            width,
+            viewportHeight: globalThis.innerHeight,
+            dark: globalThis.matchMedia("(prefers-color-scheme: dark)").matches,
+            scale: globalThis.devicePixelRatio,
+            height: Math.ceil(height),
+          });
+          if (size !== lastSize) {
+            lastSize = size;
+            pendingSize = size;
+            globalThis.clearTimeout(sizeWriteTimeout);
+            sizeWriteTimeout = globalThis.setTimeout(persistSize, 100);
+          }
+        }
+      }
+      if (isShare) {
+        // Keep unusually tall content accessible without accepting an unbounded height.
+        if (height > 10_000 && Number.parseFloat(frame.style.height) === 0) {
+          frame.style.removeProperty("height");
+        }
+        frame.scrolling = height > 10_000 ? "auto" : "no";
+        document.documentElement.classList.add("visualization-share-ready");
+      }
+      return;
+    }
+    if (data.type === "scroll-to") {
+      const top = data.top;
+      if (
+        typeof top === "number" &&
+        Number.isFinite(top) &&
+        top >= 0 &&
+        globalThis.navigator.userActivation?.isActive === true
+      ) {
+        globalThis.scrollTo({
+          top: Math.ceil(
+            globalThis.scrollY + frame.getBoundingClientRect().top + top,
+          ),
+        });
+      }
+      return;
+    }
+    if (data.type === "open-external") {
+      const rawHref = data.href;
+      if (typeof rawHref !== "string") {
+        return;
+      }
+      let href;
+      try {
+        const url = new URL(rawHref, document.baseURI);
+        if (url.protocol !== "https:") {
+          return;
+        }
+        href = url.href;
+      } catch {
+        return;
+      }
+      if (globalThis.navigator.userActivation?.isActive === true) {
+        const anchor = document.createElement("a");
+        anchor.href = href;
+        anchor.rel = "noopener noreferrer";
+        anchor.target = "_blank";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      return;
+    }
+    if (data.type === "follow-up") {
+      const prompt = data.prompt;
+      if (
+        typeof prompt !== "string" ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      const title = data.title;
+      globalThis.prompt(typeof title === "string" ? title : prompt, prompt);
+    }
+  });
+  channel.port1.start();
+  const srcdoc = frame.dataset.srcdoc;
+  if (srcdoc == null) {
+    return;
+  }
+  globalThis.addEventListener("resize", () => {
+    const height = Number.parseFloat(frame.style.height);
+    if (!isShare && (!Number.isFinite(height) || height <= viewportHeight)) {
+      frame.style.removeProperty("height");
+    }
+    viewportHeight = globalThis.innerHeight;
+    channel.port1.postMessage({ type: "measure" });
+  });
+  frame.addEventListener(
+    "load",
+    () => {
+      frame.contentWindow?.postMessage(
+        { type: "codex-visualization-initialize" },
+        "*",
+        [channel.port2],
+      );
+    },
+    { once: true },
+  );
+  // Match the trusted bootstrap element, not the same text in an authored title.
+  const frameHtml = srcdoc.replace(
+    '<script type="application/json" id="codex-visualization-widget-state">__CODEX_VISUALIZATION_WIDGET_STATE__<\/script>',
+    () =>
+      '<script type="application/json" id="codex-visualization-widget-state">' +
+      JSON.stringify(initialGlobals).replaceAll("<", "\\u003c") +
+      "<\/script>",
+  );
+  if (isShare && storage != null) {
+    // Fingerprint the rendered document, including restored widget state, without
+    // storing its content. This is a layout cache, not a security identity.
+    let hash = 5381;
+    for (let index = 0; index < frameHtml.length; index += 1) {
+      hash = (hash * 33 + frameHtml.charCodeAt(index)) % 4_294_967_296;
+    }
+    sizeFingerprint = hash.toString(36);
+    try {
+      const size = JSON.parse(storage.getItem(sizeStorageKey) ?? "null");
+      if (
+        size?.fingerprint === sizeFingerprint &&
+        size.width === frame.clientWidth &&
+        size.viewportHeight === globalThis.innerHeight &&
+        size.dark ===
+          globalThis.matchMedia("(prefers-color-scheme: dark)").matches &&
+        size.scale === globalThis.devicePixelRatio &&
+        typeof size.height === "number" &&
+        Number.isFinite(size.height) &&
+        size.height >= 0 &&
+        size.height <= 10_000
+      ) {
+        frame.style.height = size.height + "px";
+      }
+    } catch {
+      // Ignore missing or invalid cache entries and measure the live frame.
+    }
+  }
+  frame.srcdoc = frameHtml;
+  delete frame.dataset.srcdoc;
+})();
+</script>
+</body>
+</html>

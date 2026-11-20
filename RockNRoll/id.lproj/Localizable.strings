@@ -3174,3 +3174,4 @@
 "database requires a newer version of Rock’n’Roll" = "basis data membutuhkan versi baru dari Rock’n’Roll";
 "database is closed" = "basis data ditutup";
 "task is no longer assigned to this profile" = "tugas tidak lagi ditugaskan ke profil ini";
+"%@ is sharing" = "%@ sedang berbagi layar";

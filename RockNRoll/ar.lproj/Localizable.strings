@@ -3174,3 +3174,4 @@
 "database requires a newer version of Rock’n’Roll" = "تتطلب قاعدة البيانات إصدار أحدث من Rock’n’Roll";
 "database is closed" = "قاعدة البيانات مغلقة";
 "task is no longer assigned to this profile" = "لم تعد المهمة مخصصة لهذا الملف الشخصي";
+"%@ is sharing" = "%@ يشارك الشاشة";

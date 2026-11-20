@@ -3174,3 +3174,4 @@
 "database requires a newer version of Rock’n’Roll" = "数据库需要Rock’n’Roll的更新版本";
 "database is closed" = "数据库关闭";
 "task is no longer assigned to this profile" = "此配置文件不再被指定任务";
+"%@ is sharing" = "%@ 正在共享屏幕";

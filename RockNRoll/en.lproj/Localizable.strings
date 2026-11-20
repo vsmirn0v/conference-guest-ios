@@ -3402,3 +3402,4 @@
 "database requires a newer version of Rock’n’Roll" = "database requires a newer version of Rock’n’Roll";
 "database is closed" = "database is closed";
 "task is no longer assigned to this profile" = "task is no longer assigned to this profile";
+"%@ is sharing" = "%@ is sharing";
