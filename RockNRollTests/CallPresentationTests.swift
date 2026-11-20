@@ -790,10 +790,11 @@ final class CallPresentationTests: XCTestCase {
 
         header.focus.sendActions(for: .touchUpInside)
         XCTAssertTrue(header.isHidden)
-        XCTAssertFalse(cue.isHidden)
         let fitted = AVMakeRect(aspectRatio: video.displaySize, insideRect: video.bounds)
+        let safe = CallPresentationGeometry.safeContentRect(bounds: call.view.bounds, insets: call.view.safeAreaInsets)
+        XCTAssertFalse(cue.isHidden, "Share \(video.convert(fitted, to: call.view)), safe viewport \(safe), speaker \(String(describing: call.activeSpeaker.current))")
         XCTAssertLessThan(cue.frame.maxY, video.convert(fitted, to: call.view).minY)
-        XCTAssertTrue(call.view.safeAreaLayoutGuide.layoutFrame.contains(cue.frame))
+        XCTAssertTrue(safe.contains(cue.frame))
         let letterbox = CGPoint(x: call.view.bounds.maxX - 2, y: header.frame.midY)
         let touchTarget = try XCTUnwrap(call.view.hitTest(letterbox, with: nil))
         XCTAssertTrue(touchTarget === zoom || touchTarget.isDescendant(of: zoom))
@@ -813,6 +814,16 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(fill.actionHandler)(fill))
         try await Task.sleep(for: .milliseconds(450))
         XCTAssertTrue(cue.isHidden)
+        let scale = zoom.zoomScale
+        XCTAssertGreaterThan(scale, 1)
+        zoom.setContentOffset(CGPoint(x: zoom.contentOffset.x + 20, y: zoom.contentOffset.y), animated: false)
+        let offset = zoom.contentOffset
+        let show = try XCTUnwrap(zoom.accessibilityCustomActions?.first { $0.name == L("Show controls") })
+        XCTAssertTrue(try XCTUnwrap(show.actionHandler)(show))
+        XCTAssertEqual(zoom.contentOffset, offset)
+        header.focus.sendActions(for: .touchUpInside)
+        XCTAssertEqual(zoom.contentOffset, offset)
+        XCTAssertEqual(zoom.zoomScale, scale)
         zoom.setZoomScale(1, animated: false)
         XCTAssertFalse(cue.isHidden)
         listener.isSpeaking = false

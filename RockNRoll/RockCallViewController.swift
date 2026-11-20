@@ -780,8 +780,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             shareSpeakerCue.setSpeaker(nil)
             return
         }
-        let viewport = streamScroll.frame.intersection(entry.zoom.convert(entry.zoom.bounds, to: view))
-            .intersection(view.safeAreaLayoutGuide.layoutFrame)
+        let safe = CallPresentationGeometry.safeContentRect(bounds: view.bounds, insets: view.safeAreaInsets)
+        let viewport = streamScroll.frame.intersection(entry.zoom.convert(entry.zoom.bounds, to: view)).intersection(safe)
         let fitted = AVMakeRect(aspectRatio: entry.video.displaySize, insideRect: entry.video.bounds)
         let pixels = entry.video.convert(fitted, to: view).intersection(viewport)
         let margin: CGFloat = 8
