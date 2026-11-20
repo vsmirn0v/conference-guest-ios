@@ -201,7 +201,7 @@ final class CalendarReminderCoordinator: ObservableObject {
     }
     func existingOccurrence(for meeting: CalendarMeeting) -> ReminderOccurrence? {
         repository.occurrences.first { $0.eventID == meeting.id ||
-            $0.room == meeting.roomIdentity && $0.start == meeting.start && $0.end == meeting.end }
+            $0.start == meeting.start && $0.end == meeting.end && $0.room == meeting.roomIdentity }
     }
     func override(for occurrence: ReminderOccurrence) -> ReminderOverride {
         repository.states[occurrence.id]?.override ?? .init(custom: profile.timing)
@@ -608,10 +608,10 @@ final class CalendarReminderCoordinator: ObservableObject {
         var didChange = false
         for meeting in meetings {
             guard let remote = byKey[meeting.occurrenceSyncKey]
-                ?? activeRemote.first(where: { $0.semanticFingerprint.matches(meeting.semanticFingerprint) }),
-                  let localOcc = occurrence(for: meeting) else { continue }
-            var state = repository.states[localOcc.id] ?? .init()
-            let original = state
+                ?? activeRemote.first(where: { $0.semanticFingerprint.matches(meeting.semanticFingerprint) }) else { continue }
+            let existing = existingOccurrence(for: meeting)
+            let original = existing.flatMap { repository.states[$0.id] } ?? .init()
+            var state = original
             if let overrideValue = remote.reminderOverride?.value {
                 state.override = overrideValue
             }
@@ -625,10 +625,10 @@ final class CalendarReminderCoordinator: ObservableObject {
             if !remote.attendedDevices.isEmpty {
                 state.attended = true
             }
-            if state != original {
-                repository.states[localOcc.id] = state
-                didChange = true
-            }
+            guard state != original, let occurrence = existing ?? ReminderOccurrence(meeting: meeting) else { continue }
+            if existing == nil { repository.occurrences.append(occurrence) }
+            repository.states[occurrence.id] = state
+            didChange = true
         }
         if didChange { changed() }
     }

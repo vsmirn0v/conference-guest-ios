@@ -262,7 +262,7 @@ import UserNotifications
             }
         }
         library.sync.onSyncNow = { [weak self] in
-            self?.workspaceSync.scheduleSync(delayMilliseconds: 150)
+            self?.workspaceSync.scheduleSync(delayMilliseconds: 150, localChanges: false)
         }
         library.sync.onSyncPreferencesChanged = { [weak self] in
             self?.workspaceSync.scheduleSync(delayMilliseconds: 100)
@@ -1273,7 +1273,7 @@ import UserNotifications
     func backgrounded() { library.backgrounded() }
     func cloudNotification() async {
         await library.sync.synchronizeForNotification()
-        await workspaceSync.synchronizeNow()
+        await workspaceSync.synchronizeNow(localChanges: false)
         await library.continuation.refresh()
     }
     func handleURL(_ url: URL) { show(); invitation = url.absoluteString; joinInput() }

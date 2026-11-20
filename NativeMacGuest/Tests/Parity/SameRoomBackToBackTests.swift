@@ -43,8 +43,12 @@ import XCTest
 
 private final class SameRoomReminderStorage: ReminderStorage, RoomHistoryStorage {
     var data: Data?
+    var writes = 0
     func read() -> Data? { data }
-    func write(_ data: Data) throws { self.data = data }
+    func write(_ data: Data) throws {
+        self.data = data
+        writes += 1
+    }
 }
 
 @MainActor private final class SameRoomReminderNotifications: ReminderNotifying {
@@ -202,6 +206,54 @@ private final class SameRoomClockBox: @unchecked Sendable {
     }
 
     // MARK: - Reminder & Cross-Device Tests
+
+    func testImportPersistsOnlyChangedReminderStatesOncePerBatch() async throws {
+        let now = Date()
+        let version = SyncVersion(counter: 1, device: "phone")
+        let storage = SameRoomReminderStorage()
+        let coordinator = CalendarReminderCoordinator(preferences: makePreferences(), storage: storage,
+                                                       notifications: SameRoomReminderNotifications(), clock: { now })
+        let meetings = (1...2).map { index in
+            let start = now.addingTimeInterval(Double(index) * 3600)
+            var meeting = makeCalendarMeeting(id: "meeting-\(index)", seriesID: "series", title: "Meeting",
+                                              start: start, end: start.addingTimeInterval(1800), url: roomA)
+            meeting.invitation = roomA
+            meeting.engine = .guest
+            return meeting
+        }
+        var remote = meetings.map { meeting in
+            SyncedCalendarOccurrence(occurrenceKey: meeting.occurrenceSyncKey, seriesKey: meeting.seriesID,
+                                     title: meeting.title, calendarTitle: meeting.calendarTitle,
+                                     start: meeting.start, end: meeting.end, skipped: SyncValue(false, version: version),
+                                     isDeleted: SyncValue(false, version: version))
+        }
+        func apply() { coordinator.applyRemoteOccurrenceStates(remote, to: meetings, localDeviceID: "mac") }
+
+        apply()
+        XCTAssertTrue(coordinator.repository.occurrences.isEmpty)
+        XCTAssertEqual(storage.writes, 0)
+
+        remote[0].skipped = SyncValue(true, version: version)
+        remote[1].attendedDevices = ["phone"]
+        apply()
+        XCTAssertEqual(storage.writes, 1)
+        let saved = try JSONDecoder().decode(CalendarReminderRepository.self, from: XCTUnwrap(storage.data))
+        let skippedID = try XCTUnwrap(saved.occurrences.first { $0.eventID == meetings[0].id }?.id)
+        let attendedID = try XCTUnwrap(saved.occurrences.first { $0.eventID == meetings[1].id }?.id)
+        XCTAssertEqual(saved.states[skippedID]?.skipped, true)
+        XCTAssertEqual(saved.states[attendedID]?.attended, true)
+
+        await coordinator.waitForReconciliation()
+        let writesAfterReconciliation = storage.writes
+        apply()
+        await coordinator.waitForReconciliation()
+        XCTAssertEqual(storage.writes, writesAfterReconciliation)
+        remote[0].skipped = SyncValue(false, version: .init(counter: 2, device: "phone"))
+        apply()
+        XCTAssertEqual(coordinator.repository.states[skippedID]?.skipped, false)
+        XCTAssertEqual(coordinator.repository.occurrences.count, 2)
+        await coordinator.waitForReconciliation()
+    }
 
     func testCoordinatorBackToBackSuppressionWithdrawalRestoreBoundaryAndOtherDeviceToggle() async throws {
         var now = Date()

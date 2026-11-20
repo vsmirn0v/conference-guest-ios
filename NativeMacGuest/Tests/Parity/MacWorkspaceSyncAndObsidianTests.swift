@@ -61,7 +61,8 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         var deletedIDs: [String] = []
         var generation = "zone-gen-1"
         var failure: Error?
-        var onFetch: (() -> Void)?
+        var fetchFailure: Error?
+        var onFetch: (() async -> Void)?
         var fetchedTokens: [Data?] = []
 
         func connect() async throws -> CloudZoneSession {
@@ -71,7 +72,8 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
 
         func fetch(session: CloudZoneSession, after token: Data?) async throws -> CloudZoneChanges<Record> {
             fetchedTokens.append(token)
-            onFetch?()
+            await onFetch?()
+            if let fetchFailure { throw fetchFailure }
             return CloudZoneChanges(records: Array(records.values), token: Data([UInt8(fetchedTokens.count)]))
         }
 
@@ -99,12 +101,13 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
 
     // MARK: - Fixture Builder
 
-    private func makeFixture(includeTranscript: Bool = false) async throws -> (
+    private func makeFixture(includeTranscript: Bool = false, now: @escaping () -> Date = Date.init) async throws -> (
         library: MeetingLibraryController,
         notes: MeetingNotesController,
         assistant: AssistantDataStore,
         worker: ObsidianExportWorker,
         sync: MacWorkspaceSyncCoordinator,
+        reopenSync: @MainActor () -> MacWorkspaceSyncCoordinator,
         roomSync: RoomSyncCoordinator,
         libraryCloud: MockZoneTransport<MeetingLibrarySyncRecord>,
         transcriptCloud: MockZoneTransport<MeetingTranscriptSyncRecord>,
@@ -167,27 +170,255 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         let archiveRoot = temp.appendingPathComponent("Archive", isDirectory: true)
         let archiveStore = TranscriptArchiveStore(root: archiveRoot, preferences: prefs)
 
-        let sync = MacWorkspaceSyncCoordinator(
-            storageRoot: root,
-            meetingLibrary: library,
-            notes: notes,
-            assistant: assistant,
-            attentionStore: nil,
-            journalProvider: { _ in library.workspaceJournal },
-            obsidianExportNow: { await worker.runOnce() },
-            calendar: nil,
-            syncPreferences: roomSync,
-            archiveStore: archiveStore,
-            libraryTransport: AnyCloudZoneTransport(libraryCloud),
-            transcriptTransport: AnyCloudZoneTransport(transcriptCloud),
-            scheduleTransport: AnyCloudZoneTransport(scheduleCloud)
-        )
+        @MainActor func openSync() -> MacWorkspaceSyncCoordinator {
+            MacWorkspaceSyncCoordinator(
+                storageRoot: root,
+                meetingLibrary: library,
+                notes: notes,
+                assistant: assistant,
+                attentionStore: nil,
+                journalProvider: { _ in library.workspaceJournal },
+                obsidianExportNow: { await worker.runOnce() },
+                calendar: nil,
+                syncPreferences: roomSync,
+                archiveStore: archiveStore,
+                libraryTransport: AnyCloudZoneTransport(libraryCloud),
+                transcriptTransport: AnyCloudZoneTransport(transcriptCloud),
+                scheduleTransport: AnyCloudZoneTransport(scheduleCloud),
+                now: now
+            )
+        }
+        let sync = openSync()
         coordinators.append(sync)
 
-        return (library, notes, assistant, worker, sync, roomSync, libraryCloud, transcriptCloud, scheduleCloud, archiveStore, prefs)
+        return (library, notes, assistant, worker, sync, openSync, roomSync, libraryCloud, transcriptCloud, scheduleCloud, archiveStore, prefs)
+    }
+
+    /// Observe the ordinary asynchronous write without forcing a checkpoint.
+    private func persistedWorkspace(
+        containing predicate: (MeetingWorkspaceSyncDocument) -> Bool,
+        file: StaticString = #filePath, line: UInt = #line
+    ) async throws -> MeetingWorkspaceSyncDocument {
+        struct StoredReplica: Decodable { let workspaceDoc: MeetingWorkspaceSyncDocument }
+        let url = temp.appendingPathComponent("AppSupport/workspace-sync-replica.json")
+        let deadline = ContinuousClock.now + .seconds(6)
+        repeat {
+            if let data = try? Data(contentsOf: url),
+               let doc = try? JSONDecoder().decode(StoredReplica.self, from: data).workspaceDoc,
+               predicate(doc) {
+                return doc
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        } while ContinuousClock.now < deadline
+        return try XCTUnwrap(nil, "Expected local changes to reach the replica", file: file, line: line)
     }
 
     // MARK: - Tests
+
+    func testCloudRetriesRespectDeadlineWithoutRescanningOrRewritingIdleWorkspace() async throws {
+        var time = Date()
+        let f = try await makeFixture(now: { time })
+        f.libraryCloud.fetchFailure = CKError(.serviceUnavailable, userInfo: [CKErrorRetryAfterKey: 600])
+
+        await f.sync.synchronizeNow()
+        XCTAssertEqual(f.sync.localReconciliationCount, 1)
+        XCTAssertEqual(f.sync.nextRetryAt, time.addingTimeInterval(600))
+        try await f.sync.persistReplicaCheckpoint()
+        let replicaURL = temp.appendingPathComponent("AppSupport/workspace-sync-replica.json")
+        func fileNumber() throws -> NSNumber {
+            let attributes = try FileManager.default.attributesOfItem(atPath: replicaURL.path)
+            return try XCTUnwrap(attributes[.systemFileNumber] as? NSNumber)
+        }
+        let originalFile = try fileNumber()
+
+        for expectedFetches in 1...3 {
+            time.addTimeInterval(599)
+            for _ in 0..<4 { await f.sync.synchronizeNow(localChanges: false) }
+            XCTAssertEqual(f.libraryCloud.fetchedTokens.count, expectedFetches)
+            time.addTimeInterval(1)
+            await f.sync.synchronizeNow(localChanges: false)
+            XCTAssertEqual(f.libraryCloud.fetchedTokens.count, expectedFetches + 1)
+            XCTAssertEqual(f.sync.nextRetryAt, time.addingTimeInterval(600))
+            XCTAssertEqual(f.sync.localReconciliationCount, 1)
+            try await f.sync.persistReplicaCheckpoint()
+            XCTAssertEqual(try fileNumber(), originalFile, "An unchanged retry must preserve the atomically written replica")
+        }
+    }
+
+    func testContinuousShortDelayRequestsCannotPostponeFirstBatch() async throws {
+        let f = try await makeFixture()
+        f.libraryCloud.fetchFailure = CKError(.serviceUnavailable, userInfo: [CKErrorRetryAfterKey: 600])
+        let start = ContinuousClock.now
+        var requests = 0
+        repeat {
+            f.sync.scheduleSync(delayMilliseconds: 50)
+            requests += 1
+            try await Task.sleep(for: .milliseconds(100))
+        } while f.sync.nextRetryAt == nil && ContinuousClock.now < start + .seconds(4)
+
+        XCTAssertGreaterThan(requests, 3)
+        XCTAssertEqual(f.libraryCloud.fetchedTokens.count, 1)
+        XCTAssertEqual(f.sync.localReconciliationCount, 1, "The first batch should run while requests are still arriving")
+        XCTAssertGreaterThanOrEqual(start.duration(to: .now), .milliseconds(1_900), "Normal requests use the two-second batching window")
+    }
+
+    func testDeferredHistoryRecoveryWithDirtyDraftDoesNotSpinDuringCloudBackoff() async throws {
+        var f = try await makeFixture()
+        let session = MeetingSessionRecord(title: "Interrupted merge", startedAt: Date() - 120, endedAt: Date(), state: .ended)
+        try await f.library.store.upsertSession(session)
+        await f.sync.synchronizeNow()
+        try await f.sync.persistReplicaCheckpoint()
+
+        // Restore the exact journal marker left when the app exits after its merge checkpoint.
+        let url = temp.appendingPathComponent("AppSupport/workspace-sync-replica.json")
+        var replica = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        replica["pendingHistoryApply"] = [session.id.uuidString]
+        try JSONSerialization.data(withJSONObject: replica).write(to: url, options: .atomic)
+        coordinators.removeAll()
+        f.sync = f.reopenSync()
+        await f.notes.load(sessionID: session.id)
+        f.notes.update(sessionID: session.id, text: "Uncommitted during recovery")
+        f.transcriptCloud.fetchFailure = CKError(.serviceUnavailable, userInfo: [CKErrorRetryAfterKey: 600])
+        await f.sync.pullAndMergeTranscripts(for: session.id)
+        await f.sync.synchronizeNow()
+        XCTAssertNotNil(f.sync.nextRetryAt)
+        XCTAssertEqual(f.notes.draft(sessionID: session.id)?.isDirty, true)
+        let deferredScans = f.sync.localReconciliationCount
+        let fileAfterDeferral = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        XCTAssertEqual(fileAfterDeferral["pendingHistoryApply"] as? [String], [session.id.uuidString])
+
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(f.sync.localReconciliationCount, deferredScans, "An uncommitted draft must not immediately re-arm the same local scan")
+        let saved = await f.notes.flush(sessionID: session.id)
+        XCTAssertTrue(saved)
+        await f.sync.synchronizeNow()
+        _ = try await persistedWorkspace { $0.notes[session.id]?.markdown == "Uncommitted during recovery" }
+    }
+
+    func testOfflineNoteIsPersistedAndUploadsAfterCoordinatorRestart() async throws {
+        var time = Date()
+        var f = try await makeFixture(now: { time })
+        let start = time.addingTimeInterval(-600)
+        let session = MeetingSessionRecord(title: "Offline notes", startedAt: start, endedAt: time, state: .ended)
+        try await f.library.store.upsertSession(session)
+        f.libraryCloud.fetchFailure = CKError(.serviceUnavailable, userInfo: [CKErrorRetryAfterKey: 600])
+        f.sync.start()
+        await f.sync.synchronizeNow()
+        let text = "Written while iCloud was unavailable"
+        let result = await f.library.saveNote(sessionID: session.id, markdown: text)
+        _ = try result.get()
+        // A cloud-only wake must preserve the local change already queued by the note observer.
+        await f.sync.synchronizeNow(localChanges: false)
+        XCTAssertEqual(f.libraryCloud.fetchedTokens.count, 1)
+        XCTAssertEqual(f.sync.localReconciliationCount, 2)
+
+        let stored = try await persistedWorkspace { $0.notes[session.id]?.markdown == text }
+        let pendingNote = try XCTUnwrap(stored.notes[session.id])
+        XCTAssertEqual(pendingNote.markdown, text)
+        XCTAssertNil(f.libraryCloud.records[MeetingLibrarySyncRecord.note(pendingNote).syncRecordID])
+
+        // Reopen the same replica and preferences while the service is still unavailable.
+        coordinators.removeAll()
+        f.sync = f.reopenSync()
+        await f.sync.synchronizeNow()
+        XCTAssertEqual(f.libraryCloud.fetchedTokens.count, 2)
+        let scansAfterRestart = f.sync.localReconciliationCount
+        f.libraryCloud.fetchFailure = nil
+        time.addTimeInterval(600)
+        await f.sync.synchronizeNow(localChanges: false)
+        XCTAssertEqual(f.libraryCloud.fetchedTokens.count, 3)
+        XCTAssertEqual(f.sync.localReconciliationCount, scansAfterRestart)
+        XCTAssertNil(f.sync.nextRetryAt)
+        XCTAssertNil(f.sync.syncError)
+        guard case .note(let uploaded)? = f.libraryCloud.records[MeetingLibrarySyncRecord.note(pendingNote).syncRecordID] else {
+            return XCTFail("Expected the pending offline note to upload")
+        }
+        XCTAssertEqual(uploaded, pendingNote)
+    }
+
+    func testJournalOnlyEditDuringOutageIsReconciledAndUploadedOnRecovery() async throws {
+        var time = Date()
+        let f = try await makeFixture(now: { time })
+        let session = MeetingSessionRecord(title: "Captions", startedAt: time - 30, state: .active)
+        try await f.library.store.upsertSession(session)
+        await f.library.refresh()
+        let journal = f.library.workspaceJournal
+        journal.begin(sessionID: session.id, title: session.title, calendarSeriesID: nil, roomIdentity: nil, at: session.startedAt)
+        f.libraryCloud.fetchFailure = CKError(.serviceUnavailable, userInfo: [CKErrorRetryAfterKey: 600])
+        f.sync.start()
+        await f.sync.synchronizeNow(localChanges: false)
+        let scans = f.sync.localReconciliationCount
+
+        let event = MeetingWorkspaceEvent(id: "local-caption", kind: .transcript, occurredAt: time, source: "local", text: "Offline caption")
+        journal.observe(sessionID: session.id, events: [event])
+
+        let stored = try await persistedWorkspace { doc in
+            doc.mergedTranscript(for: session.id).contains { $0.id == event.id && $0.text == event.text }
+        }
+        let chunk = try XCTUnwrap(stored.transcriptChunks.values.first { $0.sessionID == session.id })
+        XCTAssertEqual(f.sync.localReconciliationCount, scans + 1)
+        XCTAssertEqual(f.libraryCloud.fetchedTokens.count, 1)
+        XCTAssertTrue(f.transcriptCloud.records.isEmpty)
+
+        time.addTimeInterval(600)
+        f.libraryCloud.fetchFailure = nil
+        await f.sync.synchronizeNow(localChanges: false)
+        guard case .chunk(let uploaded)? = f.transcriptCloud.records[MeetingTranscriptSyncRecord.chunk(chunk).syncRecordID] else {
+            return XCTFail("Expected the offline caption to upload")
+        }
+        XCTAssertEqual(uploaded.events, chunk.events)
+    }
+
+    func testNoteEditedDuringFailedFetchIsReconciledAutomaticallyDuringBackoff() async throws {
+        let f = try await makeFixture()
+        let session = MeetingSessionRecord(title: "Overlapping edit", startedAt: Date() - 300, endedAt: Date(), state: .ended)
+        try await f.library.store.upsertSession(session)
+        await f.library.refresh()
+        let text = "Saved while the cloud request was in flight"
+        f.libraryCloud.onFetch = {
+            let result = await f.library.saveNote(sessionID: session.id, markdown: text)
+            if case .failure(let error) = result { XCTFail("Note save failed: \(error)") }
+            // Publish the new card before the fetch fails. A later identical refresh
+            // must leave the original local-change notification responsible for the retry.
+            await f.library.refresh()
+        }
+        f.libraryCloud.fetchFailure = CKError(.serviceUnavailable, userInfo: [CKErrorRetryAfterKey: 600])
+        f.sync.start()
+        await f.sync.synchronizeNow(localChanges: false)
+        f.libraryCloud.onFetch = nil
+
+        _ = try await persistedWorkspace { $0.notes[session.id]?.markdown == text }
+        XCTAssertEqual(f.sync.localReconciliationCount, 2)
+        XCTAssertEqual(f.libraryCloud.fetchedTokens.count, 1)
+        XCTAssertNotNil(f.sync.nextRetryAt)
+    }
+
+    func testRemoteTranscriptImportAndReplayDoNotWakeLocalReconciliation() async throws {
+        let f = try await makeFixture()
+        let start = Date() - 120
+        let session = MeetingSessionRecord(title: "Remote captions", startedAt: start, endedAt: start + 60, state: .ended)
+        try await f.library.store.upsertSession(session)
+        await f.library.refresh()
+        f.sync.start()
+        await f.sync.synchronizeNow(localChanges: false)
+        let scans = f.sync.localReconciliationCount
+        let fetches = f.libraryCloud.fetchedTokens.count
+        let chunk = SyncedTranscriptChunk(sessionID: session.id, deviceID: "phone", chunkIndex: 0,
+            sessionStartedAt: start, sessionEndedAt: start + 60, events: [
+                SyncedTranscriptEvent(id: "phone-caption", kind: "transcript", occurredAt: start + 5,
+                                      text: "From the phone", deviceID: "phone")
+            ])
+        let record = MeetingTranscriptSyncRecord.chunk(chunk)
+        f.transcriptCloud.records[record.syncRecordID] = record
+
+        await f.sync.pullAndMergeTranscripts(for: session.id)
+        await f.sync.pullAndMergeTranscripts(for: session.id)
+        XCTAssertEqual(f.library.workspaceJournal.session(id: session.id)?.events.map(\.id), ["phone-caption"])
+        // The observer batches for two seconds. An echoed notification would run by now.
+        try await Task.sleep(for: .milliseconds(2_500))
+        XCTAssertEqual(f.sync.localReconciliationCount, scans)
+        XCTAssertEqual(f.libraryCloud.fetchedTokens.count, fetches)
+    }
 
     func testIncomingRedirectWaitsForDirtyNoteAndPreservesSavedEditOnRetry() async throws {
         let f = try await makeFixture()

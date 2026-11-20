@@ -155,7 +155,7 @@ struct NativeDesktopHomeView: View {
                         case .calendar: agenda
                         case .workspace: NativeDesktopMeetingWorkspaceView(workspace: workspace)
                         case .history: MeetingHistoryView(attention: workspace.attention, workspace: workspace)
-                            .onAppear { workspace.workspaceSync.scheduleSync(delayMilliseconds: 100) }
+                            .onAppear { workspace.workspaceSync.scheduleSync(delayMilliseconds: 100, localChanges: false) }
                         case .assistant: AttentionMomentsView(attention: workspace.attention, store: workspace.attention.store)
                         case .tasks:
                             PersonalTasksView(attention: workspace.attention) { sessionID, taskID in
