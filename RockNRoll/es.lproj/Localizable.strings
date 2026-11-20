@@ -3228,6 +3228,9 @@
 "assistant.compact.follow" = "Seguir";
 "assistant.compact.participating" = "Participar";
 
+/* History transcript references */
+"Show transcript references" = "Mostrar referencias a la transcripción";
+
 /* History sync and transcription availability */
 "iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud no está disponible temporalmente. La sincronización se reintentará automáticamente.";
 "Some audio is missing from this transcript." = "Falta parte del audio en esta transcripción.";

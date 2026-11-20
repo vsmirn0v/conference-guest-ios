@@ -85,14 +85,14 @@ struct MeetingOutcome: Codable, Identifiable, Equatable, Sendable {
     }
 
     var shareText: String {
-        var parts = [summary.trimmed]
-        if !decisions.isEmpty { parts.append(L("Decisions") + ":\n" + decisions.map { "• " + $0 }.joined(separator: "\n")) }
+        var parts = [MeetingOutcomePrompt.displayText(summary).trimmed]
+        if !decisions.isEmpty { parts.append(L("Decisions") + ":\n" + decisions.map { "• " + MeetingOutcomePrompt.displayText($0) }.joined(separator: "\n")) }
         if !tasks.isEmpty {
             parts.append(L("Tasks") + ":\n" + tasks.map { task in
-                "• " + task.text + (task.owner.trimmed.isEmpty ? "" : " — " + task.owner)
+                "• " + MeetingOutcomePrompt.displayText(task.text) + (task.owner.trimmed.isEmpty ? "" : " — " + MeetingOutcomePrompt.displayText(task.owner))
             }.joined(separator: "\n"))
         }
-        if !openQuestions.isEmpty { parts.append(L("Open questions") + ":\n" + openQuestions.map { "• " + $0 }.joined(separator: "\n")) }
+        if !openQuestions.isEmpty { parts.append(L("Open questions") + ":\n" + openQuestions.map { "• " + MeetingOutcomePrompt.displayText($0) }.joined(separator: "\n")) }
         return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 }

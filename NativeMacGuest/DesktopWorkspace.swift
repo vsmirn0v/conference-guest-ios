@@ -18,7 +18,10 @@ import UserNotifications
     var mayAdmitMeeting: () -> Bool = { true }
     var meetingAdmissionError: () -> String? = { nil }
     var onUpdateActivityChanged: () -> Void = {}
-    var busyForUpdate: Bool { preparing || !meetings.isEmpty || leaveTask != nil || !meetingLeaves.isEmpty || shutdownBlocked }
+    var busyForUpdate: Bool {
+        preparing || !meetings.isEmpty || leaveTask != nil || !meetingLeaves.isEmpty || shutdownBlocked ||
+        attention.isRecoveringOutcomes || !attention.outcomeStatus.isEmpty
+    }
     #if NATIVE_DIRECT_UPDATES
     var updates: NativeDesktopUpdates?
     @Published private(set) var supportHomeVisit: UUID?
@@ -241,6 +244,12 @@ import UserNotifications
         self.attention.talk.installHotKey(enabled: self.attention.store.pushToTalk)
         self.attention.talk.observePushToTalk()
         self.attention.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        self.attention.$outcomeStatus.combineLatest(self.attention.$isRecoveringOutcomes)
+            .map { $0.isEmpty && !$1 }.removeDuplicates().dropFirst().sink { [weak self] _ in
+                // Published emits before the status changes. Recheck admission on the
+                // next actor turn, after the summary has been persisted or failed.
+                Task { @MainActor [weak self] in self?.onUpdateActivityChanged() }
+            }.store(in: &subscriptions)
         // Store and assistant publishes (a seen-mark, a keystroke in an outcome) must not
         // invalidate the whole workspace. Views that read them observe those objects.
         library.calendar.$meetings.dropFirst().sink { [weak self] _ in

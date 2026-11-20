@@ -150,7 +150,7 @@ enum MeetingOutcomePrompt {
             let time = line.at.map(clock.string(from:)) ?? ""
             return "[\(line.ref)] \(time) \(line.speaker)\(line.isYou ? " (the user)" : "")\(line.source == .chat ? " [chat]" : ""): \(line.text)"
         }.joined(separator: "\n")
-        return [["role": "system", "content": system + "\nAppend one or two source references such as [L3] at the end of each supported decision. Use only references present in the input. Write in " + language + "."],
+        return [["role": "system", "content": system + "\nAppend one or two source references such as [L3] at the end of each supported decision. Use only references present in the input. Keep source references out of the summary, tasks, owners and open questions. Write in " + language + "."],
                 ["role": "user", "content": "Meeting: \(request.meetingTitle)\nEnded: \(clock.string(from: request.endedAt))\n\n\(lines)"]]
     }
 
@@ -161,6 +161,115 @@ enum MeetingOutcomePrompt {
         throw AttentionJudgeError.emptyAnswer
     }
 
+    /// Line references are a private writer protocol, not part of human-facing
+    /// prose. Keep normal Markdown and escaped/code literals intact, including
+    /// links whose label happens to look like a source reference.
+    static func displayText(_ text: String) -> String { sourceReferences(in: text).text }
+
+    static func sourceReferences(in text: String) -> (text: String, references: [String]) {
+        let characters = Array(text)
+        func closing(_ start: Int, open: Character, close: Character) -> Int? {
+            var depth = 1, index = start + 1
+            while index < characters.count {
+                if characters[index] == "\\" { index += 2; continue }
+                if characters[index] == open { depth += 1 }
+                if characters[index] == close {
+                    depth -= 1
+                    if depth == 0 { return index }
+                }
+                index += 1
+            }
+            return nil
+        }
+        func reference(_ label: String) -> String? {
+            let bytes = Array(label.utf8)
+            guard (2...5).contains(bytes.count), bytes[0] == 76,
+                  bytes[1...].allSatisfy({ (48...57).contains($0) }) else { return nil }
+            return label
+        }
+        let definitions = Set(text.split(separator: "\n").compactMap { line -> String? in
+            let line = line.trimmingCharacters(in: .whitespaces)
+            guard line.first == "[", let end = line.firstIndex(of: "]"),
+                  line.index(after: end) < line.endIndex, line[line.index(after: end)] == ":" else { return nil }
+            return String(line[line.index(after: line.startIndex)..<end]).lowercased()
+        })
+        var output = "", references: [String] = [], index = 0, removedReference = false
+        func append(_ range: Range<Int>) {
+            var value = String(characters[range])
+            if removedReference, let first = value.first {
+                if output.isEmpty { value = String(value.drop(while: { $0 == " " || $0 == "\t" })) }
+                else if first == " " || first == "\t" || first == "\n" || ".,;:!?)]}。，；：！？）】".contains(first) {
+                    while output.last == " " || output.last == "\t" { output.removeLast() }
+                }
+            }
+            output += value
+            removedReference = false
+        }
+        while index < characters.count {
+            let character = characters[index]
+            if index == 0 || characters[index - 1] == "\n" {
+                let indented = character == "\t" ||
+                    (index + 4 <= characters.count && characters[index..<(index + 4)].allSatisfy { $0 == " " })
+                if indented {
+                    let end = characters[index...].firstIndex(of: "\n") ?? characters.count
+                    append(index..<end); index = end; continue
+                }
+            }
+            if character == "\\" {
+                let end = min(index + 2, characters.count)
+                append(index..<end); index = end; continue
+            }
+            if character == "`" || character == "~" {
+                var runEnd = index + 1
+                while runEnd < characters.count, characters[runEnd] == character { runEnd += 1 }
+                let count = runEnd - index
+                if character == "`" || count >= 3 {
+                    var cursor = runEnd, end: Int?
+                    while cursor < characters.count {
+                        guard characters[cursor] == character else { cursor += 1; continue }
+                        var next = cursor + 1
+                        while next < characters.count, characters[next] == character { next += 1 }
+                        if next - cursor == count { end = next; break }
+                        cursor = next
+                    }
+                    let protectedEnd = end ?? characters.count
+                    append(index..<protectedEnd); index = protectedEnd; continue
+                }
+            }
+            if character == "[", let end = closing(index, open: "[", close: "]") {
+                let label = String(characters[(index + 1)..<end])
+                var protectedEnd: Int?
+                if end + 1 < characters.count {
+                    if characters[end + 1] == "(" {
+                        protectedEnd = closing(end + 1, open: "(", close: ")").map { $0 + 1 } ?? characters.count
+                    } else if characters[end + 1] == "[", let referenceEnd = closing(end + 1, open: "[", close: "]") {
+                        let linkReference = String(characters[(end + 2)..<referenceEnd])
+                        // Adjacent [L1][L2] markers are citations unless a real
+                        // Markdown reference definition makes them a link.
+                        if reference(label) == nil || reference(linkReference) == nil || definitions.contains(linkReference.lowercased()) {
+                            protectedEnd = referenceEnd + 1
+                        }
+                    } else if characters[end + 1] == ":" {
+                        protectedEnd = characters[(end + 1)...].firstIndex(of: "\n") ?? characters.count
+                    }
+                }
+                if let protectedEnd {
+                    append(index..<protectedEnd); index = protectedEnd; continue
+                }
+                if let ref = reference(label), !definitions.contains(label.lowercased()) {
+                    if !references.contains(ref) { references.append(ref) }
+                    removedReference = true; index = end + 1; continue
+                }
+                append(index..<(end + 1)); index = end + 1; continue
+            }
+            append(index..<(index + 1)); index += 1
+        }
+        if removedReference {
+            while output.last == " " || output.last == "\t" { output.removeLast() }
+        }
+        return (output, references)
+    }
+
     private static func decode(_ payload: String) -> MeetingOutcomeContent? {
         struct RawTask: Decodable { var text: String?; var owner: String?; var due_at: String? }
         struct Raw: Decodable { var summary: String?; var decisions: [String]?; var tasks: [RawTask]?; var open_questions: [String]? }
@@ -169,29 +278,28 @@ enum MeetingOutcomePrompt {
         }
         func clean(_ values: [String]) -> [String] {
             var seen = Set<String>()
-            return values.map { String($0.trimmed.prefix(500)) }.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }.prefix(20).map { $0 }
+            return values.map { String(displayText($0).trimmed.prefix(500)) }.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }.prefix(20).map { $0 }
         }
         var sources: [String: [String]] = [:]
         let decisions = clean((raw.decisions ?? []).map { rawDecision in
-            // The writer cites the printed line references at the end of a decision.
-            let pattern = #"\[L[0-9]{1,4}\]"#
-            let matches = (try? NSRegularExpression(pattern: pattern))?.matches(in: rawDecision,
-                range: NSRange(rawDecision.startIndex..., in: rawDecision)).compactMap { Range($0.range, in: rawDecision) } ?? []
-            let stripped = String(rawDecision.replacingOccurrences(of: pattern, with: "", options: .regularExpression).trimmed.prefix(500))
-            if !matches.isEmpty && !stripped.isEmpty {
-                sources[stripped] = matches.map { String(rawDecision[$0].dropFirst().dropLast()) }
+            let parsed = sourceReferences(in: rawDecision)
+            let stripped = String(parsed.text.trimmed.prefix(500))
+            if !parsed.references.isEmpty && !stripped.isEmpty {
+                for ref in parsed.references where !(sources[stripped] ?? []).contains(ref) {
+                    sources[stripped, default: []].append(ref)
+                }
             }
             return stripped
         })
         let tasks = (raw.tasks ?? []).prefix(20).compactMap { raw -> MeetingOutcomeTask? in
-            let text = String((raw.text ?? "").trimmed.prefix(500)); guard !text.isEmpty else { return nil }
+            let text = String(displayText(raw.text ?? "").trimmed.prefix(500)); guard !text.isEmpty else { return nil }
             let due = raw.due_at?.trimmed ?? ""
             let dueDay = AssistantTime.calendarDay(due)
-            return .init(text: text, owner: String((raw.owner ?? "").trimmed.prefix(120)),
+            return .init(text: text, owner: String(displayText(raw.owner ?? "").trimmed.prefix(120)),
                 dueAt: dueDay == nil && !due.isEmpty ? AssistantTime.parse(due) : nil, dueDay: dueDay)
         }
         let openQuestions = clean(raw.open_questions ?? [])
-        let explicit = raw.summary?.trimmed ?? ""
+        let explicit = displayText(raw.summary ?? "").trimmed
         let summary = explicit.isEmpty
             ? (decisions + tasks.map(\.text) + openQuestions).prefix(2).joined(separator: " ")
             : explicit

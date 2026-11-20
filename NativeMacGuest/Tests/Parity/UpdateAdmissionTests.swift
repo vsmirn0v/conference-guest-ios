@@ -521,7 +521,7 @@ private struct CompactSettingsFixture: View {
         let calls: Calls
     }
 
-    private func fixture(detectionLatch: UpdateAdmissionLatch? = nil) -> Fixture {
+    private func fixture(detectionLatch: UpdateAdmissionLatch? = nil, attention: AttentionCoordinator? = nil) -> Fixture {
         let domain = "native-update-admission-\(UUID().uuidString)"
         let preferences = UserDefaults(suiteName: domain)!
         addTeardownBlock { preferences.removePersistentDomain(forName: domain) }
@@ -547,7 +547,7 @@ private struct CompactSettingsFixture: View {
             calls.models += 1
             return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet,
                                              engine: calls.models == 1 ? engine : UpdateAdmissionEngine())
-        }, attention: desktopTestAttention())
+        }, attention: attention ?? desktopTestAttention())
         return Fixture(workspace: workspace, library: library, engine: engine, calls: calls)
     }
 
@@ -643,6 +643,50 @@ private struct CompactSettingsFixture: View {
         XCTAssertEqual(fixture.engine.connections, 0)
         XCTAssertTrue(try safety.clearPreparedUpdateIfSafe())
         XCTAssertTrue(fixture.library.canAutomaticallyJoin())
+    }
+
+    func testStartupRecoveryScanPreventsUpdateReservationBeforeLibraryLoads() async throws {
+        let attention = desktopTestAttention()
+        attention.store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "fixture")
+        attention.store.generateOutcomes = true
+        let workspace = fixture(attention: attention).workspace
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("recovery-update-gate-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let safety = try NativeUpdateSafety(stateDirectoryURL: directory, currentBuild: 100)
+        try safety.prepareUpdate(targetBuild: 101)
+        XCTAssertTrue(attention.isRecoveringOutcomes, "Startup must fence updates before its first suspension")
+        XCTAssertTrue(workspace.busyForUpdate)
+        XCTAssertFalse(try safety.reserveInstallation(busy: workspace.busyForUpdate))
+        var observedIdle = false
+        workspace.onUpdateActivityChanged = { if !workspace.busyForUpdate { observedIdle = true } }
+        defer { workspace.onUpdateActivityChanged = {} }
+        try await eventually { observedIdle }
+        XCTAssertFalse(attention.isRecoveringOutcomes)
+        XCTAssertTrue(try safety.reserveInstallation(busy: workspace.busyForUpdate))
+    }
+
+    func testPendingOutcomePreventsUpdateReservationAndCompletionReleasesIt() async throws {
+        let workspace = fixture().workspace
+        await workspace.attention.store.waitForMeetingLibrary()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("outcome-update-gate-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let safety = try NativeUpdateSafety(stateDirectoryURL: directory, currentBuild: 100)
+        try safety.prepareUpdate(targetBuild: 101)
+        var observedIdle = false
+        workspace.onUpdateActivityChanged = {
+            if !workspace.busyForUpdate { observedIdle = true }
+        }
+        defer { workspace.onUpdateActivityChanged = {} }
+
+        // Even the asynchronous lookup/claim phase must fence installation.
+        // This missing job completes without contacting any summary provider.
+        workspace.attention.retryOutcome(for: UUID(), outcomeID: UUID())
+        XCTAssertTrue(workspace.meetings.isEmpty)
+        XCTAssertTrue(workspace.busyForUpdate)
+        XCTAssertFalse(try safety.reserveInstallation(busy: workspace.busyForUpdate))
+        try await eventually { observedIdle }
+        XCTAssertTrue(workspace.attention.outcomeStatus.isEmpty)
+        XCTAssertTrue(try safety.reserveInstallation(busy: workspace.busyForUpdate))
     }
 
     func testDiscoveryAndCancelledDiscoveryDrainStayBusyUntilOwnerFinishes() async throws {

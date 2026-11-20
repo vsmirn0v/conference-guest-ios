@@ -3228,6 +3228,9 @@
 "assistant.compact.follow" = "跟进";
 "assistant.compact.participating" = "参与";
 
+/* History transcript references */
+"Show transcript references" = "显示转录引用";
+
 /* History sync and transcription availability */
 "iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud 暂时不可用。同步将自动重试。";
 "Some audio is missing from this transcript." = "此转录缺少部分音频。";

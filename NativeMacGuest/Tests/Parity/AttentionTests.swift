@@ -1422,6 +1422,35 @@ import XCTest
 
     // MARK: Outcomes and local assistant data
 
+    func testOutcomeCitationsStayOutOfProseAndRetainVerifiedDecisionEvidence() throws {
+        let parsed = try MeetingOutcomePrompt.parse(#"""
+        {"summary":"Обсудили сроки. [L257][L334]","decisions":["Ship Monday [L1][L2].","Ship Monday. [L9999]"],
+        "tasks":[{"text":"Update DNS [L2]","owner":"Anna [L2]","due_at":""}],
+        "open_questions":["Who owns rollback? [L1]"]}
+        """#)
+        XCTAssertEqual(parsed.summary, "Обсудили сроки.")
+        XCTAssertEqual(parsed.decisions, ["Ship Monday."])
+        XCTAssertEqual(parsed.tasks.first?.text, "Update DNS")
+        XCTAssertEqual(parsed.tasks.first?.owner, "Anna")
+        XCTAssertEqual(parsed.openQuestions, ["Who owns rollback?"])
+        XCTAssertEqual(parsed.decisionSources["Ship Monday."], ["L1", "L2", "L9999"])
+        XCTAssertEqual(MeetingOutcomePrompt.verifiedEvidence(parsed, window: sampleWindow())["Ship Monday."], ["t1", "t2"])
+    }
+
+    func testOutcomeDisplayRemovesLegacyMarkersWithoutChangingMarkdownOrStoredText() {
+        let markdown = #"[L8](https://example.test/docs) [Guide](https://example.test/[L9]) `[L10]` \[L11] [QA] [Lx] [L12345]"#
+        XCTAssertEqual(MeetingOutcomePrompt.displayText(markdown), markdown)
+        let referenceLink = "[L12][docs] [Guide][L13] [L14]\n\n[docs]: https://example.test/docs\n[L13]: https://example.test/guide\n[L14]: https://example.test/shortcut"
+        XCTAssertEqual(MeetingOutcomePrompt.displayText(referenceLink), referenceLink)
+        let code = "```swift\nlet ref = \"[L15]\"\n```\n~~~text\n[L16]\n~~~\n\n    print(\"[L17]\")\n\t[L18]"
+        XCTAssertEqual(MeetingOutcomePrompt.displayText(code), code)
+        XCTAssertEqual(MeetingOutcomePrompt.displayText("First [L1] sentence. Second [L2]."), "First sentence. Second.")
+        let stored = MeetingOutcome(meetingTitle: "Legacy", endedAt: Date(), summary: "Reviewed. [L257][L334]",
+                                    decisions: ["Ship. [L1]"], tasks: [.init(text: "Check DNS [L2]")], openQuestions: ["When? [L3]"])
+        XCTAssertFalse(stored.shareText.contains("[L"))
+        XCTAssertEqual(stored.summary, "Reviewed. [L257][L334]", "Display and copy cleanup must not rewrite saved user content")
+    }
+
     func testOutcomeParsingAndSnapshotBounds() throws {
         let due = Date(timeIntervalSince1970: 1_800_000_000)
         let json = """
@@ -1633,6 +1662,101 @@ import XCTest
         XCTAssertEqual(saved?.summary, "DNS migration reviewed.")
         let input = try await restarted.meetingLibrary.store.outcomeInput(outcomeID)
         XCTAssertNil(input)
+    }
+
+    func testStartupResumesInterruptedOutcomeOnceWithoutRetryingOtherFailures() async throws {
+        let original = store()
+        let provider = AttentionProvider(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        original.provider = provider
+        await original.waitForMeetingLibrary()
+        let request = MeetingOutcomeRequest(meetingTitle: "Infra", endedAt: Date(), window: sampleWindow(), language: "ru")
+        let input = MeetingOutcomeInput(request: request, provider: provider)
+        let interrupted = MeetingOutcome(meetingID: UUID(), meetingTitle: request.meetingTitle, endedAt: request.endedAt, summary: "")
+        _ = try await original.meetingLibrary.store.startOutcome(interrupted, input: input, owner: "previous-process")
+        let failed = MeetingOutcome(meetingID: UUID(), meetingTitle: "Provider timeout", endedAt: request.endedAt, summary: "")
+        _ = try await original.meetingLibrary.store.startOutcome(failed, input: input, owner: "timeout-owner")
+        _ = try await original.meetingLibrary.store.finishOutcome(failed, owner: "timeout-owner", errorCode: "timeout")
+        let ready = MeetingOutcome(meetingID: UUID(), meetingTitle: "Completed", endedAt: request.endedAt, summary: "Already saved")
+        _ = try await original.meetingLibrary.store.saveOutcome(ready, state: .ready)
+        await original.meetingLibrary.close()
+
+        let restarted = AttentionStore(root: original.root, defaults: UserDefaults(suiteName: "attention-\(UUID())")!,
+                                       keychain: AttentionKeychain(service: "attention-recovery-test-\(UUID())"))
+        closeLibraryAtTeardown(restarted)
+        restarted.provider = provider
+        let writer = FakeOutcomeWriter(), coordinator = AttentionCoordinator(store: restarted)
+        coordinator.makeOutcomeWriter = { _, _ in writer }
+        coordinator.start()
+        XCTAssertTrue(coordinator.isRecoveringOutcomes, "Startup fences updates before the library scan can suspend")
+        coordinator.start()
+        defer { coordinator.stop() }
+        try await spin { restarted.meetingLibrary.cards.first { $0.outcomeID == interrupted.id }?.outcomeState == .ready }
+        await coordinator.resumeInterruptedOutcomes()
+        XCTAssertFalse(coordinator.isRecoveringOutcomes)
+        XCTAssertEqual(writer.calls, 1, "Startup resumes the existing request once without requiring a Retry click")
+        XCTAssertEqual(writer.request?.window, request.window)
+        XCTAssertEqual(writer.request?.language, request.language)
+        XCTAssertEqual(restarted.assistant.outcomes.first { $0.id == interrupted.id }?.summary, "DNS migration reviewed.")
+        XCTAssertEqual(restarted.meetingLibrary.cards.first { $0.outcomeID == failed.id }?.outcomeErrorCode, "timeout")
+        let preserved = try await restarted.meetingLibrary.store.outcome(ready.id)
+        XCTAssertEqual(preserved?.summary, "Already saved")
+        let retained = try await restarted.meetingLibrary.store.outcomeInput(interrupted.id)
+        XCTAssertNil(retained, "Successful recovery clears the retained generation input")
+    }
+
+    func testOutcomeRecoveryScanIsBusySynchronouslyAndClearsWithNoWork() async {
+        for enabled in [true, false] {
+            let store = store()
+            store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+            store.generateOutcomes = enabled
+            let coordinator = AttentionCoordinator(store: store)
+            coordinator.start()
+            XCTAssertEqual(coordinator.isRecoveringOutcomes, enabled)
+            XCTAssertTrue(coordinator.outcomeStatus.isEmpty, "The startup fence covers the time before jobs are discovered")
+            coordinator.stop()
+            coordinator.start()
+            XCTAssertEqual(coordinator.isRecoveringOutcomes, enabled, "A quick stop/start must not abandon the active scan")
+            await coordinator.resumeInterruptedOutcomes()
+            XCTAssertFalse(coordinator.isRecoveringOutcomes, "Disabled or empty recovery releases admission")
+            coordinator.stop()
+            coordinator.start()
+            XCTAssertFalse(coordinator.isRecoveringOutcomes, "Restarting live judgment does not repeat completed startup recovery")
+            coordinator.stop()
+        }
+    }
+
+    func testInterruptedOutcomeRecoveryPreservesProviderAndCurrentPrivacyChoices() async throws {
+        for restriction in ["disabled", "remote-disabled", "provider-changed"] {
+            let original = store()
+            let provider = AttentionProvider(kind: .local, baseURL: "https://writer.example.test/v1", model: "original")
+            original.provider = provider
+            await original.waitForMeetingLibrary()
+            let request = MeetingOutcomeRequest(meetingTitle: "Infra", endedAt: Date(), window: sampleWindow(), language: "ru")
+            let input = MeetingOutcomeInput(request: request, provider: provider)
+            let interrupted = MeetingOutcome(meetingID: UUID(), meetingTitle: request.meetingTitle, endedAt: request.endedAt, summary: "")
+            _ = try await original.meetingLibrary.store.startOutcome(interrupted, input: input, owner: "previous-process")
+            await original.meetingLibrary.close()
+
+            let restarted = AttentionStore(root: original.root, defaults: UserDefaults(suiteName: "attention-\(UUID())")!,
+                                           keychain: AttentionKeychain(service: "attention-recovery-policy-\(UUID())"))
+            closeLibraryAtTeardown(restarted)
+            restarted.provider = provider
+            restarted.enabled = true
+            restarted.remoteOutcomes = restriction != "remote-disabled"
+            restarted.generateOutcomes = restriction != "disabled"
+            if restriction == "provider-changed" { restarted.provider.model = "replacement" }
+            let writer = FakeOutcomeWriter(), coordinator = AttentionCoordinator(store: restarted)
+            coordinator.makeOutcomeWriter = { _, _ in writer }
+            await coordinator.resumeInterruptedOutcomes()
+            // Disabled recovery is a synchronous no-op; library startup is
+            // independent and must finish before inspecting retained input.
+            await restarted.waitForMeetingLibrary()
+            XCTAssertEqual(writer.calls, 0, restriction)
+            XCTAssertEqual(restarted.meetingLibrary.cards.first { $0.outcomeID == interrupted.id }?.outcomeErrorCode, "interrupted")
+            let retained = try await restarted.meetingLibrary.store.outcomeInput(interrupted.id)
+            XCTAssertEqual(retained?.provider, provider, "Recovery cannot move a saved transcript to another provider")
+            XCTAssertEqual(retained?.request.window, request.window, "The retained input remains available for an explicit retry")
+        }
     }
 
     func testOutcomeReminderIsRecordedOnlyAfterScheduling() async throws {

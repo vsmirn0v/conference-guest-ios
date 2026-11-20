@@ -1309,6 +1309,10 @@ import XCTest
         XCTAssertTrue(containsText(rendered, task.text))
         XCTAssertNotNil(element(rendered, identifier: "meeting.notes.editor"))
         XCTAssertFalse(containsText(rendered, L("Source passages")))
+        XCTAssertNil(element(rendered, identifier: "history.decision-source"), "Transcript references are hidden by default")
+        let showSources = try XCTUnwrap(element(rendered, identifier: "history.show-sources"))
+        XCTAssertEqual(AXUIElementPerformAction(showSources, kAXPressAction as CFString), .success)
+        await settle()
         let source = try XCTUnwrap(element(rendered, identifier: "history.decision-source"))
         _ = AXUIElementPerformAction(source, kAXPressAction as CFString)
         try await wait { attention.historyNavigation.tab == .transcript }
@@ -1319,6 +1323,119 @@ import XCTest
         XCTAssertNotNil(element(rendered, identifier: "meeting.notes.editor"))
         XCTAssertTrue(containsText(rendered, task.text))
         try capture(rendered)
+        attention.historyNavigation.selectedSessionID = first.id
+        await settle()
+        XCTAssertNil(element(rendered, identifier: "history.show-sources"), "Meetings without source events have no empty disclosure")
+        attention.historyNavigation.selectedSessionID = second.id
+        attention.historyNavigation.tab = .summary
+        attention.historyNavigation.taskID = nil
+        await settle()
+        XCTAssertNotNil(element(rendered, identifier: "history.show-sources"))
+        XCTAssertNil(element(rendered, identifier: "history.decision-source"), "Opening another meeting resets the source disclosure")
+    }
+
+    func testHistoryNotesComeFirstAndExpandWithoutReplacingTheEditor() async throws {
+        let store = store()
+        await store.waitForMeetingLibrary()
+        let key = "native.meetingHistory.readingMode"
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(false, forKey: key)
+        addTeardownBlock { UserDefaults.standard.set(previous, forKey: key) }
+        let now = Date()
+        let empty = MeetingSessionRecord(title: "Empty notes", startedAt: now - 1200, endedAt: now - 900, state: .ended)
+        let saved = MeetingSessionRecord(title: "Saved notes", startedAt: now - 600, endedAt: now - 300, state: .ended)
+        let originalSummary = "Readable summary [L257][L334]"
+        let originalDecision = "Keep the reviewed decision [L335]"
+        let originalQuestion = "Who verifies the result? [L336]"
+        let originalTask = MeetingOutcomeTask(text: "Verify the result [L337]", owner: "Anna [L338]")
+        for session in [empty, saved] {
+            try await store.meetingLibrary.store.upsertSession(session)
+            try await store.meetingLibrary.store.saveOutcome(.init(meetingID: session.id, meetingTitle: session.title,
+                endedAt: session.endedAt!, summary: originalSummary, decisions: [originalDecision],
+                tasks: session.id == empty.id ? [originalTask] : [], openQuestions: [originalQuestion]), state: .ready)
+        }
+        _ = try await store.meetingLibrary.store.saveNote(sessionID: saved.id, markdown: "Previously saved notes")
+        await store.meetingLibrary.refresh()
+        store.assistant.restorePersistedOutcomes(try await store.meetingLibrary.store.outcomes())
+        let attention = AttentionCoordinator(store: store)
+        attention.historyNavigation.selectedSessionID = empty.id
+        let rendered = await present(MeetingHistoryView(attention: attention), size: NSSize(width: 1100, height: 700),
+            name: "history-compact-notes", sizeToContent: false)
+        rendered.window.makeKeyAndOrderFront(nil)
+        try await wait { store.notes.draft(sessionID: empty.id)?.savedText != nil && store.notes.editorOwner(sessionID: empty.id) != nil }
+        await settle()
+
+        func findEditor(_ view: NSView) -> MeetingNotesEditor.TextView? {
+            if let editor = view as? MeetingNotesEditor.TextView { return editor }
+            for child in view.subviews {
+                if let editor = findEditor(child) { return editor }
+            }
+            return nil
+        }
+        func frame(_ identifier: String) throws -> CGRect {
+            let item = try XCTUnwrap(element(rendered, identifier: identifier))
+            let position = try XCTUnwrap(attribute(item, kAXPositionAttribute)) as! AXValue
+            let size = try XCTUnwrap(attribute(item, kAXSizeAttribute)) as! AXValue
+            var origin = CGPoint.zero, dimensions = CGSize.zero
+            XCTAssertTrue(AXValueGetValue(position, .cgPoint, &origin))
+            XCTAssertTrue(AXValueGetValue(size, .cgSize, &dimensions))
+            return CGRect(origin: origin, size: dimensions)
+        }
+        let editor = try XCTUnwrap(findEditor(rendered.hosting))
+        let scroll = try XCTUnwrap(editor.enclosingScrollView)
+        let emptyEditorHeight = scroll.bounds.height
+        XCTAssertLessThan(emptyEditorHeight, 120, "Empty notes should leave room to read the summary")
+        XCTAssertGreaterThan(emptyEditorHeight, 40, "The compact note remains directly editable")
+        XCTAssertLessThan(try frame("meeting.notes.editor").maxY, try frame("history.summary").minY,
+            "Notes appear above the summary")
+        XCTAssertTrue(containsText(rendered, "Readable summary"))
+        XCTAssertTrue(containsText(rendered, "Keep the reviewed decision"))
+        XCTAssertTrue(containsText(rendered, "Who verifies the result?"))
+        XCTAssertTrue(containsText(rendered, "Verify the result"))
+        for marker in ["[L257]", "[L334]", "[L335]", "[L336]", "[L337]", "[L338]"] {
+            XCTAssertFalse(containsText(rendered, marker), marker)
+        }
+        let originalOutcome = try XCTUnwrap(store.assistant.outcomes.first { $0.meetingID == empty.id })
+        XCTAssertEqual(originalOutcome.summary, originalSummary,
+            "Displaying legacy summaries does not rewrite the saved text")
+        XCTAssertEqual(originalOutcome.decisions, [originalDecision])
+        XCTAssertEqual(originalOutcome.openQuestions, [originalQuestion])
+        XCTAssertEqual(originalOutcome.tasks.first, originalTask)
+        try capture(rendered)
+
+        XCTAssertTrue(rendered.window.makeFirstResponder(editor))
+        editor.insertText("My first note", replacementRange: NSRange(location: 0, length: 0))
+        try await wait { store.notes.buffer(sessionID: empty.id) == "My first note" }
+        await settle()
+        XCTAssertTrue(findEditor(rendered.hosting) === editor, "Expanding keeps the AppKit editor and its selection")
+        XCTAssertTrue(rendered.window.firstResponder === editor, "Typing keeps keyboard focus after expansion")
+        XCTAssertGreaterThan(scroll.bounds.height, emptyEditorHeight + 170)
+        let flushed = await store.notes.flush(sessionID: empty.id)
+        XCTAssertTrue(flushed)
+        let note = try await store.meetingLibrary.store.note(empty.id)
+        XCTAssertEqual(note?.markdown, "My first note")
+        try capture(rendered)
+
+        attention.historyNavigation.selectedSessionID = saved.id
+        try await wait { store.notes.draft(sessionID: saved.id)?.savedText == "Previously saved notes" }
+        await settle()
+        let savedEditor = try XCTUnwrap(findEditor(rendered.hosting))
+        XCTAssertEqual(savedEditor.string, "Previously saved notes")
+        XCTAssertGreaterThan(try XCTUnwrap(savedEditor.enclosingScrollView).bounds.height, emptyEditorHeight + 170,
+            "Existing notes open at the normal expanded size")
+
+        let taskDefaultsName = "legacy-task-ui-\(UUID().uuidString)"
+        let taskDefaults = try XCTUnwrap(UserDefaults(suiteName: taskDefaultsName))
+        taskDefaults.set(false, forKey: "native.assistant.tasksAssignedToMeOnly")
+        addTeardownBlock { taskDefaults.removePersistentDomain(forName: taskDefaultsName) }
+        let tasks = await present(PersonalTasksView(attention: attention, openOutcome: { _, _ in })
+            .defaultAppStorage(taskDefaults), size: NSSize(width: 700, height: 500), name: "legacy-task-references", sizeToContent: false)
+        try await wait { self.containsText(tasks, "Verify the result") }
+        XCTAssertTrue(containsText(tasks, "Anna"))
+        XCTAssertFalse(containsText(tasks, "[L337]"))
+        XCTAssertFalse(containsText(tasks, "[L338]"))
+        let unchanged = try await store.meetingLibrary.store.outcomeBySession(empty.id)
+        XCTAssertEqual(unchanged?.tasks.first, originalTask, "Task displays do not rewrite saved source text")
     }
 
     func testOutcomeDaysRenderNewestFirstAndCountEachRepeatedRoomOccurrence() async throws {

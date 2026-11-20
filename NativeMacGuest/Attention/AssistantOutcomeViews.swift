@@ -33,6 +33,7 @@ struct MeetingHistoryView: View {
     @AppStorage("native.meetingHistory.readingMode") private var readingMode = false
     @State private var showingGuidance = false
     @State private var showingContext = false
+    @State private var showingTranscriptSources = false
     @State private var reviewedDraft: AttentionCoordinator.HistoryOutcomeDraft?
     @State private var pendingSend: (outcome: UUID, meeting: UUID)?
     @State private var collapsedDays: Set<Day> = []
@@ -157,6 +158,7 @@ struct MeetingHistoryView: View {
         .onChange(of: historyCards.map(\.sessionID)) { ids in
             if navigation.selectedSessionID == nil, !ids.isEmpty { select(groups.first?.value.first) }
         }
+        .onChange(of: selectedCard?.sessionID) { _ in showingTranscriptSources = false }
         .onAppear {
             if let requested = attention.requestedOutcomeSessionID {
                 navigation.selectedSessionID = requested
@@ -337,8 +339,6 @@ struct MeetingHistoryView: View {
         ScrollViewReader { scroll in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    outcomeContent(card)
-                    overviewTasks(sources: sources).padding(.horizontal, 20).id("tasks")
                     VStack(alignment: .leading, spacing: 10) {
                         if sources.count > 1 {
                             Picker(L("Notes"), selection: Binding(get: {
@@ -350,9 +350,11 @@ struct MeetingHistoryView: View {
                             }
                         }
                         let source = sources.first { $0.sessionID == selectedNoteSource } ?? card
-                        meetingNotes(source).id(source.sessionID).frame(height: 340)
+                        meetingNotes(source).id(source.sessionID)
                             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                    }.padding(.horizontal, 20).id("notes")
+                    }.padding([.top, .horizontal], 20).id("notes")
+                    outcomeContent(card)
+                    overviewTasks(sources: sources).padding(.horizontal, 20).id("tasks")
                     if let outcome = data.outcomes.first(where: { $0.id == card.outcomeID }) {
                         seriesHistory(outcome).padding(.horizontal, 20)
                     }
@@ -395,7 +397,7 @@ struct MeetingHistoryView: View {
                         if main?.isMiniaturized == true { main?.deminiaturize(nil) }
                         main?.makeKeyAndOrderFront(nil)
                     })
-            })
+            }, compactWhenEmpty: true)
     }
 
     @ViewBuilder private func outcomeContent(_ card: MeetingLibraryCard) -> some View {
@@ -485,7 +487,7 @@ struct MeetingHistoryView: View {
                 }
                 if let outcome = data.outcomes.first(where: { $0.id == card.outcomeID }) {
                     Text("·").foregroundStyle(.secondary)
-                    Text(outcome.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(MeetingOutcomePrompt.displayText(outcome.summary)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 } else if let status = attention.outcomeStatus[card.sessionID] {
                     Text("·").foregroundStyle(.secondary)
                     Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -542,6 +544,11 @@ struct MeetingHistoryView: View {
     @ViewBuilder private func detail(_ outcome: MeetingOutcome) -> some View {
         let binding = Binding(get: { data.outcomes.first { $0.id == outcome.id } ?? outcome },
             set: { data.updateOutcome($0) })
+        let summary = Binding(get: { MeetingOutcomePrompt.displayText(binding.wrappedValue.summary) }, set: { text in
+            var edited = binding.wrappedValue
+            edited.summary = text
+            binding.wrappedValue = edited
+        })
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 Button(L("Copy as text")) {
@@ -563,7 +570,7 @@ struct MeetingHistoryView: View {
                         Text(L("This is the meeting open now. The outcome is from an earlier occurrence."))
                             .font(.callout).foregroundStyle(.secondary)
                     }
-                    Text(outcome.summary).font(.callout).foregroundStyle(.secondary).lineLimit(4)
+                    Text(MeetingOutcomePrompt.displayText(outcome.summary)).font(.callout).foregroundStyle(.secondary).lineLimit(4)
                     HStack {
                         Button(L("Confirm")) {
                             pendingSend = nil
@@ -578,8 +585,14 @@ struct MeetingHistoryView: View {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
             GroupBox(L("Summary")) {
-                TextField(L("Summary"), text: binding.summary, axis: .vertical).lineLimit(3...8)
+                TextField(L("Summary"), text: summary, axis: .vertical).lineLimit(3...8)
                     .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("history.summary")
+            }
+            if hasDecisionSources(outcome) {
+                Toggle(L("Show transcript references"), isOn: $showingTranscriptSources)
+                    .toggleStyle(.checkbox).font(.caption)
+                    .accessibilityIdentifier("history.show-sources")
             }
             editableLines(L("Decisions"), values: binding.decisions,
                           evidence: outcome.decisionEvidence ?? [:], sessionID: outcome.meetingID)
@@ -595,7 +608,7 @@ struct MeetingHistoryView: View {
                         Button { select(library.cards.first { $0.outcomeID == item.id }) } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.knownEndedAt?.formatted(date: .abbreviated, time: .shortened) ?? L("Date unknown")).font(.caption.weight(.semibold))
-                                Text(item.summary).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                                Text(MeetingOutcomePrompt.displayText(item.summary)).font(.callout).foregroundStyle(.secondary).lineLimit(3)
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }.buttonStyle(.plain)
                     }
@@ -627,9 +640,17 @@ struct MeetingHistoryView: View {
                                 taskBinding.wrappedValue = current
                             })).labelsHidden()
                             VStack(alignment: .leading, spacing: 4) {
-                                TextField(L("Task"), text: taskBinding.text, axis: .vertical).textFieldStyle(.plain)
+                                TextField(L("Task"), text: Binding(get: {
+                                    MeetingOutcomePrompt.displayText(taskBinding.wrappedValue.text)
+                                }, set: { text in
+                                    var current = taskBinding.wrappedValue
+                                    current.text = text
+                                    taskBinding.wrappedValue = current
+                                }), axis: .vertical).textFieldStyle(.plain)
                                 HStack {
-                                    TextField(L("Owner"), text: Binding(get: { taskBinding.wrappedValue.owner }, set: { owner in
+                                    TextField(L("Owner"), text: Binding(get: {
+                                        MeetingOutcomePrompt.displayText(taskBinding.wrappedValue.owner)
+                                    }, set: { owner in
                                         var current = taskBinding.wrappedValue
                                         guard current.owner != owner else { return }
                                         current.owner = owner
@@ -662,12 +683,12 @@ struct MeetingHistoryView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(outcome.taskReviewCandidates) { candidate in
                             HStack {
-                                Text(candidate.text)
+                                Text(MeetingOutcomePrompt.displayText(candidate.text))
                                 Spacer()
                                 if !outcome.tasks.isEmpty {
                                     Menu(L("Match existing task")) {
                                         ForEach(outcome.tasks) { existing in
-                                            Button(existing.text) {
+                                            Button(MeetingOutcomePrompt.displayText(existing.text)) {
                                                 attention.reviewTaskCandidate(candidate, in: outcome, accept: false, matchedTaskID: existing.id)
                                             }
                                         }
@@ -681,6 +702,13 @@ struct MeetingHistoryView: View {
                 }
             }
         }
+    }
+
+    private func hasDecisionSources(_ outcome: MeetingOutcome) -> Bool {
+        guard let sessionID = outcome.meetingID, let session = conversation(sessionID) else { return false }
+        let evidence = outcome.decisionEvidence ?? [:]
+        let ids = Set(outcome.decisions.flatMap { evidence[$0] ?? [] })
+        return session.visibleEvents.contains { ids.contains($0.id) }
     }
 
     @ViewBuilder private func decisionSources(_ ids: [String], sessionID: UUID?) -> some View {
@@ -711,7 +739,7 @@ struct MeetingHistoryView: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(values.wrappedValue.enumerated()), id: \.offset) { index, current in
                     let lineBinding = Binding<String>(
-                        get: { values.wrappedValue.indices.contains(index) ? values.wrappedValue[index] : current },
+                        get: { MeetingOutcomePrompt.displayText(values.wrappedValue.indices.contains(index) ? values.wrappedValue[index] : current) },
                         set: { newValue in
                             guard values.wrappedValue.indices.contains(index) else { return }
                             values.wrappedValue[index] = newValue
@@ -720,7 +748,9 @@ struct MeetingHistoryView: View {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
                             TextField(title, text: lineBinding, axis: .vertical).textFieldStyle(.plain)
-                            decisionSources(evidence[current] ?? [], sessionID: sessionID)
+                            if showingTranscriptSources {
+                                decisionSources(evidence[current] ?? [], sessionID: sessionID)
+                            }
                         }
                         Button {
                             guard values.wrappedValue.indices.contains(index) else { return }
@@ -827,7 +857,7 @@ struct LastTimeView: View {
     let visibleTasks: [MeetingOutcomeTask]
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(L("Last time: %@", outcome.summary)).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+            Text(L("Last time: %@", MeetingOutcomePrompt.displayText(outcome.summary))).font(.caption).foregroundStyle(.secondary).lineLimit(3)
             let pending = visibleTasks.filter { !$0.done }
             if !pending.isEmpty {
                 Text(L("Open tasks: %ld of %ld", pending.count, visibleTasks.count)).font(.caption2).foregroundStyle(.orange)

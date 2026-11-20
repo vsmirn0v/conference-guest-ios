@@ -3228,6 +3228,9 @@
 "assistant.compact.follow" = "अनुसरण";
 "assistant.compact.participating" = "सहभागी";
 
+/* History transcript references */
+"Show transcript references" = "ट्रांसक्रिप्ट के संदर्भ दिखाएँ";
+
 /* History sync and transcription availability */
 "iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud अस्थायी रूप से उपलब्ध नहीं है। सिंक अपने आप फिर से होगा।";
 "Some audio is missing from this transcript." = "इस ट्रांसक्रिप्ट में कुछ ऑडियो मौजूद नहीं है।";

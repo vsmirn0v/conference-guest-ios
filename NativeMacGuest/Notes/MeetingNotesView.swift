@@ -9,6 +9,7 @@ struct MeetingNotesView: View {
     var ended = false
     var openWindow: (() -> Void)?
     var returnToMain: (() -> Void)?
+    var compactWhenEmpty = false
     @State private var editorID = UUID()
     @State private var formatted = true
     @State private var command: NoteFormattingCommand?
@@ -18,6 +19,7 @@ struct MeetingNotesView: View {
     private var draft: MeetingNotesController.Draft? { notes.draft(sessionID: sessionID) }
     private var owner: UUID? { notes.editorOwner(sessionID: sessionID) }
     private var editing: Bool { owner == editorID }
+    private var compact: Bool { compactWhenEmpty && draft?.text.isEmpty != false }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,11 +82,12 @@ struct MeetingNotesView: View {
                             .padding(.leading, 17).padding(.top, 12).allowsHitTesting(false)
                     }
                 }
-                .frame(minHeight: 220)
+                .frame(minHeight: compact ? 52 : 220)
                 .accessibilityIdentifier("meeting.notes.editor")
             Divider()
             statusBar.padding(.horizontal, 12).padding(.vertical, 6)
         }
+        .frame(height: compactWhenEmpty ? (compact ? 150 : 340) : nil)
         .onDisappear {
             guard let openWindow, notes.draft(sessionID: sessionID)?.isDirty == true else { return }
             Task {

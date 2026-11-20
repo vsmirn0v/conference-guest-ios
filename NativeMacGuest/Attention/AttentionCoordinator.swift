@@ -131,6 +131,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     @Published private(set) var judging: UUID?
     @Published private(set) var outcomeStatus: [UUID: String] = [:]
     @Published private(set) var outcomeError: [UUID: String] = [:]
+    @Published private(set) var isRecoveringOutcomes = false
     @Published var requestedOutcomeSessionID: UUID?
     @Published var opensAssistantMoments = false
     let historyNavigation = MeetingHistoryNavigation()
@@ -228,6 +229,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     private var loop: Task<Void, Never>?
     private var calls: [Date] = []
     private var outcomeCaptures: Set<UUID> = []
+    private var attemptedOutcomeRecovery = false
+    private var outcomeRecoveryTask: Task<Void, Never>?
     private var overflowMeetingByMomentID: [UUID: UUID] = [:]
     private var remindingMoments: Set<UUID> = []
     private var reminderCancellationTask: Task<Void, Never>?
@@ -292,6 +295,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     func start() {
         guard loop == nil else { return }
+        beginOutcomeRecovery()
         loop = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -582,8 +586,51 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         await library.refresh()
     }
 
-    func retryOutcome(for sessionID: UUID, outcomeID: UUID) {
-        _ = runOutcome(for: sessionID) { [self] library, owner in
+    /// Resume only work interrupted by a process exit. Other provider failures
+    /// still require an explicit retry, and retained inputs keep their original
+    /// provider and privacy checks. Database claims also protect against a manual
+    /// retry arriving while startup recovery is running.
+    func resumeInterruptedOutcomes() async {
+        beginOutcomeRecovery()
+        await outcomeRecoveryTask?.value
+    }
+
+    private func beginOutcomeRecovery() {
+        guard !attemptedOutcomeRecovery else { return }
+        attemptedOutcomeRecovery = true
+        guard store.shouldCaptureOutcome else { return }
+        // Fence update admission before the first suspension, including the
+        // library startup scan that has not discovered individual jobs yet.
+        isRecoveringOutcomes = true
+        outcomeRecoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                isRecoveringOutcomes = false
+                outcomeRecoveryTask = nil
+            }
+            await recoverInterruptedOutcomes()
+        }
+    }
+
+    private func recoverInterruptedOutcomes() async {
+        await store.waitForMeetingLibrary()
+        guard store.shouldCaptureOutcome else { return }
+        let interrupted = store.meetingLibrary.cards.filter {
+            $0.outcomeState == .failed && $0.outcomeErrorCode == MeetingOutcomeFailure.interrupted.rawValue && $0.hasOutcomeInput
+        }
+        if !interrupted.isEmpty { probeLog("assistant-outcome-recovery", ["count": interrupted.count]) }
+        var previous: Task<Void, Never>?
+        for card in interrupted {
+            guard let id = card.outcomeID else { continue }
+            if let task = retryOutcome(for: card.sessionID, outcomeID: id, after: previous) { previous = task }
+        }
+        await previous?.value
+    }
+
+    @discardableResult
+    func retryOutcome(for sessionID: UUID, outcomeID: UUID,
+                      after previous: Task<Void, Never>? = nil) -> Task<Void, Never>? {
+        runOutcome(for: sessionID, after: previous) { [self] library, owner in
             guard let input = try await library.outcomeInput(outcomeID) else { return nil }
             try checkOutcomeProvider(input.provider)
             guard let draft = try await library.claimOutcomeRetry(outcomeID, owner: owner) else { return nil }

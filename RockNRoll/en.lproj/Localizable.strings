@@ -3456,6 +3456,9 @@
 "assistant.compact.follow" = "Follow";
 "assistant.compact.participating" = "Engage";
 
+/* History transcript references */
+"Show transcript references" = "Show transcript references";
+
 /* History sync and transcription availability */
 "iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud is temporarily unavailable. Sync will retry automatically.";
 "Some audio is missing from this transcript." = "Some audio is missing from this transcript.";

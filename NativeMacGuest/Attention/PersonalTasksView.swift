@@ -113,7 +113,7 @@ struct PersonalTasksView: View {
                                     Text(L("Unassigned")).tag(PersonalTaskAssigneeFilter.unassigned)
                                 }
                                 ForEach(options.people) { option in
-                                    Text(option.displayName).tag(PersonalTaskAssigneeFilter.person(option.key))
+                                    Text(MeetingOutcomePrompt.displayText(option.displayName)).tag(PersonalTaskAssigneeFilter.person(option.key))
                                 }
                             }
                             .labelsHidden()
@@ -310,19 +310,20 @@ struct PersonalTasksView: View {
 
     private func taskRow(_ row: PersonalTaskRow, archived: Bool, showMeetingLink: Bool = true) -> some View {
         let owned = assistant.taskProfile.owns(row.task)
-        let ownerText = row.task.owner.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ownerText = MeetingOutcomePrompt.displayText(row.task.owner).trimmingCharacters(in: .whitespacesAndNewlines)
+        let taskText = MeetingOutcomePrompt.displayText(row.task.text)
 
         return HStack(alignment: .top, spacing: 12) {
             if archived {
                 Image(systemName: row.task.done ? "checkmark.square" : "square")
                     .accessibilityLabel(row.task.done ? L("Completed") : L("Open"))
             } else {
-                Toggle(row.task.text, isOn: Binding(get: { row.task.done }, set: { done in
+                Toggle(taskText, isOn: Binding(get: { row.task.done }, set: { done in
                     mutate(row) { try await attention.setTaskDone(row, done: done) }
                 })).labelsHidden().disabled(busy.contains(row.id))
             }
             VStack(alignment: .leading, spacing: 5) {
-                Text(row.task.text).strikethrough(row.task.done)
+                Text(taskText).strikethrough(row.task.done)
                 HStack(spacing: 10) {
                     if !ownerText.isEmpty {
                         Label(ownerText, systemImage: "person")

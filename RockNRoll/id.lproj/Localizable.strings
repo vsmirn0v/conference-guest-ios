@@ -3228,6 +3228,9 @@
 "assistant.compact.follow" = "Ikuti";
 "assistant.compact.participating" = "Ikut serta";
 
+/* History transcript references */
+"Show transcript references" = "Tampilkan referensi transkrip";
+
 /* History sync and transcription availability */
 "iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud sementara tidak tersedia. Sinkronisasi akan dicoba lagi secara otomatis.";
 "Some audio is missing from this transcript." = "Sebagian audio tidak ada dalam transkrip ini.";

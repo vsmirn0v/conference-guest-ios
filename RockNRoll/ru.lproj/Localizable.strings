@@ -3455,6 +3455,9 @@
 "assistant.compact.follow" = "Следить";
 "assistant.compact.participating" = "Участие";
 
+/* History transcript references */
+"Show transcript references" = "Показывать ссылки на расшифровку";
+
 /* History sync and transcription availability */
 "iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud временно недоступен. Синхронизация повторится автоматически.";
 "Some audio is missing from this transcript." = "В этой расшифровке отсутствует часть аудио.";
