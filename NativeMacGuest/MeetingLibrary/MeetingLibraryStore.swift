@@ -216,22 +216,9 @@ actor MeetingLibraryStore: @unchecked Sendable {
 
     func prepare() async throws {
         if connectionBox.current() != nil { return }
-        // Teardown cancellation: the owner cancels its prepare task when a fixture
-        // closes the library; a job that starts after cancellation must not open
-        // a handle at all (closeSync may already have run and seen an empty box).
         guard !Task.isCancelled else { throw CancellationError() }
         let opened = try MeetingSQLiteConnection(path: databaseURL)
-        // Register the handle before running DDL: a synchronous `closeSync()` from
-        // owner teardown (a fixture) can then take and close it even mid-prepare.
-        connectionBox.install(opened)
-        // The handle exists on disk now; if the owner cancelled us between the
-        // first guard and registration (teardown running concurrently), close it
-        // immediately — but only if it is still ours: a concurrent closeSync may
-        // already have taken and closed it, and a second close would corrupt.
-        guard !Task.isCancelled else {
-            if let taken = connectionBox.take() { taken.close() }
-            throw CancellationError()
-        }
+        try Task.checkCancellation()
         do {
             if try opened.one("SELECT 1 FROM sqlite_master WHERE name='schema_migrations'") != nil {
                 let previous = try opened.one("SELECT MAX(version) FROM schema_migrations")?.integer(0) ?? 0
@@ -276,23 +263,14 @@ actor MeetingLibraryStore: @unchecked Sendable {
                     }
                 }
             }
-        } catch {
-            _ = connectionBox.take()
-            throw error
         }
+        connectionBox.install(opened)
     }
 
     /// Deterministic teardown: closes the SQLite connection — checkpointing and
     /// removing the WAL sidecar — before a test removes the containing directory.
     /// Idempotent; `prepare()` reopens the database on demand.
     func close() { connectionBox.take()?.close() }
-
-    /// Synchronous close for the drained teardown path only (`AttentionStore.
-    /// closeLibrarySyncForTeardown`): the caller must guarantee no statement is
-    /// in flight — `sqlite3_close_v2` racing `sqlite3_exec` corrupts the
-    /// connection. Idempotent; safe from any thread once drained (FULLMUTEX
-    /// handle, pointer consumed exactly once via the box).
-    nonisolated func closeSync() { connectionBox.take()?.close() }
 
     /// Last-resort hygiene when the store is released without `close()`: with
     /// FULLMUTEX handles the close is safe from the deallocating thread.

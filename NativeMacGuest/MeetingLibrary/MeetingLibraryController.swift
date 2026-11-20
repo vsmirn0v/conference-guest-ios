@@ -40,7 +40,13 @@ enum MeetingNoteSaveStatus: Equatable {
 
     /// Deterministic teardown for tests and app shutdown; the underlying store
     /// reopens on the next `prepare()` if the controller is used again.
-    func close() async { await store.close(); workspaceJournal.close() }
+    func close() async {
+        refreshTask?.cancel()
+        await refreshTask?.value
+        refreshTask = nil
+        await store.close()
+        workspaceJournal.close()
+    }
 
     /// Sessions visible to Assistant/history. Failed joins with no content are excluded
     /// by the store's card query.

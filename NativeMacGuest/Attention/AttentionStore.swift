@@ -354,27 +354,14 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     let root: URL
     lazy var workspaceGuidance = MeetingWorkspaceGuidance(root: root)
     let assistant: AssistantDataStore
-    /// Test-teardown entry point: cancels pending library preparation, closes any
-    /// open handle, and drains the in-flight prepare. XCTest teardown blocks run
-    /// LIFO, so a fixture that calls this right after store creation wins every
-    /// race — the queued prepare, mid-flight DDL inside a `close_v2` zombie, and
-    /// Swift's scheduled isolated deinits — against directory removal
-    /// ("vnode unlinked while in use").
+    /// Drain writes and close the actor-owned library before a test deletes its files.
     func closeLibrarySyncForTeardown() async {
         libraryTask?.cancel()
-        // Drain BEFORE closing: `sqlite3_close_v2` racing an in-flight `sqlite3_exec`
-        // corrupts the connection's internal lock (crash), so the handle must be
-        // idle. The cancelled task either never starts, or finishes its uncancellable
-        // in-flight section and stops at the next cancellation check.
         await libraryTask?.value
-        // The assistant's dual-write callbacks also touch the store; drain them too.
-        // Both the callbacks and this teardown run on the main actor, so no new
-        // persist task can register between this drain and the close below.
         for task in persistTasks.values { task.cancel() }
         for task in persistTasks.values { await task.value }
         persistTasks.removeAll()
-        meetingLibrary.store.closeSync()
-        meetingLibrary.workspaceJournal.close()
+        await meetingLibrary.close()
     }
 
     /// Durable meeting library: sessions, notes and outcomes in SQLite. Shared root
