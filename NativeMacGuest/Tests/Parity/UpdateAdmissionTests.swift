@@ -85,9 +85,9 @@ private final class UpdateAdmissionNoNetwork: URLProtocol {
         connections += 1; setPhase(.connected)
     }
     func reconnect() async throws {}
-    func setMicrophone(_ enabled: Bool) async throws {}
+    func setMicrophone(_ enabled: Bool) async throws { snapshot.microphoneOn = enabled; onState?(snapshot) }
     func setCamera(_ enabled: Bool) async throws {}
-    func setPlayout(_ enabled: Bool) async throws {}
+    func setPlayout(_ enabled: Bool) async throws { snapshot.playoutOn = enabled; onState?(snapshot) }
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {}
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {}
     func leave() async -> Bool {
@@ -127,7 +127,7 @@ private struct CompactSettingsFixture: View {
 
         for (title, expectedTab) in [("Calendars", 1), ("Camera & sound", 3)] {
             let row = try XCTUnwrap(accessibilityButton(in: window, title: L(title)))
-            try clickTrailingArea(row, in: window)
+            try click(row, in: window, trailingArea: true)
             await settleUI(host)
             XCTAssertEqual(workspace.settingsTab, expectedTab, "Trailing area did not select \(title)")
         }
@@ -150,10 +150,70 @@ private struct CompactSettingsFixture: View {
         await settleUI(host)
 
         let favorite = try XCTUnwrap(accessibilityButton(in: window, title: "Fixture favorite"))
-        try clickTrailingArea(favorite, in: window)
+        try click(favorite, in: window, trailingArea: true)
         await settleUI(host)
         XCTAssertEqual(openCount, 1)
         XCTAssertEqual(fixture.calls.detections, 0)
+    }
+
+    func testActiveMeetingSidebarSwitchesAndControlsMeetingsFromHistory() async throws {
+        let workspace = fixture().workspace
+        addTeardownBlock { @MainActor in
+            let window = NSApp.windows.first { $0.delegate === workspace }
+            _ = await workspace.leave()
+            window?.close()
+        }
+        workspace.attention.store.enabled = true
+        for index in 1...2 {
+            let url = try XCTUnwrap(URL(string: "https://example.test/calls/sidebar-\(index)"))
+            workspace.join(url, engine: .guest, title: "Sidebar \(index)", quiet: true)
+            try await eventually { workspace.meetings.count == index && workspace.meetings.allSatisfy(\.connected) && !workspace.preparing }
+        }
+        workspace.openMeetingHistory()
+        let window = try XCTUnwrap(NSApp.windows.first { $0.delegate === workspace })
+        let host = try XCTUnwrap(window.contentView)
+        await settleUI(host)
+
+        let first = workspace.meetings[0], second = workspace.meetings[1]
+        func button(_ identifier: String) throws -> AXUIElement {
+            try XCTUnwrap(accessibilityNodes(in: nil).first {
+                accessibilityValue($0, kAXIdentifierAttribute) as? String == identifier
+            }, identifier)
+        }
+        func press(_ identifier: String) throws {
+            _ = AXUIElementPerformAction(try button(identifier), kAXPressAction as CFString)
+        }
+        let originalTalkID = workspace.talkID
+        for meeting in [second, first] {
+            try click(button("liveSidebar.meeting.\(meeting.sessionID)"), in: window)
+            try await eventually { workspace.selectedMeetingID == meeting.sessionID }
+            XCTAssertEqual(workspace.talkID, originalTalkID)
+            await settleUI(host)
+        }
+        workspace.openMeetingHistory()
+        await settleUI(host)
+        try click(button("liveMeeting.microphone.\(first.sessionID)"), in: window)
+        try await eventually { first.snapshot.microphoneOn }
+        try press("liveMeeting.microphone.\(first.sessionID)")
+        try await eventually { !first.snapshot.microphoneOn }
+        let sound = second.snapshot.playoutOn
+        try press("liveMeeting.playout.\(second.sessionID)")
+        try await eventually { second.snapshot.playoutOn != sound }
+        XCTAssertEqual(workspace.sidebarSelection, .section(.history))
+
+        let firstMode = workspace.attention.resolvedMode(first).mode
+        let secondMode: AttentionMode = workspace.attention.resolvedMode(second).mode == .watch ? .mentions : .watch
+        try press("liveMeeting.assistant.\(second.sessionID)")
+        let modeIdentifier = "attention.mode.\(secondMode.rawValue)"
+        func modeChoice() -> AXUIElement? {
+            accessibilityNodes(in: nil).first { accessibilityValue($0, kAXIdentifierAttribute) as? String == modeIdentifier }
+        }
+        try await eventually { modeChoice() != nil }
+        let choice = try XCTUnwrap(modeChoice())
+        _ = AXUIElementPerformAction(choice, kAXPressAction as CFString)
+        try await eventually { workspace.attention.resolvedMode(second).mode == secondMode }
+        XCTAssertEqual(workspace.attention.resolvedMode(first).mode, firstMode)
+        XCTAssertEqual(workspace.sidebarSelection, .section(.history))
     }
 
     /// Render the actual SwiftUI surfaces using isolated, no-network fixtures.
@@ -275,12 +335,13 @@ private struct CompactSettingsFixture: View {
         return value
     }
 
-    private func accessibilityNodes(in window: NSWindow) -> [AXUIElement] {
+    private func accessibilityNodes(in window: NSWindow?) -> [AXUIElement] {
         func children(_ root: AXUIElement) -> [AXUIElement] {
             (accessibilityValue(root, kAXChildrenAttribute) as? [AXUIElement]) ?? []
         }
         func walk(_ root: AXUIElement) -> [AXUIElement] { [root] + children(root).flatMap(walk) }
         let app = AXUIElementCreateApplication(getpid())
+        guard let window else { return walk(app) }
         guard let target = children(app).first(where: { accessibilityValue($0, kAXTitleAttribute) as? String == window.title }) else { return [] }
         return walk(target)
     }
@@ -297,16 +358,17 @@ private struct CompactSettingsFixture: View {
         accessibilityNodes(in: window).first { accessibilityValue($0, kAXIdentifierAttribute) as? String == identifier }
     }
 
-    private func clickTrailingArea(_ element: AXUIElement, in window: NSWindow, bottomInset: CGFloat? = nil) throws {
+    private func click(_ element: AXUIElement, in window: NSWindow, trailingArea: Bool = false, bottomInset: CGFloat? = nil) throws {
         let position = try XCTUnwrap(accessibilityValue(element, kAXPositionAttribute)) as! AXValue
         let size = try XCTUnwrap(accessibilityValue(element, kAXSizeAttribute)) as! AXValue
         var origin = CGPoint.zero
         var dimensions = CGSize.zero
         XCTAssertTrue(AXValueGetValue(position, .cgPoint, &origin))
         XCTAssertTrue(AXValueGetValue(size, .cgSize, &dimensions))
-        XCTAssertGreaterThan(dimensions.width, 150)
+        if trailingArea { XCTAssertGreaterThan(dimensions.width, 150) }
         let y = origin.y + (bottomInset.map { dimensions.height - $0 } ?? dimensions.height / 2)
-        let screenPoint = NSPoint(x: origin.x + dimensions.width - 5, y: NSScreen.screens[0].frame.maxY - y)
+        let x = origin.x + (trailingArea ? dimensions.width - 5 : dimensions.width / 2)
+        let screenPoint = NSPoint(x: x, y: NSScreen.screens[0].frame.maxY - y)
         let point = window.convertPoint(fromScreen: screenPoint)
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
@@ -379,7 +441,7 @@ private struct CompactSettingsFixture: View {
         }
         await settleUI(host)
         let result = try XCTUnwrap(accessibilityElement(in: window, identifier: "settings.result.settings.display-name"))
-        try clickTrailingArea(result, in: window, bottomInset: 5)
+        try click(result, in: window, trailingArea: true, bottomInset: 5)
         try await Task.sleep(nanoseconds: 500_000_000)
         await settleUI(host)
         XCTAssertEqual(workspace.settingsTab, 0)
@@ -446,7 +508,8 @@ private struct CompactSettingsFixture: View {
             return .verified(.guest(endpoint: url))
         }, makeMeeting: { destination, name, title, quiet in
             calls.models += 1
-            return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine)
+            return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet,
+                                             engine: calls.models == 1 ? engine : UpdateAdmissionEngine())
         }, attention: desktopTestAttention())
         return Fixture(workspace: workspace, library: library, engine: engine, calls: calls)
     }

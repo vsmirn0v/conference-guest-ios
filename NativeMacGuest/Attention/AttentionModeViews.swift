@@ -130,6 +130,7 @@ struct AttentionModePicker: View {
                                     in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("attention.mode.\(mode.rawValue)")
                     .accessibilityAddTraits(mode == resolved.mode && participation.status == .inactive ? .isSelected : [])
                 }
                 Button { showingParticipation = true } label: {

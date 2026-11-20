@@ -87,44 +87,54 @@ struct NativeDesktopHomeView: View {
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).contextMenu { roomMenu(room) }
     }
+    private func sectionRow(_ item: NativeDesktopWorkspace.Section) -> some View {
+        HStack {
+            if item == .workspace {
+                Label(L("Live"), systemImage: item.symbol)
+                if !workspace.meetings.isEmpty {
+                    Text(workspace.meetings.count.formatted()).font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Label(item == .recent ? L("Recent rooms") : L(item.rawValue), systemImage: item.symbol)
+            }
+            if item == .assistant { AssistantUnreadBadge(store: workspace.attention.store) }
+        }.tag(NativeDesktopSidebarItem.section(item))
+    }
+    private var sidebar: some View {
+        List(selection: Binding(get: { workspace.sidebarSelection }, set: { workspace.sidebarSelection = $0 })) {
+            if !workspace.meetings.isEmpty {
+                Section(workspace.meetings.count == 1 ? L("In meeting") : L("Meetings")) {
+                    ForEach(workspace.meetings, id: \.sessionID) { model in
+                        NativeDesktopLiveMeetingControls(workspace: workspace, model: model, inSidebar: true)
+                            .tag(NativeDesktopSidebarItem.meeting(model.sessionID))
+                    }
+                }
+            }
+            Section {
+                ForEach(NativeDesktopWorkspace.Section.allCases) { item in
+                    sectionRow(item)
+                }
+            }
+            if !library.favorites.isEmpty {
+                Section(L("Favorites")) {
+                    ForEach(library.favorites) { room in
+                        favoriteSidebarRow(room)
+                    }.onMove { library.moveFavorites(from: $0, to: $1) }
+                }
+            }
+        }
+        .listStyle(.sidebar).navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 320)
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Image(systemName: library.sync.enabled ? "icloud" : "internaldrive")
+                Text(library.sync.status).font(.caption).lineLimit(2)
+                Spacer()
+            }.foregroundStyle(.secondary).padding(12)
+        }
+    }
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding(get: { workspace.sidebarSelection }, set: { workspace.sidebarSelection = $0 })) {
-                Section {
-                    ForEach(NativeDesktopWorkspace.Section.allCases) { item in
-                        HStack {
-                            if item == .workspace {
-                                Button { workspace.openLiveWorkspace() } label: {
-                                    Label(L("Live"), systemImage: item.symbol)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                }.buttonStyle(.plain)
-                                if !workspace.meetings.isEmpty {
-                                    Text(workspace.meetings.count.formatted()).font(.caption).foregroundStyle(.secondary)
-                                }
-                            } else {
-                                Label(item == .recent ? L("Recent rooms") : L(item.rawValue), systemImage: item.symbol)
-                            }
-                            if item == .assistant { AssistantUnreadBadge(store: workspace.attention.store) }
-                        }.tag(NativeDesktopSidebarItem.section(item))
-                    }
-                }
-                if !library.favorites.isEmpty {
-                    Section(L("Favorites")) {
-                        ForEach(library.favorites) { room in
-                            favoriteSidebarRow(room)
-                        }.onMove { library.moveFavorites(from: $0, to: $1) }
-                    }
-                }
-            }
-            .listStyle(.sidebar).navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 320)
-            .safeAreaInset(edge: .bottom) {
-                HStack {
-                    Image(systemName: library.sync.enabled ? "icloud" : "internaldrive")
-                    Text(library.sync.status).font(.caption).lineLimit(2)
-                    Spacer()
-                }.foregroundStyle(.secondary).padding(12)
-            }
+            sidebar
         } detail: {
             ZStack {
                 if workspace.selectedMeeting == nil {
@@ -945,6 +955,7 @@ struct NativeDesktopSetupView: View {
 struct NativeDesktopLiveMeetingControls: View {
     @ObservedObject var workspace: NativeDesktopWorkspace
     @ObservedObject var model: NativeDesktopMeetingModel
+    var inSidebar = false
     private var speaking: Bool { model.participants.contains { !$0.isLocal && $0.speaking == true } }
     private var live: Bool { model.ownsMicrophone && model.snapshot.microphoneOn }
     /// A move between meetings, or a start, shows at once: the device and server steps take time.
@@ -963,39 +974,74 @@ struct NativeDesktopLiveMeetingControls: View {
         if let talk = workspace.talkMeeting, talk !== model { return L("Moves your microphone from “%@” and unmutes it here.", talk.title) }
         return L("Talk here")
     }
+    @ViewBuilder private var statusIcon: some View {
+        if moving { ProgressView().controlSize(.small) }
+        else {
+            Image(systemName: NativeDesktopWorkspace.statusSymbol(model))
+                .foregroundStyle(live ? Color.red : model.snapshot.playoutOn ? Color.accentColor : Color.secondary)
+        }
+    }
+    private var title: some View {
+        HStack(spacing: 5) {
+            Text(model.title).lineLimit(1)
+            if model.transcriptionIndicator == .on {
+                Image(systemName: "text.bubble.fill").font(.caption2).foregroundStyle(.orange)
+                    .help(L("Transcribing")).accessibilityLabel(L("Transcribing"))
+            }
+        }
+    }
+    private var status: some View {
+        Text(subtitle).font(.caption).foregroundStyle(moving ? Color.orange : live ? Color.red : Color.secondary).lineLimit(1)
+    }
+    @ViewBuilder private var indicators: some View {
+        AttentionBadge(attention: workspace.attention, meetingID: model.sessionID)
+        if speaking { Image(systemName: "waveform").font(.caption).foregroundStyle(.secondary).help(L("Someone is speaking")) }
+        if workspace.isDetached(model) {
+            Image(systemName: "macwindow").font(.caption).foregroundStyle(.secondary).help(L("This meeting is open in its own window."))
+        }
+    }
+    @ViewBuilder private var controls: some View {
+        AttentionModeChipGate(attention: workspace.attention, model: model)
+            .accessibilityIdentifier("liveMeeting.assistant.\(model.sessionID)")
+        Button { model.toggleMicrophone() } label: { Image(systemName: micSymbol).frame(width: 20, height: 20) }
+            .buttonStyle(.borderless).foregroundStyle(live ? Color.red : Color.secondary)
+            .help(micHelp).accessibilityLabel(micLabel)
+            .accessibilityIdentifier("liveMeeting.microphone.\(model.sessionID)")
+        Button { model.togglePlayout() } label: { Image(systemName: model.soundSymbol).frame(width: 20, height: 20) }
+            .buttonStyle(.borderless).foregroundStyle(model.snapshot.playoutOn ? Color.secondary : Color.orange)
+            .help(model.snapshot.playoutOn ? L("Silence") : L("Sound on"))
+            .accessibilityLabel(model.snapshot.playoutOn ? L("Silence") : L("Sound on"))
+            .accessibilityIdentifier("liveMeeting.playout.\(model.sessionID)")
+    }
     var body: some View {
-        HStack(spacing: 8) {
-            Group {
-                if moving { ProgressView().controlSize(.small) }
-                else {
-                    Image(systemName: NativeDesktopWorkspace.statusSymbol(model))
-                        .foregroundStyle(live ? Color.red : model.snapshot.playoutOn ? Color.accentColor : Color.secondary)
-                }
-            }.frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 5) {
-                    Text(model.title).lineLimit(1)
-                    if model.transcriptionIndicator == .on {
-                        Image(systemName: "text.bubble.fill").font(.caption2).foregroundStyle(.orange)
-                            .help(L("Transcribing")).accessibilityLabel(L("Transcribing"))
+        Group {
+            if inSidebar {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Button { workspace.selectSidebarMeeting(model) } label: {
+                            HStack(spacing: 5) {
+                                statusIcon.frame(width: 18)
+                                title
+                            }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityLabel(model.title)
+                            .accessibilityIdentifier("liveSidebar.meeting.\(model.sessionID)")
+                        indicators
+                    }
+                    HStack(spacing: 5) {
+                        status
+                        Spacer(minLength: 2)
+                        controls
                     }
                 }
-                Text(subtitle).font(.caption).foregroundStyle(moving ? Color.orange : live ? Color.red : Color.secondary).lineLimit(1)
+            } else {
+                HStack(spacing: 8) {
+                    statusIcon.frame(width: 18)
+                    VStack(alignment: .leading, spacing: 1) { title; status }
+                    Spacer(minLength: 4)
+                    indicators
+                    controls
+                }
             }
-            Spacer(minLength: 4)
-            AttentionBadge(attention: workspace.attention, meetingID: model.sessionID)
-            AttentionModeChipGate(attention: workspace.attention, model: model)
-            if speaking { Image(systemName: "waveform").font(.caption).foregroundStyle(.secondary).help(L("Someone is speaking")) }
-            if workspace.isDetached(model) {
-                Image(systemName: "macwindow").font(.caption).foregroundStyle(.secondary).help(L("This meeting is open in its own window."))
-            }
-            Button { model.toggleMicrophone() } label: { Image(systemName: micSymbol).frame(width: 20, height: 20) }
-                .buttonStyle(.borderless).foregroundStyle(live ? Color.red : Color.secondary)
-                .help(micHelp).accessibilityLabel(micLabel)
-            Button { model.togglePlayout() } label: { Image(systemName: model.soundSymbol).frame(width: 20, height: 20) }
-                .buttonStyle(.borderless).foregroundStyle(model.snapshot.playoutOn ? Color.secondary : Color.orange)
-                .help(model.snapshot.playoutOn ? L("Silence") : L("Sound on"))
-                .accessibilityLabel(model.snapshot.playoutOn ? L("Silence") : L("Sound on"))
         }.padding(.vertical, 2)
         .contextMenu {
             Button(L("Show meeting")) { workspace.showMeeting(model) }

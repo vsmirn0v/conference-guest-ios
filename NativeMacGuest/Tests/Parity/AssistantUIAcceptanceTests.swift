@@ -944,6 +944,41 @@ import XCTest
         try capture(Rendered(window: rendered.window, hosting: rendered.hosting, name: "talk-multiple-meetings-narrow"))
     }
 
+    func testLongApprovalKeepsAssistantComposerInsideShortWindow() async throws {
+        let attention = AttentionCoordinator(store: store())
+        let rendered = await present(AttentionMomentsView(attention: attention, store: attention.store),
+            size: NSSize(width: 540, height: 340), name: "assistant-short-window",
+            minSize: NSSize(width: 380, height: 280), sizeToContent: false)
+        attention.talk.agentPending = .init(action: .init(id: UUID(), kind: .sendChat, payloadHash: "fixture"),
+            toolCallID: "fixture", toolName: "sendChat", title: "Review outgoing message",
+            detail: Array(repeating: "An entire paragraph of text to review before sending.", count: 50).joined(separator: "\n"),
+            expiresAt: Date().addingTimeInterval(60))
+        await settle()
+
+        func bounds(_ item: AXUIElement) throws -> CGRect {
+            let position = try XCTUnwrap(attribute(item, kAXPositionAttribute))
+            let size = try XCTUnwrap(attribute(item, kAXSizeAttribute))
+            var origin = CGPoint.zero, extent = CGSize.zero
+            XCTAssertTrue(AXValueGetValue(position as! AXValue, .cgPoint, &origin))
+            XCTAssertTrue(AXValueGetValue(size as! AXValue, .cgSize, &extent))
+            return CGRect(origin: origin, size: extent)
+        }
+        let window = try XCTUnwrap(nodes(rendered).first)
+        let windowBounds = try bounds(window)
+        for identifier in ["assistant.input", "assistant.ask", "assistant.listen"] {
+            let control = try XCTUnwrap(element(rendered, identifier: identifier))
+            let frame = try bounds(control)
+            XCTAssertFalse(frame.isEmpty)
+            XCTAssertTrue(windowBounds.contains(frame), "\(identifier) extends beyond the window")
+        }
+        let conversation = try XCTUnwrap(nodes(rendered).first {
+            (attribute($0, kAXRoleAttribute) as? String) == kAXScrollAreaRole
+        })
+        XCTAssertTrue(nodes(conversation).contains {
+            (attribute($0, kAXIdentifierAttribute) as? String) == "assistant.agent.confirm"
+        }, "The full review and its confirm button should scroll together")
+    }
+
     func testTranscriptionPopoverStaysOpenAcrossLocalAndRemoteUpdates() async throws {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent("listen-ui-\(UUID().uuidString)", isDirectory: true)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("listen-root-\(UUID().uuidString)", isDirectory: true)

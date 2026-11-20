@@ -60,6 +60,7 @@ import UserNotifications
     @Published var selection: Section = .home {
         didSet {
             if selectedMeetingID != nil { selectedMeetingID = nil }
+            if selection == .assistant { fitMainWindowToScreen() }
             #if NATIVE_DIRECT_UPDATES
             if oldValue != selection {
                 focusHomeAfterSupport = selection == .home && oldValue == .settings && settingsTab == SupportCopy.settingsTab
@@ -305,8 +306,6 @@ import UserNotifications
 
     @Published private(set) var lastFinishedHistoryID: UUID?
 
-    func openLiveWorkspace() { selection = .workspace }
-
     func openAssistantMoments() {
         attention.opensAssistantMoments = true
         show(section: .assistant)
@@ -344,15 +343,38 @@ import UserNotifications
         if window == nil {
             let value = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 800),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-            value.delegate = self; value.title = "Rock'N'Roll for Mac"; value.minSize = NSSize(width: 900, height: 560)
+            value.delegate = self; value.title = "Rock'N'Roll for Mac"
             value.isReleasedWhenClosed = false; value.titlebarAppearsTransparent = true
-            value.contentView = NSHostingView(rootView: NativeDesktopHomeView(workspace: self, library: library))
-            value.setFrameAutosaveName("nativeDesktop.library"); value.center(); window = value
+            let host = NSHostingView(rootView: NativeDesktopHomeView(workspace: self, library: library))
+            host.sizingOptions = []
+            value.contentView = host
+            value.center()
+            value.setFrameAutosaveName("nativeDesktop.library")
+            window = value
+            NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+                .sink { [weak self] _ in self?.fitMainWindowToScreen() }.store(in: &subscriptions)
             NativeDesktopForegroundMedia.shared.setHomeWindow(value)
         }
         if window?.isMiniaturized == true { window?.deminiaturize(nil) }
+        if window?.isVisible != true { fitMainWindowToScreen() }
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         installMenuBar(); installKeyboard(); synchronizeMeetingPresentation()
+    }
+
+    private func fitMainWindowToScreen() {
+        guard let window, !window.styleMask.contains(.fullScreen),
+              let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+        window.minSize = NSSize(width: min(900, visible.width), height: min(420, visible.height))
+        let fitted = Self.fittedMainWindowFrame(window.frame, in: visible)
+        if fitted != window.frame { window.setFrame(fitted, display: true) }
+    }
+
+    static func fittedMainWindowFrame(_ frame: NSRect, in visible: NSRect) -> NSRect {
+        let width = min(frame.width, visible.width)
+        let height = min(frame.height, visible.height)
+        return NSRect(x: min(max(frame.minX, visible.minX), visible.maxX - width),
+                      y: min(max(frame.maxY, visible.minY + height), visible.maxY) - height,
+                      width: width, height: height)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -1148,7 +1170,7 @@ import UserNotifications
     /// the ambient status surface, and floating video is an explicit opt-in
     /// ("Mini meeting"), never an automatic overlay over library sections.
     var sidebarSelection: NativeDesktopSidebarItem? {
-        get { .section(selectedMeetingID == nil ? selection : .workspace) }
+        get { selectedMeetingID.map(NativeDesktopSidebarItem.meeting) ?? .section(selection) }
         set {
             // The sidebar List writes its selection back during view updates;
             // republishing an unchanged value would re-render it in a loop.
@@ -1161,11 +1183,14 @@ import UserNotifications
                 #endif
             case .meeting(let id)?:
                 guard let model = meetings.first(where: { $0.sessionID == id }) else { return }
-                selectedMeetingID = id
-                if isDetached(model) { showMeeting(model) }
+                selectSidebarMeeting(model)
             case nil: break
             }
         }
+    }
+    func selectSidebarMeeting(_ model: NativeDesktopMeetingModel) {
+        if isDetached(model), selectedMeetingID != model.sessionID { selectedMeetingID = model.sessionID }
+        showMeeting(model)
     }
     func presentEmbedded(_ model: NativeDesktopMeetingModel) {
         guard meetings.contains(where: { $0 === model }) else { return }

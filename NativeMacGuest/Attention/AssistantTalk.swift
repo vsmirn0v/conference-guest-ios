@@ -839,95 +839,26 @@ struct AssistantTalkView: View {
                     .disabled(talk.targetMeetingID == nil)
             }.padding(12)
             Divider()
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if store.agentAssistantEnabled {
-                        if agentRuntime.items.isEmpty {
-                            VStack(spacing: 8) {
-                                Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)
-                                Text(L("Talk to Assistant")).font(.title3)
-                                Text(L("Ask about your meetings, outcomes, calendar, or request an action."))
-                                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 50)
-                        }
-                        ForEach(agentRuntime.turns) { turn in
-                            AssistantAgentTurnView(turn: turn, historyAction: historyAction)
-                        }
-                    } else if talk.entries.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)
-                            Text(L("Talk to Assistant")).font(.title3)
-                            if let targetMeeting {
-                                Text(L("Ask about %@ or choose another meeting below.", targetMeeting.title))
-                                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                            }
-                            Text(L("Type a request, or hold ⌥Space. Your speech is recognized on this Mac."))
-                                .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        }.frame(maxWidth: .infinity).padding(.vertical, 50)
-                    }
-                    if !store.agentAssistantEnabled {
-                        ForEach(talk.entries) { entry in
-                            Text(entry.text).textSelection(.enabled).padding(10)
-                                .background(entry.role == .user ? Color.accentColor.opacity(0.1) : Color(nsColor: .controlBackgroundColor),
-                                    in: RoundedRectangle(cornerRadius: 8))
-                                .frame(maxWidth: .infinity, alignment: entry.role == .user ? .trailing : .leading)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 8) {
+                        conversation
+                        pendingReviews
+                        if let error = talk.audioError {
+                            Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 12)
+                                .id("assistant.audio-error")
                         }
                     }
-                }.padding(16)
-            }
-            if let pending = talk.pending {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(pending.title).font(.headline)
-                        if !pending.detail.isEmpty { Text(pending.detail).textSelection(.enabled) }
-                        HStack {
-                            Button(L("Confirm")) { talk.confirmPending() }.buttonStyle(.borderedProminent)
-                                .accessibilityIdentifier("assistant.command.confirm")
-                            Button(L("Cancel"), role: .cancel) { talk.cancelPending() }
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(.horizontal, 12)
-            }
-            if let approval = talk.agentPending {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(approval.title).font(.headline)
-                        if !approval.detail.isEmpty { Text(approval.detail).textSelection(.enabled) }
-                        Text(L("Expires at %@", approval.expiresAt.formatted(date: .omitted, time: .shortened)))
-                            .font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Button(L("Confirm")) { talk.confirmAgentPending() }.buttonStyle(.borderedProminent)
-                                .accessibilityIdentifier("assistant.agent.confirm")
-                            Button(L("Cancel"), role: .cancel) { talk.cancelAgentPending() }
-                                .accessibilityIdentifier("assistant.agent.cancel")
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(.horizontal, 12)
-            }
-            if let proposal = talk.ruleProposalReview {
-                AssistantRuleReviewCard(proposal: proposal,
-                    onEnable: { unattended in talk.enableReviewedRule(unattended: unattended) },
-                    onDiscard: { talk.discardReviewedRule() })
-                    .padding(.horizontal, 12)
-            }
-            ForEach(ruleStore.pendingActions) { pending in
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(L("Automation rule: mention reply")).font(.headline)
-                        Text(L("“%@” in “%@”", pending.ruleText, pending.meetingTitle)).textSelection(.enabled)
-                        Text(L("Expires at %@", pending.expiresAt.formatted(date: .omitted, time: .shortened)))
-                            .font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Button(L("Say it")) {
-                                Task { @MainActor in
-                                    let result = await attention.executeRuleAction(pending)
-                                    if !result.isEmpty { talk.agentRuntime.appendSystemForUI(result) }
-                                }
-                            }.buttonStyle(.borderedProminent)
-                            Button(L("Skip"), role: .cancel) { ruleStore.actionDenied(pending.id) }
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(.horizontal, 12)
+                }
+                .onAppear {
+                    if let id = reviewIDs.first { proxy.scrollTo(id, anchor: .top) }
+                }
+                .onChange(of: reviewIDs) { ids in
+                    if let id = ids.first { proxy.scrollTo(id, anchor: .top) }
+                }
+                .onChange(of: talk.audioError) { error in
+                    if error != nil { proxy.scrollTo("assistant.audio-error", anchor: .bottom) }
+                }
             }
             if talk.working { ProgressView(L("Interpreting…")).controlSize(.small).padding(6) }
             if store.agentAssistantEnabled {
@@ -943,7 +874,6 @@ struct AssistantTalkView: View {
                 }.padding(.horizontal, 12)
             }
             if talk.listening { Label(L("Listening on this Mac… release ⌥Space to interpret"), systemImage: "mic.fill").foregroundStyle(.teal).padding(6) }
-            if let error = talk.audioError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 12) }
             if !liveMeetings.isEmpty {
                 HStack(spacing: 12) {
                     Menu {
@@ -998,6 +928,105 @@ struct AssistantTalkView: View {
         }
         .onAppear { talk.reconcileMeetingTarget() }
         .onChange(of: liveMeetings.map(\.sessionID)) { _ in talk.reconcileMeetingTarget() }
+    }
+
+    private var conversation: some View {
+        LazyVStack(alignment: .leading, spacing: 10) {
+            if store.agentAssistantEnabled {
+                if agentRuntime.items.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)
+                        Text(L("Talk to Assistant")).font(.title3)
+                        Text(L("Ask about your meetings, outcomes, calendar, or request an action."))
+                            .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }.frame(maxWidth: .infinity).padding(.vertical, 50)
+                }
+                ForEach(agentRuntime.turns) { turn in
+                    AssistantAgentTurnView(turn: turn, historyAction: historyAction)
+                }
+            } else if talk.entries.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)
+                    Text(L("Talk to Assistant")).font(.title3)
+                    if let targetMeeting {
+                        Text(L("Ask about %@ or choose another meeting below.", targetMeeting.title))
+                            .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }
+                    Text(L("Type a request, or hold ⌥Space. Your speech is recognized on this Mac."))
+                        .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }.frame(maxWidth: .infinity).padding(.vertical, 50)
+            }
+            if !store.agentAssistantEnabled {
+                ForEach(talk.entries) { entry in
+                    Text(entry.text).textSelection(.enabled).padding(10)
+                        .background(entry.role == .user ? Color.accentColor.opacity(0.1) : Color(nsColor: .controlBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 8))
+                        .frame(maxWidth: .infinity, alignment: entry.role == .user ? .trailing : .leading)
+                }
+            }
+        }.padding(16)
+    }
+
+    private var reviewIDs: [UUID] {
+        [talk.pending?.id, talk.agentPending?.id, talk.ruleProposalReview?.id].compactMap { $0 } +
+            ruleStore.pendingActions.map(\.id)
+    }
+
+    @ViewBuilder private var pendingReviews: some View {
+        if let pending = talk.pending {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(pending.title).font(.headline)
+                    if !pending.detail.isEmpty { Text(pending.detail).textSelection(.enabled) }
+                    HStack {
+                        Button(L("Confirm")) { talk.confirmPending() }.buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("assistant.command.confirm")
+                        Button(L("Cancel"), role: .cancel) { talk.cancelPending() }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.horizontal, 12).id(pending.id)
+        }
+        if let approval = talk.agentPending {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(approval.title).font(.headline)
+                    if !approval.detail.isEmpty { Text(approval.detail).textSelection(.enabled) }
+                    Text(L("Expires at %@", approval.expiresAt.formatted(date: .omitted, time: .shortened)))
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button(L("Confirm")) { talk.confirmAgentPending() }.buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("assistant.agent.confirm")
+                        Button(L("Cancel"), role: .cancel) { talk.cancelAgentPending() }
+                            .accessibilityIdentifier("assistant.agent.cancel")
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.horizontal, 12).id(approval.id)
+        }
+        if let proposal = talk.ruleProposalReview {
+            AssistantRuleReviewCard(proposal: proposal,
+                onEnable: { unattended in talk.enableReviewedRule(unattended: unattended) },
+                onDiscard: { talk.discardReviewedRule() })
+                .padding(.horizontal, 12).id(proposal.id)
+        }
+        ForEach(ruleStore.pendingActions) { pending in
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(L("Automation rule: mention reply")).font(.headline)
+                    Text(L("“%@” in “%@”", pending.ruleText, pending.meetingTitle)).textSelection(.enabled)
+                    Text(L("Expires at %@", pending.expiresAt.formatted(date: .omitted, time: .shortened)))
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button(L("Say it")) {
+                            Task { @MainActor in
+                                let result = await attention.executeRuleAction(pending)
+                                if !result.isEmpty { talk.agentRuntime.appendSystemForUI(result) }
+                            }
+                        }.buttonStyle(.borderedProminent)
+                        Button(L("Skip"), role: .cancel) { ruleStore.actionDenied(pending.id) }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.horizontal, 12).id(pending.id)
+        }
     }
 
     private func historyAction(for source: AssistantEvidenceSource) -> (() -> Void)? {

@@ -10,6 +10,15 @@ import XCTest
 /// Opt in with NATIVE_DESKTOP_LAYOUT_FIXTURE=1. The optional hold interval is
 /// clamped to 120 seconds so CUA can inspect the real meeting window.
 @MainActor final class DesktopLayoutTests: XCTestCase {
+    func testMainWindowFitsShortSecondaryDisplayAndPreservesUsableSavedFrame() {
+        let visible = NSRect(x: -1024, y: 24, width: 1024, height: 540)
+        let oversized = NSRect(x: -1250, y: -350, width: 1240, height: 860)
+        XCTAssertEqual(NativeDesktopWorkspace.fittedMainWindowFrame(oversized, in: visible), visible)
+        let saved = NSRect(x: -980, y: 56, width: 920, height: 460)
+        XCTAssertEqual(NativeDesktopWorkspace.fittedMainWindowFrame(saved, in: visible), saved)
+        let low = saved.offsetBy(dx: 0, dy: -260)
+        XCTAssertEqual(NativeDesktopWorkspace.fittedMainWindowFrame(low, in: visible).minY, visible.minY)
+    }
     func testOfflineMeetingLayoutFixture() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["NATIVE_DESKTOP_LAYOUT_FIXTURE"] == "1" || environment["NATIVE_DESKTOP_LAYOUT_HOLD_SECONDS"] != nil else {

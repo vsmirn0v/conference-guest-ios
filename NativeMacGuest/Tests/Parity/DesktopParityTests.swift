@@ -1359,11 +1359,31 @@ private final class DesktopActivitySpy: NSUserActivity {
         _ = await workspace.leave()
         XCTAssertTrue(workspace.meetings.isEmpty); XCTAssertFalse(workspace.busyForUpdate)
     }
+    func testOpeningAssistantFitsWindowToDisplayAndAllowsShorterHeight() throws {
+        let workspace = multiWorkspace([])
+        let key = "NSWindow Frame nativeDesktop.library"
+        let previous = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(previous, forKey: key) }
+        workspace.show(section: .history)
+        let window = try XCTUnwrap(NSApp.windows.first { $0.delegate === workspace })
+        let original = window.frame
+        defer { window.setFrame(original, display: false); window.close() }
+        let visible = try XCTUnwrap(window.screen?.visibleFrame)
+        window.setFrame(visible.insetBy(dx: -20, dy: -200), display: false)
+        workspace.sidebarSelection = .section(.assistant)
+        XCTAssertTrue(visible.contains(window.frame))
+        // AppKit can add title-bar chrome to the minimum after laying out the split view.
+        XCTAssertLessThanOrEqual(window.minSize.height, 460)
+        window.setContentSize(NSSize(width: window.frame.width, height: 440))
+        window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertLessThanOrEqual(try XCTUnwrap(window.contentView).bounds.height, 440)
+    }
+
     func testMeetingsLiveInMainWindowAndSelectionFollowsLeave() async throws {
         let workspace = multiWorkspace([DesktopTestEngine(), DesktopTestEngine()])
         try await join(workspace, 1)
         let a = workspace.meetings[0]
-        XCTAssertEqual(workspace.sidebarSelection, .section(.workspace), "All embedded calls use the single Live sidebar destination")
+        XCTAssertEqual(workspace.sidebarSelection, .meeting(a.sessionID))
         XCTAssertEqual(workspace.embeddedMeetings.map(\.sessionID), [a.sessionID])
         try await spin { a.mediaPresentation == .meeting }
         XCTAssertEqual(a.mediaPresentation, .meeting, "The selected meeting renders in full")
@@ -1381,7 +1401,14 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(menu.items.first { $0.representedObject as? UUID == a.sessionID && $0.keyEquivalent == "1" }?.title, a.title)
         XCTAssertEqual(menu.items.first { $0.keyEquivalent == "2" }?.state, .on, "The Window menu marks the shown meeting")
         XCTAssertTrue(workspace.dockMenu().items.contains { $0.title == L("Unmute Microphone") }, "The Dock menu controls the talk meeting")
+        let originalTalkID = workspace.talkID
+        workspace.sidebarSelection = .section(.history)
+        XCTAssertNil(workspace.selectedMeeting)
+        workspace.sidebarSelection = .meeting(b.sessionID)
+        XCTAssertEqual(workspace.selectedMeetingID, b.sessionID)
         workspace.sidebarSelection = .meeting(a.sessionID)
+        XCTAssertEqual(workspace.sidebarSelection, .meeting(a.sessionID))
+        XCTAssertEqual(workspace.talkID, originalTalkID)
         XCTAssertEqual(b.mediaPresentation, .hidden)
         _ = await workspace.leave(a)
         XCTAssertEqual(workspace.selectedMeetingID, b.sessionID, "Leaving the shown meeting selects the next one")
