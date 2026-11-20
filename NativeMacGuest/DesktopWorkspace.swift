@@ -1252,7 +1252,7 @@ import UserNotifications
         if meeting.snapshot.phase == .connected {
             workspaceSync.noteLocalSessionJoined(
                 sessionID: meeting.workspaceSessionID,
-                joinedAt: Date(),
+                joinedAt: library.calendar.currentTime,
                 hasOutcomeWriter: attention.store.generateOutcomes
             )
             workspaceSync.noteMicStateChanged(

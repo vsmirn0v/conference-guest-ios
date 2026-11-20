@@ -391,6 +391,43 @@ private final class SameRoomClockBox: @unchecked Sendable {
         XCTAssertFalse(req2.window.lines.contains { $0.text.contains("backend migration") })
     }
 
+    func testHistoryRejoinWithinGraceReusesRecordAndKeepsTwoIntervals() async throws {
+        let start = Date()
+        let clockBox = SameRoomClockBox(start + 60)
+        let harness = makeHarness(clockBox: clockBox)
+        let event = makeCalendarMeeting(id: "history-rejoin", seriesID: "release", title: "Release review",
+            start: start, end: start + 30 * 60, url: roomA)
+        await harness.reader.setMeetings([event])
+        harness.calendar.refresh()
+        try await spin { harness.calendar.meetings.first?.hasResolvedInvitation == true }
+
+        harness.workspace.join(roomA, eventID: event.id, quiet: true)
+        try await spin { harness.workspace.meeting?.connected == true && !harness.workspace.preparing }
+        let first = try XCTUnwrap(harness.workspace.meeting)
+        let id = first.workspaceSessionID
+        clockBox.now = start + 19 * 60
+        let firstLeft = await harness.workspace.leave(first)
+        XCTAssertTrue(firstLeft)
+        try await spin { harness.attention.store.meetingLibrary.cards.contains(where: { $0.sessionID == id && $0.state == .ended }) }
+
+        clockBox.now = start + 42 * 60
+        XCTAssertTrue(harness.workspace.canResumeHistory(id, invitation: roomA))
+        harness.workspace.joinFromHistory(id, invitation: roomA, title: "Release review")
+        try await spin { harness.workspace.meeting?.connected == true && !harness.workspace.preparing }
+        let second = try XCTUnwrap(harness.workspace.meeting)
+        XCTAssertEqual(second.workspaceSessionID, id)
+        XCTAssertNotEqual(second.sessionID, first.sessionID)
+        XCTAssertFalse(second.snapshot.microphoneOn)
+        XCTAssertFalse(second.snapshot.cameraOn)
+        clockBox.now = start + 47 * 60
+        let secondLeft = await harness.workspace.leave(second)
+        XCTAssertTrue(secondLeft)
+        let leg = try XCTUnwrap(harness.workspace.workspaceSync.attendance(for: id).first)
+        XCTAssertEqual(leg.intervals?.count, 2)
+        XCTAssertEqual(leg.intervals?.values.compactMap(\.leftAt).max(), clockBox.now)
+        XCTAssertEqual(harness.attention.store.meetingLibrary.cards.filter { $0.sessionID == id }.count, 1)
+    }
+
     func testWorkspaceTwoMinuteOverrunGraceFoldsTailIntoFirstSession() async throws {
         let base = Date()
         let clockBox = SameRoomClockBox(base.addingTimeInterval(-120))
