@@ -3240,3 +3240,9 @@
 "Some audio was skipped while this Mac was busy." = "此 Mac 忙碌时跳过了部分音频。";
 "The speech model was unavailable during this period." = "此期间语音识别模型不可用。";
 "Next sync attempt at %@" = "下次同步尝试时间：%@";
+
+"Allow this server to generate speech in Transcription & voice settings first." = "请先在转写与语音设置中允许此服务器生成语音。";
+"Sends your typed reply as speech into the selected room. Your microphone stays muted." = "将输入的回复以语音形式发送到所选房间。麦克风保持静音。";
+"For previews and meeting replies, including assistant replies, Rapid-MLX sends the text, language, model name and voice style notes to %@ to generate speech." = "为试听和会议回复（包括助理回复）生成语音时，Rapid-MLX 会向 %@ 发送文本、语言、模型名称和语音风格说明。";
+"Allow speech requests to this server" = "允许向此服务器发送语音生成请求";
+"Enter an HTTP or HTTPS server address without credentials, a query or a fragment." = "请输入 HTTP 或 HTTPS 服务器地址，不含凭据、查询参数或片段标识符。";

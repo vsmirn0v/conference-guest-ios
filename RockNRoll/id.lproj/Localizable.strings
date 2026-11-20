@@ -3240,3 +3240,9 @@
 "Some audio was skipped while this Mac was busy." = "Sebagian audio dilewati saat Mac ini sibuk.";
 "The speech model was unavailable during this period." = "Model pengenalan suara tidak tersedia selama periode ini.";
 "Next sync attempt at %@" = "Percobaan sinkronisasi berikutnya pukul %@";
+
+"Allow this server to generate speech in Transcription & voice settings first." = "Izinkan server ini menghasilkan ucapan terlebih dahulu di pengaturan transkripsi dan suara.";
+"Sends your typed reply as speech into the selected room. Your microphone stays muted." = "Balasan yang Anda ketik dibacakan di ruang yang dipilih. Mikrofon Anda tetap dibisukan.";
+"For previews and meeting replies, including assistant replies, Rapid-MLX sends the text, language, model name and voice style notes to %@ to generate speech." = "Untuk menghasilkan suara pratinjau dan balasan rapat, termasuk balasan asisten, Rapid-MLX mengirim teks, bahasa, nama model dan catatan gaya suara ke %@.";
+"Allow speech requests to this server" = "Izinkan permintaan sintesis suara ke server ini";
+"Enter an HTTP or HTTPS server address without credentials, a query or a fragment." = "Masukkan alamat server HTTP atau HTTPS tanpa kredensial, kueri atau fragmen.";

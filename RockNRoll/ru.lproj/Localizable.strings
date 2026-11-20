@@ -3467,3 +3467,9 @@
 "Some audio was skipped while this Mac was busy." = "Часть аудио пропущена, пока этот Mac был занят.";
 "The speech model was unavailable during this period." = "В этот период модель распознавания речи была недоступна.";
 "Next sync attempt at %@" = "Следующая попытка синхронизации в %@";
+
+"Allow this server to generate speech in Transcription & voice settings first." = "Сначала разрешите этому серверу генерировать речь в настройках «Расшифровка и голос».";
+"Sends your typed reply as speech into the selected room. Your microphone stays muted." = "Озвучивает введённый ответ в выбранной комнате. Ваш микрофон остаётся выключенным.";
+"For previews and meeting replies, including assistant replies, Rapid-MLX sends the text, language, model name and voice style notes to %@ to generate speech." = "Для прослушивания и озвучивания ответов на встречах, включая ответы ассистента, Rapid-MLX отправляет на %@ текст, язык, название модели и пожелания к звучанию голоса.";
+"Allow speech requests to this server" = "Разрешить запросы на озвучивание к этому серверу";
+"Enter an HTTP or HTTPS server address without credentials, a query or a fragment." = "Введите HTTP- или HTTPS-адрес сервера без учётных данных, строки запроса и фрагмента.";

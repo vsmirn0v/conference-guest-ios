@@ -3240,3 +3240,9 @@
 "Some audio was skipped while this Mac was busy." = "इस Mac के व्यस्त होने के दौरान कुछ ऑडियो छोड़ दिया गया।";
 "The speech model was unavailable during this period." = "इस अवधि में वाक् पहचान मॉडल उपलब्ध नहीं था।";
 "Next sync attempt at %@" = "अगला सिंक प्रयास %@ बजे";
+
+"Allow this server to generate speech in Transcription & voice settings first." = "पहले ट्रांसक्रिप्शन और आवाज़ सेटिंग में इस सर्वर को आवाज़ बनाने की अनुमति दें।";
+"Sends your typed reply as speech into the selected room. Your microphone stays muted." = "आपका लिखा जवाब चुने गए रूम में बोलकर सुनाया जाता है। आपका माइक्रोफ़ोन म्यूट रहता है।";
+"For previews and meeting replies, including assistant replies, Rapid-MLX sends the text, language, model name and voice style notes to %@ to generate speech." = "प्रीव्यू और मीटिंग के जवाबों के लिए आवाज़ बनाने हेतु Rapid-MLX टेक्स्ट, भाषा, मॉडल का नाम और आवाज़ की शैली संबंधी निर्देश %@ पर भेजता है। इसमें असिस्टेंट के जवाब भी शामिल हैं।";
+"Allow speech requests to this server" = "इस सर्वर पर आवाज़ बनाने के अनुरोध भेजने की अनुमति दें";
+"Enter an HTTP or HTTPS server address without credentials, a query or a fragment." = "बिना लॉगिन जानकारी, क्वेरी या फ़्रैगमेंट वाला HTTP या HTTPS सर्वर पता दर्ज करें।";

@@ -124,7 +124,7 @@ struct VoiceReplySheetView: View {
                             .foregroundStyle(.red)
                     }
                 } footer: {
-                    Text(L("Generates speech on this iPhone using the selected voice and sends it directly into the target room without unmuting your microphone."))
+                    Text(L("Sends your typed reply as speech into the selected room. Your microphone stays muted."))
                 }
 
                 Section {
@@ -314,6 +314,20 @@ struct TranscriptionAndVoiceSettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     TextField(L("Voice style notes (optional)"), text: $voiceStore.rapidMLXDescription)
+                    if let endpoint = voiceStore.rapidMLXEndpoint {
+                        Text(L("For previews and meeting replies, including assistant replies, Rapid-MLX sends the text, language, model name and voice style notes to %@ to generate speech.", endpoint.absoluteString))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Toggle(L("Allow speech requests to this server"), isOn: Binding(
+                            get: { voiceStore.hasRapidMLXConsent },
+                            set: { voiceStore.setRapidMLXConsent($0) }
+                        ))
+                        .accessibilityIdentifier("voice.rapidmlx.consent")
+                    } else {
+                        Text(L("Enter an HTTP or HTTPS server address without credentials, a query or a fragment."))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 if previewPlayer.isPlaying {
@@ -332,7 +346,7 @@ struct TranscriptionAndVoiceSettingsView: View {
                             Label(L("Preview voice"), systemImage: "play.circle")
                         }
                     }
-                    .disabled(isGeneratingPreview)
+                    .disabled(isGeneratingPreview || (voiceStore.engine == .rapidMLX && !voiceStore.hasRapidMLXConsent))
                     .accessibilityIdentifier("voice.preview")
                 }
 
