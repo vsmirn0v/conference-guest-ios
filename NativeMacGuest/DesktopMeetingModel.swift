@@ -469,6 +469,12 @@ import UniformTypeIdentifiers
         }
     }
 
+    func useInitialWorkspaceSession(_ id: UUID) {
+        guard !workspaceSessionCreated else { return }
+        workspaceSessionID = id
+        activeNoteSessionID = id
+    }
+
     func switchLiveNoteToCurrentSession() {
         activeNoteSessionID = workspaceSessionID
         pendingNoteRolloverTitle = nil

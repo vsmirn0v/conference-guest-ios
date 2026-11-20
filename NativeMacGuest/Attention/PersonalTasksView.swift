@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PersonalTasksView: View {
     let attention: AttentionCoordinator
-    let openOutcome: (UUID) -> Void
+    let openOutcome: (UUID, UUID?) -> Void
     @ObservedObject private var assistant: AssistantDataStore
     @ObservedObject private var library: MeetingLibraryController
     @AppStorage("native.assistant.personalTaskFilter") private var filter = PersonalTaskFilter.open
@@ -20,7 +20,7 @@ struct PersonalTasksView: View {
     @State private var error: String?
     @State private var undo: PersonalTaskRow?
 
-    init(attention: AttentionCoordinator, openOutcome: @escaping (UUID) -> Void) {
+    init(attention: AttentionCoordinator, openOutcome: @escaping (UUID, UUID?) -> Void) {
         self.attention = attention
         self.openOutcome = openOutcome
         _assistant = ObservedObject(wrappedValue: attention.store.assistant)
@@ -291,7 +291,7 @@ struct PersonalTasksView: View {
     private func meetingGroupHeader(_ group: PersonalTaskMeetingGroup) -> some View {
         HStack(spacing: 8) {
             Button {
-                openOutcome(group.sessionID)
+                openOutcome(group.sessionID, nil)
             } label: {
                 Text(group.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? L("Meeting") : group.title)
                     .font(.subheadline.weight(.semibold))
@@ -345,7 +345,7 @@ struct PersonalTasksView: View {
                 if showMeetingLink {
                     Button {
                         showArchive = false
-                        openOutcome(row.sessionID)
+                        openOutcome(row.sessionID, row.id)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.title)

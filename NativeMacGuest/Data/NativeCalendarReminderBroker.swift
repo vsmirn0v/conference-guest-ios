@@ -8,6 +8,7 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
     static let category = "MEETING_REMINDER"
     static let attentionCategory = "ATTENTION_MOMENT"
     static let join = "REMINDER_JOIN", snooze = "REMINDER_SNOOZE", skip = "REMINDER_SKIP"
+    @MainActor var onTask: (UUID) -> Void = { _ in }
     @MainActor var onAttention: (UUID) -> Void = { _ in }
     @MainActor var isTaskReminderAllowed: (@MainActor (UUID) async -> Bool)?
     @MainActor private var coordinator: CalendarReminderCoordinator?
@@ -51,6 +52,13 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
         if response.notification.request.content.categoryIdentifier == Self.attentionCategory,
            let id = (response.notification.request.content.userInfo["momentID"] as? String).flatMap(UUID.init(uuidString:)) {
             Task { @MainActor in onAttention(id); completionHandler() }
+            return
+        }
+        let taskPrefix = "meeting-task-"
+        let requestID = response.notification.request.identifier
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier, requestID.hasPrefix(taskPrefix),
+           let id = UUID(uuidString: String(requestID.dropFirst(taskPrefix.count))) {
+            Task { @MainActor in onTask(id); completionHandler() }
             return
         }
         guard response.notification.request.content.categoryIdentifier == Self.category,

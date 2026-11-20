@@ -71,7 +71,7 @@ actor AppleCalendarReader: CalendarReading {
                 seriesID: series, calendarID: eventCalendar.calendarIdentifier, calendarTitle: eventCalendar.title ?? L("Untitled calendar"),
                 title: String((event.title ?? L("Untitled meeting")).prefix(160)), start: begin, end: finish,
                 allDay: event.isAllDay, tentative: event.status == .tentative,
-                linkGroups: groups, externalSeriesID: externalSeries)
+                linkGroups: groups, externalSeriesID: externalSeries, originalOccurrenceStart: occurrence)
         }.sorted { ($0.start, $0.title, $0.id) < ($1.start, $1.title, $1.id) }
         let upcoming = Array(meetings.filter { $0.end > now }.prefix(300))
         let past = Array(meetings.filter { $0.end <= now }.suffix(50))

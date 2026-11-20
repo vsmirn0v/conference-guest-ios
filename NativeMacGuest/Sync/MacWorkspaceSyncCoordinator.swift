@@ -5,10 +5,12 @@ import Foundation
 @MainActor
 final class MacWorkspaceSyncCoordinator: ObservableObject {
     @Published private(set) var lastSyncedAt: Date?
+    @Published private(set) var lastLibrarySyncAt: Date?
     @Published private(set) var syncError: String?
     @Published private(set) var isSyncing = false
 
     let deviceID: String
+    var onTranscriptChanged: ((UUID) -> Void)?
     private let meetingLibrary: MeetingLibraryController
     private let notes: MeetingNotesController
     private let assistant: AssistantDataStore
@@ -53,6 +55,9 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         var acknowledgedTranscripts: [String: MeetingTranscriptSyncRecord] = [:]
         var acknowledgedSchedule: [String: MeetingScheduleSyncRecord] = [:]
         var knownLocalSessions: Set<UUID> = []
+        var localAttendance: [UUID: DeviceParticipationLeg]?
+        var calendarLinks: [UUID: SyncValue<MeetingCalendarAssociation?>]?
+        var historyGroups: [UUID: SyncValue<UUID?>]?
         var lastExportedNoteMarkdown: [UUID: String] = [:]
         var lastExportedOutcomes: [UUID: ExportedOutcomeSnapshot] = [:]
         var lastExportedTaskIDs: [UUID: Set<UUID>] = [:]
@@ -171,39 +176,150 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         activeSyncTask = nil
     }
 
-    func noteLocalSessionJoined(sessionID: UUID, joinedAt: Date, hasOutcomeWriter: Bool) {
-        let now = Date()
-        let existing = activeLegsBySession[sessionID]
-        if let existing, existing.leftAt == nil, existing.hasOutcomeWriter == hasOutcomeWriter {
-            return
+    func canonicalSessionID(_ id: UUID) -> UUID {
+        replica.workspaceDoc.resolveCanonicalSessionID(for: id)
+    }
+
+    private func historyGroupLink(_ id: UUID) -> SyncValue<UUID?>? {
+        let local = replica.historyGroups?[id]
+        let synced = replica.workspaceDoc.sessions[id]?.historyGroupParent
+        if let local, let synced { return local.merging(synced) }
+        return local ?? synced
+    }
+
+    func historySessionID(_ id: UUID) -> UUID {
+        replica.workspaceDoc.resolveHistorySessionID(for: id, visibleIDs: Set(meetingLibrary.cards.map(\.sessionID))) {
+            replica.historyGroups?[$0]
         }
-        var leg = existing ?? DeviceParticipationLeg(
-            deviceID: deviceID,
-            deviceKind: .mac,
-            joinedAt: joinedAt,
-            hasOutcomeWriter: hasOutcomeWriter,
-            updatedAt: now
-        )
-        leg.joinedAt = min(leg.joinedAt, joinedAt)
-        leg.leftAt = nil
-        leg.hasOutcomeWriter = hasOutcomeWriter
-        leg.updatedAt = now
-        activeLegsBySession[sessionID] = leg
+    }
+
+    func setHistoryGroup(sessionID: UUID, parent: UUID?) {
+        let source = canonicalSessionID(sessionID)
+        let target = parent.map(historySessionID)
+        guard source != target, historyGroupLink(source)?.value != target else { return }
+        let link = SyncValue(target, version: replica.workspaceDoc.nextVersion())
+        if replica.historyGroups == nil { replica.historyGroups = [:] }
+        replica.historyGroups?[source] = link
+        if var session = replica.workspaceDoc.sessions[source] {
+            session.historyGroupParent = link
+            replica.workspaceDoc.upsertSession(session)
+        }
+        objectWillChange.send()
+        persistReplica()
+        scheduleSync(delayMilliseconds: 100)
+    }
+
+    func historyConversation(for id: UUID, in journal: MeetingWorkspaceJournal) -> MeetingWorkspaceSession? {
+        let id = historySessionID(id)
+        let related = journal.sessions.filter { historySessionID($0.id) == id }
+        guard var session = related.first(where: { $0.id == id }) ?? related.min(by: { $0.startedAt < $1.startedAt }) else { return nil }
+        var byID: [String: MeetingWorkspaceEvent] = [:]
+        for item in related.flatMap(\.events) {
+            let known = byID[item.id]
+            var latest = known.map { $0.revisions.count > item.revisions.count ? $0 : item } ?? item
+            latest.isBookmarked = item.isBookmarked || known?.isBookmarked == true
+            byID[item.id] = latest
+        }
+        session.events = byID.values.sorted { ($0.occurredAt, $0.id) < ($1.occurredAt, $1.id) }
+        return session
+    }
+
+    func association(for id: UUID) -> MeetingCalendarAssociation? {
+        calendarLink(for: id)?.value
+    }
+
+    private func calendarLink(for id: UUID) -> SyncValue<MeetingCalendarAssociation?>? {
+        let canonical = canonicalSessionID(id)
+        let local = replica.calendarLinks?[canonical]
+        let synced = replica.workspaceDoc.sessions[canonical]?.calendarAssociation
+        if let local, let synced { return local.merging(synced) }
+        return local ?? synced
+    }
+
+    func recordCalendarAssociation(_ value: MeetingCalendarAssociation?, sessionID: UUID) {
+        let id = canonicalSessionID(sessionID)
+        if let current = calendarLink(for: id), current.value == value { return }
+        let change = SyncValue(value, version: replica.workspaceDoc.nextVersion())
+        if replica.calendarLinks == nil { replica.calendarLinks = [:] }
+        replica.calendarLinks?[id] = change
+        if var session = replica.workspaceDoc.sessions[id] {
+            session.calendarAssociation = change
+            replica.workspaceDoc.upsertSession(session)
+        }
+        objectWillChange.send()
+        persistReplica()
         scheduleSync(delayMilliseconds: 200)
     }
 
-    func noteLocalSessionLeft(sessionID: UUID, leftAt: Date) {
-        closeMicIntervalIfNeeded(sessionID: sessionID, at: leftAt)
-        var leg = activeLegsBySession[sessionID] ?? DeviceParticipationLeg(
-            deviceID: deviceID,
-            deviceKind: .mac,
-            joinedAt: leftAt,
-            hasOutcomeWriter: attentionStore?.generateOutcomes == true,
-            updatedAt: leftAt
+    func historySession(matching association: MeetingCalendarAssociation) -> UUID? {
+        meetingLibrary.cards.filter { card in
+            self.association(for: card.sessionID)?.matches(association) == true
+        }.max { $0.updatedAt < $1.updatedAt }.map { canonicalSessionID($0.sessionID) }
+    }
+
+    func attendance(for sessionID: UUID) -> [DeviceParticipationLeg] {
+        let id = canonicalSessionID(sessionID)
+        var legs = replica.workspaceDoc.sessions[id]?.legs ?? [:]
+        for (key, leg) in replica.localAttendance ?? [:] where canonicalSessionID(key) == id {
+            legs[leg.deviceID] = legs[leg.deviceID]?.merging(leg) ?? leg
+        }
+        return legs.values.sorted { $0.joinedAt < $1.joinedAt }
+    }
+
+    func isHistoryRefreshWriter(for id: UUID, at date: Date) -> Bool {
+        let legs = attendance(for: id)
+        guard !legs.contains(where: {
+            $0.leftAt == nil && date.timeIntervalSince($0.updatedAt) < OutcomeCoordinatorPolicy.activeLegStaleSeconds
+        }) else { return false }
+        let macWriters = legs.filter { $0.deviceKind == .mac && $0.hasOutcomeWriter }
+        return macWriters.map(\.deviceID).min().map { $0 == deviceID } ?? !syncPreferences.enabled
+    }
+
+    func transcriptReceipt(for id: UUID) -> (received: Bool, pending: Bool) {
+        let id = canonicalSessionID(id)
+        let remote = attendance(for: id).filter { $0.deviceID != deviceID }
+        let devices = Set(remote.filter { $0.transcriptChunkCount > 0 }.map(\.deviceID))
+        let delivered = Set(replica.workspaceDoc.transcriptChunks.values.filter {
+            $0.sessionID == id && !$0.isDeleted && !$0.events.isEmpty
+        }.map(\.deviceID))
+        return (!delivered.subtracting([deviceID]).isEmpty, !devices.subtracting(delivered).isEmpty)
+    }
+
+    func noteLocalSessionJoined(sessionID: UUID, joinedAt: Date, hasOutcomeWriter: Bool) {
+        let id = canonicalSessionID(sessionID)
+        let active = activeLegsBySession[id]
+        if let active, active.leftAt == nil, active.hasOutcomeWriter == hasOutcomeWriter { return }
+        var leg = active ?? replica.localAttendance?[id] ?? DeviceParticipationLeg(
+            deviceID: deviceID, deviceKind: .mac, joinedAt: joinedAt, updatedAt: joinedAt
         )
+        if active?.leftAt != nil || active == nil {
+            // An app exit can leave an open interval. Close it at the last durable observation.
+            leg.endInterval(at: leg.leftAt ?? leg.updatedAt)
+            leg.beginInterval(at: joinedAt)
+        }
+        leg.leftAt = nil
+        leg.hasOutcomeWriter = hasOutcomeWriter
+        leg.updatedAt = max(joinedAt, Date())
+        storeLocalAttendance(leg, sessionID: id)
+    }
+
+    func noteLocalSessionLeft(sessionID: UUID, leftAt: Date) {
+        let id = canonicalSessionID(sessionID)
+        closeMicIntervalIfNeeded(sessionID: id, at: leftAt)
+        let previous = activeLegsBySession[id] ?? replica.localAttendance?[id]
+        guard var leg = previous, leg.leftAt == nil else { return }
+        leg.endInterval(at: leftAt)
         leg.leftAt = leftAt
-        leg.updatedAt = leftAt
+        leg.updatedAt = max(leg.updatedAt, leftAt)
+        storeLocalAttendance(leg, sessionID: id)
+    }
+
+    private func storeLocalAttendance(_ leg: DeviceParticipationLeg, sessionID: UUID) {
         activeLegsBySession[sessionID] = leg
+        if replica.localAttendance == nil { replica.localAttendance = [:] }
+        replica.localAttendance?[sessionID] = leg
+        objectWillChange.send()
+        persistReplica()
         scheduleSync(delayMilliseconds: 200)
     }
 
@@ -220,7 +336,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     /// Pulls any transcript/chat chunks recorded on iPhone into the local journal so Mac outcome
     /// generation incorporates every participant across devices.
     func pullAndMergeTranscripts(for sessionID: UUID) async {
-        guard syncPreferences.enabled, syncPreferences.syncWorkspace else { return }
+        guard syncPreferences.enabled, syncPreferences.syncWorkspace, syncPreferences.transcriptRetention != .off else { return }
         do {
             let session = try await connectZone(name: "transcript", transport: transcriptTransport) {
                 self.replica.transcriptToken = nil
@@ -359,6 +475,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             if syncPreferences.syncWorkspace {
                 do {
                     let prefetchedTranscripts = try await syncWorkspacePass()
+                    lastLibrarySyncAt = Date()
                     try await syncTranscriptsPass(prefetched: prefetchedTranscripts)
                     anyPassSucceeded = true
                 } catch {
@@ -451,13 +568,14 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         // Transcript records arrive in a different zone. Import them before creating
         // export jobs for the incoming meetings, including phone-initiated saves.
         var prefetchedTranscripts: CloudZoneSession?
-        if !report.changedSessions.isEmpty,
+        if !report.changedSessions.isEmpty, syncPreferences.transcriptRetention != .off,
            try await meetingLibrary.store.destination()?.layout.sections.contains(.transcript) == true,
            let session = try? await connectTranscriptZone(),
            (try? await mergeIncomingTranscripts(session: session)) != nil {
             prefetchedTranscripts = session
         }
 
+        if !report.changedSessions.isEmpty { objectWillChange.send() }
         if !report.changedSessions.isEmpty || !report.changedTaskIDs.isEmpty ||
             !report.changedProfileIDs.isEmpty || !report.changedSettingsKeys.isEmpty ||
             !changes.records.isEmpty {
@@ -497,6 +615,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         if !changedSessions.isEmpty {
             applyTranscriptsToJournal(for: changedSessions)
             archiveUpdatedSessions(Array(changedSessions))
+            for id in changedSessions { onTranscriptChanged?(id) }
         }
     }
 
@@ -504,15 +623,16 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         let snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
         exportLocalTranscriptsAndArchive(snapshot: snapshot)
 
+        let retention = syncPreferences.transcriptRetention
+        if retention == .off && replica.workspaceDoc.expiredCloudTranscriptRecordIDs(retention: retention).isEmpty { return }
         let zoneSession: CloudZoneSession
         if let prefetched {
             zoneSession = prefetched
         } else {
             zoneSession = try await connectTranscriptZone()
-            try await mergeIncomingTranscripts(session: zoneSession)
+            if retention != .off { try await mergeIncomingTranscripts(session: zoneSession) }
         }
 
-        let retention = syncPreferences.transcriptRetention
         let eligible = replica.workspaceDoc.transcriptRecordsForCloud(retention: retention)
         let pending = eligible.filter { replica.acknowledgedTranscripts[$0.syncRecordID] != $0 }
         if !pending.isEmpty {
@@ -588,12 +708,22 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             let existing = replica.workspaceDoc.sessions[sid]
             let receipt = snapshot.obsidianReceipts[session.id]
             var legs = existing?.legs ?? [:]
-            if let localLeg = activeLegsBySession[session.id] ?? activeLegsBySession[sid] {
+            if let localLeg = replica.localAttendance?[session.id] ?? replica.localAttendance?[sid] {
                 legs[deviceID] = legs[deviceID]?.merging(localLeg) ?? localLeg
             }
 
+            let calendarLink = calendarLink(for: sid)
+            let groupLink = historyGroupLink(sid)
             if var existing {
                 var changed = false
+                if existing.historyGroupParent != groupLink {
+                    existing.historyGroupParent = groupLink
+                    changed = true
+                }
+                if existing.calendarAssociation != calendarLink {
+                    existing.calendarAssociation = calendarLink
+                    changed = true
+                }
                 if existing.title.value != session.title {
                     existing.title = SyncValue(session.title, version: replica.workspaceDoc.nextVersion())
                     changed = true
@@ -636,6 +766,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                 let created = SyncedMeetingSession(
                     id: sid,
                     occurrenceKey: occKey,
+                    calendarAssociation: calendarLink,
+                    historyGroupParent: groupLink,
                     title: SyncValue(session.title, version: v),
                     hasTitleOverride: SyncValue(hasTitleOverride, version: v),
                     invitation: SyncValue(session.invitation, version: v),

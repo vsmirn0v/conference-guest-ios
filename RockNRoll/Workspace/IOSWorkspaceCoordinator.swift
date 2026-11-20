@@ -237,10 +237,14 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         title: String,
         invitation: URL,
         roomIdentity: String,
-        calendarMeeting: CalendarMeeting?
+        calendarMeeting: CalendarMeeting?,
+        engine: MeetingEngineKind? = nil
     ) -> UUID {
         let now = Date()
         let transitionMode = effectiveTransitionMode(roomURL: invitation.absoluteString, seriesID: calendarMeeting?.seriesID)
+        let association = calendarMeeting.flatMap { meeting in
+            MeetingRoomIdentity(invitation, engine: engine).map { MeetingCalendarAssociation(meeting, room: $0) }
+        }
         let occKey = MeetingWorkspaceSyncDocument.occurrenceKey(
             calendarSeriesExternalID: calendarMeeting?.externalSeriesID,
             roomIdentity: roomIdentity,
@@ -251,7 +255,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         if let requested = requestedWorkspaceID {
             sessionID = replica.workspaceDoc.resolveCanonicalSessionID(for: requested)
         } else if let existing = findMatchingSessionID(
-            occurrenceKey: occKey,
+            association: association,
             roomIdentity: roomIdentity,
             transitionMode: transitionMode,
             now: now
@@ -273,6 +277,8 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             updatedAt: now
         )
         myLeg.joinedAt = min(myLeg.joinedAt, now)
+        myLeg.endInterval(at: myLeg.leftAt ?? myLeg.updatedAt)
+        myLeg.beginInterval(id: controllerID, at: now)
         myLeg.leftAt = nil
         myLeg.hasOutcomeWriter = outcomeConfig.autoGenerateOnLeave && outcomeConfig.hasOnDeviceOrRemoteWriter
         myLeg.updatedAt = now
@@ -301,6 +307,13 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         )
 
         upsertSessionIntoDoc(session, fieldChanges: .all)
+        if let association, var synced = replica.workspaceDoc.sessions[sessionID],
+           synced.calendarAssociation?.value == nil || (requestedWorkspaceID == nil &&
+               synced.calendarAssociation?.value?.matches(association) == true) {
+            synced.calendarAssociation = SyncValue(association, version: replica.workspaceDoc.nextVersion())
+            replica.workspaceDoc.upsertSession(synced)
+        }
+        persistReplica()
         Task { @MainActor [weak self] in
             guard let self else { return }
             try? await self.store.upsertSession(session)
@@ -376,6 +389,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
                 hasOutcomeWriter: self.outcomeConfig.autoGenerateOnLeave && self.outcomeConfig.hasOnDeviceOrRemoteWriter,
                 updatedAt: endedAt
             )
+            myLeg.endInterval(id: controllerID, at: endedAt)
             myLeg.leftAt = endedAt
             myLeg.transcriptChunkCount = self.liveEventsBySession[sid]?.count ?? myLeg.transcriptChunkCount
             myLeg.updatedAt = endedAt
@@ -515,7 +529,8 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             )
 
             stage = "save"
-            let outcomeID = outcomesBySession[sid]?.outcomeID ?? UUID()
+            let prior = outcomesBySession[sid]
+            let outcomeID = prior?.outcomeID ?? UUID()
             let now = Date()
             let v = replica.workspaceDoc.nextVersion()
             let mappedTasks = result.tasks.enumerated().map { idx, snap in
@@ -542,36 +557,50 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             }
 
             let duration = max(0, endedAt.timeIntervalSince(session?.startedAt ?? endedAt))
+            let existingTasks = tasks.filter { $0.sessionID == sid }
+            let reviewingExisting = prior?.state == "ready" || !existingTasks.isEmpty
+            var versions = prior?.versions ?? []
+            if let prior, prior.state == "ready" {
+                let next = (versions.map(\.revision).max() ?? 0) + 1
+                versions.append(.init(revision: next, summary: prior.summary, decisions: prior.decisions,
+                    openQuestions: prior.openQuestions, savedAt: prior.updatedAt, deviceID: deviceID))
+            }
+            var candidates = prior?.reviewCandidates ?? []
+            if reviewingExisting {
+                let existing = Set(existingTasks.map { $0.text.workspaceFolded + "|" + $0.owner.workspaceFolded })
+                    .union(candidates.map { $0.text.workspaceFolded + "|" + $0.owner.workspaceFolded })
+                candidates += result.tasks.filter { !existing.contains($0.text.workspaceFolded + "|" + $0.owner.workspaceFolded) }
+            }
             let newOutcome = IOSMeetingOutcomeItem(
                 outcomeID: outcomeID,
                 sessionID: sid,
                 state: "ready",
-                summary: result.summary,
-                decisions: result.decisions,
-                openQuestions: result.openQuestions,
-                summaryEdited: false,
-                decisionsEdited: false,
-                questionsEdited: false,
+                summary: prior?.summaryEdited == true ? (prior?.summary ?? "") : result.summary,
+                decisions: prior?.decisionsEdited == true ? (prior?.decisions ?? []) : result.decisions,
+                openQuestions: prior?.questionsEdited == true ? (prior?.openQuestions ?? []) : result.openQuestions,
+                summaryEdited: prior?.summaryEdited ?? false,
+                decisionsEdited: prior?.decisionsEdited ?? false,
+                questionsEdited: prior?.questionsEdited ?? false,
                 coverageSeconds: duration,
                 writerTier: 1,
-                versions: outcomesBySession[sid]?.versions ?? [],
-                reviewCandidates: outcomesBySession[sid]?.reviewCandidates ?? [],
+                versions: Array(versions.suffix(8)),
+                reviewCandidates: candidates,
                 updatedAt: now
             )
 
             try await store.saveOutcome(newOutcome)
-            try await store.replaceTasks(for: sid, tasks: mappedTasks)
+            if !reviewingExisting { try await store.replaceTasks(for: sid, tasks: mappedTasks) }
 
             let syncedOutcome = SyncedMeetingOutcome(
                 outcomeID: outcomeID,
                 sessionID: sid,
                 state: SyncValue("ready", version: v),
-                summary: SyncValue(result.summary, version: v),
-                decisions: SyncValue(result.decisions, version: v),
-                openQuestions: SyncValue(result.openQuestions, version: v),
-                summaryEdited: false,
-                decisionsEdited: false,
-                questionsEdited: false,
+                summary: SyncValue(newOutcome.summary, version: v),
+                decisions: SyncValue(newOutcome.decisions, version: v),
+                openQuestions: SyncValue(newOutcome.openQuestions, version: v),
+                summaryEdited: prior?.summaryEdited ?? false,
+                decisionsEdited: prior?.decisionsEdited ?? false,
+                questionsEdited: prior?.questionsEdited ?? false,
                 coverageSeconds: duration,
                 writerTier: 1,
                 versions: newOutcome.versions,
@@ -580,7 +609,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
                 isDeleted: SyncValue(false, version: v)
             )
             replica.workspaceDoc.upsertOutcome(syncedOutcome)
-            for t in mappedTasks {
+            for t in reviewingExisting ? [] : mappedTasks {
                 let syncedTask = toSyncedTask(t, version: v)
                 replica.workspaceDoc.upsertTask(syncedTask)
             }
@@ -1050,6 +1079,36 @@ final class IOSWorkspaceCoordinator: ObservableObject {
 
     // MARK: - Transcripts & Archive
 
+    var historySessions: [IOSMeetingSessionItem] {
+        let ids = Set(sessions.map(\.id))
+        return sessions.filter { replica.workspaceDoc.resolveHistorySessionID(for: $0.id, visibleIDs: ids) == $0.id }
+    }
+
+    func linkedHistorySources(for id: UUID) -> [IOSMeetingSessionItem] {
+        let ids = Set(sessions.map(\.id))
+        return sessions.filter {
+            $0.id != id && replica.workspaceDoc.resolveHistorySessionID(for: $0.id, visibleIDs: ids) == id
+        }
+    }
+
+    func historyTranscriptForDisplay(sessionID: UUID) async -> (events: [SyncedTranscriptEvent], isLocalArchiveOnly: Bool) {
+        let sources = linkedHistorySources(for: sessionID)
+        guard !sources.isEmpty else { return await transcriptForDisplay(sessionID: sessionID) }
+        var byID: [String: SyncedTranscriptEvent] = [:]
+        var archiveOnly = true
+        for id in [sessionID] + sources.map(\.id) {
+            let (events, local) = await transcriptForDisplay(sessionID: id)
+            if !events.isEmpty { archiveOnly = archiveOnly && local }
+            for event in events {
+                let older = byID[event.id]
+                var preferred = older.map { $0.revisions.count > event.revisions.count ? $0 : event } ?? event
+                preferred.isBookmarked = event.isBookmarked || older?.isBookmarked == true
+                byID[event.id] = preferred
+            }
+        }
+        return (byID.values.sorted { ($0.occurredAt, $0.id) < ($1.occurredAt, $1.id) }, archiveOnly)
+    }
+
     func transcriptForDisplay(sessionID: UUID) async -> (events: [SyncedTranscriptEvent], isLocalArchiveOnly: Bool) {
         let sid = replica.workspaceDoc.resolveCanonicalSessionID(for: sessionID)
         let merged = replica.workspaceDoc.mergedTranscript(for: sid)
@@ -1308,25 +1367,29 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     }
 
     private func syncTranscriptsPass() async throws {
+        let retention = syncPreferences.transcriptRetention
+        if retention == .off && replica.workspaceDoc.expiredCloudTranscriptRecordIDs(retention: retention).isEmpty { return }
         let session = try await connectZone(name: "transcript", transport: transcriptTransport) {
             self.replica.transcriptToken = nil
             self.replica.acknowledgedTranscripts.removeAll()
         }
-        let changes = try await transcriptTransport.fetch(session: session, after: replica.transcriptToken)
-        replica.transcriptToken = changes.token
+        if retention != .off {
+            let changes = try await transcriptTransport.fetch(session: session, after: replica.transcriptToken)
+            replica.transcriptToken = changes.token
 
-        let changedSessions = replica.workspaceDoc.mergeTranscriptRecords(changes.records)
-        for sid in changedSessions {
-            if let s = replica.workspaceDoc.sessions[sid],
-               s.isDeleted.value || (s.canonicalSessionID?.value != nil && s.canonicalSessionID?.value != sid) {
-                continue
+            let changedSessions = replica.workspaceDoc.mergeTranscriptRecords(changes.records)
+            for sid in changedSessions {
+                if let s = replica.workspaceDoc.sessions[sid],
+                   s.isDeleted.value || (s.canonicalSessionID?.value != nil && s.canonicalSessionID?.value != sid) {
+                    continue
+                }
+                let merged = replica.workspaceDoc.mergedTranscript(for: sid)
+                try? await store.appendTranscriptEvents(sessionID: sid, events: merged)
+                await archiveSessionIfNeeded(sessionID: sid)
             }
-            let merged = replica.workspaceDoc.mergedTranscript(for: sid)
-            try? await store.appendTranscriptEvents(sessionID: sid, events: merged)
-            await archiveSessionIfNeeded(sessionID: sid)
+
         }
 
-        let retention = syncPreferences.transcriptRetention
         let eligible = replica.workspaceDoc.transcriptRecordsForCloud(retention: retention)
         let pending = eligible.filter { replica.acknowledgedTranscripts[$0.syncRecordID] != $0 }
         if !pending.isEmpty {
@@ -1515,26 +1578,24 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     }
 
     private func findMatchingSessionID(
-        occurrenceKey: String,
+        association: MeetingCalendarAssociation?,
         roomIdentity: String,
         transitionMode: IOSSameRoomTransitionMode,
         now: Date
     ) -> UUID? {
-        if occurrenceKey.hasPrefix("cal:"),
-           let exact = sessions.first(where: { $0.occurrenceKey == occurrenceKey }) {
-            return exact.id
+        if let association {
+            return sessions.filter { session in
+                let known = replica.workspaceDoc.sessions[session.id]?.calendarAssociation?.value
+                return known?.matches(association) == true && association.allowsRejoin(at: now)
+            }.max { $0.updatedAt < $1.updatedAt }?.id
         }
-        return sessions.first(where: { existing in
-            guard existing.roomIdentity.workspaceFolded == roomIdentity.workspaceFolded, !roomIdentity.isEmpty else {
-                return false
-            }
+        return sessions.first { existing in
+            guard replica.workspaceDoc.sessions[existing.id]?.calendarAssociation == nil,
+                  !roomIdentity.isEmpty, existing.roomIdentity.workspaceFolded == roomIdentity.workspaceFolded else { return false }
             if existing.endedAt == nil { return true }
-            if transitionMode == .continuousSession,
-               let ended = existing.endedAt, now.timeIntervalSince(ended) < 900 {
-                return true
-            }
-            return abs(now.timeIntervalSince(existing.startedAt)) < 900 && existing.endedAt == nil
-        })?.id
+            guard transitionMode == .continuousSession, let ended = existing.endedAt else { return false }
+            return now.timeIntervalSince(ended) < 900
+        }?.id
     }
 
     private func effectiveTransitionMode(roomURL: String, seriesID: String?) -> IOSSameRoomTransitionMode {

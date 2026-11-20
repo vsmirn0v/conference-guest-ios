@@ -1362,7 +1362,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         let workspace = multiWorkspace([DesktopTestEngine(), DesktopTestEngine()])
         try await join(workspace, 1)
         let a = workspace.meetings[0]
-        XCTAssertEqual(workspace.sidebarSelection, .meeting(a.sessionID), "Joining selects the meeting in the main window")
+        XCTAssertEqual(workspace.sidebarSelection, .section(.workspace), "All embedded calls use the single Live sidebar destination")
         XCTAssertEqual(workspace.embeddedMeetings.map(\.sessionID), [a.sessionID])
         try await spin { a.mediaPresentation == .meeting }
         XCTAssertEqual(a.mediaPresentation, .meeting, "The selected meeting renders in full")

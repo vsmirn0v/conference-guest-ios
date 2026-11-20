@@ -55,6 +55,25 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
         return current
     }
 
+    /// Follow reversible presentation links without rewriting source records.
+    public func resolveHistorySessionID(for id: UUID, visibleIDs: Set<UUID>,
+                                        localLink: (UUID) -> SyncValue<UUID?>? = { _ in nil }) -> UUID {
+        var cursor = resolveCanonicalSessionID(for: id)
+        var path: [UUID] = []
+        var seen: Set<UUID> = []
+        while seen.insert(cursor).inserted {
+            path.append(cursor)
+            let remote = sessions[cursor]?.historyGroupParent
+            let local = localLink(cursor)
+            let link = if let local, let remote { local.merging(remote) } else { local ?? remote }
+            guard let value = link?.value else { return cursor }
+            let target = resolveCanonicalSessionID(for: value)
+            guard visibleIDs.contains(target) else { return cursor }
+            cursor = target
+        }
+        return path.drop(while: { $0 != cursor }).min(by: { $0.uuidString < $1.uuidString }) ?? cursor
+    }
+
     public mutating func upsertSession(_ incoming: SyncedMeetingSession) {
         counter = max(counter, incoming.maximumCounter)
         let canonical = resolveCanonicalSessionID(for: incoming.id)
@@ -174,6 +193,8 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
                     id: winner.id,
                     occurrenceKey: winner.occurrenceKey,
                     canonicalSessionID: nil,
+                    calendarAssociation: loser.calendarAssociation,
+                    historyGroupParent: loser.historyGroupParent,
                     title: loser.title,
                     hasTitleOverride: loser.hasTitleOverride,
                     invitation: loser.invitation,
@@ -238,6 +259,10 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
         _ second: SyncedMeetingSession,
         transitionMode: (String?) -> String?
     ) -> Bool {
+        if first.calendarAssociation != nil || second.calendarAssociation != nil {
+            guard let lhs = first.calendarAssociation?.value, let rhs = second.calendarAssociation?.value else { return false }
+            return lhs.matches(rhs)
+        }
         if !first.legs.isEmpty,
            !second.legs.isEmpty,
            first.legs.count == 1,

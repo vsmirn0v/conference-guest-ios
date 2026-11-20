@@ -90,19 +90,21 @@ struct NativeDesktopHomeView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: Binding(get: { workspace.sidebarSelection }, set: { workspace.sidebarSelection = $0 })) {
-                // Live meetings come first: each one is a destination in this window.
-                if !workspace.meetings.isEmpty {
-                    Section(workspace.meetings.count > 1 ? L("Meetings") : L("In meeting")) {
-                        ForEach(workspace.meetings, id: \.sessionID) { model in
-                            NativeDesktopSidebarMeetingRow(workspace: workspace, model: model)
-                                .tag(NativeDesktopSidebarItem.meeting(model.sessionID))
-                        }
-                    }
-                }
                 Section {
                     ForEach(NativeDesktopWorkspace.Section.allCases) { item in
                         HStack {
-                            Label(item == .recent ? L("Recent rooms") : L(item.rawValue), systemImage: item.symbol)
+                            if item == .workspace {
+                                Button { workspace.openLiveWorkspace() } label: {
+                                    Label(L("Live"), systemImage: item.symbol)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                                if !workspace.meetings.isEmpty {
+                                    Text(workspace.meetings.count.formatted()).font(.caption).foregroundStyle(.secondary)
+                                }
+                            } else {
+                                Label(item == .recent ? L("Recent rooms") : L(item.rawValue), systemImage: item.symbol)
+                            }
                             if item == .assistant { AssistantUnreadBadge(store: workspace.attention.store) }
                         }.tag(NativeDesktopSidebarItem.section(item))
                     }
@@ -133,11 +135,12 @@ struct NativeDesktopHomeView: View {
                         case .recent: roomList(library.recent, title: L("Recent rooms"), search: $recentSearch)
                         case .calendar: agenda
                         case .workspace: NativeDesktopMeetingWorkspaceView(workspace: workspace)
+                        case .history: MeetingHistoryView(attention: workspace.attention, workspace: workspace)
+                            .onAppear { workspace.workspaceSync.scheduleSync(delayMilliseconds: 100) }
                         case .assistant: AttentionMomentsView(attention: workspace.attention, store: workspace.attention.store)
                         case .tasks:
-                            PersonalTasksView(attention: workspace.attention) { sessionID in
-                                workspace.attention.requestedOutcomeSessionID = sessionID
-                                workspace.selection = .assistant
+                            PersonalTasksView(attention: workspace.attention) { sessionID, taskID in
+                                workspace.openMeetingHistory(sessionID, tab: .tasks, taskID: taskID, source: .tasks)
                             }.navigationTitle(L("Tasks"))
                         case .home: home
                         }
@@ -163,7 +166,7 @@ struct NativeDesktopHomeView: View {
                         .navigationTitle(selected.title)
                         .navigationSubtitle(meetingSubtitle(selected))
                 }
-                AttentionCardStack(attention: workspace.attention, openAssistant: { workspace.show(section: .assistant) })
+                AttentionCardStack(attention: workspace.attention, openAssistant: { workspace.openAssistantMoments() })
             }
             .sheet(item: Binding(get: { workspace.attention.inspecting }, set: { workspace.attention.inspecting = $0 })) { card in
                 AttentionInspector(attention: workspace.attention, card: card)
@@ -518,6 +521,10 @@ struct NativeDesktopHomeView: View {
             } label: {
                 Image(systemName: item.invitation.flatMap { library.history.matching($0, engine: item.engine) }?.isStarred == true ? "star.fill" : "star")
             }.buttonStyle(.borderless).foregroundStyle(.orange)
+            if let room = item.roomIdentity,
+               let id = workspace.workspaceSync.historySession(matching: MeetingCalendarAssociation(item, room: room)) {
+                Button(L("Open saved meeting")) { workspace.openMeetingHistory(id, source: .calendar) }
+            }
             Button(L("Join")) { library.open(item) }.buttonStyle(.bordered)
         }.padding(16).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 14))
             .contextMenu {
@@ -933,9 +940,9 @@ struct NativeDesktopSetupView: View {
     }
 }
 
-/// A live meeting in the sidebar: its role (talking, listening, silenced), who is
+/// A meeting in the live workspace: its role (talking, listening, silenced), who is
 /// speaking, and the actions the menu bar offers, without leaving the window.
-struct NativeDesktopSidebarMeetingRow: View {
+struct NativeDesktopLiveMeetingControls: View {
     @ObservedObject var workspace: NativeDesktopWorkspace
     @ObservedObject var model: NativeDesktopMeetingModel
     private var speaking: Bool { model.participants.contains { !$0.isLocal && $0.speaking == true } }

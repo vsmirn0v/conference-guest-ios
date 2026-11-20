@@ -8,17 +8,14 @@ func workspaceDate(_ date: Date, style: Date.FormatStyle.DateStyle = .omitted) -
 
 @MainActor
 final class MeetingWorkspaceViewState: ObservableObject {
-    enum Destination: Hashable { case live, review }
     enum Pause: Equatable {
         case participation(UUID)
         case following(UUID)
         case both(participation: UUID, following: UUID)
     }
 
-    @Published var destination: Destination = .live
     @Published var parallel = false
     @Published var focusedID: UUID?
-    @Published var reviewID: UUID?
     @Published var restorePauses: [UUID: Pause] = [:]
     @Published var guidanceDrafts: [UUID: String] = [:]
     @Published var manualDrafts: [UUID: String] = [:]
@@ -113,7 +110,7 @@ struct NativeDesktopMeetingWorkspaceView: View {
             MeetingWorkspaceContent(workspace: workspace, state: state,
                 journal: store.meetingLibrary.workspaceJournal)
         }
-        .navigationTitle(L("Meeting workspace"))
+        .navigationTitle(L("Live"))
         .tint(.teal)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { state.prune(liveIDs: Set(workspace.meetings.map(\.sessionID))) }
@@ -124,15 +121,8 @@ struct NativeDesktopMeetingWorkspaceView: View {
 
     private var header: some View {
         HStack {
-            Picker(L("Meeting workspace"), selection: $state.destination) {
-                Label(L("Live"), systemImage: "dot.radiowaves.left.and.right").tag(MeetingWorkspaceViewState.Destination.live)
-                Label(L("Review"), systemImage: "clock.arrow.circlepath").tag(MeetingWorkspaceViewState.Destination.review)
-            }
-            .labelsHidden().pickerStyle(.segmented)
-            .frame(maxWidth: 215)
-            .accessibilityIdentifier("meetingWorkspace.destination")
             Spacer()
-            if state.destination == .live, !workspace.meetings.isEmpty {
+            if !workspace.meetings.isEmpty {
                 Button { state.parallel.toggle() } label: {
                     Label(state.parallel ? L("Focused conversation") : L("Parallel transcripts"),
                           systemImage: state.parallel ? "rectangle.split.2x1" : "rectangle.split.3x1")
@@ -167,10 +157,7 @@ private struct MeetingWorkspaceContent: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
                     .background(.orange.opacity(0.07))
             }
-            switch state.destination {
-            case .live: live
-            case .review: MeetingWorkspaceReview(workspace: workspace, state: state, journal: journal)
-            }
+            live
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -178,7 +165,7 @@ private struct MeetingWorkspaceContent: View {
     private var live: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
-                Text(L("Live workspace")).font(.system(size: 26, weight: .semibold))
+                Text(L("Live")).font(.system(size: 26, weight: .semibold))
                 Spacer()
                 if let talk = workspace.talkMeeting {
                     WorkspaceMicrophoneRoute(model: talk)
@@ -187,15 +174,36 @@ private struct MeetingWorkspaceContent: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            if let id = workspace.lastFinishedHistoryID {
+                Button(L("Open saved meeting"), systemImage: "clock.arrow.circlepath") {
+                    workspace.openMeetingHistory(id, source: .workspace)
+                }.buttonStyle(.link)
+            }
             if workspace.meetings.isEmpty {
                 WorkspaceEmptyView(title: L("No live meetings"), detail: L("Join a meeting to follow its conversation here."),
                                    symbol: "dot.radiowaves.left.and.right")
-                HStack {
-                    Spacer()
-                    Button(L("Go to Home")) { workspace.selection = .home }
-                    Button(L("Review saved meetings")) { state.destination = .review }
-                    Spacer()
-                }
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        TextField(L("Invitation link"), text: $workspace.invitation)
+                            .textFieldStyle(.roundedBorder).onSubmit(workspace.joinInput)
+                        Button(L("Join")) { workspace.joinInput() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(workspace.preparing || workspace.invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if let next = workspace.library.calendar.upcoming.first {
+                        Button { workspace.library.open(next) } label: {
+                            Label(next.title + " · " + workspaceDate(next.start), systemImage: "calendar")
+                        }.buttonStyle(.link)
+                    }
+                    if !workspace.library.recent.isEmpty {
+                        Menu(L("Recent rooms")) {
+                            ForEach(workspace.library.recent.prefix(5)) { room in
+                                Button(room.displayTitle) { workspace.library.open(room) }
+                            }
+                        }
+                    }
+                    Button(L("Review saved meetings")) { workspace.openMeetingHistory() }.buttonStyle(.link)
+                }.frame(maxWidth: 480)
                 Spacer(minLength: 0)
             } else {
                 GeometryReader { geometry in
@@ -215,6 +223,10 @@ private struct MeetingWorkspaceContent: View {
                         }
                         .frame(height: state.parallel ? max(0, geometry.size.height) : 158)
                         if !state.parallel, let focused {
+                            HStack {
+                                NativeDesktopLiveMeetingControls(workspace: workspace, model: focused)
+                                Button(L("Show meeting")) { workspace.showMeeting(focused) }
+                            }.padding(.horizontal, 6)
                             WorkspaceLiveMeeting(workspace: workspace, state: state, model: focused,
                                 session: journal.session(id: focused.workspaceSessionID),
                                 selected: true, style: .focused)

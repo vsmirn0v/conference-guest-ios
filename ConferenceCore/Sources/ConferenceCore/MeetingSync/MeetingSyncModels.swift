@@ -46,6 +46,47 @@ public enum SyncedDeviceKind: String, Codable, Equatable, Sendable {
     case ios
 }
 
+/// One local join and leave, including repeated participation on the same device.
+public struct MeetingParticipationInterval: Codable, Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public let joinedAt: Date
+    public var leftAt: Date?
+
+    public init(id: UUID = UUID(), joinedAt: Date, leftAt: Date? = nil) {
+        self.id = id
+        self.joinedAt = joinedAt
+        self.leftAt = leftAt
+    }
+}
+
+public struct MeetingCalendarAssociation: Codable, Equatable, Sendable {
+    public static let rejoinGrace: TimeInterval = 30 * 60
+    public let occurrenceID: String
+    public let roomKey: String
+    public let title: String
+    public let start: Date
+    public let end: Date
+
+    public init(_ meeting: CalendarMeeting, room: MeetingRoomIdentity) {
+        let occurrence = meeting.originalOccurrenceStart ?? meeting.start
+        self.occurrenceID = (meeting.externalSeriesID ?? meeting.seriesID) + "|" +
+            String(Int64(occurrence.timeIntervalSince1970.rounded(.towardZero)))
+        self.roomKey = room.workspaceKey
+        self.title = meeting.title
+        self.start = meeting.start
+        self.end = meeting.end
+    }
+
+    public func matches(_ other: Self) -> Bool {
+        occurrenceID == other.occurrenceID && roomKey == other.roomKey
+    }
+
+    public func allowsRejoin(at date: Date, before nextOccurrence: Date? = nil) -> Bool {
+        date >= start && date <= end.addingTimeInterval(Self.rejoinGrace) &&
+            (nextOccurrence.map { date < $0 } ?? true)
+    }
+}
+
 public struct DeviceParticipationLeg: Codable, Equatable, Sendable {
     public var deviceID: String
     public var deviceKind: SyncedDeviceKind
@@ -54,6 +95,7 @@ public struct DeviceParticipationLeg: Codable, Equatable, Sendable {
     public var hasOutcomeWriter: Bool
     public var transcriptChunkCount: Int
     public var updatedAt: Date
+    public var intervals: [UUID: MeetingParticipationInterval]?
 
     public init(
         deviceID: String,
@@ -62,7 +104,8 @@ public struct DeviceParticipationLeg: Codable, Equatable, Sendable {
         leftAt: Date? = nil,
         hasOutcomeWriter: Bool = false,
         transcriptChunkCount: Int = 0,
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        intervals: [UUID: MeetingParticipationInterval]? = nil
     ) {
         self.deviceID = deviceID
         self.deviceKind = deviceKind
@@ -71,6 +114,22 @@ public struct DeviceParticipationLeg: Codable, Equatable, Sendable {
         self.hasOutcomeWriter = hasOutcomeWriter
         self.transcriptChunkCount = transcriptChunkCount
         self.updatedAt = updatedAt
+        self.intervals = intervals
+    }
+
+    public mutating func beginInterval(id: UUID = UUID(), at date: Date) {
+        if intervals?[id] != nil { return }
+        var history = intervals ?? [:]
+        history[id] = MeetingParticipationInterval(id: id, joinedAt: date)
+        intervals = history
+    }
+
+    public mutating func endInterval(id: UUID? = nil, at date: Date) {
+        guard var history = intervals,
+              let target = id ?? history.values.filter({ $0.leftAt == nil }).max(by: { $0.joinedAt < $1.joinedAt })?.id,
+              let interval = history[target], interval.leftAt == nil else { return }
+        history[target]?.leftAt = max(interval.joinedAt, date)
+        intervals = history
     }
 
     public func merging(_ other: Self) -> Self {
@@ -83,6 +142,12 @@ public struct DeviceParticipationLeg: Codable, Equatable, Sendable {
         if winner.leftAt == nil, let fallbackLeft = (newer ? other.leftAt : leftAt),
            (newer ? other.updatedAt : updatedAt) >= winner.updatedAt {
             winner.leftAt = fallbackLeft
+        }
+        if intervals != nil || other.intervals != nil {
+            winner.intervals = (intervals ?? [:]).merging(other.intervals ?? [:]) { old, incoming in
+                MeetingParticipationInterval(id: old.id, joinedAt: min(old.joinedAt, incoming.joinedAt),
+                    leftAt: [old.leftAt, incoming.leftAt].compactMap { $0 }.max())
+            }
         }
         winner.updatedAt = max(updatedAt, other.updatedAt)
         return winner
@@ -142,6 +207,9 @@ public struct ObsidianSyncReceipt: Codable, Equatable, Sendable {
 public struct SyncedMeetingSession: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public var occurrenceKey: String
+    public var calendarAssociation: SyncValue<MeetingCalendarAssociation?>?
+    /// User-visible grouping. Keep the original child records and their content independently addressable.
+    public var historyGroupParent: SyncValue<UUID?>?
     public var canonicalSessionID: SyncValue<UUID>?
     public var title: SyncValue<String>
     public var hasTitleOverride: SyncValue<Bool>
@@ -167,6 +235,8 @@ public struct SyncedMeetingSession: Codable, Equatable, Identifiable, Sendable {
         id: UUID,
         occurrenceKey: String,
         canonicalSessionID: SyncValue<UUID>? = nil,
+        calendarAssociation: SyncValue<MeetingCalendarAssociation?>? = nil,
+        historyGroupParent: SyncValue<UUID?>? = nil,
         title: SyncValue<String>,
         hasTitleOverride: SyncValue<Bool>,
         invitation: SyncValue<URL?>,
@@ -189,6 +259,8 @@ public struct SyncedMeetingSession: Codable, Equatable, Identifiable, Sendable {
     ) {
         self.id = id
         self.occurrenceKey = occurrenceKey
+        self.calendarAssociation = calendarAssociation
+        self.historyGroupParent = historyGroupParent
         self.canonicalSessionID = canonicalSessionID
         self.title = title
         self.hasTitleOverride = hasTitleOverride
@@ -220,6 +292,8 @@ public struct SyncedMeetingSession: Codable, Equatable, Identifiable, Sendable {
             state.version,
             isDeleted.version
         ]
+        if let calendarAssociation { versions.append(calendarAssociation.version) }
+        if let historyGroupParent { versions.append(historyGroupParent.version) }
         if let canonicalSessionID { versions.append(canonicalSessionID.version) }
         if let outcomeClaim { versions.append(outcomeClaim.version) }
         if let obsidianReceipt { versions.append(obsidianReceipt.version) }
@@ -233,7 +307,13 @@ public struct SyncedMeetingSession: Codable, Equatable, Identifiable, Sendable {
         var result = self
         result.occurrenceKey = Self.pickNonEmpty(occurrenceKey, other.occurrenceKey)
         result.canonicalSessionID = Self.mergeOptional(canonicalSessionID, other.canonicalSessionID)
-        result.title = title.merging(other.title)
+        result.calendarAssociation = Self.mergeOptional(calendarAssociation, other.calendarAssociation)
+        result.historyGroupParent = Self.mergeOptional(historyGroupParent, other.historyGroupParent)
+        if hasTitleOverride.value != other.hasTitleOverride.value {
+            result.title = hasTitleOverride.value ? title : other.title
+        } else {
+            result.title = title.merging(other.title)
+        }
         result.hasTitleOverride = hasTitleOverride.merging(other.hasTitleOverride)
         result.invitation = invitation.merging(other.invitation)
         result.roomIdentity = Self.pickNonEmpty(roomIdentity, other.roomIdentity)
@@ -756,6 +836,7 @@ public struct SyncedCalendarOccurrence: Codable, Equatable, Identifiable, Sendab
     public var calendarTitle: String
     public var start: Date
     public var end: Date
+    public var originalOccurrenceStart: Date?
     public var allDay: Bool
     public var tentative: Bool
     public var links: [URL]
@@ -783,6 +864,7 @@ public struct SyncedCalendarOccurrence: Codable, Equatable, Identifiable, Sendab
         calendarTitle: String,
         start: Date,
         end: Date,
+        originalOccurrenceStart: Date? = nil,
         allDay: Bool = false,
         tentative: Bool = false,
         links: [URL] = [],
@@ -807,6 +889,7 @@ public struct SyncedCalendarOccurrence: Codable, Equatable, Identifiable, Sendab
         self.calendarTitle = calendarTitle
         self.start = start
         self.end = end
+        self.originalOccurrenceStart = originalOccurrenceStart
         self.allDay = allDay
         self.tentative = tentative
         self.links = links
@@ -856,6 +939,7 @@ public struct SyncedCalendarOccurrence: Codable, Equatable, Identifiable, Sendab
         let preferOtherMeta = (otherFresh, other.invitation != nil ? 1 : 0) >
             (selfFresh, invitation != nil ? 1 : 0)
         var result = preferOtherMeta ? other : self
+        result.originalOccurrenceStart = result.originalOccurrenceStart ?? (preferOtherMeta ? originalOccurrenceStart : other.originalOccurrenceStart)
         let mergedDeleted = isDeleted.merging(other.isDeleted)
         result.isDeleted = mergedDeleted
         if mergedDeleted.value {
@@ -905,6 +989,7 @@ public struct SyncedCalendarOccurrence: Codable, Equatable, Identifiable, Sendab
         let base = preferOther ? other : self
         let secondary = preferOther ? self : other
         var result = base
+        result.originalOccurrenceStart = result.originalOccurrenceStart ?? secondary.originalOccurrenceStart
 
         var sources = base.sourceDevices
         for (device, seen) in secondary.sourceDevices {

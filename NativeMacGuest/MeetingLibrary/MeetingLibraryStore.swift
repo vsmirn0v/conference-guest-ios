@@ -874,7 +874,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
                 try Self.bindInt($0, now.ms, at: 9)
             }
             try Self.replaceTasks(db: db, outcome: outcome)
-            if state == .ready, previous == nil || expectedOwner != nil {
+            if state == .ready, previous == nil || expectedOwner != nil || previous?.transcriptFingerprint != outcome.transcriptFingerprint {
                 try Self.recordOutcomeVersion(db: db, outcome: outcome, sessionID: sessionID, revision: revision,
                     savedAt: now, canonicalOutcomeID: outcome.id)
             }
@@ -1553,6 +1553,37 @@ extension MeetingLibraryStore {
             try Self.bindText($0, outcomeID.uuidString, at: 1)
         }) else { return nil }
         return row.text(0).flatMap(MeetingOutcomePersistenceState.init(rawValue:))
+    }
+
+    func commitHistorySummary(card: MeetingLibraryCard, content: MeetingOutcomeContent, evidence: [String: [String]],
+                              fingerprint: String, replaceSummary: Bool, replaceDecisions: Bool,
+                              replaceQuestions: Bool) throws -> MeetingOutcomeCommit? {
+        let database = try db()
+        let row = try database.one("SELECT outcome_id FROM meeting_outcomes WHERE session_id=?", bind: {
+            try Self.bindText($0, card.sessionID.uuidString, at: 1)
+        })
+        let id = row?.text(0).flatMap(UUID.init(uuidString:))
+        let current = try id.flatMap { try Self.storedOutcome(db: database, id: $0) }
+        guard current?.transcriptFingerprint != fingerprint else { return nil }
+        var outcome = current ?? MeetingOutcome(meetingID: card.sessionID, meetingTitle: card.title,
+            endedAt: card.endedAt ?? card.effectiveDate?.date ?? Date(), summary: "")
+        if replaceSummary || current == nil { outcome.summary = content.summary }
+        if replaceDecisions || current == nil {
+            outcome.decisions = content.decisions
+            outcome.decisionEvidence = evidence
+        }
+        if replaceQuestions || current == nil { outcome.openQuestions = content.openQuestions }
+
+        let existing = outcome.tasks + outcome.taskReviewCandidates
+        let newSuggestions = content.tasks.filter { candidate in
+            !existing.contains {
+                $0.text.caseInsensitiveCompare(candidate.text) == .orderedSame &&
+                    $0.owner.caseInsensitiveCompare(candidate.owner) == .orderedSame
+            }
+        }
+        outcome.taskReviewCandidates += newSuggestions
+        outcome.transcriptFingerprint = fingerprint
+        return try commitOutcome(outcome, state: .ready)
     }
 
     func outcomeBySession(_ sessionID: UUID) async throws -> MeetingOutcome? {

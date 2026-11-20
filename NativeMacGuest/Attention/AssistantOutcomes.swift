@@ -75,6 +75,7 @@ struct MeetingOutcomeContent: Equatable, Sendable {
     var decisions: [String]
     var tasks: [MeetingOutcomeTask]
     var openQuestions: [String]
+    var decisionSources: [String: [String]] = [:]
 }
 
 protocol MeetingOutcomeWriter: Sendable {
@@ -109,15 +110,47 @@ enum MeetingOutcomePrompt {
     A task is something a person explicitly agreed to do, not a suggestion or topic. Keep every item short.
     """
 
+    static func historyWindow(title: String, events: [MeetingWorkspaceEvent], endedAt: Date,
+                              onDevice: Bool, contextTokens: Int?,
+                              chapters: [(at: Date, title: String)] = []) -> AttentionWindow {
+        let speech = events.filter { $0.kind == .transcript && !$0.isPrivate }.compactMap { event -> GuestMeetingMessage? in
+            guard let text = event.text, !text.trimmed.isEmpty else { return nil }
+            return .init(id: event.id, participantID: "", participantName: event.displayAuthor, text: text,
+                         sentAt: event.occurredAt, isOwn: false)
+        }
+        let chat = events.filter { $0.kind == .chat && !$0.isPrivate }.compactMap { event -> ChatEntry? in
+            guard let text = event.text, !text.trimmed.isEmpty else { return nil }
+            return .init(id: event.id, sender: event.displayAuthor, text: text, sentAt: event.occurredAt, isOwn: false)
+        }
+        return window(title: title, transcript: speech, chat: chat, yourName: "", now: endedAt,
+                      onDevice: onDevice, contextTokens: contextTokens, chapters: chapters)
+    }
+
+    static func fingerprint(_ window: AttentionWindow) -> String {
+        MeetingWorkspaceSyncDocument.digest(window.lines.filter { $0.source != .note }.map {
+            [$0.id, $0.speaker, $0.text].joined(separator: "\u{1F}")
+        }.joined(separator: "\u{1E}"))
+    }
+
+    static func verifiedEvidence(_ content: MeetingOutcomeContent, window: AttentionWindow) -> [String: [String]] {
+        let references = Dictionary(uniqueKeysWithValues: window.lines.filter { !$0.ref.isEmpty }.map { ($0.ref, $0) })
+        return content.decisionSources.mapValues { supplied in
+            supplied.prefix(3).compactMap { ref in
+                guard let line = references[ref] else { return nil }
+                return line.source == .chat ? String(line.id.dropFirst("chat-".count)) : line.id
+            }
+        }
+    }
+
     static func messages(_ request: MeetingOutcomeRequest) -> [[String: String]] {
         let language = Localization.englishLanguageName(for: request.language)
         let clock = ISO8601DateFormatter()
         let lines = request.window.lines.map { line -> String in
             if line.source == .note { return line.text }
             let time = line.at.map(clock.string(from:)) ?? ""
-            return "\(time) \(line.speaker)\(line.isYou ? " (the user)" : "")\(line.source == .chat ? " [chat]" : ""): \(line.text)"
+            return "[\(line.ref)] \(time) \(line.speaker)\(line.isYou ? " (the user)" : "")\(line.source == .chat ? " [chat]" : ""): \(line.text)"
         }.joined(separator: "\n")
-        return [["role": "system", "content": system + "\nWrite in " + language + "."],
+        return [["role": "system", "content": system + "\nAppend one or two source references such as [L3] at the end of each supported decision. Use only references present in the input. Write in " + language + "."],
                 ["role": "user", "content": "Meeting: \(request.meetingTitle)\nEnded: \(clock.string(from: request.endedAt))\n\n\(lines)"]]
     }
 
@@ -138,7 +171,18 @@ enum MeetingOutcomePrompt {
             var seen = Set<String>()
             return values.map { String($0.trimmed.prefix(500)) }.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }.prefix(20).map { $0 }
         }
-        let decisions = clean(raw.decisions ?? [])
+        var sources: [String: [String]] = [:]
+        let decisions = clean((raw.decisions ?? []).map { rawDecision in
+            // The writer cites the printed line references at the end of a decision.
+            let pattern = #"\[L[0-9]{1,4}\]"#
+            let matches = (try? NSRegularExpression(pattern: pattern))?.matches(in: rawDecision,
+                range: NSRange(rawDecision.startIndex..., in: rawDecision)).compactMap { Range($0.range, in: rawDecision) } ?? []
+            let stripped = String(rawDecision.replacingOccurrences(of: pattern, with: "", options: .regularExpression).trimmed.prefix(500))
+            if !matches.isEmpty && !stripped.isEmpty {
+                sources[stripped] = matches.map { String(rawDecision[$0].dropFirst().dropLast()) }
+            }
+            return stripped
+        })
         let tasks = (raw.tasks ?? []).prefix(20).compactMap { raw -> MeetingOutcomeTask? in
             let text = String((raw.text ?? "").trimmed.prefix(500)); guard !text.isEmpty else { return nil }
             let due = raw.due_at?.trimmed ?? ""
@@ -153,7 +197,7 @@ enum MeetingOutcomePrompt {
             : explicit
         guard !summary.isEmpty else { return nil }
         return .init(summary: String(summary.prefix(1600)), decisions: decisions,
-            tasks: tasks, openQuestions: openQuestions)
+            tasks: tasks, openQuestions: openQuestions, decisionSources: sources)
     }
 
     /// Closes a JSON object cut off by a token limit or followed by trailing prose.

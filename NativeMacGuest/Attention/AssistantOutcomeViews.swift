@@ -1,13 +1,40 @@
 import AppKit
+import Combine
+import ConferenceCore
 import SwiftUI
 
-struct AssistantOutcomesView: View {
+enum MeetingHistoryTab: String, CaseIterable, Identifiable {
+    case summary = "Summary", transcript = "Transcript", tasks = "Tasks", notes = "Notes"
+    var id: Self { self }
+}
+
+@MainActor final class MeetingHistoryNavigation: ObservableObject {
+    @Published var selectedSessionID: UUID?
+    @Published var tab: MeetingHistoryTab = .summary
+    @Published var query = ""
+    @Published var indexVisible = false
+    @Published var taskID: UUID?
+    @Published var source: NativeDesktopWorkspace.Section?
+    @Published var eventID: String?
+}
+
+struct MeetingHistoryView: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject private var data: AssistantDataStore
     @ObservedObject private var library: MeetingLibraryController
-    @State private var selectedSessionID: UUID?
+    @ObservedObject private var journal: MeetingWorkspaceJournal
+    @ObservedObject private var preferences: AttentionStore
+    @ObservedObject private var navigation: MeetingHistoryNavigation
+    @State private var selectedNoteSource: UUID?
+    @State private var syncRevision = 0
+    @State private var archivedEvents: [SyncedTranscriptEvent] = []
+    @State private var loadedArchiveID: UUID?
+    private let workspace: NativeDesktopWorkspace?
+    @AppStorage("native.meetingHistory.readingMode") private var readingMode = false
+    @State private var showingGuidance = false
+    @State private var showingContext = false
+    @State private var reviewedDraft: AttentionCoordinator.HistoryOutcomeDraft?
     @State private var pendingSend: (outcome: UUID, meeting: UUID)?
-    @State private var query = ""
     @State private var collapsedDays: Set<Day> = []
     @State private var calendar = Calendar.current
     @State private var rename: Rename?
@@ -29,19 +56,24 @@ struct AssistantOutcomesView: View {
         var sessionID: UUID?
     }
 
-    init(attention: AttentionCoordinator) {
+    init(attention: AttentionCoordinator, workspace: NativeDesktopWorkspace? = nil) {
+        self.workspace = workspace
+        _navigation = ObservedObject(wrappedValue: attention.historyNavigation)
+        _journal = ObservedObject(wrappedValue: attention.store.meetingLibrary.workspaceJournal)
+        _preferences = ObservedObject(wrappedValue: attention.store)
         self.attention = attention
         _data = ObservedObject(wrappedValue: attention.store.assistant)
         _library = ObservedObject(wrappedValue: attention.store.meetingLibrary)
     }
 
-    private var search: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var search: String { navigation.query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private var groups: [(key: Day, value: [MeetingLibraryCard])] {
-        let cards = library.cards.filter { card in
+        let cards = historyCards.filter { card in
             search.isEmpty || card.title.localizedStandardContains(search) ||
                 card.notePreview?.localizedStandardContains(search) == true ||
-                data.outcomes.first(where: { $0.id == card.outcomeID })?.summary.localizedStandardContains(search) == true
+                data.outcomes.first(where: { $0.id == card.outcomeID })?.summary.localizedStandardContains(search) == true ||
+                searchedEvent(card.sessionID) != nil
         }
         return Dictionary(grouping: cards) { card in
             Day(date: card.effectiveDate.map { calendar.startOfDay(for: $0.date) })
@@ -56,10 +88,119 @@ struct AssistantOutcomesView: View {
         .sorted { ($0.key.date ?? .distantPast) > ($1.key.date ?? .distantPast) }
     }
 
+    private var sourceCards: [MeetingLibraryCard] {
+        let live = Set(attention.meetings().flatMap { [$0.sessionID, $0.workspaceSessionID] + $0.segments.map(\.sessionID) })
+        let saved = Set(library.cards.map(\.sessionID))
+        let journalOnly = journal.sessions.filter { $0.endedAt != nil && !saved.contains($0.id) }.map { entry in
+            MeetingLibraryCard(sessionID: entry.id, title: entry.title, startedAt: entry.startedAt, endedAt: entry.endedAt,
+                state: .ended, hasNotes: false, noteID: nil, noteRevision: 0, notePreview: nil,
+                outcomeID: nil, outcomeState: .notStarted, updatedAt: entry.endedAt ?? entry.startedAt,
+                startProvenance: .recorded, outcomeEndFallback: nil)
+        }
+        return (library.cards + journalOnly).filter { card in
+            !live.contains(card.sessionID) &&
+                (workspace?.workspaceSync.canonicalSessionID(card.sessionID) ?? card.sessionID) == card.sessionID
+        }
+    }
+
+    private var historyCards: [MeetingLibraryCard] {
+        _ = syncRevision
+        return sourceCards.filter { (workspace?.workspaceSync.historySessionID($0.sessionID) ?? $0.sessionID) == $0.sessionID }
+    }
+
+    private func groupedCards(for id: UUID) -> [MeetingLibraryCard] {
+        guard let workspace else { return sourceCards.filter { $0.sessionID == id } }
+        return sourceCards.filter { workspace.workspaceSync.historySessionID($0.sessionID) == id }
+            .sorted { ($0.sessionID != id ? 1 : 0, $0.startedAt) < ($1.sessionID != id ? 1 : 0, $1.startedAt) }
+    }
+
+    private func searchedEvent(_ id: UUID) -> MeetingWorkspaceEvent? {
+        guard !search.isEmpty else { return nil }
+        return conversation(id)?.visibleEvents.first { $0.matches(search) }
+    }
+
+    private func conversation(_ id: UUID) -> MeetingWorkspaceSession? {
+        workspace?.workspaceSync.historyConversation(for: id, in: journal) ?? journal.session(id: id)
+    }
+
+    private var selectedCard: MeetingLibraryCard? {
+        if let id = navigation.selectedSessionID {
+            let canonical = workspace?.workspaceSync.historySessionID(id) ?? id
+            return historyCards.first { $0.sessionID == canonical }
+        }
+        return nil
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
+        GeometryReader { geometry in
+            let narrow = readingMode || geometry.size.width < 615
+            HStack(spacing: 0) {
+                if !narrow || navigation.indexVisible || selectedCard == nil {
+                    index.frame(width: narrow ? nil : 228).frame(maxWidth: narrow ? .infinity : nil)
+                }
+                if !narrow || (!navigation.indexVisible && selectedCard != nil) {
+                    if !narrow { Divider() }
+                    if let card = selectedCard {
+                        selectedMeeting(card, compact: narrow).id(card.sessionID)
+                    } else {
+                        Text(L("Choose a meeting")).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+            }
+        }
+        .navigationTitle(L("Meeting history"))
+        .tint(.teal)
+        .onReceive(workspace?.workspaceSync.objectWillChange.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+            syncRevision += 1
+        }
+        .onChange(of: historyCards.map(\.sessionID)) { ids in
+            if navigation.selectedSessionID == nil, !ids.isEmpty { select(groups.first?.value.first) }
+        }
+        .onAppear {
+            if let requested = attention.requestedOutcomeSessionID {
+                navigation.selectedSessionID = requested
+                navigation.indexVisible = false
+                attention.requestedOutcomeSessionID = nil
+            } else if navigation.selectedSessionID == nil { select(groups.first?.value.first) }
+        }
+        .onChange(of: attention.requestedOutcomeSessionID) { id in
+            if let id {
+                navigation.selectedSessionID = id
+                navigation.query = ""
+                navigation.indexVisible = false
+                attention.requestedOutcomeSessionID = nil
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+            calendar = Calendar.current
+        }
+        .onDisappear { data.flushOutcomeEdits() }
+        .sheet(item: $rename) { value in
+            RenameMeetingSheet(library: library, sessionID: value.id, currentTitle: value.title)
+        }
+        .sheet(item: $exportRequest) { value in
+            MeetingManualExportView(attention: attention, singleSessionID: value.sessionID)
+        }
+        .sheet(item: $reviewedDraft) { draft in
+            if let selectedCard, selectedCard.sessionID == draft.id {
+                HistoryOutcomeReview(card: selectedCard, draft: draft, attention: attention)
+            }
+        }
+        .sheet(isPresented: $showingGuidance) {
+            WorkspaceSavedGuidance(guidance: preferences.workspaceGuidance, journal: journal)
+        }
+        .alert(L("Save in Obsidian"), isPresented: Binding(get: { obsidianMessage != nil },
+            set: { shown in if !shown { obsidianMessage = nil } })) {
+            Button(L("OK"), role: .cancel) { obsidianMessage = nil }
+        } message: {
+            Text(obsidianMessage ?? "")
+        }
+    }
+
+    private var index: some View {
             VStack(spacing: 0) {
-                TextField(L("Search meetings"), text: $query)
+                TextField(L("Search meetings"), text: $navigation.query)
                     .textFieldStyle(.roundedBorder).padding(10)
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) {
@@ -88,56 +229,39 @@ struct AssistantOutcomesView: View {
                         .font(.callout).foregroundStyle(.secondary).padding()
                 }
                 Divider()
-                Button(L("Export Markdown…")) { exportRequest = ExportRequest() }
-                    .disabled(library.cards.isEmpty)
-                    .padding(10)
-            }.frame(width: 270).background(Color(nsColor: .controlBackgroundColor))
-            Divider()
-            if let card = library.cards.first(where: { $0.sessionID == selectedSessionID }) {
-                selectedMeeting(card).id(card.sessionID)
-            } else {
-                VStack(spacing: 10) {
-                    Image(systemName: "checkmark.bubble").font(.largeTitle).foregroundStyle(.secondary)
-                    Text(L("Choose a meeting")).font(.title3)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
-            }
-        }
-        .onAppear {
-            if let requested = attention.requestedOutcomeSessionID {
-                selectedSessionID = requested
-                attention.requestedOutcomeSessionID = nil
-            }
-            else if selectedSessionID == nil { select(groups.first?.value.first) }
-        }
-        .onChange(of: attention.requestedOutcomeSessionID) { id in
-            if let id {
-                selectedSessionID = id
-                query = ""
-                attention.requestedOutcomeSessionID = nil
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
-            calendar = Calendar.current
-        }
-        .onDisappear { data.flushOutcomeEdits() }
-        .sheet(item: $rename) { value in
-            RenameMeetingSheet(library: library, sessionID: value.id, currentTitle: value.title)
-        }
-        .sheet(item: $exportRequest) { value in
-            MeetingManualExportView(attention: attention, singleSessionID: value.sessionID)
-        }
-        .alert(L("Save in Obsidian"), isPresented: Binding(get: { obsidianMessage != nil },
-            set: { shown in if !shown { obsidianMessage = nil } })) {
-            Button(L("OK"), role: .cancel) { obsidianMessage = nil }
-        } message: {
-            Text(obsidianMessage ?? "")
-        }
+                Menu(L("History options")) {
+                    Toggle(L("Reading mode"), isOn: $readingMode)
+                    Button(L("Saved guidance")) { showingGuidance = true }
+                    Button(L("Export Markdown…")) { exportRequest = ExportRequest() }.disabled(library.cards.isEmpty)
+                }.padding(10)
+            }.background(Color(nsColor: .controlBackgroundColor))
     }
 
-    private func select(_ card: MeetingLibraryCard?) { selectedSessionID = card?.sessionID }
+    private func select(_ card: MeetingLibraryCard?) {
+        navigation.selectedSessionID = card?.sessionID
+        navigation.indexVisible = false
+        navigation.taskID = nil
+        navigation.source = nil
+        navigation.eventID = card.flatMap { searchedEvent($0.sessionID)?.id }
+        navigation.tab = navigation.eventID != nil || (card?.outcomeID == nil && card.map {
+            journal.session(id: $0.sessionID) != nil
+        } == true) ? .transcript : .summary
+    }
 
-    private func selectedMeeting(_ card: MeetingLibraryCard) -> some View {
-        VStack(spacing: 0) {
+    private func selectedMeeting(_ card: MeetingLibraryCard, compact: Bool) -> some View {
+        let sources = groupedCards(for: card.sessionID)
+        return VStack(spacing: 0) {
+            if compact || navigation.source != nil {
+                HStack {
+                    Button(L("Back"), systemImage: "chevron.left") {
+                        if let source = navigation.source {
+                            navigation.source = nil
+                            workspace?.show(section: source)
+                        } else { navigation.indexVisible = true }
+                    }.buttonStyle(.borderless)
+                    Spacer()
+                }.padding([.top, .horizontal], 12)
+            }
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(card.title).font(.title2.bold()).lineLimit(2)
@@ -152,37 +276,93 @@ struct AssistantOutcomesView: View {
                         Text(L("Date unknown")).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Button { rename = Rename(id: card.sessionID, title: card.title) } label: {
-                    Image(systemName: "pencil")
-                }
-                .buttonStyle(.borderless).help(L("Rename meeting"))
-                .accessibilityLabel(L("Rename meeting"))
                 Spacer(minLength: 4)
-                exportButtons(sessionID: card.sessionID)
+                if library.cards.contains(where: { $0.sessionID == card.sessionID }) {
+                    Button { rename = Rename(id: card.sessionID, title: card.title) } label: {
+                        Image(systemName: "pencil")
+                    }.buttonStyle(.borderless).help(L("Rename meeting")).accessibilityLabel(L("Rename meeting"))
+                    exportButtons(sessionID: card.sessionID)
+                }
+                if workspace != nil {
+                    Button(L("Participation and calendar"), systemImage: "calendar.badge.clock") { showingContext = true }
+                        .labelStyle(.iconOnly).help(L("Participation and calendar"))
+                }
             }.padding(16)
+            Picker(L("Meeting history"), selection: $navigation.tab) {
+                ForEach(MeetingHistoryTab.allCases) { tab in Text(L(tab.rawValue)).tag(tab) }
+            }.labelsHidden().pickerStyle(.segmented).padding([.horizontal, .bottom], 10)
             Divider()
-            GeometryReader { geometry in
-                let wide = geometry.size.width >= 820
-                let layout = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 0)) :
-                    AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
-                ScrollView {
-                    layout {
-                        meetingNotes(card)
-                            .frame(minWidth: wide ? 340 : nil, maxWidth: .infinity)
-                            .frame(height: wide ? max(250, geometry.size.height) : 330)
-                        Rectangle().fill(Color(nsColor: .separatorColor))
-                            .frame(width: wide ? 1 : nil, height: wide ? geometry.size.height : 1)
-                        if wide {
-                            ScrollView { outcomeContent(card) }
-                                .frame(minWidth: 410, maxWidth: .infinity, maxHeight: .infinity)
-                                .frame(height: geometry.size.height)
-                        } else {
-                            outcomeContent(card)
+            switch navigation.tab {
+            case .summary: ScrollView { outcomeContent(card) }
+            case .transcript:
+                if let session = conversation(card.sessionID), !session.events.isEmpty {
+                    WorkspaceSessionReview(session: session, journal: journal, guidance: preferences.workspaceGuidance,
+                                           highlightedEventID: navigation.eventID, showsDelete: sources.count <= 1,
+                                           onBookmark: { event in
+                                               let source = journal.sessions.first {
+                                                   (workspace?.workspaceSync.historySessionID($0.id) ?? $0.id) == card.sessionID &&
+                                                       $0.events.contains { $0.id == event }
+                                               }?.id ?? session.id
+                                               journal.toggleBookmark(sessionID: source, eventID: event)
+                                           })
+                } else if loadedArchiveID == card.sessionID, !archivedEvents.isEmpty {
+                    ArchivedHistoryTranscript(events: archivedEvents)
+                } else {
+                    VStack(spacing: 10) {
+                        Text(L("No saved transcript or assistant reply text is available for this meeting."))
+                            .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        if let workspace {
+                            Button(L("Sync now")) { workspace.workspaceSync.scheduleSync(delayMilliseconds: 0) }
+                                .disabled(!workspace.library.sync.enabled || !workspace.library.sync.syncWorkspace)
+                            Button(L("Settings")) { workspace.settingsTab = 0; workspace.show(section: .settings) }
+                        }
+                    }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            case .tasks:
+                let taskSources = sources.compactMap { source in
+                    data.outcomes.first(where: { $0.id == source.outcomeID })
+                }
+                if !taskSources.isEmpty {
+                    ScrollViewReader { scroll in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 14) {
+                                ForEach(taskSources) { outcome in
+                                    if taskSources.count > 1 { Text(outcome.meetingTitle).font(.headline) }
+                                    meetingTasks(outcome)
+                                }
+                            }.padding(16)
+                        }
+                        .task(id: navigation.taskID) {
+                            if let id = navigation.taskID { scroll.scrollTo(id, anchor: .center) }
                         }
                     }
+                } else {
+                    Text(L("No tasks yet.")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+            case .notes:
+                if sources.count > 1 {
+                    Picker(L("Notes"), selection: Binding(get: {
+                        sources.first(where: { $0.sessionID == selectedNoteSource })?.sessionID ?? card.sessionID
+                    }, set: { selectedNoteSource = $0 })) {
+                        ForEach(sources) { source in
+                            Text(source.title + " · " + workspaceDate(source.startedAt)).tag(source.sessionID)
+                        }
+                    }.padding(10)
+                }
+                let source = sources.first { $0.sessionID == selectedNoteSource } ?? card
+                meetingNotes(source).id(source.sessionID)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: card.sessionID) {
+            guard let workspace else { return }
+            let events = await workspace.workspaceSync.archiveStore.loadTranscript(sessionID: card.sessionID)
+            guard !Task.isCancelled else { return }
+            archivedEvents = events ?? []
+            loadedArchiveID = card.sessionID
+        }
+        .sheet(isPresented: $showingContext) {
+            if let workspace { MeetingHistoryContext(card: card, workspace: workspace) }
+        }
     }
 
     private func meetingNotes(_ card: MeetingLibraryCard) -> some View {
@@ -191,7 +371,8 @@ struct AssistantOutcomesView: View {
                 let main = NSApp.keyWindow
                 attention.store.notes.windows.open(sessionID: card.sessionID, title: card.title,
                     date: card.effectiveDate?.date, showInMain: { [weak main] in
-                        attention.requestedOutcomeSessionID = card.sessionID
+                        if let workspace { workspace.openMeetingHistory(card.sessionID, tab: .notes, activate: true) }
+                        else { attention.requestedOutcomeSessionID = card.sessionID }
                         if main?.isMiniaturized == true { main?.deminiaturize(nil) }
                         main?.makeKeyAndOrderFront(nil)
                     })
@@ -200,6 +381,7 @@ struct AssistantOutcomesView: View {
 
     @ViewBuilder private func outcomeContent(_ card: MeetingLibraryCard) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            historyOutcomeActions(card)
             if let id = card.outcomeID, let error = data.outcomeWriteErrors[id] {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(L("Outcome changes could not be saved. %@", error)).font(.callout).foregroundStyle(.red)
@@ -211,7 +393,7 @@ struct AssistantOutcomesView: View {
                     }
                 }.padding(16)
             }
-            if card.outcomeState == .failed || card.outcomeState == .pending || attention.outcomeError[card.sessionID] != nil {
+            if card.outcomeState == .failed || card.outcomeState == .pending {
                 generationDetail(card)
             } else if let outcome = data.outcomes.first(where: { $0.id == card.outcomeID }) {
                 detail(outcome)
@@ -224,8 +406,36 @@ struct AssistantOutcomesView: View {
         }
     }
 
+    @ViewBuilder private func historyOutcomeActions(_ card: MeetingLibraryCard) -> some View {
+        if let draft = attention.historyOutcomeDrafts[card.sessionID] {
+            Button(L("Review summary draft")) { reviewedDraft = draft }.padding(16)
+        } else if let status = attention.outcomeStatus[card.sessionID] {
+            ProgressView(status).controlSize(.small).padding(16)
+        } else if let session = conversation(card.sessionID) {
+            let writer = preferences.effectiveWriter
+            let end = session.endedAt ?? card.endedAt ?? card.startedAt
+            let window = MeetingOutcomePrompt.historyWindow(title: card.title, events: session.events, endedAt: end,
+                onDevice: writer.kind == .apple, contextTokens: preferences.outcomeContextTokens)
+            let previous = data.outcomes.first { $0.id == card.outcomeID }
+            if !window.lines.isEmpty, previous?.transcriptFingerprint != MeetingOutcomePrompt.fingerprint(window) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if previous?.transcriptFingerprint != nil {
+                        Label(L("The available transcript has changed."), systemImage: "text.badge.plus")
+                            .foregroundStyle(.secondary)
+                    }
+                    Button(previous == nil ? L("Generate summary") : L("Refresh summary")) {
+                        attention.prepareHistoryOutcome(sessionID: card.sessionID, title: card.title, endedAt: end, window: window)
+                    }
+                    if let error = attention.outcomeError[card.sessionID] {
+                        Text(error).foregroundStyle(.orange)
+                    }
+                }.padding(16)
+            }
+        }
+    }
+
     @ViewBuilder private func cardRow(_ card: MeetingLibraryCard) -> some View {
-        let isSelected = selectedSessionID == card.sessionID
+        let isSelected = selectedCard?.sessionID == card.sessionID
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Text(card.title).fontWeight(.semibold).lineLimit(1)
@@ -354,6 +564,42 @@ struct AssistantOutcomesView: View {
                     .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
             }
             editableLines(L("Decisions"), values: binding.decisions)
+            if let id = outcome.meetingID, let citations = outcome.decisionEvidence, let session = conversation(id) {
+                let citedIDs = Set(outcome.decisions.flatMap { citations[$0] ?? [] })
+                let cited = session.visibleEvents.filter { citedIDs.contains($0.id) }
+                if !cited.isEmpty {
+                    GroupBox(L("Source passages")) {
+                        ForEach(cited) { event in
+                            Button(workspaceDate(event.occurredAt) + " · " + event.displayAuthor) {
+                                navigation.eventID = event.id
+                                navigation.tab = .transcript
+                            }.buttonStyle(.link)
+                        }
+                    }
+                }
+            }
+            editableLines(L("Open questions"), values: binding.openQuestions)
+            if outcome.seriesID != nil || outcome.invitation != nil {
+                GroupBox(L("Series history")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(data.seriesOutcomes(invitation: outcome.invitation, series: outcome.seriesID)) { item in
+                            Button { select(library.cards.first { $0.outcomeID == item.id }) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.knownEndedAt?.formatted(date: .abbreviated, time: .shortened) ?? L("Date unknown")).font(.caption.weight(.semibold))
+                                    Text(item.summary).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func meetingTasks(_ outcome: MeetingOutcome) -> some View {
+        let binding = Binding(get: { data.outcomes.first { $0.id == outcome.id } ?? outcome },
+                              set: { data.updateOutcome($0) })
+        return VStack(alignment: .leading, spacing: 12) {
             GroupBox(L("Tasks")) {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(outcome.tasks.filter(data.isTaskOperational)) { task in
@@ -395,6 +641,10 @@ struct AssistantOutcomesView: View {
                                 Image(systemName: "trash")
                             }.buttonStyle(.borderless).help(L("Delete task"))
                         }
+                        .padding(6)
+                        .background(navigation.taskID == task.id ? Color.accentColor.opacity(0.12) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 6))
+                        .id(task.id)
                     }
                     Button(L("Add task")) { var copy = binding.wrappedValue; copy.tasks.append(.init(text: L("New task"))); data.updateOutcome(copy) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -422,22 +672,7 @@ struct AssistantOutcomesView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            editableLines(L("Open questions"), values: binding.openQuestions)
-            if outcome.seriesID != nil || outcome.invitation != nil {
-                GroupBox(L("Series history")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(data.seriesOutcomes(invitation: outcome.invitation, series: outcome.seriesID)) { item in
-                            Button { select(library.cards.first { $0.outcomeID == item.id }) } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.knownEndedAt?.formatted(date: .abbreviated, time: .shortened) ?? L("Date unknown")).font(.caption.weight(.semibold))
-                                    Text(item.summary).font(.callout).foregroundStyle(.secondary).lineLimit(3)
-                                }.frame(maxWidth: .infinity, alignment: .leading)
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func editableLines(_ title: String, values: Binding<[String]>) -> some View {

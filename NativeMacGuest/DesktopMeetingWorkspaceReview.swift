@@ -1,115 +1,7 @@
 import AppKit
 import SwiftUI
 
-struct MeetingWorkspaceReview: View {
-    @ObservedObject var workspace: NativeDesktopWorkspace
-    @ObservedObject var state: MeetingWorkspaceViewState
-    @ObservedObject var journal: MeetingWorkspaceJournal
-    @ObservedObject private var library: MeetingLibraryController
-    @ObservedObject private var guidance: MeetingWorkspaceGuidance
-
-    @State private var meetingQuery = ""
-    @State private var showingGuidance = false
-
-    private struct ArchivedMeeting: Identifiable {
-        let id: UUID
-        let title: String
-        let startedAt: Date?
-        let endedAt: Date?
-        let session: MeetingWorkspaceSession?
-    }
-
-    init(workspace: NativeDesktopWorkspace, state: MeetingWorkspaceViewState, journal: MeetingWorkspaceJournal) {
-        self.workspace = workspace
-        self.state = state
-        self.journal = journal
-        _library = ObservedObject(wrappedValue: workspace.attention.store.meetingLibrary)
-        _guidance = ObservedObject(wrappedValue: workspace.attention.store.workspaceGuidance)
-    }
-
-    private var meetings: [ArchivedMeeting] {
-        let journalIDs = Set(journal.sessions.map(\.id))
-        let liveIDs = Set(workspace.meetings.flatMap { [$0.sessionID, $0.workspaceSessionID] + $0.segments.map(\.sessionID) })
-        let saved = journal.sessions.filter { $0.endedAt != nil && !liveIDs.contains($0.id) }.map {
-            ArchivedMeeting(id: $0.id, title: $0.title, startedAt: $0.startedAt, endedAt: $0.endedAt, session: $0)
-        }
-        let older = library.cards.filter {
-            $0.endedAt != nil && !journalIDs.contains($0.sessionID) && !liveIDs.contains($0.sessionID)
-        }.map {
-            ArchivedMeeting(id: $0.sessionID, title: $0.title, startedAt: $0.startedAt, endedAt: $0.endedAt, session: nil)
-        }
-        let search = meetingQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (saved + older).filter { search.isEmpty || $0.title.localizedStandardContains(search) }
-            .sorted { ($0.startedAt ?? $0.endedAt ?? .distantPast) > ($1.startedAt ?? $1.endedAt ?? .distantPast) }
-    }
-
-    var body: some View {
-        let visible = meetings
-        let selected = visible.first { $0.id == state.reviewID } ?? visible.first
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 9) {
-                Text(L("Saved meetings")).font(.headline)
-                TextField(L("Search meeting titles"), text: $meetingQuery).textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("meetingWorkspace.findMeeting")
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(visible) { item in
-                            Button { state.reviewID = item.id } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(item.title).font(.callout.weight(.medium)).lineLimit(1)
-                                    if let date = item.startedAt ?? item.endedAt {
-                                        Text(workspaceDate(date, style: .abbreviated))
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(item.id == selected?.id ? .teal.opacity(0.12) : .clear,
-                                            in: RoundedRectangle(cornerRadius: 7))
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain).help(item.title)
-                            .accessibilityAddTraits(item.id == selected?.id ? .isSelected : [])
-                        }
-                    }
-                }
-                Button { showingGuidance = true } label: {
-                    Label(L("Saved guidance"), systemImage: "slider.horizontal.3")
-                }.buttonStyle(.borderless)
-            }
-            .padding(14).frame(width: 185).frame(maxHeight: .infinity, alignment: .topLeading)
-            .background(Color(nsColor: .underPageBackgroundColor))
-            Divider()
-            if let selected {
-                if let session = selected.session {
-                    WorkspaceSessionReview(session: session, journal: journal, guidance: guidance, library: library)
-                        .id(session.id)
-                } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(selected.title).font(.title2.bold())
-                        Text(L("No saved transcript or assistant reply text is available for this meeting."))
-                            .foregroundStyle(.secondary)
-                        ParticipationOutcomeActivity(sessionID: selected.id, root: workspace.attention.store.root)
-                        Button(L("Open meeting outcome")) {
-                            workspace.attention.requestedOutcomeSessionID = selected.id
-                            workspace.show(section: .assistant)
-                        }
-                        Spacer()
-                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-                    .id(selected.id)
-                }
-            } else {
-                WorkspaceEmptyView(title: L("No saved meetings"), detail: meetingQuery.isEmpty
-                    ? L("Conversations captured on this Mac appear here after you leave.")
-                    : L("No saved meetings match your search."), symbol: "clock.arrow.circlepath")
-            }
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .tint(.teal)
-        .sheet(isPresented: $showingGuidance) { WorkspaceSavedGuidance(guidance: guidance, journal: journal) }
-    }
-}
-
-private struct WorkspaceSessionReview: View {
+struct WorkspaceSessionReview: View {
     enum Filter: CaseIterable, Hashable {
         case all, assistant, bookmarks
 
@@ -133,15 +25,15 @@ private struct WorkspaceSessionReview: View {
     let session: MeetingWorkspaceSession
     @ObservedObject var journal: MeetingWorkspaceJournal
     @ObservedObject var guidance: MeetingWorkspaceGuidance
-    let library: MeetingLibraryController
+    var highlightedEventID: String? = nil
+    var showsDelete = true
+    var onBookmark: ((String) -> Void)?
 
     @State private var filter: Filter = .all
     @State private var query = ""
     @State private var replyID: String?
-    @State private var outcome: MeetingOutcome?
     @State private var confirmDelete = false
     @State private var deleteError: String?
-    @State private var copied = false
 
     private var events: [MeetingWorkspaceEvent] { session.visibleEvents }
     private var filteredEvents: [MeetingWorkspaceEvent] {
@@ -152,7 +44,10 @@ private struct WorkspaceSessionReview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            recap
+            if session.interrupted || events.contains(where: { $0.kind == .captureGap }) {
+                Label(L("This conversation has gaps in speech capture."), systemImage: "waveform.slash")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             ViewThatFits(in: .horizontal) {
                 HStack { filterPicker; Spacer(minLength: 7); searchField.frame(width: 170) }
                 VStack(alignment: .leading, spacing: 7) { filterPicker; searchField }
@@ -163,8 +58,11 @@ private struct WorkspaceSessionReview: View {
                     VStack(alignment: .leading, spacing: 7) {
                         WorkspaceTimeline(events: filteredEvents,
                             empty: query.isEmpty && filter == .all ? L("No conversation captured") : L("No matching entries"),
-                            live: false, followsLatest: false, selectedID: replyID, onSelect: { replyID = $0 },
-                            onBookmark: { journal.toggleBookmark(sessionID: session.id, eventID: $0) })
+                            live: false, followsLatest: false, scrollTargetID: highlightedEventID, selectedID: replyID ?? highlightedEventID, onSelect: { replyID = $0 },
+                            onBookmark: { event in
+                                if let onBookmark { onBookmark(event) }
+                                else { journal.toggleBookmark(sessionID: session.id, eventID: event) }
+                            })
                         if !inline, selectedReply != nil {
                             Button(L("Reflect on this reply"), systemImage: "sidebar.right") { showingReflection = true }
                         }
@@ -189,9 +87,6 @@ private struct WorkspaceSessionReview: View {
             }
         }
         .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .task(id: session.id) {
-            outcome = await library.outcome(sessionID: session.id)
-        }
         .confirmationDialog(L("Delete saved conversation?"), isPresented: $confirmDelete, titleVisibility: .visible) {
             Button(L("Delete saved conversation"), role: .destructive) {
                 do { try journal.delete(sessionID: session.id) }
@@ -222,44 +117,18 @@ private struct WorkspaceSessionReview: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(session.title).font(.title2.weight(.semibold)).lineLimit(2).help(session.title)
-                Text(workspaceDate(session.startedAt, style: .long))
-                    .font(.caption).foregroundStyle(.secondary)
-                Label(session.interrupted ? L("Conversation history interrupted") : L("Saved on this Mac"),
-                      systemImage: session.interrupted ? "exclamationmark.triangle" : "internaldrive")
+                Label(session.interrupted ? L("Conversation history interrupted") : L("Full conversation"),
+                      systemImage: session.interrupted ? "exclamationmark.triangle" : "text.alignleft")
                     .font(.caption).foregroundStyle(session.interrupted ? .orange : .secondary)
             }
             Spacer(minLength: 7)
-            if let outcome, !outcome.summary.isEmpty {
-                Button(copied ? L("Copied") : L("Copy recap"), systemImage: "doc.on.doc") {
-                    NSPasteboard.general.clearContents()
-                    copied = NSPasteboard.general.setString(outcome.summary, forType: .string)
-                }.lineLimit(1)
+            if showsDelete {
+                Menu {
+                    Button(L("Delete saved conversation"), role: .destructive) { confirmDelete = true }
+                } label: {
+                    Label(L("Conversation actions"), systemImage: "ellipsis.circle").labelStyle(.iconOnly)
+                }.menuIndicator(.hidden).fixedSize()
             }
-            Menu {
-                Button(L("Delete saved conversation"), role: .destructive) { confirmDelete = true }
-            } label: {
-                Label(L("Conversation actions"), systemImage: "ellipsis.circle").labelStyle(.iconOnly)
-            }.menuIndicator(.hidden).fixedSize()
-        }
-    }
-
-    @ViewBuilder private var recap: some View {
-        if let outcome, !outcome.summary.isEmpty {
-            DisclosureGroup(L("Meeting recap")) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(outcome.summary).textSelection(.enabled)
-                        ForEach(Array(outcome.decisions.enumerated()), id: \.offset) { _, decision in
-                            Label(decision, systemImage: "checkmark.circle").textSelection(.enabled)
-                        }
-                    }.padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(maxHeight: 120)
-            }.padding(9).modifier(WorkspacePanel())
-        }
-        if session.interrupted || events.contains(where: { $0.kind == .captureGap }) {
-            Label(L("This conversation has gaps in speech capture."), systemImage: "waveform.slash")
-                .font(.caption).foregroundStyle(.orange)
         }
     }
 
@@ -338,7 +207,7 @@ private struct WorkspaceReflection: View {
     }
 }
 
-private struct WorkspaceSavedGuidance: View {
+struct WorkspaceSavedGuidance: View {
     @ObservedObject var guidance: MeetingWorkspaceGuidance
     let journal: MeetingWorkspaceJournal
     @Environment(\.dismiss) private var dismiss

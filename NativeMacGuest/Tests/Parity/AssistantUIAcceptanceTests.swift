@@ -545,12 +545,11 @@ import XCTest
             reloaded.prepare()
             defer { reloaded.close() }
             XCTAssertNotNil(reloaded.session(id: first.sessionID)?.endedAt)
-            workspace.workspaceViewState.reviewID = first.sessionID
-            let review = MeetingWorkspaceReview(workspace: workspace, state: workspace.workspaceViewState, journal: reloaded)
+            let session = try XCTUnwrap(reloaded.session(id: first.sessionID))
+            let review = WorkspaceSessionReview(session: session, journal: reloaded, guidance: store.workspaceGuidance)
             let archive = await present(review, size: NSSize(width: 1030, height: 720), name: "workspace-review-reloaded")
             archive.window.makeKeyAndOrderFront(nil)
             await settle()
-            XCTAssertTrue(containsText(archive, "Сохранённые встречи"))
             XCTAssertTrue(containsText(archive, "В записи этого разговора есть пропуски."))
             XCTAssertTrue(containsText(archive, line))
             XCTAssertTrue(containsText(archive, reply))
@@ -1074,7 +1073,7 @@ import XCTest
         let card = try XCTUnwrap(store.meetingLibrary.cards.first { $0.outcomeID == outcome.id })
         let attention = AttentionCoordinator(store: store)
         attention.requestedOutcomeSessionID = card.sessionID
-        let rendered = await present(AssistantOutcomesView(attention: attention),
+        let rendered = await present(MeetingHistoryView(attention: attention),
             size: NSSize(width: 1100, height: 700), name: "legacy-outcome-end-time")
         XCTAssertTrue(containsText(rendered, "Imported meeting"))
         XCTAssertTrue(containsText(rendered, L("By end time")))
@@ -1091,7 +1090,7 @@ import XCTest
         await library.refresh()
         let attention = AttentionCoordinator(store: store)
         attention.requestedOutcomeSessionID = session.id
-        let rendered = await present(AssistantOutcomesView(attention: attention),
+        let rendered = await present(MeetingHistoryView(attention: attention),
             size: NSSize(width: 1100, height: 700), name: "rename-cancel-validation")
         rendered.window.makeKeyAndOrderFront(nil)
         let errorMessage = L("Enter a meeting title.")
@@ -1203,7 +1202,7 @@ import XCTest
         store.assistant.restorePersistedOutcomes(try await library.store.outcomes())
         let attention = AttentionCoordinator(store: store)
         attention.requestedOutcomeSessionID = chosen.id
-        let rendered = await present(AssistantOutcomesView(attention: attention),
+        let rendered = await present(MeetingHistoryView(attention: attention),
             size: NSSize(width: 1100, height: 700), name: "renamed-occurrence")
         XCTAssertTrue(containsText(rendered, "Session-only title"))
         XCTAssertTrue(containsText(rendered, "Regenerated fixture outcome"))
@@ -1229,7 +1228,7 @@ import XCTest
         }
         await store.meetingLibrary.refresh()
         store.assistant.restorePersistedOutcomes(try await store.meetingLibrary.store.outcomes())
-        let rendered = await present(AssistantOutcomesView(attention: AttentionCoordinator(store: store)),
+        let rendered = await present(MeetingHistoryView(attention: AttentionCoordinator(store: store)),
             size: NSSize(width: 1100, height: 700), name: "repeated-room-day-order")
         try assertOutcomeDayOrder(rendered, expected: [
             (day, ["Afternoon occurrence", "Morning occurrence"]),
@@ -1251,7 +1250,7 @@ import XCTest
         await library.refresh()
         let attention = AttentionCoordinator(store: store)
         attention.requestedOutcomeSessionID = selected.id
-        let rendered = await present(AssistantOutcomesView(attention: attention),
+        let rendered = await present(MeetingHistoryView(attention: attention),
             size: NSSize(width: 1100, height: 700), name: "outcome-history-search")
         rendered.window.makeKeyAndOrderFront(nil)
         await settle()
@@ -1318,7 +1317,7 @@ import XCTest
         store.assistant.restorePersistedOutcomes(try await library.store.outcomes())
         let attention = AttentionCoordinator(store: store)
         attention.requestedOutcomeSessionID = overnight.id
-        let rendered = await present(AssistantOutcomesView(attention: attention),
+        let rendered = await present(MeetingHistoryView(attention: attention),
             size: NSSize(width: 1100, height: 700), name: "overnight-outcome-day")
         try assertOutcomeDayOrder(rendered, expected: [
             (midnight, ["Next-day meeting"]), (dayBefore, ["Overnight occurrence"])

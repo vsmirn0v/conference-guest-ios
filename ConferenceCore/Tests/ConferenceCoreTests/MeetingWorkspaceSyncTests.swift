@@ -430,6 +430,81 @@ final class MeetingWorkspaceSyncTests: XCTestCase {
         XCTAssertEqual(doc.mergedTranscript(for: s1).count, 1)
     }
 
+    func testCalendarOccurrenceUsesOriginalDateAndMergesSequentialMacAndPhoneJoins() throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let ends = start + 30 * 60
+        let macURL = try XCTUnwrap(URL(string: "https://rock.glowsoft.ru/jams/history?name=Mac"))
+        let phoneURL = try XCTUnwrap(URL(string: "https://rock.glowsoft.ru/jams/history?name=iPhone"))
+        let macRoom = try XCTUnwrap(MeetingRoomIdentity(macURL))
+        let phoneRoom = try XCTUnwrap(MeetingRoomIdentity(phoneURL))
+        let first = CalendarMeeting(id: "mac", seriesID: "private-mac", calendarID: "work", calendarTitle: "Work",
+            title: "Review", start: start, end: ends, externalSeriesID: "shared-series", originalOccurrenceStart: start)
+        let moved = CalendarMeeting(id: "phone", seriesID: "private-phone", calendarID: "work", calendarTitle: "Work",
+            title: "Review", start: start + 60, end: ends + 60, externalSeriesID: "shared-series", originalOccurrenceStart: start)
+        let nextWeek = CalendarMeeting(id: "next", seriesID: "private-phone", calendarID: "work", calendarTitle: "Work",
+            title: "Review", start: start + 604_800, end: ends + 604_800, externalSeriesID: "shared-series")
+        let firstLink = MeetingCalendarAssociation(first, room: macRoom)
+        let movedLink = MeetingCalendarAssociation(moved, room: phoneRoom)
+        let nextWeekLink = MeetingCalendarAssociation(nextWeek, room: phoneRoom)
+        XCTAssertTrue(firstLink.matches(movedLink))
+        XCTAssertFalse(firstLink.matches(nextWeekLink))
+        XCTAssertTrue(firstLink.allowsRejoin(at: ends + 20 * 60))
+        XCTAssertFalse(firstLink.allowsRejoin(at: ends + 20 * 60, before: ends + 15 * 60))
+
+        var doc = MeetingWorkspaceSyncDocument(device: "mac")
+        let macID = UUID(), phoneID = UUID(), nextID = UUID()
+        let macFirstInterval = UUID(), macSecondInterval = UUID(), phoneInterval = UUID()
+        var macLeg = DeviceParticipationLeg(deviceID: "mac", deviceKind: .mac, joinedAt: start, leftAt: start + 42 * 60)
+        macLeg.beginInterval(id: macFirstInterval, at: start)
+        macLeg.endInterval(id: macFirstInterval, at: start + 18 * 60)
+        macLeg.beginInterval(id: macSecondInterval, at: start + 29 * 60)
+        macLeg.endInterval(id: macSecondInterval, at: start + 42 * 60)
+        var phoneLeg = DeviceParticipationLeg(deviceID: "phone", deviceKind: .ios, joinedAt: start + 19 * 60, leftAt: start + 27 * 60)
+        phoneLeg.beginInterval(id: phoneInterval, at: start + 19 * 60)
+        phoneLeg.endInterval(id: phoneInterval, at: start + 27 * 60)
+
+        func entry(_ id: UUID, _ key: String, _ link: MeetingCalendarAssociation?,
+                   _ leg: DeviceParticipationLeg, _ version: SyncVersion) -> SyncedMeetingSession {
+            SyncedMeetingSession(id: id, occurrenceKey: key, calendarAssociation: SyncValue(link, version: version),
+                title: SyncValue("Review", version: version), hasTitleOverride: SyncValue(false, version: version),
+                invitation: SyncValue(nil, version: version), roomIdentity: key, startedAt: leg.joinedAt,
+                endedAt: SyncValue(leg.leftAt, version: version), timeZoneID: "UTC",
+                state: SyncValue("ended", version: version), legs: [leg.deviceID: leg],
+                isDeleted: SyncValue(false, version: version), createdAt: start, updatedAt: leg.leftAt ?? start)
+        }
+
+        let mac = entry(macID, "mac-legacy-room", firstLink, macLeg, doc.nextVersion())
+        let phone = entry(phoneID, "phone-legacy-room", movedLink, phoneLeg, doc.nextVersion())
+        let next = entry(nextID, "mac-legacy-room", nextWeekLink, phoneLeg, doc.nextVersion())
+        for session in [mac, phone, next] { doc.upsertSession(session) }
+        XCTAssertEqual(doc.coalesceOverlappingSessions().count, 1)
+        XCTAssertEqual(doc.resolveCanonicalSessionID(for: phoneID), macID)
+        XCTAssertEqual(doc.resolveCanonicalSessionID(for: nextID), nextID)
+        XCTAssertEqual(doc.sessions[macID]?.legs["mac"]?.intervals?.count, 2)
+        XCTAssertEqual(doc.sessions[macID]?.legs["phone"]?.intervals?[phoneInterval]?.leftAt, start + 27 * 60)
+        XCTAssertTrue(doc.coalesceOverlappingSessions().isEmpty)
+
+        let saved = try JSONDecoder().decode(MeetingWorkspaceSyncDocument.self, from: JSONEncoder().encode(doc))
+        XCTAssertEqual(saved, doc)
+    }
+
+    func testManualHistoryGroupingCanBeUndoneWithoutMovingSourceContent() throws {
+        let first = UUID(), second = UUID()
+        let visible: Set<UUID> = [first, second]
+        var doc = MeetingWorkspaceSyncDocument(device: "mac")
+        doc.saveNote(sessionID: second, markdown: "Original note")
+        let link = SyncValue<UUID?>(first, version: doc.nextVersion())
+        XCTAssertEqual(doc.resolveHistorySessionID(for: second, visibleIDs: visible) {
+            $0 == second ? link : nil
+        }, first)
+        let unlink = SyncValue<UUID?>(nil, version: doc.nextVersion())
+        XCTAssertEqual(doc.resolveHistorySessionID(for: second, visibleIDs: visible) {
+            $0 == second ? unlink : nil
+        }, second)
+        XCTAssertEqual(doc.notes[second]?.markdown, "Original note")
+        XCTAssertNil(doc.notes[first])
+    }
+
     func testCalendarScheduleDocumentMergesAndPrunes() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         var macDoc = CalendarScheduleSyncDocument(device: "mac")

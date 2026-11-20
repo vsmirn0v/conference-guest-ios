@@ -132,6 +132,17 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     @Published private(set) var outcomeStatus: [UUID: String] = [:]
     @Published private(set) var outcomeError: [UUID: String] = [:]
     @Published var requestedOutcomeSessionID: UUID?
+    @Published var opensAssistantMoments = false
+    let historyNavigation = MeetingHistoryNavigation()
+    var openHistory: ((UUID, MeetingHistoryTab) -> Void)?
+    @Published private(set) var historyOutcomeDrafts: [UUID: HistoryOutcomeDraft] = [:]
+
+    struct HistoryOutcomeDraft: Identifiable {
+        let id: UUID
+        let content: MeetingOutcomeContent
+        let evidence: [String: [String]]
+        let fingerprint: String
+    }
     @Published private(set) var workspaceFollowingPauses: [UUID: UUID] = [:]
     private var workspacePauseRevisions: [UUID: UUID] = [:]
 
@@ -501,16 +512,19 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         var captured: Set<UUID> = []
         var previousTask: Task<Void, Never>?
         for segment in segments {
+            if store.assistant.outcomes.contains(where: { $0.meetingID == segment.sessionID && !$0.summary.isEmpty }) {
+                continue
+            }
             if outcomeCaptures.contains(segment.sessionID) {
                 captured.insert(segment.sessionID)
                 continue
             }
-            let window = MeetingOutcomePrompt.window(title: segment.title, transcript: transcript,
-                chat: chat, yourName: yourName, now: segment.endedAt,
-                // Only Apple's on-device model uses the compact window. Rapid-MLX and other writers use the remote window,
-                // sized from the catalogued context length, or from a small default when that length was never stored.
-                onDevice: onDevice, contextTokens: contextTokens,
-                from: segment.from, until: segment.until, chapters: segment.chapters)
+            let journalEvents = model.workspaceJournal?.session(id: segment.sessionID)?.events ?? []
+            let merged = MeetingOutcomePrompt.historyWindow(title: segment.title, events: journalEvents,
+                endedAt: segment.endedAt, onDevice: onDevice, contextTokens: contextTokens, chapters: segment.chapters)
+            let window = merged.lines.isEmpty ? MeetingOutcomePrompt.window(title: segment.title, transcript: transcript,
+                chat: chat, yourName: yourName, now: segment.endedAt, onDevice: onDevice, contextTokens: contextTokens,
+                from: segment.from, until: segment.until, chapters: segment.chapters) : merged
             guard window.lines.contains(where: { $0.source != .note }) else { continue }
             outcomeCaptures.insert(segment.sessionID)
             captured.insert(segment.sessionID)
@@ -524,6 +538,48 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             }
         }
         return captured
+    }
+
+    func prepareHistoryOutcome(sessionID: UUID, title: String, endedAt: Date, window: AttentionWindow) {
+        guard outcomeStatus[sessionID] == nil else { return }
+        let fingerprint = MeetingOutcomePrompt.fingerprint(window)
+        guard !window.lines.isEmpty, historyOutcomeDrafts[sessionID]?.fingerprint != fingerprint else { return }
+        let provider = store.effectiveWriter
+        // Explicit refresh uses the same configured provider and remote privacy controls.
+        guard store.writerConfigured, provider.onThisMac || (store.enabled && store.remoteOutcomes) else {
+            outcomeError[sessionID] = MeetingOutcomeFailure.configuration.localizedDescription
+            return
+        }
+        outcomeError[sessionID] = nil
+        outcomeStatus[sessionID] = L("Preparing the meeting outcome…")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { outcomeStatus[sessionID] = nil }
+            do {
+                let writer = makeOutcomeWriter(provider, store.apiKey(for: provider))
+                let content = try await writer.outcome(.init(meetingTitle: title, endedAt: endedAt,
+                    window: window, language: language))
+                historyOutcomeDrafts[sessionID] = .init(id: sessionID, content: content,
+                    evidence: MeetingOutcomePrompt.verifiedEvidence(content, window: window), fingerprint: fingerprint)
+            } catch {
+                outcomeError[sessionID] = MeetingOutcomeFailure(writerError: error).localizedDescription
+            }
+        }
+    }
+
+    func applyHistoryOutcome(_ draft: HistoryOutcomeDraft, card: MeetingLibraryCard,
+                             replaceSummary: Bool, replaceDecisions: Bool, replaceQuestions: Bool) async throws {
+        guard historyOutcomeDrafts[card.sessionID]?.fingerprint == draft.fingerprint else { return }
+        store.assistant.flushOutcomeEdits()
+        await store.waitForOutcomeWrites()
+        let library = store.meetingLibrary
+        _ = try await store.publishOutcomeMutation {
+            try await library.store.commitHistorySummary(card: card, content: draft.content, evidence: draft.evidence,
+                fingerprint: draft.fingerprint, replaceSummary: replaceSummary,
+                replaceDecisions: replaceDecisions, replaceQuestions: replaceQuestions)
+        }
+        historyOutcomeDrafts[card.sessionID] = nil
+        await library.refresh()
     }
 
     func retryOutcome(for sessionID: UUID, outcomeID: UUID) {
@@ -571,6 +627,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                     outcome.decisions = content.decisions
                     outcome.tasks = content.tasks
                     outcome.openQuestions = content.openQuestions
+                    outcome.transcriptFingerprint = MeetingOutcomePrompt.fingerprint(input.request.window)
+                    outcome.decisionEvidence = MeetingOutcomePrompt.verifiedEvidence(content, window: input.request.window)
                 } catch {
                     failure = MeetingOutcomeFailure(writerError: error)
                     var fields: [String: Any] = [
