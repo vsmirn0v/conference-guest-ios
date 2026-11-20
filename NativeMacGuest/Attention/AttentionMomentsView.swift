@@ -72,9 +72,10 @@ struct AttentionMomentsView: View {
                             ForEach(moments) { moment in row(moment) }
                         }.padding(.horizontal, 8)
                     }
-                    .onAppear { scrollToRequested(proxy) }
-                    .onChange(of: attention.requestedMomentID) { _ in scrollToRequested(proxy) }
-                    .onChange(of: store.momentsLoaded) { _ in scrollToRequested(proxy) }
+                    .onAppear { scrollToSelection(proxy) }
+                    .onChange(of: selectedID) { _ in scrollToSelection(proxy) }
+                    .onChange(of: attention.requestedMomentID) { _ in scrollToSelection(proxy) }
+                    .onChange(of: store.momentsLoaded) { _ in scrollToSelection(proxy) }
                 }
                 if !store.momentsLoaded { ProgressView().controlSize(.small).padding(8) }
                 if moments.isEmpty && store.momentsLoaded {
@@ -86,8 +87,10 @@ struct AttentionMomentsView: View {
         }
     }
 
-    private func scrollToRequested(_ proxy: ScrollViewProxy) {
-        guard let id = attention.requestedMomentID, moments.contains(where: { $0.id == id }) else { return }
+    private func scrollToSelection(_ proxy: ScrollViewProxy) {
+        // Opening a moment consumes the request before SwiftUI lays out the
+        // list. Keep scrolling tied to the durable selection instead.
+        guard let id = selectedID, moments.contains(where: { $0.id == id }) else { return }
         proxy.scrollTo(id, anchor: .center)
     }
 
