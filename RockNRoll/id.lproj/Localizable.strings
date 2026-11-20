@@ -279,7 +279,7 @@
 "Show floating video" = "Tampilkan video mengambang";
 "Show local preview" = "Tampilkan pratinjau lokal";
 "Show musicians" = "Tampilkan musisi";
-"Small music groups in Yerevan can plan sessions and share ideas live." = "Kelompok musik kecil di Yerevan dapat merencanakan sesi dan berbagi ide secara langsung.";
+"Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation." = "Gunakan undangan untuk bergabung ke ruang LiveKit yang kompatibel, rapat Yandex Telemost atau TrueConf, dan rapat perusahaan yang menerima tamu.";
 "Speaker" = "Pembicara";
 "Speaking" = "Berbicara";
 "Star %@" = "Bintang %@";
@@ -533,7 +533,7 @@
 "Choose another room" = "Pilih kamar lain";
 "All day" = "Sepanjang hari";
 "Show calendar meetings" = "Tampilkan pertemuan kalender";
-"Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited." = "Cari tautan rapat di kalender pilihan Anda. Detail acara tetap berada di perangkat ini. Kalender Anda tidak pernah diubah.";
+"Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited." = "Temukan rapat di kalender yang Anda pilih. Jika jadwal dibagikan, detail rapat dapat disinkronkan melalui penyimpanan iCloud pribadi Anda. Aplikasi tidak mengubah kalender Anda.";
 "Allow full calendar access in Settings to read scheduled meetings." = "Memungkinkan akses kalender penuh pada Pengaturan untuk membaca pertemuan yang dijadwalkan.";
 "Allow calendar access" = "Ijinkan akses kalender";
 "Join scheduled meetings when opening the app" = "Gabungkan pertemuan yang dijadwalkan ketika membuka aplikasi";
@@ -884,7 +884,7 @@
 "Your current settings" = "Pengaturan anda saat ini";
 "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "Disarankan: tidak ada pengingat sebelum awal, peringatan di awal, dan pengingat tenang 30 detik setelah aplikasi ini dibuka pada rapat lain. Rincian suara dan pertemuan aktif; Pengatur Waktu dimatikan.";
 "More iCloud options" = "Lebih dari iCloud pilihan";
-"Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "Gunakan Akun Apple yang sama pada perangkat Anda. Undangan tersimpan dapat termasuk kode akses. Audio, video, percakapan dan transkrip tidak disinkronkan. Pilih kalender dan aktifkan pemberitahuan secara terpisah pada setiap perangkat.";
+"When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options." = "Saat sinkronisasi iCloud aktif, penyimpanan iCloud pribadi Anda dapat berisi undangan dengan kode akses, jadwal kalender, riwayat rapat, catatan, tugas, obrolan dan transkrip. Tinjau pilihan Anda di opsi iCloud lainnya.";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "Anda dapat menyelesaikan pengaturan sementara iCloud terhubung, atau menjaga semuanya pada perangkat ini. Ubah pilihan ini kapan saja di Pengaturan.";
 "Continue meeting setup" = "Lanjutkan pengaturan pertemuan";
 "Join audio" = "Gabung audio";
@@ -2827,9 +2827,9 @@
 "Allow Speech Recognition in Settings to transcribe speech on this iPhone." = "Izinkan pengenalan ucapan di Pengaturan untuk mentranskripsikan ucapan di iPhone ini.";
 "Allow this app to use your Personal Voice in Settings → Privacy & Security → Personal Voice." = "Izinkan aplikasi ini menggunakan Suara Personal Anda di Pengaturan → Privasi & Keamanan → Suara Personal.";
 "Apple On-Device Speech" = "Pidato Apple On-Device";
-"Apple Speech Recognition is unavailable for %@ right now." = "Pengakuan Pidato Apple tidak tersedia untuk %@ sekarang.";
+"On-device speech recognition is unavailable for %@." = "Pengenalan ucapan di perangkat tidak tersedia untuk %@.";
 "Automatic for language" = "Otomatis untuk bahasa";
-"Built into iOS. Supports Russian, English, and system languages without extra downloads." = "Dibangun menjadi iOS. Mendukung bahasa Rusia, Inggris, dan sistem tanpa pengunduhan ekstra.";
+"Uses Apple Speech when on-device recognition is available for the selected language." = "Menggunakan pengenalan ucapan Apple jika bahasa yang dipilih didukung di perangkat.";
 "Cannot send a voice reply while the call is on hold." = "Tidak dapat mengirim balasan suara saat panggilan sedang ditahan.";
 "CoreML GigaAM inference failed at %@." = "Inferensi CoremL Gigaam gagal pada %@.";
 "CoreML GigaAM model file is missing: %@." = "Berkas model CoremL GigaAM hilang: %@.";

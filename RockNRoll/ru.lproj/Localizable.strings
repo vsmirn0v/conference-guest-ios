@@ -280,7 +280,7 @@
 "Show floating video" = "Показать видео в отдельном окне";
 "Show local preview" = "Показать предпросмотр";
 "Show musicians" = "Показать музыкантов";
-"Small music groups in Yerevan can plan sessions and share ideas live." = "Небольшие музыкальные группы Еревана могут планировать репетиции и обмениваться идеями вживую.";
+"Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation." = "Подключайтесь по приглашению к совместимым комнатам LiveKit, встречам Яндекс Телемоста и TrueConf, а также к корпоративным встречам с гостевым доступом.";
 "Speaker" = "Динамик";
 "Speaking" = "Говорит";
 "Star %@" = "Добавить %@ в избранное";
@@ -546,7 +546,7 @@
 "Choose another room" = "Выбрать другую комнату";
 "All day" = "Весь день";
 "Show calendar meetings" = "Показывать встречи из календаря";
-"Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited." = "Находим ссылки на встречи в выбранных календарях. Сведения о событиях остаются на этом устройстве. Приложение не изменяет календарь.";
+"Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited." = "Приложение ищет встречи в выбранных календарях. Если включена синхронизация расписания, сведения о встречах могут передаваться через ваше личное хранилище iCloud. Приложение не изменяет календарь.";
 "Allow full calendar access in Settings to read scheduled meetings." = "Разрешите полный доступ к календарю в Настройках, чтобы читать запланированные встречи.";
 "Allow calendar access" = "Разрешить доступ к календарю";
 "Join scheduled meetings when opening the app" = "Подключаться к встречам при открытии приложения";
@@ -999,7 +999,7 @@
 "Your current settings" = "Ваши текущие настройки";
 "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "Рекомендуем: без напоминания до начала, сигнал в момент начала и тихое напоминание через 30 секунд после, если приложение открыто в другой встрече. Звук и сведения о встрече включены, неотложные уведомления выключены.";
 "More iCloud options" = "Другие настройки iCloud";
-"Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "Используйте один Аккаунт Apple на всех устройствах. Сохранённые приглашения могут содержать коды доступа. Аудио, видео, чат и расшифровки не синхронизируются. Выбор календарей и включение уведомлений настраиваются отдельно на каждом устройстве.";
+"When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options." = "При включённой синхронизации в вашем личном хранилище iCloud могут сохраняться приглашения с кодами доступа, расписание, история встреч, заметки, задачи, сообщения чата и расшифровки. Эти параметры можно изменить в дополнительных настройках iCloud.";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "Вы можете завершить настройку, пока iCloud подключается, или хранить всё только на этом устройстве. Эти параметры можно изменить в настройках.";
 "Continue meeting setup" = "Продолжить настройку встреч";
 
@@ -3049,9 +3049,9 @@
 "Allow Speech Recognition in Settings to transcribe speech on this iPhone." = "Разрешите распознавание речи в Настройках, чтобы расшифровывать речь на этом iPhone.";
 "Allow this app to use your Personal Voice in Settings → Privacy & Security → Personal Voice." = "Разрешите приложению использовать Личный голос в Настройках → Конфиденциальность и безопасность → Личный голос.";
 "Apple On-Device Speech" = "Распознавание речи Apple на устройстве";
-"Apple Speech Recognition is unavailable for %@ right now." = "Распознавание речи Apple сейчас недоступно для языка: %@.";
+"On-device speech recognition is unavailable for %@." = "Распознавание речи на устройстве недоступно для языка %@.";
 "Automatic for language" = "Автоматически по языку";
-"Built into iOS. Supports Russian, English, and system languages without extra downloads." = "Встроено в iOS. Поддерживает русский, английский и системные языки без загрузок.";
+"Uses Apple Speech when on-device recognition is available for the selected language." = "Речь распознаётся средствами Apple, если выбранный язык поддерживается на устройстве.";
 "Cannot send a voice reply while the call is on hold." = "Нельзя отправить голосовую реплику, пока звонок на удержании.";
 "CoreML GigaAM inference failed at %@." = "Ошибка распознавания CoreML GigaAM на этапе %@.";
 "CoreML GigaAM model file is missing: %@." = "Не найден файл модели CoreML GigaAM: %@.";

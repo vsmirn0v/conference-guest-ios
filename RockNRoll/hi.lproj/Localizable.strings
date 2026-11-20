@@ -279,7 +279,7 @@
 "Show floating video" = "फ्लोटिंग वीडियो दिखाएं";
 "Show local preview" = "स्थानीय पूर्वावलोकन दिखाएं";
 "Show musicians" = "संगीतकारों का प्रदर्शन";
-"Small music groups in Yerevan can plan sessions and share ideas live." = "येरेव में छोटे संगीत समूह योजना बना सकते हैं और विचारों को साझा कर सकते हैं.";
+"Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation." = "आमंत्रण के ज़रिए संगत LiveKit रूम, Yandex Telemost और TrueConf मीटिंग तथा अतिथियों के लिए खुली कॉर्पोरेट मीटिंग में शामिल हों।";
 "Speaker" = "भाषण";
 "Speaking" = "बोलते हैं";
 "Star %@" = "सितारा %@";
@@ -533,7 +533,7 @@
 "Choose another room" = "एक और कमरा चुनें";
 "All day" = "हर दिन";
 "Show calendar meetings" = "पंचांग सभाएँ दिखाएँ";
-"Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited." = "अपने चुने हुए कैलेंडरों में मीटिंग के लिंक ढूँढें। इवेंट का विवरण इसी डिवाइस पर रहता है। आपके कैलेंडर में कभी बदलाव नहीं किया जाता।";
+"Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited." = "अपने चुने हुए कैलेंडर में मीटिंग ढूँढें। शेड्यूल शेयर करने पर मीटिंग का विवरण आपके निजी iCloud स्टोरेज के ज़रिए सिंक हो सकता है। ऐप आपका कैलेंडर नहीं बदलता।";
 "Allow full calendar access in Settings to read scheduled meetings." = "नियत मीटिंगों को पढ़ने के लिए कैलेण्डर एक्सेस स्वीकारें.";
 "Allow calendar access" = "कैलेंडर पहुंच की अनुमति";
 "Join scheduled meetings when opening the app" = "जब एपीएस को खोला जाए तो मीटिंगों में शामिल हों";
@@ -884,7 +884,7 @@
 "Your current settings" = "आपकी वर्तमान व्यवस्थाएं";
 "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "अनुस्मरण करें: शुरू होने से पहले कोई चेतावनी, शुरू होने पर एक सचेत अनुस्मारक, और जब तक यह एप्पन अन्य सभा में खुला है. ध्वनि और बैठक विवरण चालू हैं; समय संवेदनशील हो जाता है.";
 "More iCloud options" = "अधिक iCloud विकल्प";
-"Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "अपने उपकरणों पर उसी एप्पल खाता का उपयोग करें. सहेजा गया आमंत्रण कोड को समाहित कर सकता है. ऑडियो, वीडियो, चैट, और उच्चारण शामिल नहीं हैं. पंचांग चुनें और प्रत्येक उपकरण पर अलग से सूचना सक्षम करें.";
+"When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options." = "iCloud सिंक चालू होने पर आपके निजी iCloud स्टोरेज में ऐक्सेस कोड वाले आमंत्रण, कैलेंडर शेड्यूल, मीटिंग का इतिहास, नोट्स, कार्य, चैट और ट्रांसक्रिप्ट शामिल हो सकते हैं। अतिरिक्त iCloud विकल्पों में अपने चयन देखें।";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "आप iCloud कनेक्ट होने के दौरान सेटअप कर सकते हैं या इस उपकरण पर सब कुछ रखें. इन विकल्पों को विन्यास में कोई भी समय बदलें.";
 "Continue meeting setup" = "बैठक सेटअप जारी रखें";
 "Join audio" = "ऑडियो में शामिल हों";
@@ -2827,9 +2827,9 @@
 "Allow Speech Recognition in Settings to transcribe speech on this iPhone." = "इस iPhone पर बोली को लिखने के लिए सेटिंग्स में वाक् पहचान की अनुमति दें।";
 "Allow this app to use your Personal Voice in Settings → Privacy & Security → Personal Voice." = "सेटिंग्स → गोपनीयता और सुरक्षा → पर्सनल वॉइस में इस ऐप को आपकी पर्सनल वॉइस इस्तेमाल करने की अनुमति दें।";
 "Apple On-Device Speech" = "एपल ऑन- डेव- द- से- वार्ता";
-"Apple Speech Recognition is unavailable for %@ right now." = "एपल स्पीच एगलल के लिए अनुपलब्ध है %@ अभी.";
+"On-device speech recognition is unavailable for %@." = "%@ के लिए इस डिवाइस पर वाक् पहचान उपलब्ध नहीं है।";
 "Automatic for language" = "भाषा के लिए स्वचालित";
-"Built into iOS. Supports Russian, English, and system languages without extra downloads." = "iOS में बनाया गया है. समर्थन रूसी, अंग्रेजी, और सिस्टम भाषा बिना अतिरिक्त डाउनलोड किए.";
+"Uses Apple Speech when on-device recognition is available for the selected language." = "चुनी हुई भाषा के लिए डिवाइस पर वाक् पहचान उपलब्ध होने पर Apple की वाक् पहचान का उपयोग होता है।";
 "Cannot send a voice reply while the call is on hold." = "कोई आवाज जवाब नहीं दे सकता, जबकि कॉल होल्ड हो रहा है.";
 "CoreML GigaAM inference failed at %@." = "कोरएमएल गीगापी %@ में असफल.";
 "CoreML GigaAM model file is missing: %@." = "कोरएमएल गीगा मॉडल फ़ाइल गुम है: %@.";

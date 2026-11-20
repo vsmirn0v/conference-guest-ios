@@ -257,6 +257,7 @@ final class IOSMeetingTranscriber: ObservableObject {
     private let setOutputDemand: (Bool) async -> Bool
     private let gigaamLoader: @Sendable (URL) async throws -> CoreMLGigaAMRecognizer
     private let speechAuthorization: @MainActor () async -> Bool
+    private let localAppleSpeechAvailable: @MainActor () -> Bool
 
     private var remoteSources: [MeetingAudioSource] = []
     private var taps: [String: (source: MeetingAudioSource, sink: MeetingAudioSink)] = [:]
@@ -276,13 +277,15 @@ final class IOSMeetingTranscriber: ObservableObject {
         participantNameLookup: @escaping (String) -> String?,
         setOutputDemand: @escaping (Bool) async -> Bool,
         gigaamLoader: (@Sendable (URL) async throws -> CoreMLGigaAMRecognizer)? = nil,
-        speechAuthorization: (@MainActor () async -> Bool)? = nil
+        speechAuthorization: (@MainActor () async -> Bool)? = nil,
+        localAppleSpeechAvailable: (@MainActor () -> Bool)? = nil
     ) {
         self.modelStore = modelStore
         self.localDisplayName = localDisplayName
         self.participantNameLookup = participantNameLookup
         self.setOutputDemand = setOutputDemand
         self.speechAuthorization = speechAuthorization ?? Self.requestSpeechAuthorization
+        self.localAppleSpeechAvailable = localAppleSpeechAvailable ?? modelStore.appleSpeechAvailableOnDevice
         self.gigaamLoader = gigaamLoader ?? { dir in
             try await CoreMLGigaAMRecognizer.shared(directory: dir)
         }
@@ -416,9 +419,9 @@ final class IOSMeetingTranscriber: ObservableObject {
             state = .unavailable(L("Allow Speech Recognition in Settings to transcribe speech on this iPhone."))
             return false
         }
-        guard let recognizer = SFSpeechRecognizer(locale: modelStore.language.locale), recognizer.isAvailable else {
+        guard localAppleSpeechAvailable() else {
             activeRun = nil
-            state = .unavailable(L("Apple Speech Recognition is unavailable for %@ right now.", modelStore.language.title))
+            state = .unavailable(L("On-device speech recognition is unavailable for %@.", modelStore.language.title))
             return false
         }
         self.currentBackend = .appleSpeech
@@ -656,12 +659,10 @@ private final class SpeakerPipeline {
     }
 
     private func startAppleRequest() {
-        guard let speechRecognizer, speechRecognizer.isAvailable else { return }
+        guard let speechRecognizer, speechRecognizer.isAvailable, speechRecognizer.supportsOnDeviceRecognition else { return }
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
-        if speechRecognizer.supportsOnDeviceRecognition {
-            req.requiresOnDeviceRecognition = true
-        }
+        req.requiresOnDeviceRecognition = true
         if #available(iOS 16.0, *) {
             req.addsPunctuation = true
         }

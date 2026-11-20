@@ -827,7 +827,7 @@ struct JoinView: View {
     }
     private var aboutSettings: some View {
         Section(L("About")) {
-            Text(L("Small music groups in Yerevan can plan sessions and share ideas live."))
+            Text(L("Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation."))
             Link(L("Community"), destination: URL(string: "https://rock.glowsoft.ru/community")!)
             Link(L("Privacy policy"), destination: URL(string: "https://rock.glowsoft.ru/privacy")!)
             Link(L("Support"), destination: URL(string: "https://rock.glowsoft.ru/support")!)

@@ -279,7 +279,7 @@
 "Show floating video" = "Schwebendes Video anzeigen";
 "Show local preview" = "Lokale Vorschau anzeigen";
 "Show musicians" = "Musiker anzeigen";
-"Small music groups in Yerevan can plan sessions and share ideas live." = "Kleine Musikgruppen in Eriwan können Sitzungen planen und Ideen live teilen.";
+"Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation." = "Mit einer Einladung kannst du kompatiblen LiveKit-Räumen, Konferenzen in Yandex Telemost und TrueConf sowie Unternehmensmeetings mit Gastzugang beitreten.";
 "Speaker" = "Sprecher";
 "Speaking" = "Sprechen";
 "Star %@" = "Stern %@";
@@ -533,7 +533,7 @@
 "Choose another room" = "Wählen Sie ein anderes Zimmer";
 "All day" = "Den ganzen Tag";
 "Show calendar meetings" = "Kalendersitzungen anzeigen";
-"Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited." = "Meeting-Links in den von dir gewählten Kalendern finden. Termindetails bleiben auf diesem Gerät. Dein Kalender wird nie bearbeitet.";
+"Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited." = "Suche Meetings in ausgewählten Kalendern. Wenn du den Zeitplan teilst, können Meetingdetails über deinen privaten iCloud-Speicher synchronisiert werden. Dein Kalender wird nicht bearbeitet.";
 "Allow full calendar access in Settings to read scheduled meetings." = "Erlauben Sie den vollen Kalenderzugriff in Einstellungen, um geplante Meetings zu lesen.";
 "Allow calendar access" = "Kalenderzugriff zulassen";
 "Join scheduled meetings when opening the app" = "Teilnahme an geplanten Sitzungen beim Öffnen der App";
@@ -884,7 +884,7 @@
 "Your current settings" = "Ihre aktuellen Einstellungen";
 "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "Empfohlen: keine Erinnerung vor dem Start, eine Warnung am Anfang und eine stille Erinnerung 30 Sekunden danach, während diese App in einem anderen Meeting geöffnet ist. Sound- und Sitzungsdetails sind eingeschaltet; Time Sensitive ist aus.";
 "More iCloud options" = "Mehr iCloud Optionen";
-"Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "Verwenden Sie das gleiche Apple-Konto auf Ihren Geräten. Gespeicherte Einladungen können Zugriffscodes enthalten. Audio, Video, Chat und Transkripte werden nicht synchronisiert. Kalender auswählen und Benachrichtigungen separat auf jedem Gerät aktivieren.";
+"When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options." = "Wenn die iCloud-Synchronisierung aktiv ist, kann dein privater iCloud-Speicher Einladungen mit Zugangscodes, Kalendertermine, den Meetingverlauf, Notizen, Aufgaben, Chats und Transkripte enthalten. Prüfe die Auswahl unter den weiteren iCloud-Optionen.";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "Sie können das Setup beenden, während iCloud verbindet, oder alles auf diesem Gerät. Ändern Sie diese Optionen jederzeit in Einstellungen.";
 "Continue meeting setup" = "Sitzungsaufbau fortsetzen";
 "Join audio" = "Audio verbinden";
@@ -2827,9 +2827,9 @@
 "Allow Speech Recognition in Settings to transcribe speech on this iPhone." = "Erlaube die Spracherkennung in den Einstellungen, um Gesprochenes auf diesem iPhone zu transkribieren.";
 "Allow this app to use your Personal Voice in Settings → Privacy & Security → Personal Voice." = "Erlaube dieser App unter Einstellungen → Datenschutz & Sicherheit → Eigene Stimme den Zugriff auf deine eigene Stimme.";
 "Apple On-Device Speech" = "Rede über Apple On-Device";
-"Apple Speech Recognition is unavailable for %@ right now." = "Apple Speech Recognition ist für %@ im Moment nicht verfügbar.";
+"On-device speech recognition is unavailable for %@." = "Die Spracherkennung auf diesem Gerät ist für %@ nicht verfügbar.";
 "Automatic for language" = "Automatisch für Sprache";
-"Built into iOS. Supports Russian, English, and system languages without extra downloads." = "Gebaut in iOS. Unterstützt Russisch, Englisch und Systemsprachen ohne zusätzliche Downloads.";
+"Uses Apple Speech when on-device recognition is available for the selected language." = "Nutzt die Apple-Spracherkennung, wenn die gewählte Sprache auf dem Gerät unterstützt wird.";
 "Cannot send a voice reply while the call is on hold." = "Eine Sprachantwort kann nicht gesendet werden, solange der Anruf auf Eis gelegt wird.";
 "CoreML GigaAM inference failed at %@." = "CoreML GigaAM Inferenz fehlgeschlagen bei %@.";
 "CoreML GigaAM model file is missing: %@." = "CoreML GigaAM Modelldatei fehlt: %@.";

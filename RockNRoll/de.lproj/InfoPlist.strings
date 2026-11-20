@@ -1,7 +1,7 @@
 "NSBluetoothAlwaysUsageDescription" = "Bluetooth-Kopfhörer und andere Audiogeräte für den Ton von Sessions verwenden, auch wenn eine Session im Hintergrund weiterläuft.";
 "NSCameraUsageDescription" = "Video übertragen, wenn du die Kamera in einer Session einschaltest.";
 "NSMicrophoneUsageDescription" = "Das Mikrofon verwenden, damit du in Sessions sprechen und deinen Ton vor dem Aufheben der Stummschaltung privat testen kannst.";
-"NSCalendarsUsageDescription" = "Einladungslinks und Termine in den von dir gewählten Kalendern finden. Dein Kalender wird nie bearbeitet. Termindetails bleiben auf diesem Gerät. Ob als Favoriten gespeicherte Raumnamen synchronisiert werden, richtet sich nach deiner iCloud-Einstellung.";
-"NSCalendarsFullAccessUsageDescription" = "Einladungslinks und Termine in den von dir gewählten Kalendern finden. Dein Kalender wird nie bearbeitet. Termindetails bleiben auf diesem Gerät. Ob als Favoriten gespeicherte Raumnamen synchronisiert werden, richtet sich nach deiner iCloud-Einstellung.";
+"NSCalendarsUsageDescription" = "Suche Meetings in ausgewählten Kalendern. Wenn du den Zeitplan teilst, können Meetingdetails über deinen privaten iCloud-Speicher synchronisiert werden. Dein Kalender wird nicht bearbeitet.";
+"NSCalendarsFullAccessUsageDescription" = "Suche Meetings in ausgewählten Kalendern. Wenn du den Zeitplan teilst, können Meetingdetails über deinen privaten iCloud-Speicher synchronisiert werden. Dein Kalender wird nicht bearbeitet.";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll verwendet die Spracherkennung auf dem Gerät, um Meetings lokal auf diesem iPhone zu transkribieren.";
 "NSPersonalVoiceUsageDescription" = "Rock’n’Roll kann deine eigene Stimme verwenden, um Sprachantworten vorzulesen, die du in Meetings sendest.";

@@ -1,7 +1,7 @@
 "NSBluetoothAlwaysUsageDescription" = "Menggunakan headphone Bluetooth dan perangkat audio lain untuk suara sesi, termasuk saat sesi berlanjut di latar belakang.";
 "NSCameraUsageDescription" = "Membagikan video saat Anda memilih untuk menyalakan kamera dalam sesi.";
 "NSMicrophoneUsageDescription" = "Menggunakan mikrofon untuk berbicara dalam sesi dan menguji suara secara pribadi sebelum membunyikan mikrofon.";
-"NSCalendarsUsageDescription" = "Mencari tautan dan waktu rapat di kalender yang Anda pilih. Kalender Anda tidak pernah diubah. Detail acara tetap berada di perangkat ini. Sinkronisasi nama ruang yang disimpan ke Favorit mengikuti pilihan sinkronisasi iCloud Anda.";
-"NSCalendarsFullAccessUsageDescription" = "Mencari tautan dan waktu rapat di kalender yang Anda pilih. Kalender Anda tidak pernah diubah. Detail acara tetap berada di perangkat ini. Sinkronisasi nama ruang yang disimpan ke Favorit mengikuti pilihan sinkronisasi iCloud Anda.";
+"NSCalendarsUsageDescription" = "Temukan rapat di kalender yang Anda pilih. Jika jadwal dibagikan, detail rapat dapat disinkronkan melalui penyimpanan iCloud pribadi Anda. Aplikasi tidak mengubah kalender Anda.";
+"NSCalendarsFullAccessUsageDescription" = "Temukan rapat di kalender yang Anda pilih. Jika jadwal dibagikan, detail rapat dapat disinkronkan melalui penyimpanan iCloud pribadi Anda. Aplikasi tidak mengubah kalender Anda.";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll menggunakan pengenalan ucapan di perangkat untuk mentranskripsikan rapat secara lokal di iPhone ini.";
 "NSPersonalVoiceUsageDescription" = "Rock’n’Roll dapat menggunakan Suara Personal Anda untuk membacakan balasan suara yang Anda kirim ke rapat.";
