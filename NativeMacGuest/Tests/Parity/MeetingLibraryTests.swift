@@ -57,7 +57,7 @@ final class MeetingLibraryTests: XCTestCase {
         XCTAssertEqual(reloaded?.exportRevision, 2)
     }
 
-    func testCardsIncludeNotesOnlyMeetingsAndExcludeFailedJoins() async throws {
+    func testCardsIncludeNotesAndEmptyAttendedMeetingsAndExcludeFailedJoins() async throws {
         let store = try await makePreparedStore()
         let notesOnly = MeetingSessionRecord(title: "Solo Notes", startedAt: Date())
         try await store.upsertSession(notesOnly)
@@ -65,13 +65,15 @@ final class MeetingLibraryTests: XCTestCase {
 
         let failed = MeetingSessionRecord(title: "Failed Join", startedAt: Date(), state: .failed)
         try await store.upsertSession(failed)
+        let attended = MeetingSessionRecord(title: "No capture", startedAt: Date(), endedAt: Date(), state: .ended)
+        try await store.upsertSession(attended)
 
         let cards = try await store.cards()
-        XCTAssertEqual(cards.count, 1)
-        XCTAssertEqual(cards[0].sessionID, notesOnly.id)
-        XCTAssertTrue(cards[0].hasNotes)
-        XCTAssertEqual(cards[0].outcomeState, .notStarted)
-        XCTAssertNotNil(cards[0].notePreview)
+        XCTAssertEqual(Set(cards.map(\.sessionID)), [notesOnly.id, attended.id])
+        let notesCard = try XCTUnwrap(cards.first { $0.sessionID == notesOnly.id })
+        XCTAssertTrue(notesCard.hasNotes)
+        XCTAssertEqual(notesCard.outcomeState, .notStarted)
+        XCTAssertNotNil(notesCard.notePreview)
     }
 
     func testImportLegacyOutcomesIsIdempotent() async throws {
