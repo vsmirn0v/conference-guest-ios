@@ -426,6 +426,22 @@ private final class SameRoomClockBox: @unchecked Sendable {
         XCTAssertEqual(leg.intervals?.count, 2)
         XCTAssertEqual(leg.intervals?.values.compactMap(\.leftAt).max(), clockBox.now)
         XCTAssertEqual(harness.attention.store.meetingLibrary.cards.filter { $0.sessionID == id }.count, 1)
+
+        let next = makeCalendarMeeting(id: "next-release", seriesID: "release", title: "Next review",
+            start: start + 48 * 60, end: start + 78 * 60, url: roomA)
+        await harness.reader.setMeetings([event, next])
+        clockBox.now = start + 50 * 60
+        harness.calendar.refresh()
+        try await spin { harness.calendar.meetings.count == 2 }
+        XCTAssertFalse(harness.workspace.canResumeHistory(id, invitation: roomA))
+        harness.workspace.joinFromHistory(id, invitation: roomA, title: "Release review")
+        try await spin { harness.workspace.meeting?.connected == true && !harness.workspace.preparing }
+        let newMeeting = try XCTUnwrap(harness.workspace.meeting)
+        XCTAssertNotEqual(newMeeting.workspaceSessionID, id)
+        XCTAssertNil(harness.workspace.workspaceSync.association(for: newMeeting.workspaceSessionID))
+        XCTAssertNil(newMeeting.segments.first?.calendarEventID)
+        let newMeetingLeft = await harness.workspace.leave(newMeeting)
+        XCTAssertTrue(newMeetingLeft)
     }
 
     func testWorkspaceTwoMinuteOverrunGraceFoldsTailIntoFirstSession() async throws {

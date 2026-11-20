@@ -58,6 +58,7 @@ import UniformTypeIdentifiers
     @Published private(set) var activeNoteSessionID: UUID
     @Published private(set) var pendingNoteRolloverTitle: String? = nil
     var segments: [ScheduledSegment]
+    var ignoreCalendarOccurrencesStartingOnOrBefore: Date?
     @Published var sameRoomTransitionBanner: SameRoomTransitionBanner? = nil
     private var workspaceCaptureGap: (id: String, reason: String, start: Date)?
     private var transcriptionDrains: [UUID: Task<Void, Never>] = [:]
