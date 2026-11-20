@@ -89,7 +89,17 @@ private final class WorkspaceTimelineScrollProbe: NSView {
 extension MeetingWorkspaceSession {
     var visibleEvents: [MeetingWorkspaceEvent] {
         let linkedChat = Set(events.compactMap(\.linkedChatID))
-        return events.filter { $0.kind != .chat || !linkedChat.contains($0.id) }
+        var visible: [MeetingWorkspaceEvent] = []
+        for event in events where event.kind != .chat || !linkedChat.contains(event.id) {
+            if let previous = visible.last, previous.kind == .captureGap, event.kind == .captureGap,
+               previous.source == event.source, let end = previous.endedAt, let nextEnd = event.endedAt,
+               event.occurredAt >= previous.occurredAt, event.occurredAt.timeIntervalSince(end) <= 1 {
+                visible[visible.count - 1].endedAt = max(end, nextEnd)
+            } else {
+                visible.append(event)
+            }
+        }
+        return visible
     }
 }
 
@@ -106,7 +116,10 @@ extension MeetingWorkspaceEvent {
             case "connection": L("Speech capture paused while the meeting connection was unavailable.")
             case "transcriptionFailed": L("Speech capture failed during this period.")
             case "transcriptionPaused": L("Speech transcription was paused.")
-            case "decode": L("Some speech could not be transcribed on this Mac.")
+            case "decode": L("Some audio is missing from this transcript.")
+            case "audioBacklog", "recognitionBacklog": L("Some audio was skipped while this Mac was busy.")
+            case "modelUnavailable": L("The speech model was unavailable during this period.")
+            case "decodeFailure": L("Some speech could not be transcribed on this Mac.")
             case "finalization": L("Some final speech could not be saved before the meeting closed.")
             default: L("Speech transcription was unavailable.")
             }
@@ -237,8 +250,8 @@ private struct WorkspaceTimelineRow: View {
                 Label(event.displayText, systemImage: event.timelineSymbol)
                     .font(.caption).foregroundStyle(event.kind == .captureGap ? .orange : .secondary)
                 HStack(spacing: 3) {
-                    Text(event.occurredAt, style: .time)
-                    if let end = event.endedAt { Text("–"); Text(end, style: .time) }
+                    Text(event.occurredAt.formatted(.dateTime.hour().minute().second()))
+                    if let end = event.endedAt { Text("–"); Text(end.formatted(.dateTime.hour().minute().second())) }
                 }.font(.caption2).foregroundStyle(.secondary)
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {

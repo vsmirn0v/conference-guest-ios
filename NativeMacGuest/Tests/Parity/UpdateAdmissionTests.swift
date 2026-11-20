@@ -156,6 +156,42 @@ private struct CompactSettingsFixture: View {
         XCTAssertEqual(fixture.calls.detections, 0)
     }
 
+    func testEmptyLiveViewKeepsSidebarAndJoinControlsInsideShortWindow() async throws {
+        let fixture = fixture(), workspace = fixture.workspace
+        let host = NSHostingView(rootView: NativeDesktopHomeView(workspace: workspace, library: fixture.library))
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(x: 120, y: 100, width: 1100, height: 700),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "Live viewport fixture \(UUID())"
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        addTeardownBlock { window.close() }
+        for size in [NSSize(width: 1100, height: 700), NSSize(width: 900, height: 560)] {
+            window.setContentSize(size)
+            for section in [NativeDesktopWorkspace.Section.history, .workspace, .assistant, .workspace] {
+                workspace.selection = section
+                await settleUI(host)
+                XCTAssertLessThanOrEqual(host.bounds.height, size.height)
+                if section == .workspace {
+                    let input = try XCTUnwrap(accessibilityElement(in: window, identifier: "meetingWorkspace.invitation"))
+                    let sidebar = try XCTUnwrap(accessibilityElement(in: window, identifier: "sidebar.section.\(NativeDesktopWorkspace.Section.home.id)"))
+                    for item in [sidebar, input] {
+                        let position = try XCTUnwrap(accessibilityValue(item, kAXPositionAttribute)) as! AXValue
+                        let size = try XCTUnwrap(accessibilityValue(item, kAXSizeAttribute)) as! AXValue
+                        var origin = CGPoint.zero, dimensions = CGSize.zero
+                        XCTAssertTrue(AXValueGetValue(position, .cgPoint, &origin))
+                        XCTAssertTrue(AXValueGetValue(size, .cgSize, &dimensions))
+                        let rect = NSRect(x: origin.x, y: NSScreen.screens[0].frame.maxY - origin.y - dimensions.height,
+                                          width: dimensions.width, height: dimensions.height)
+                        XCTAssertTrue(window.frame.contains(rect), "Control is outside window: \(rect)")
+                    }
+                    try attachScreenshot(host, name: "live-viewport-\(Int(size.height))")
+                }
+            }
+        }
+    }
+
     func testActiveMeetingSidebarSwitchesAndControlsMeetingsFromHistory() async throws {
         let workspace = fixture().workspace
         addTeardownBlock { @MainActor in

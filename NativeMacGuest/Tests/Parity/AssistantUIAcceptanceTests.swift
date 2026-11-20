@@ -1245,6 +1245,82 @@ import XCTest
         XCTAssertFalse(containsText(rendered, "Provider updated planning"))
     }
 
+    func testHistoryCardPaddingSelectsMeetingAndOverviewIncludesTasksAndNotes() async throws {
+        let store = store()
+        await store.waitForMeetingLibrary()
+        let key = "native.meetingHistory.readingMode"
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(false, forKey: key)
+        addTeardownBlock { UserDefaults.standard.set(previous, forKey: key) }
+        let now = Date()
+        let first = MeetingSessionRecord(title: "One", startedAt: now - 1200, endedAt: now - 900, state: .ended)
+        let second = MeetingSessionRecord(title: "Two", startedAt: now - 600, endedAt: now - 300, state: .ended)
+        let task = MeetingOutcomeTask(text: "Track the selected meeting task")
+        for session in [first, second] {
+            try await store.meetingLibrary.store.upsertSession(session)
+            var outcome = MeetingOutcome(meetingID: session.id, meetingTitle: session.title,
+                endedAt: session.endedAt!, summary: "Summary for " + session.title,
+                decisions: ["Ship the reviewed change"],
+                tasks: session.id == second.id ? [task] : [.init(text: "Task from the other meeting")])
+            if session.id == second.id { outcome.decisionEvidence = ["Ship the reviewed change": ["speech:decision"]] }
+            try await store.meetingLibrary.store.saveOutcome(outcome, state: .ready)
+            _ = try await store.meetingLibrary.store.saveNote(sessionID: session.id, markdown: "Notes for " + session.title)
+        }
+        let journal = store.meetingLibrary.workspaceJournal
+        journal.begin(sessionID: second.id, title: second.title, calendarSeriesID: nil, roomIdentity: nil, at: second.startedAt)
+        journal.observe(sessionID: second.id, events: [
+            .init(id: "speech:decision", kind: .transcript, occurredAt: second.startedAt + 20,
+                  source: "fixture", author: "Anna", text: "Ship the reviewed change on Friday.")
+        ])
+        journal.end(sessionID: second.id, at: second.endedAt!)
+        await store.meetingLibrary.refresh()
+        store.assistant.restorePersistedOutcomes(try await store.meetingLibrary.store.outcomes())
+        let attention = AttentionCoordinator(store: store)
+        attention.historyNavigation.selectedSessionID = first.id
+        let rendered = await present(MeetingHistoryView(attention: attention), size: NSSize(width: 1100, height: 700),
+            name: "history-overview", sizeToContent: false)
+        rendered.window.makeKeyAndOrderFront(nil)
+        await settle()
+        let card = try XCTUnwrap(nodes(rendered).first { node in
+            (attribute(node, kAXIdentifierAttribute) as? String) == "assistant.meeting-card" &&
+                nodes(node).contains { strings($0).contains { $0.contains("Two") } }
+        })
+        let position = try XCTUnwrap(attribute(card, kAXPositionAttribute)) as! AXValue
+        let size = try XCTUnwrap(attribute(card, kAXSizeAttribute)) as! AXValue
+        var origin = CGPoint.zero, dimensions = CGSize.zero
+        XCTAssertTrue(AXValueGetValue(position, .cgPoint, &origin))
+        XCTAssertTrue(AXValueGetValue(size, .cgSize, &dimensions))
+        XCTAssertGreaterThan(dimensions.width, 150)
+        // The point is inside the card's trailing bottom padding, clear of every text label.
+        let screen = NSPoint(x: origin.x + dimensions.width - 3,
+                             y: NSScreen.screens[0].frame.maxY - origin.y - dimensions.height + 3)
+        let point = rendered.window.convertPoint(fromScreen: screen)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: rendered.window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            rendered.window.sendEvent(event)
+        }
+        try await wait { attention.historyNavigation.selectedSessionID == second.id }
+        await settle()
+        try capture(rendered)
+        XCTAssertEqual(attention.historyNavigation.tab, .summary)
+        XCTAssertTrue(containsText(rendered, "Summary for Two"))
+        XCTAssertTrue(containsText(rendered, task.text))
+        XCTAssertNotNil(element(rendered, identifier: "meeting.notes.editor"))
+        XCTAssertFalse(containsText(rendered, L("Source passages")))
+        let source = try XCTUnwrap(element(rendered, identifier: "history.decision-source"))
+        _ = AXUIElementPerformAction(source, kAXPressAction as CFString)
+        try await wait { attention.historyNavigation.tab == .transcript }
+        XCTAssertEqual(attention.historyNavigation.eventID, "speech:decision")
+        attention.historyNavigation.tab = .tasks
+        attention.historyNavigation.taskID = task.id
+        await settle()
+        XCTAssertNotNil(element(rendered, identifier: "meeting.notes.editor"))
+        XCTAssertTrue(containsText(rendered, task.text))
+        try capture(rendered)
+    }
+
     func testOutcomeDaysRenderNewestFirstAndCountEachRepeatedRoomOccurrence() async throws {
         let store = store()
         await store.waitForMeetingLibrary()

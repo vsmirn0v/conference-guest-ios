@@ -3227,3 +3227,10 @@
 "assistant.compact.mentions" = "提及";
 "assistant.compact.follow" = "跟进";
 "assistant.compact.participating" = "参与";
+
+/* History sync and transcription availability */
+"iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud 暂时不可用。同步将自动重试。";
+"Some audio is missing from this transcript." = "此转录缺少部分音频。";
+"Some audio was skipped while this Mac was busy." = "此 Mac 忙碌时跳过了部分音频。";
+"The speech model was unavailable during this period." = "此期间语音识别模型不可用。";
+"Next sync attempt at %@" = "下次同步尝试时间：%@";

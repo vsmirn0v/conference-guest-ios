@@ -3454,3 +3454,10 @@
 "assistant.compact.mentions" = "Упом.";
 "assistant.compact.follow" = "Следить";
 "assistant.compact.participating" = "Участие";
+
+/* History sync and transcription availability */
+"iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud временно недоступен. Синхронизация повторится автоматически.";
+"Some audio is missing from this transcript." = "В этой расшифровке отсутствует часть аудио.";
+"Some audio was skipped while this Mac was busy." = "Часть аудио пропущена, пока этот Mac был занят.";
+"The speech model was unavailable during this period." = "В этот период модель распознавания речи была недоступна.";
+"Next sync attempt at %@" = "Следующая попытка синхронизации в %@";

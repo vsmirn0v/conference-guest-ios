@@ -941,7 +941,7 @@ import UserNotifications
         let id = workspaceSync.historySessionID(rawID)
         guard !meetings.contains(where: { workspaceSync.historySessionID($0.workspaceSessionID) == id }),
               workspaceSync.isHistoryRefreshWriter(for: id, at: library.calendar.currentTime),
-              let old = attention.store.assistant.outcomes.first(where: { $0.meetingID == id && $0.transcriptFingerprint != nil }),
+              let old = attention.store.assistant.outcomes.first(where: { $0.meetingID == id }),
               let session = workspaceSync.historyConversation(for: id, in: attention.store.meetingLibrary.workspaceJournal),
               let end = session.endedAt else { return }
         let window = MeetingOutcomePrompt.historyWindow(title: session.title, events: session.events, endedAt: end,

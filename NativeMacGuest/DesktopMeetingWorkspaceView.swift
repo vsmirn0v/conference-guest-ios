@@ -104,14 +104,16 @@ struct NativeDesktopMeetingWorkspaceView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, 22).padding(.vertical, 14)
-            Divider()
+            if !workspace.meetings.isEmpty {
+                header
+                    .padding(.horizontal, 22).padding(.vertical, 14)
+                Divider()
+            }
             MeetingWorkspaceContent(workspace: workspace, state: state,
                 journal: store.meetingLibrary.workspaceJournal)
         }
         .navigationTitle(L("Live"))
-        .tint(.teal)
+        .tint(.orange)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { state.prune(liveIDs: Set(workspace.meetings.map(\.sessionID))) }
         .onChange(of: workspace.meetings.map(\.sessionID)) { state.prune(liveIDs: Set($0)) }
@@ -177,15 +179,19 @@ private struct MeetingWorkspaceContent: View {
             if let id = workspace.lastFinishedHistoryID {
                 Button(L("Open saved meeting"), systemImage: "clock.arrow.circlepath") {
                     workspace.openMeetingHistory(id, source: .workspace)
-                }.buttonStyle(.link)
+                }.buttonStyle(.borderless).foregroundStyle(.orange)
             }
             if workspace.meetings.isEmpty {
+                ScrollView {
+                VStack(spacing: 18) {
                 WorkspaceEmptyView(title: L("No live meetings"), detail: L("Join a meeting to follow its conversation here."),
                                    symbol: "dot.radiowaves.left.and.right")
+                    .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         TextField(L("Invitation link"), text: $workspace.invitation)
                             .textFieldStyle(.roundedBorder).onSubmit(workspace.joinInput)
+                            .accessibilityIdentifier("meetingWorkspace.invitation")
                         Button(L("Join")) { workspace.joinInput() }
                             .buttonStyle(.borderedProminent)
                             .disabled(workspace.preparing || workspace.invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -193,7 +199,7 @@ private struct MeetingWorkspaceContent: View {
                     if let next = workspace.library.calendar.upcoming.first {
                         Button { workspace.library.open(next) } label: {
                             Label(next.title + " · " + workspaceDate(next.start), systemImage: "calendar")
-                        }.buttonStyle(.link)
+                        }.buttonStyle(.borderless).foregroundStyle(.orange)
                     }
                     if !workspace.library.recent.isEmpty {
                         Menu(L("Recent rooms")) {
@@ -202,9 +208,11 @@ private struct MeetingWorkspaceContent: View {
                             }
                         }
                     }
-                    Button(L("Review saved meetings")) { workspace.openMeetingHistory() }.buttonStyle(.link)
+                    Button(L("Review saved meetings")) { workspace.openMeetingHistory() }.buttonStyle(.borderless).foregroundStyle(.orange)
                 }.frame(maxWidth: 480)
-                Spacer(minLength: 0)
+                }.frame(maxWidth: .infinity).padding(.vertical, 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 GeometryReader { geometry in
                     let models = workspace.meetings
@@ -276,7 +284,7 @@ struct WorkspacePanel: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: 12)
         content
             .background(Color(nsColor: .controlBackgroundColor), in: shape)
-            .overlay(shape.strokeBorder(selected ? .teal : Color(nsColor: .separatorColor),
+            .overlay(shape.strokeBorder(selected ? .orange : Color(nsColor: .separatorColor),
                                         lineWidth: selected ? 1.5 : 0.5).allowsHitTesting(false))
     }
 }

@@ -171,9 +171,10 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
     /// occurrence or overlapping call in the same room.
     @discardableResult
     public mutating func coalesceOverlappingSessions(
+        excludingSessions: Set<UUID> = [],
         respectingTransitionMode: (String?) -> String? = { _ in nil }
     ) -> [(loser: UUID, winner: UUID)] {
-        let active = sessions.values.filter { $0.canonicalSessionID == nil && !$0.isDeleted.value }
+        let active = sessions.values.filter { $0.canonicalSessionID == nil && !$0.isDeleted.value && !excludingSessions.contains($0.id) }
             .sorted { ($0.startedAt, $0.id.uuidString) < ($1.startedAt, $1.id.uuidString) }
         var redirects: [(loser: UUID, winner: UUID)] = []
         var consumed: Set<UUID> = []
@@ -225,6 +226,28 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
         return redirects
     }
 
+    /// Older clients stored join times without the portable calendar occurrence.
+    /// Repair only an unambiguous room and time match, preserving explicit unlink choices.
+    public mutating func inferCalendarAssociations(from calendar: [MeetingCalendarAssociation] = []) -> Set<UUID> {
+        let known = calendar + sessions.values.compactMap { $0.calendarAssociation?.value }
+        var changed: Set<UUID> = []
+        for session in sessions.values where !session.isDeleted.value && session.canonicalSessionID == nil &&
+            session.calendarAssociation == nil && session.historyGroupParent == nil {
+            guard let invitation = session.invitation.value, let room = MeetingRoomIdentity(invitation) else { continue }
+            let sameRoom = known.filter { $0.roomKey == room.workspaceKey }
+            let candidates = sameRoom.filter { candidate in
+                let next = sameRoom.filter { $0.start > candidate.start && !$0.matches(candidate) }.map(\.start).min()
+                return candidate.allowsRejoin(at: session.startedAt, before: next)
+            }
+            guard let candidate = candidates.first, candidates.allSatisfy({ $0.matches(candidate) }) else { continue }
+            var linked = session
+            linked.calendarAssociation = SyncValue(candidate, version: nextVersion())
+            sessions[session.id] = linked
+            changed.insert(session.id)
+        }
+        return changed
+    }
+
     private func resolvedTransitionMode(
         for first: SyncedMeetingSession,
         second: SyncedMeetingSession,
@@ -259,6 +282,8 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
         _ second: SyncedMeetingSession,
         transitionMode: (String?) -> String?
     ) -> Bool {
+        // A manual grouping or separation is authoritative on every device.
+        if first.historyGroupParent != nil || second.historyGroupParent != nil { return false }
         if first.calendarAssociation != nil || second.calendarAssociation != nil {
             guard let lhs = first.calendarAssociation?.value, let rhs = second.calendarAssociation?.value else { return false }
             return lhs.matches(rhs)
@@ -344,6 +369,7 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
         public var changedTaskIDs: Set<UUID> = []
         public var changedProfileIDs: Set<String> = []
         public var changedSettingsKeys: Set<String> = []
+        public init() {}
     }
 
     @discardableResult

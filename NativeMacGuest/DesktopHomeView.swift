@@ -99,6 +99,7 @@ struct NativeDesktopHomeView: View {
             }
             if item == .assistant { AssistantUnreadBadge(store: workspace.attention.store) }
         }.tag(NativeDesktopSidebarItem.section(item))
+            .accessibilityIdentifier("sidebar.section.\(item.id)")
     }
     private var sidebar: some View {
         List(selection: Binding(get: { workspace.sidebarSelection }, set: { workspace.sidebarSelection = $0 })) {
@@ -133,6 +134,14 @@ struct NativeDesktopHomeView: View {
         }
     }
     var body: some View {
+        GeometryReader { geometry in
+            navigation
+                .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .tint(.orange)
+        .accentColor(.orange)
+    }
+    private var navigation: some View {
         NavigationSplitView {
             sidebar
         } detail: {

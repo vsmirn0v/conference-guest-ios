@@ -601,7 +601,7 @@ import SwiftUI
             probeLog("assistant-capture-stop", ["samples": samples.count, "rms": String(format: "%.5f", rms)])
             guard let self, samples.count >= 3200, let model = ListenModelStore.shared.recognizerModel() else { return }
             let text: String? = await withCheckedContinuation { continuation in
-                LocalSpeechRecognizer.shared.transcribe(samples, model: model) { text, _ in continuation.resume(returning: text) }
+                LocalSpeechRecognizer.shared.transcribe(samples, model: model) { text, _, _ in continuation.resume(returning: text) }
             }
             guard let clean = text?.trimmed, !clean.isEmpty else {
                 // Empty text with a silent buffer means the tap captured nothing — another

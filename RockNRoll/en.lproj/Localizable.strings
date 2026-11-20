@@ -3455,3 +3455,10 @@
 "assistant.compact.mentions" = "Mentions";
 "assistant.compact.follow" = "Follow";
 "assistant.compact.participating" = "Engage";
+
+/* History sync and transcription availability */
+"iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud is temporarily unavailable. Sync will retry automatically.";
+"Some audio is missing from this transcript." = "Some audio is missing from this transcript.";
+"Some audio was skipped while this Mac was busy." = "Some audio was skipped while this Mac was busy.";
+"The speech model was unavailable during this period." = "The speech model was unavailable during this period.";
+"Next sync attempt at %@" = "Next sync attempt at %@";

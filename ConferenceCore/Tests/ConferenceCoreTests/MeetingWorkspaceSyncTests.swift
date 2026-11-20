@@ -430,6 +430,41 @@ final class MeetingWorkspaceSyncTests: XCTestCase {
         XCTAssertEqual(doc.mergedTranscript(for: s1).count, 1)
     }
 
+    func testLegacyCalendarAssociationRequiresUniqueRoomWindowAndHonorsSeparateChoice() throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let url = try XCTUnwrap(URL(string: "https://rock.glowsoft.ru/jams/history?name=Mac"))
+        let room = try XCTUnwrap(MeetingRoomIdentity(url))
+        let event = CalendarMeeting(id: "one", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+            title: "Review", start: start, end: start + 1800)
+        let next = CalendarMeeting(id: "two", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+            title: "Review", start: start + 1800, end: start + 3600)
+        let link = MeetingCalendarAssociation(event, room: room)
+        let nextLink = MeetingCalendarAssociation(next, room: room)
+        var doc = MeetingWorkspaceSyncDocument(device: "mac")
+        func entry(_ at: Date, _ version: SyncVersion) -> SyncedMeetingSession {
+            SyncedMeetingSession(id: UUID(), occurrenceKey: "legacy", title: SyncValue("Review", version: version),
+                hasTitleOverride: SyncValue(false, version: version), invitation: SyncValue(url, version: version),
+                roomIdentity: "legacy", startedAt: at, endedAt: SyncValue(at + 60, version: version),
+                timeZoneID: "UTC", state: SyncValue("ended", version: version),
+                isDeleted: SyncValue(false, version: version), createdAt: at, updatedAt: at)
+        }
+        let first = entry(start, doc.nextVersion())
+        let second = entry(start + 900, doc.nextVersion())
+        let other = entry(start + 1900, doc.nextVersion())
+        var separate = entry(start + 1200, doc.nextVersion())
+        separate.calendarAssociation = SyncValue(link, version: doc.nextVersion())
+        separate.historyGroupParent = SyncValue(nil, version: doc.nextVersion())
+        for row in [first, second, other, separate] { doc.upsertSession(row) }
+        XCTAssertEqual(doc.inferCalendarAssociations(from: [link, nextLink]), [first.id, second.id, other.id])
+        XCTAssertEqual(doc.sessions[other.id]?.calendarAssociation?.value, nextLink)
+        XCTAssertTrue(doc.coalesceOverlappingSessions(excludingSessions: [second.id]).isEmpty)
+        XCTAssertEqual(doc.resolveCanonicalSessionID(for: second.id), second.id)
+        XCTAssertEqual(doc.coalesceOverlappingSessions().count, 1)
+        XCTAssertEqual(doc.resolveCanonicalSessionID(for: second.id), first.id)
+        XCTAssertEqual(doc.resolveCanonicalSessionID(for: separate.id), separate.id)
+        XCTAssertEqual(doc.resolveCanonicalSessionID(for: other.id), other.id)
+    }
+
     func testCalendarOccurrenceUsesOriginalDateAndMergesSequentialMacAndPhoneJoins() throws {
         let start = Date(timeIntervalSince1970: 1_700_000_000)
         let ends = start + 30 * 60

@@ -1335,6 +1335,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         }
         var doc = replica.workspaceDoc
         var report = doc.mergeLibraryRecords(changes.records)
+        report.changedSessions.formUnion(doc.inferCalendarAssociations())
         let redirects = doc.coalesceOverlappingSessions { roomIdentity in
             guard let roomIdentity else { return nil }
             return localModeOverrides["room:" + roomIdentity]

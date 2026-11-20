@@ -1,4 +1,5 @@
 import Combine
+import CloudKit
 import ConferenceCore
 import Foundation
 
@@ -8,6 +9,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     @Published private(set) var lastLibrarySyncAt: Date?
     @Published private(set) var syncError: String?
     @Published private(set) var isSyncing = false
+    @Published private(set) var nextRetryAt: Date?
 
     let deviceID: String
     var onTranscriptChanged: ((UUID) -> Void)?
@@ -58,6 +60,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         var localAttendance: [UUID: DeviceParticipationLeg]?
         var calendarLinks: [UUID: SyncValue<MeetingCalendarAssociation?>]?
         var historyGroups: [UUID: SyncValue<UUID?>]?
+        var pendingHistoryApply: Set<UUID>?
         var lastExportedNoteMarkdown: [UUID: String] = [:]
         var lastExportedOutcomes: [UUID: ExportedOutcomeSnapshot] = [:]
         var lastExportedTaskIDs: [UUID: Set<UUID>] = [:]
@@ -146,7 +149,6 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     }
 
     func scheduleSync(delayMilliseconds: Int = 600) {
-        guard syncPreferences.enabled else { return }
         let remainingMs = max(0, Int(ceil(cloudBackoffUntil.timeIntervalSinceNow * 1000)))
         let effectiveDelay = max(delayMilliseconds, remainingMs)
         pendingSyncTask?.cancel()
@@ -196,7 +198,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     func setHistoryGroup(sessionID: UUID, parent: UUID?) {
         let source = canonicalSessionID(sessionID)
         let target = parent.map(historySessionID)
-        guard source != target, historyGroupLink(source)?.value != target else { return }
+        guard source != target else { return }
+        if let previous = historyGroupLink(source), previous.value == target { return }
         let link = SyncValue(target, version: replica.workspaceDoc.nextVersion())
         if replica.historyGroups == nil { replica.historyGroups = [:] }
         replica.historyGroups?[source] = link
@@ -221,6 +224,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             byID[item.id] = latest
         }
         session.events = byID.values.sorted { ($0.occurredAt, $0.id) < ($1.occurredAt, $1.id) }
+        session.endedAt = related.contains(where: { $0.endedAt == nil }) ? nil : related.compactMap(\.endedAt).max()
         return session
     }
 
@@ -272,7 +276,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             $0.leftAt == nil && date.timeIntervalSince($0.updatedAt) < OutcomeCoordinatorPolicy.activeLegStaleSeconds
         }) else { return false }
         let macWriters = legs.filter { $0.deviceKind == .mac && $0.hasOutcomeWriter }
-        return macWriters.map(\.deviceID).min().map { $0 == deviceID } ?? !syncPreferences.enabled
+        return macWriters.map(\.deviceID).min().map { $0 == deviceID } ?? (legs.isEmpty || !syncPreferences.enabled)
     }
 
     func transcriptReceipt(for id: UUID) -> (received: Bool, pending: Bool) {
@@ -338,6 +342,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     /// generation incorporates every participant across devices.
     func pullAndMergeTranscripts(for sessionID: UUID) async {
         guard syncPreferences.enabled, syncPreferences.syncWorkspace, syncPreferences.transcriptRetention != .off else { return }
+        guard Date() >= cloudBackoffUntil else { return }
         do {
             let session = try await connectZone(name: "transcript", transport: transcriptTransport) {
                 self.replica.transcriptToken = nil
@@ -351,7 +356,13 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             }
             persistReplica()
         } catch {
-            syncError = error.localizedDescription
+            syncError = syncErrorDescription(error)
+            if let delay = CloudKitRateLimit.retryAfter(for: error, consecutiveFailures: consecutiveCloudBackoffs + 1) {
+                consecutiveCloudBackoffs += 1
+                cloudBackoffUntil = Date().addingTimeInterval(delay)
+                nextRetryAt = cloudBackoffUntil
+                scheduleSync(delayMilliseconds: 0)
+            }
         }
     }
 
@@ -460,6 +471,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
         repeat {
             needsAnotherPass = false
+            do { try await reconcileLocalHistory() }
+            catch { syncError = error.localizedDescription; break }
             guard syncPreferences.enabled else {
                 calendar?.applyRemoteSchedule([], localDeviceID: deviceID)
                 break
@@ -480,12 +493,13 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                     try await syncTranscriptsPass(prefetched: prefetchedTranscripts)
                     anyPassSucceeded = true
                 } catch {
-                    syncError = error.localizedDescription
+                    syncError = syncErrorDescription(error)
                     let ns = error as NSError
                     var fields: [String: Any] = ["pass": "library", "domain": ns.domain, "code": ns.code]
                     if let retryAfter = CloudKitRateLimit.retryAfter(for: error, consecutiveFailures: consecutiveCloudBackoffs + 1) {
                         consecutiveCloudBackoffs += 1
                         cloudBackoffUntil = Date().addingTimeInterval(retryAfter)
+                        nextRetryAt = cloudBackoffUntil
                         hitRateLimit = true
                         fields["retryAfter"] = Int(retryAfter.rounded())
                     }
@@ -499,12 +513,13 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                         try await syncCalendarPass()
                         anyPassSucceeded = true
                     } catch {
-                        syncError = error.localizedDescription
+                        syncError = syncErrorDescription(error)
                         let ns = error as NSError
                         var fields: [String: Any] = ["pass": "schedule", "domain": ns.domain, "code": ns.code]
                         if let retryAfter = CloudKitRateLimit.retryAfter(for: error, consecutiveFailures: consecutiveCloudBackoffs + 1) {
                             consecutiveCloudBackoffs += 1
                             cloudBackoffUntil = Date().addingTimeInterval(retryAfter)
+                            nextRetryAt = cloudBackoffUntil
                             hitRateLimit = true
                             fields["retryAfter"] = Int(retryAfter.rounded())
                         }
@@ -518,6 +533,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             if anyPassSucceeded && !hitRateLimit {
                 consecutiveCloudBackoffs = 0
                 cloudBackoffUntil = .distantPast
+                nextRetryAt = nil
                 lastSyncedAt = Date()
                 persistReplica()
             } else if anyPassSucceeded {
@@ -531,12 +547,45 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         } while needsAnotherPass && !Task.isCancelled
     }
 
-    private func syncWorkspacePass() async throws -> CloudZoneSession? {
+    private func syncErrorDescription(_ error: Error) -> String {
+        let ns = error as NSError
+        if ns.domain == CKError.errorDomain, ns.code == CKError.serviceUnavailable.rawValue {
+            return L("iCloud is temporarily unavailable. Sync will retry automatically.")
+        }
+        return error.localizedDescription
+    }
+
+    private func reconcileLocalHistory() async throws {
+        remoteApplyDepth += 1
+        defer { remoteApplyDepth -= 1 }
         await meetingLibrary.prepare()
         let snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
         ingestLocalSnapshotIntoDocument(snapshot)
         ingestLocalContextSettings()
+        exportLocalTranscriptsAndArchive(snapshot: snapshot)
+        let associations = (calendar?.meetings ?? []).compactMap { event -> MeetingCalendarAssociation? in
+            guard !event.allDay, !event.tentative, let room = event.roomIdentity else { return nil }
+            return MeetingCalendarAssociation(event, room: room)
+        }
+        var report = MeetingWorkspaceSyncDocument.LibraryMergeOutcome()
+        report.changedSessions = replica.workspaceDoc.inferCalendarAssociations(from: associations)
+        let drafts = Set(snapshot.sessions.filter { notes.draft(sessionID: $0.id)?.isDirty == true }.map(\.id))
+        let redirects = replica.workspaceDoc.coalesceOverlappingSessions(excludingSessions: drafts)
+        for redirect in redirects {
+            report.changedSessions.formUnion([redirect.winner, redirect.loser])
+        }
+        report.changedSessions.formUnion(replica.pendingHistoryApply ?? [])
+        replica.pendingHistoryApply = report.changedSessions
+        persistReplica()
+        guard !report.changedSessions.isEmpty else { return }
+        objectWillChange.send()
+        try await applyRemoteLibraryReport(report)
+        replica.pendingHistoryApply = nil
+        persistReplica()
+        for redirect in redirects { onTranscriptChanged?(redirect.winner) }
+    }
 
+    private func syncWorkspacePass() async throws -> CloudZoneSession? {
         let zoneSession = try await connectZone(name: "library", transport: libraryTransport) {
             self.replica.libraryToken = nil
             self.replica.acknowledgedLibrary.removeAll()
@@ -556,7 +605,9 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         }
         var doc = replica.workspaceDoc
         var report = doc.mergeLibraryRecords(changes.records)
-        let redirects = doc.coalesceOverlappingSessions { roomIdentity in
+        report.changedSessions.formUnion(doc.inferCalendarAssociations())
+        let drafts = Set(doc.sessions.keys.filter { notes.draft(sessionID: $0)?.isDirty == true })
+        let redirects = doc.coalesceOverlappingSessions(excludingSessions: drafts) { roomIdentity in
             guard let roomIdentity else { return nil }
             return roomModes[roomIdentity.workspaceFolded]
         }
@@ -1149,6 +1200,17 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
         let store = meetingLibrary.store
         for sessionID in report.changedSessions {
+            let canonical = replica.workspaceDoc.resolveCanonicalSessionID(for: sessionID)
+            if canonical != sessionID { try await store.preserveRedirectedHistory(from: sessionID, to: canonical) }
+        }
+        // Preserve source versions above, then release their unique task IDs before
+        // the canonical outcome claims them. pendingHistoryApply makes retries durable.
+        let orderedSessions = report.changedSessions.sorted {
+            let leftRedirect = replica.workspaceDoc.resolveCanonicalSessionID(for: $0) != $0
+            let rightRedirect = replica.workspaceDoc.resolveCanonicalSessionID(for: $1) != $1
+            return leftRedirect == rightRedirect ? $0.uuidString < $1.uuidString : leftRedirect
+        }
+        for sessionID in orderedSessions {
             let remoteSession = replica.workspaceDoc.sessions[sessionID]
             let remoteNote = replica.workspaceDoc.notes[sessionID]
             let sessionOutcome = replica.workspaceDoc.outcomes[sessionID]

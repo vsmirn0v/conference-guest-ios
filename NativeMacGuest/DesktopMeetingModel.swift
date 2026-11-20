@@ -257,9 +257,9 @@ import UniformTypeIdentifiers
             LocalSpeechRecognizer.shared.acquire(model)   // loads before the first utterance
             let generation = UUID()
             localTranscriptionGeneration = generation
-            let transcriber = MeetingTranscriber(model: model, vadModel: vad, onDropped: { [weak self] start, end in
+            let transcriber = MeetingTranscriber(model: model, vadModel: vad, onDropped: { [weak self] start, end, reason in
                 guard let self else { return }
-                self.workspaceJournal?.recordGap(sessionID: self.workspaceSessionID, reason: "decode", from: start, until: end)
+                self.workspaceJournal?.recordGap(sessionID: self.workspaceSessionID, reason: reason.rawValue, from: start, until: end)
             }) { [weak self] line in
                 self?.receiveLocalLine(line, generation: generation)
             }
@@ -298,7 +298,10 @@ import UniformTypeIdentifiers
                 probeLog("local-transcription-stop", ["utterances": summary.utterances, "lines": summary.lines,
                     "audioSeconds": summary.audioSeconds.rounded(), "decodeSeconds": summary.decodeSeconds.rounded(),
                     "droppedSeconds": summary.droppedSeconds.rounded(), "micUtterances": summary.microphoneUtterances,
-                    "micSeconds": summary.microphoneSeconds.rounded()])
+                    "micSeconds": summary.microphoneSeconds.rounded(),
+                    "dropReasons": Dictionary(uniqueKeysWithValues: summary.droppedSecondsByReason.map {
+                        ($0.key.rawValue, $0.value.rounded())
+                    })])
                 archivedLocalAttribution[generation] = nil
                 transcriptionDrains[generation] = nil
             }

@@ -150,7 +150,7 @@ struct MeetingHistoryView: View {
             }
         }
         .navigationTitle(L("Meeting history"))
-        .tint(.teal)
+        .tint(.orange)
         .onReceive(workspace?.workspaceSync.objectWillChange.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
             syncRevision += 1
         }
@@ -243,9 +243,7 @@ struct MeetingHistoryView: View {
         navigation.taskID = nil
         navigation.source = nil
         navigation.eventID = card.flatMap { searchedEvent($0.sessionID)?.id }
-        navigation.tab = navigation.eventID != nil || (card?.outcomeID == nil && card.map {
-            journal.session(id: $0.sessionID) != nil
-        } == true) ? .transcript : .summary
+        navigation.tab = navigation.eventID != nil ? .transcript : .summary
     }
 
     private func selectedMeeting(_ card: MeetingLibraryCard, compact: Bool) -> some View {
@@ -288,12 +286,15 @@ struct MeetingHistoryView: View {
                         .labelStyle(.iconOnly).help(L("Participation and calendar"))
                 }
             }.padding(16)
-            Picker(L("Meeting history"), selection: $navigation.tab) {
-                ForEach(MeetingHistoryTab.allCases) { tab in Text(L(tab.rawValue)).tag(tab) }
+            Picker(L("Meeting history"), selection: Binding(get: {
+                navigation.tab == .transcript ? MeetingHistoryTab.transcript : .summary
+            }, set: { navigation.tab = $0 })) {
+                Text(L("Summary")).tag(MeetingHistoryTab.summary)
+                Text(L("Transcript")).tag(MeetingHistoryTab.transcript)
             }.labelsHidden().pickerStyle(.segmented).padding([.horizontal, .bottom], 10)
             Divider()
             switch navigation.tab {
-            case .summary: ScrollView { outcomeContent(card) }
+            case .summary, .tasks, .notes: overview(card, sources: sources)
             case .transcript:
                 if let session = conversation(card.sessionID), !session.events.isEmpty {
                     WorkspaceSessionReview(session: session, journal: journal, guidance: preferences.workspaceGuidance,
@@ -318,39 +319,6 @@ struct MeetingHistoryView: View {
                         }
                     }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            case .tasks:
-                let taskSources = sources.compactMap { source in
-                    data.outcomes.first(where: { $0.id == source.outcomeID })
-                }
-                if !taskSources.isEmpty {
-                    ScrollViewReader { scroll in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 14) {
-                                ForEach(taskSources) { outcome in
-                                    if taskSources.count > 1 { Text(outcome.meetingTitle).font(.headline) }
-                                    meetingTasks(outcome)
-                                }
-                            }.padding(16)
-                        }
-                        .task(id: navigation.taskID) {
-                            if let id = navigation.taskID { scroll.scrollTo(id, anchor: .center) }
-                        }
-                    }
-                } else {
-                    Text(L("No tasks yet.")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            case .notes:
-                if sources.count > 1 {
-                    Picker(L("Notes"), selection: Binding(get: {
-                        sources.first(where: { $0.sessionID == selectedNoteSource })?.sessionID ?? card.sessionID
-                    }, set: { selectedNoteSource = $0 })) {
-                        ForEach(sources) { source in
-                            Text(source.title + " · " + workspaceDate(source.startedAt)).tag(source.sessionID)
-                        }
-                    }.padding(10)
-                }
-                let source = sources.first { $0.sessionID == selectedNoteSource } ?? card
-                meetingNotes(source).id(source.sessionID)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: card.sessionID) {
@@ -362,6 +330,57 @@ struct MeetingHistoryView: View {
         }
         .sheet(isPresented: $showingContext) {
             if let workspace { MeetingHistoryContext(card: card, workspace: workspace) }
+        }
+    }
+
+    private func overview(_ card: MeetingLibraryCard, sources: [MeetingLibraryCard]) -> some View {
+        ScrollViewReader { scroll in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    outcomeContent(card)
+                    overviewTasks(sources: sources).padding(.horizontal, 20).id("tasks")
+                    VStack(alignment: .leading, spacing: 10) {
+                        if sources.count > 1 {
+                            Picker(L("Notes"), selection: Binding(get: {
+                                sources.first(where: { $0.sessionID == selectedNoteSource })?.sessionID ?? card.sessionID
+                            }, set: { selectedNoteSource = $0 })) {
+                                ForEach(sources) { source in
+                                    Text(source.title + " · " + workspaceDate(source.startedAt)).tag(source.sessionID)
+                                }
+                            }
+                        }
+                        let source = sources.first { $0.sessionID == selectedNoteSource } ?? card
+                        meetingNotes(source).id(source.sessionID).frame(height: 340)
+                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    }.padding(.horizontal, 20).id("notes")
+                    if let outcome = data.outcomes.first(where: { $0.id == card.outcomeID }) {
+                        seriesHistory(outcome).padding(.horizontal, 20)
+                    }
+                    AssistantOutcomeHistoryView(store: library.store, sessionID: card.sessionID, updatedAt: card.updatedAt)
+                    ParticipationOutcomeActivity(sessionID: card.sessionID, root: attention.store.root)
+                }.padding(.bottom, 20)
+            }
+            .task(id: navigation.taskID) {
+                if let id = navigation.taskID { scroll.scrollTo(id, anchor: .center) }
+            }
+            .task(id: navigation.tab) {
+                if navigation.tab == .tasks, navigation.taskID == nil { scroll.scrollTo("tasks", anchor: .top) }
+                if navigation.tab == .notes { scroll.scrollTo("notes", anchor: .top) }
+            }
+        }
+    }
+
+    @ViewBuilder private func overviewTasks(sources: [MeetingLibraryCard]) -> some View {
+        let outcomes = sources.compactMap { source in data.outcomes.first { $0.id == source.outcomeID } }
+        if outcomes.isEmpty {
+            GroupBox(L("Tasks")) {
+                Text(L("No tasks yet.")).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            ForEach(outcomes) { outcome in
+                if outcomes.count > 1 { Text(outcome.meetingTitle).font(.headline) }
+                meetingTasks(outcome)
+            }
         }
     }
 
@@ -401,8 +420,6 @@ struct MeetingHistoryView: View {
                 Text(card.state == .active || card.state == .reconnecting ? L("Meeting in progress") : L("Outcome unavailable"))
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(20)
             }
-            AssistantOutcomeHistoryView(store: library.store, sessionID: card.sessionID, updatedAt: card.updatedAt)
-            ParticipationOutcomeActivity(sessionID: card.sessionID, root: attention.store.root)
         }
     }
 
@@ -475,8 +492,9 @@ struct MeetingHistoryView: View {
                 }
             }
         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.accentColor.opacity(0.13) : .clear,
+            .background(isSelected ? Color.orange.opacity(0.13) : .clear,
                 in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
     }
 
     private func generationDetail(_ card: MeetingLibraryCard) -> some View {
@@ -563,37 +581,27 @@ struct MeetingHistoryView: View {
                 TextField(L("Summary"), text: binding.summary, axis: .vertical).lineLimit(3...8)
                     .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
             }
-            editableLines(L("Decisions"), values: binding.decisions)
-            if let id = outcome.meetingID, let citations = outcome.decisionEvidence, let session = conversation(id) {
-                let citedIDs = Set(outcome.decisions.flatMap { citations[$0] ?? [] })
-                let cited = session.visibleEvents.filter { citedIDs.contains($0.id) }
-                if !cited.isEmpty {
-                    GroupBox(L("Source passages")) {
-                        ForEach(cited) { event in
-                            Button(workspaceDate(event.occurredAt) + " · " + event.displayAuthor) {
-                                navigation.eventID = event.id
-                                navigation.tab = .transcript
-                            }.buttonStyle(.link)
-                        }
-                    }
-                }
-            }
+            editableLines(L("Decisions"), values: binding.decisions,
+                          evidence: outcome.decisionEvidence ?? [:], sessionID: outcome.meetingID)
             editableLines(L("Open questions"), values: binding.openQuestions)
-            if outcome.seriesID != nil || outcome.invitation != nil {
-                GroupBox(L("Series history")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(data.seriesOutcomes(invitation: outcome.invitation, series: outcome.seriesID)) { item in
-                            Button { select(library.cards.first { $0.outcomeID == item.id }) } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.knownEndedAt?.formatted(date: .abbreviated, time: .shortened) ?? L("Date unknown")).font(.caption.weight(.semibold))
-                                    Text(item.summary).font(.callout).foregroundStyle(.secondary).lineLimit(3)
-                                }.frame(maxWidth: .infinity, alignment: .leading)
-                            }.buttonStyle(.plain)
-                        }
+        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func seriesHistory(_ outcome: MeetingOutcome) -> some View {
+        if outcome.seriesID != nil || outcome.invitation != nil {
+            GroupBox(L("Series history")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(data.seriesOutcomes(invitation: outcome.invitation, series: outcome.seriesID)) { item in
+                        Button { select(library.cards.first { $0.outcomeID == item.id }) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.knownEndedAt?.formatted(date: .abbreviated, time: .shortened) ?? L("Date unknown")).font(.caption.weight(.semibold))
+                                Text(item.summary).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(.plain)
                     }
                 }
             }
-        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func meetingTasks(_ outcome: MeetingOutcome) -> some View {
@@ -642,7 +650,7 @@ struct MeetingHistoryView: View {
                             }.buttonStyle(.borderless).help(L("Delete task"))
                         }
                         .padding(6)
-                        .background(navigation.taskID == task.id ? Color.accentColor.opacity(0.12) : .clear,
+                        .background(navigation.taskID == task.id ? Color.orange.opacity(0.12) : .clear,
                                     in: RoundedRectangle(cornerRadius: 6))
                         .id(task.id)
                     }
@@ -675,7 +683,30 @@ struct MeetingHistoryView: View {
         }
     }
 
-    private func editableLines(_ title: String, values: Binding<[String]>) -> some View {
+    @ViewBuilder private func decisionSources(_ ids: [String], sessionID: UUID?) -> some View {
+        if let sessionID, let session = conversation(sessionID) {
+            let events: [MeetingWorkspaceEvent] = session.visibleEvents.filter { ids.contains($0.id) }
+            ForEach(events) { event in
+                decisionSource(event)
+            }
+        }
+    }
+
+    private func decisionSource(_ event: MeetingWorkspaceEvent) -> some View {
+        let timestamp: String = workspaceDate(event.occurredAt)
+        let title: String = timestamp + " · " + event.displayAuthor
+        return Button {
+            navigation.eventID = event.id
+            navigation.tab = .transcript
+        } label: {
+            Label(title, systemImage: "text.quote")
+        }.buttonStyle(.borderless).foregroundStyle(.orange).font(.caption)
+            .help(event.displayText)
+            .accessibilityIdentifier("history.decision-source")
+    }
+
+    private func editableLines(_ title: String, values: Binding<[String]>, evidence: [String: [String]] = [:],
+                               sessionID: UUID? = nil) -> some View {
         GroupBox(title) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(values.wrappedValue.enumerated()), id: \.offset) { index, current in
@@ -687,7 +718,10 @@ struct MeetingHistoryView: View {
                         }
                     )
                     HStack(alignment: .top) {
-                        TextField(title, text: lineBinding, axis: .vertical).textFieldStyle(.plain)
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField(title, text: lineBinding, axis: .vertical).textFieldStyle(.plain)
+                            decisionSources(evidence[current] ?? [], sessionID: sessionID)
+                        }
                         Button {
                             guard values.wrappedValue.indices.contains(index) else { return }
                             values.wrappedValue.remove(at: index)

@@ -3227,3 +3227,10 @@
 "assistant.compact.mentions" = "उल्लेख";
 "assistant.compact.follow" = "अनुसरण";
 "assistant.compact.participating" = "सहभागी";
+
+/* History sync and transcription availability */
+"iCloud is temporarily unavailable. Sync will retry automatically." = "iCloud अस्थायी रूप से उपलब्ध नहीं है। सिंक अपने आप फिर से होगा।";
+"Some audio is missing from this transcript." = "इस ट्रांसक्रिप्ट में कुछ ऑडियो मौजूद नहीं है।";
+"Some audio was skipped while this Mac was busy." = "इस Mac के व्यस्त होने के दौरान कुछ ऑडियो छोड़ दिया गया।";
+"The speech model was unavailable during this period." = "इस अवधि में वाक् पहचान मॉडल उपलब्ध नहीं था।";
+"Next sync attempt at %@" = "अगला सिंक प्रयास %@ बजे";

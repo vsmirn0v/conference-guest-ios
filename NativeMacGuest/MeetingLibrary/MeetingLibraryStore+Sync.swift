@@ -2,6 +2,26 @@ import ConferenceCore
 import Foundation
 
 extension MeetingLibraryStore {
+    /// Keep the source summary and historical task citations when an alias replaces a session.
+    func preserveRedirectedHistory(from source: UUID, to target: UUID) throws {
+        let db = try db()
+        try db.transaction {
+            try Self.ensureSessionExists(db: db, sessionID: target)
+            if let row = try db.one("SELECT outcome_id,revision,updated_at FROM meeting_outcomes WHERE session_id=?", bind: {
+                try Self.bindText($0, source.uuidString, at: 1)
+            }), let id = row.text(0).flatMap(UUID.init(uuidString:)), let outcome = try Self.storedOutcome(db: db, id: id) {
+                try Self.recordOutcomeVersion(db: db, outcome: outcome, sessionID: source,
+                    revision: Int(row.integer(1) ?? 1), savedAt: Self.date(row.integer(2)), canonicalOutcomeID: id)
+            }
+            for table in ["meeting_outcome_versions", "meeting_outcome_task_links"] {
+                try db.run("UPDATE \(table) SET session_id=? WHERE session_id=?") {
+                    try Self.bindText($0, target.uuidString, at: 1)
+                    try Self.bindText($0, source.uuidString, at: 2)
+                }
+            }
+        }
+    }
+
     func noteSyncBase(_ sessionID: UUID) throws -> NoteBaseSnapshot? {
         guard let row = try db().one("SELECT sha256, markdown FROM note_sync_bases WHERE session_id=?", bind: {
             try Self.bindText($0, sessionID.uuidString, at: 1)

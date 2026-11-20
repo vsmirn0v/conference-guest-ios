@@ -133,7 +133,7 @@ struct MeetingHistoryContext: View {
                     confirmJoin = true
                 }.buttonStyle(.borderedProminent)
             }
-        }.padding(20).frame(width: 510)
+        }.padding(20).frame(width: 510).tint(.orange)
         .task(id: card.sessionID) { record = try? await workspace.attention.store.meetingLibrary.store.session(card.sessionID) }
         .confirmationDialog(L("Combine meeting records?"), isPresented: Binding(get: { combineTarget != nil },
             set: { if !$0 { combineTarget = nil } }), titleVisibility: .visible, presenting: combineTarget) { target in
@@ -199,6 +199,9 @@ struct MeetingHistoryContext: View {
             }
             if let failure = sync.syncError {
                 Text(failure).foregroundStyle(.orange)
+                if let retry = sync.nextRetryAt, retry > Date() {
+                    Text(L("Next sync attempt at %@", workspaceDate(retry))).font(.caption).foregroundStyle(.secondary)
+                }
             }
             let receipt = sync.transcriptReceipt(for: card.sessionID)
             if receipt.received { Label(L("Transcript received from another device"), systemImage: "icloud.and.arrow.down") }
@@ -258,7 +261,7 @@ struct HistoryOutcomeReview: View {
                     }
                 }.buttonStyle(.borderedProminent).disabled(applying)
             }
-        }.padding(20).frame(width: 620, height: 520)
+        }.padding(20).frame(width: 620, height: 520).tint(.orange)
     }
 
     private func comparison(_ title: String, _ draft: String, existing: String?, replace: Binding<Bool>) -> some View {

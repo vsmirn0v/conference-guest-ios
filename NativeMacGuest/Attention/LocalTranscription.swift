@@ -76,6 +76,9 @@ struct LocalSpeechRecognizerRuntimeSnapshot: Equatable, Sendable {
 final class LocalSpeechRecognizer: @unchecked Sendable {
     static let shared = LocalSpeechRecognizer()
     static let maxPendingSeconds = 90.0
+    enum DropReason: String, Sendable {
+        case audioBacklog, recognitionBacklog, modelUnavailable, decodeFailure
+    }
     let runtime = CurrentValueSubject<LocalSpeechRecognizerRuntimeSnapshot, Never>(.init())
     private let queue = DispatchQueue(label: "attention.listen.recognizer", qos: .utility)
     private let lock = NSLock()
@@ -84,17 +87,17 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
     private var loaded: ListenRecognizerModel?
     private var runtimeState = LocalSpeechRecognizerRuntimeSnapshot()
 
-    /// Calls `completion` on the recognizer queue: text, or nil when dropped or failed.
-    func transcribe(_ samples: [Float], model: ListenRecognizerModel, completion: @escaping (String?, TimeInterval) -> Void) {
+    /// Reports why audio could not be recognized, including bounded-queue overload.
+    func transcribe(_ samples: [Float], model: ListenRecognizerModel, completion: @escaping (String?, TimeInterval, DropReason?) -> Void) {
         let seconds = Double(samples.count) / 16_000
         let admitted: Bool = { lock.lock(); defer { lock.unlock() }
             guard pending + seconds <= Self.maxPendingSeconds else { return false }
             pending += seconds; return true }()
-        guard admitted else { completion(nil, 0); return }
+        guard admitted else { completion(nil, 0, .recognitionBacklog); return }
         queue.async { [self] in
             defer { lock.lock(); pending -= seconds; lock.unlock() }
             let token = measurementTokenIfLoadNeeded(model)
-            guard load(model, measurementToken: token) else { completion(nil, 0); return }
+            guard load(model, measurementToken: token) else { completion(nil, 0, .modelUnavailable); return }
             runtimeState.activeDecodes += 1
             publishRuntime()
             defer {
@@ -107,7 +110,7 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
                 probeLog("local-transcription-decode-failed", ["error": String(describing: error)]); text = nil
             }
             LocalModelMemoryTracker.shared.refine(.speech)
-            completion(text, ProcessInfo.processInfo.systemUptime - started)
+            completion(text, ProcessInfo.processInfo.systemUptime - started, text == nil ? .decodeFailure : nil)
         }
     }
 
@@ -254,6 +257,7 @@ final class MeetingTranscriber: @unchecked Sendable {
     struct Summary: Equatable {
         var utterances = 0, lines = 0; var audioSeconds = 0.0, decodeSeconds = 0.0, droppedSeconds = 0.0
         var microphoneUtterances = 0; var microphoneSeconds = 0.0
+        var droppedSecondsByReason: [LocalSpeechRecognizer.DropReason: Double] = [:]
     }
     /// The speaker key of your own microphone.
     static let localTrackID = "local-microphone"
@@ -276,7 +280,7 @@ final class MeetingTranscriber: @unchecked Sendable {
     private let model: ListenRecognizerModel
     private let vadModel: URL
     private let onLine: @MainActor (Line) -> Void
-    private let onDropped: (@MainActor (Date, Date) -> Void)?
+    private let onDropped: (@MainActor (Date, Date, LocalSpeechRecognizer.DropReason) -> Void)?
     private let deliveries = DispatchGroup()
     // Main actor: attached sinks by source id.
     private var taps: [String: (source: MeetingAudioSource, tap: MeetingAudioSink)] = [:]
@@ -300,8 +304,8 @@ final class MeetingTranscriber: @unchecked Sendable {
     }
 
     init(model: ListenRecognizerModel, vadModel: URL, recognizer: LocalSpeechRecognizer = .shared,
-         queue: DispatchQueue = DispatchQueue(label: "attention.listen.meeting", qos: .utility),
-         onDropped: (@MainActor (Date, Date) -> Void)? = nil,
+         queue: DispatchQueue = DispatchQueue(label: "attention.listen.meeting", qos: .userInitiated),
+         onDropped: (@MainActor (Date, Date, LocalSpeechRecognizer.DropReason) -> Void)? = nil,
          onLine: @escaping @MainActor (Line) -> Void) {
         self.model = model; self.vadModel = vadModel; self.recognizer = recognizer; self.onLine = onLine
         self.onDropped = onDropped; self.queue = queue
@@ -357,7 +361,9 @@ final class MeetingTranscriber: @unchecked Sendable {
 
     private var summaryIncludingInputDrops: Summary {
         var result = summary
-        result.droppedSeconds += ingressLock.withLock { droppedInputSeconds }
+        let inputDrops = ingressLock.withLock { droppedInputSeconds }
+        result.droppedSeconds += inputDrops
+        result.droppedSecondsByReason[.audioBacklog, default: 0] += inputDrops
         return result
     }
 
@@ -440,7 +446,7 @@ final class MeetingTranscriber: @unchecked Sendable {
                 defer { pendingGap = nil }
                 return pendingGap
             }
-            if let gap { onDropped(gap.start, gap.end) }
+            if let gap { onDropped(gap.start, gap.end, .audioBacklog) }
             deliveries.leave()
         }
     }
@@ -481,15 +487,17 @@ final class MeetingTranscriber: @unchecked Sendable {
             if trackID == Self.localTrackID { summary.microphoneUtterances += 1 }
             deliveries.enter()
             let deliveries = deliveries
-            recognizer.transcribe(segment.samples, model: model) { [weak self] text, decode in
+            recognizer.transcribe(segment.samples, model: model) { [weak self] text, decode, reason in
                 guard let self else { deliveries.leave(); return }
                 self.queue.async {
                     guard !self.stopped || self.finishDeliveries else { deliveries.leave(); return }
                     guard let text else {
+                        let reason = reason ?? .decodeFailure
                         self.summary.droppedSeconds += end.timeIntervalSince(start)
+                        self.summary.droppedSecondsByReason[reason, default: 0] += end.timeIntervalSince(start)
                         let dropped = self.onDropped
                         DispatchQueue.main.async {
-                            MainActor.assumeIsolated { dropped?(start, end) }
+                            MainActor.assumeIsolated { dropped?(start, end, reason) }
                             deliveries.leave()
                         }
                         return

@@ -378,11 +378,51 @@ import XCTest
         return .coreMLGigaAM(.init(encoder: missing, decoder: missing, joint: missing, tokens: missing, cache: missing))
     }
 
+    func testRecognizerDistinguishesOverloadFromMissingModel() async {
+        let recognizer = LocalSpeechRecognizer()
+        let model = unavailableSpeechModel
+        let overloaded: LocalSpeechRecognizer.DropReason? = await withCheckedContinuation { continuation in
+            recognizer.transcribe([Float](repeating: 0, count: 16_000 * 91), model: model) { text, _, reason in
+                XCTAssertNil(text)
+                continuation.resume(returning: reason)
+            }
+        }
+        XCTAssertEqual(overloaded, .recognitionBacklog)
+        let unavailable: LocalSpeechRecognizer.DropReason? = await withCheckedContinuation { continuation in
+            recognizer.transcribe([Float](repeating: 0, count: 160), model: model) { text, _, reason in
+                XCTAssertNil(text)
+                continuation.resume(returning: reason)
+            }
+        }
+        XCTAssertEqual(unavailable, .modelUnavailable)
+    }
+
+    func testTranscriptCombinesAdjacentGapsWithoutHidingInterveningSpeech() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        func gap(_ id: String, _ offset: TimeInterval, _ end: TimeInterval, reason: String = "decode") -> MeetingWorkspaceEvent {
+            var event = MeetingWorkspaceEvent(id: id, kind: .captureGap, occurredAt: start + offset, source: reason)
+            event.endedAt = start + end
+            return event
+        }
+        var session = MeetingWorkspaceSession(id: UUID(), title: "Fixture", startedAt: start,
+            calendarSeriesID: nil, roomIdentity: nil)
+        session.events = [gap("one", 0, 2), gap("two", 2.5, 4),
+            .init(id: "speech", kind: .transcript, occurredAt: start + 4.2, text: "Captured words"),
+            gap("three", 4.5, 5), gap("four", 10, 11), gap("five", 11, 12, reason: "modelUnavailable")]
+        let projected = session.visibleEvents
+        XCTAssertEqual(projected.map(\.id), ["one", "speech", "three", "four", "five"])
+        XCTAssertEqual(projected.first?.endedAt, start + 4)
+        XCTAssertEqual(session.events.count, 6, "Original capture evidence remains intact")
+    }
+
     func testIncomingAudioSharesOneBoundAcrossTracksAndMicrophone() async throws {
         let worker = DispatchQueue(label: "test.transcription.audio-backlog")
         var gaps: [DateInterval] = []
         let transcriber = MeetingTranscriber(model: unavailableSpeechModel, vadModel: temporaryFolder(), queue: worker,
-            onDropped: { gaps.append(DateInterval(start: $0, end: $1)) }) { _ in }
+            onDropped: { start, end, reason in
+                XCTAssertEqual(reason, .audioBacklog)
+                gaps.append(DateInterval(start: start, end: end))
+            }) { _ in }
         var sinks: [MeetingAudioSink] = []
         let sources = ["one", "two", "three"].map { trackID in
             MeetingAudioSource(id: trackID, participantIdentity: trackID,
@@ -415,6 +455,8 @@ import XCTest
         let summary = await transcriber.waitForDelivery()
         let expected = (Double(oversized.frameLength) + Double(extraFrames) * 160) / 16_000
         XCTAssertEqual(summary.droppedSeconds, expected, accuracy: 0.0001)
+        XCTAssertEqual(summary.droppedSecondsByReason[.audioBacklog] ?? 0, expected, accuracy: 0.0001)
+        XCTAssertNil(summary.droppedSecondsByReason[.decodeFailure])
         XCTAssertEqual(gaps.count, 1, "The journal receives one gap for a burst of dropped buffers")
         XCTAssertEqual(summary.audioSeconds, 0, "Cancelling discards pending raw audio before voice detection")
         XCTAssertEqual(transcriber.trackCount, 0)

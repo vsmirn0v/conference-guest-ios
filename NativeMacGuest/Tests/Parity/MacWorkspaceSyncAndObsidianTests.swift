@@ -1,3 +1,4 @@
+import CloudKit
 import ConferenceCore
 import Foundation
 import XCTest
@@ -59,9 +60,11 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         var records: [String: Record] = [:]
         var deletedIDs: [String] = []
         var generation = "zone-gen-1"
+        var failure: Error?
 
         func connect() async throws -> CloudZoneSession {
-            CloudZoneSession(account: "acc-1", generation: generation)
+            if let failure { throw failure }
+            return CloudZoneSession(account: "acc-1", generation: generation)
         }
 
         func fetch(session: CloudZoneSession, after token: Data?) async throws -> CloudZoneChanges<Record> {
@@ -181,6 +184,50 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
     }
 
     // MARK: - Tests
+
+    func testLocalCalendarRejoinMergesDuringCloudOutageAndKeepsNotesTasksAndVersions() async throws {
+        let f = try await makeFixture()
+        let start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 3600)
+        let invitation = try XCTUnwrap(URL(string: "https://rock.glowsoft.ru/jams/sync-regression"))
+        let room = try XCTUnwrap(MeetingRoomIdentity(invitation))
+        let event = CalendarMeeting(id: "event", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+            title: "Review", start: start, end: start + 1800, externalSeriesID: "portable")
+        let association = MeetingCalendarAssociation(event, room: room)
+        let first = MeetingSessionRecord(title: "Review", invitation: invitation, startedAt: start, endedAt: start + 900, state: .ended)
+        let second = MeetingSessionRecord(title: "Review", invitation: invitation, startedAt: start + 1200, endedAt: start + 2100, state: .ended)
+        let firstTask = MeetingOutcomeTask(text: "Accepted task", done: true)
+        let secondTask = MeetingOutcomeTask(text: "Later task")
+        for session in [first, second] {
+            try await f.library.store.upsertSession(session)
+            _ = try await f.library.store.saveNote(sessionID: session.id, markdown: session.id == first.id ? "First notes" : "Later notes")
+            _ = try await f.library.store.saveOutcome(.init(meetingID: session.id, meetingTitle: "Review", endedAt: session.endedAt!,
+                summary: session.id == first.id ? "First summary" : "Later summary", tasks: [session.id == first.id ? firstTask : secondTask]), state: .ready)
+        }
+        // Only the newer client captured an occurrence. Backfill the old row from that evidence.
+        f.sync.recordCalendarAssociation(association, sessionID: second.id)
+        let storedFirst = try await f.library.store.session(first.id)
+        XCTAssertEqual(storedFirst?.invitation, invitation)
+        f.libraryCloud.failure = CKError(.serviceUnavailable)
+        await f.sync.synchronizeNow()
+
+        XCTAssertEqual(f.sync.canonicalSessionID(second.id), first.id)
+        XCTAssertEqual(f.library.cards.filter { $0.sessionID == first.id }.count, 1)
+        XCTAssertFalse(f.library.cards.contains { $0.sessionID == second.id })
+        let note = try await f.library.store.note(first.id)
+        XCTAssertTrue(note?.markdown.contains("First notes") == true)
+        XCTAssertTrue(note?.markdown.contains("Later notes") == true)
+        let outcome = try await f.library.store.outcomeBySession(first.id)
+        XCTAssertEqual(Set(outcome?.tasks.map(\.id) ?? []), [firstTask.id, secondTask.id])
+        XCTAssertTrue(outcome?.tasks.first { $0.id == firstTask.id }?.done == true)
+        let versions = try await f.library.store.outcomeVersions(sessionID: first.id)
+        XCTAssertTrue(versions.contains { $0.outcome.summary == "First summary" })
+        XCTAssertTrue(versions.contains { $0.outcome.summary == "Later summary" })
+        XCTAssertNotNil(f.sync.nextRetryAt)
+        XCTAssertNotNil(f.sync.syncError)
+        f.roomSync.setEnabled(false)
+        await f.sync.synchronizeNow()
+        XCTAssertEqual(f.sync.canonicalSessionID(second.id), first.id)
+    }
 
     func testPhoneSaveIncludesTranscriptFromSameCloudSyncPass() async throws {
         let f = try await makeFixture(includeTranscript: true)
