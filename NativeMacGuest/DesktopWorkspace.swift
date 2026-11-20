@@ -400,13 +400,15 @@ import UserNotifications
         if let live = meetings.first(where: { workspaceSync.canonicalSessionID($0.workspaceSessionID) == canonical }) {
             showMeeting(live)
         } else {
-            join(invitation, title: title, quiet: true, historyRejoinID: id)
+            let resumesHistory = canResumeHistory(id, invitation: invitation)
+            join(invitation, title: title, quiet: true, historyRejoinID: resumesHistory ? id : nil,
+                 startNewHistory: !resumesHistory)
         }
     }
 
     func join(_ url: URL, engine known: MeetingEngineKind? = nil, title: String? = nil, eventID: String? = nil,
               quiet: Bool = false, scheduled: NativeDesktopScheduledJoin? = nil, nameOverride: String? = nil,
-              workspaceID: UUID? = nil, historyRejoinID: UUID? = nil) {
+              workspaceID: UUID? = nil, historyRejoinID: UUID? = nil, startNewHistory: Bool = false) {
         guard mayAdmitMeeting() else {
             scheduled?.finish(); error = meetingAdmissionError() ?? L("An update is being installed. Please try again after Rock'N'Roll for Mac restarts."); return
         }
@@ -417,7 +419,8 @@ import UserNotifications
             // Asked for while another join is still finding its service: it starts
             // right after that step, without waiting for the other to connect.
             queuedJoin = { [weak self] in
-                self?.join(url, engine: known, title: title, eventID: eventID, quiet: quiet, nameOverride: nameOverride, workspaceID: workspaceID, historyRejoinID: historyRejoinID)
+                self?.join(url, engine: known, title: title, eventID: eventID, quiet: quiet, nameOverride: nameOverride,
+                           workspaceID: workspaceID, historyRejoinID: historyRejoinID, startNewHistory: startNewHistory)
             }
             return
         }
@@ -479,23 +482,34 @@ import UserNotifications
                 }
                 let explicitTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let nowAtJoin = library.calendar.currentTime
+                if let historyRejoinID, !canResumeHistory(historyRejoinID, invitation: url) {
+                    throw NativeDesktopError.unavailable(L("The meeting is unavailable."))
+                }
                 let calendarCandidates = incomingRoom.map {
                     library.calendar.matchingHistoryOccurrences(
                         ActiveRoomConnection(room: $0, normalizedEndpoint: endpointString), at: nowAtJoin)
                 } ?? []
                 let explicitEvent = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id } }
-                let calendarMeeting = explicitEvent ?? (calendarCandidates.count == 1 ? calendarCandidates.first : nil)
+                let calendarMeeting: CalendarMeeting?
+                if startNewHistory {
+                    calendarMeeting = nil
+                } else if let historyRejoinID, let incomingRoom, let saved = workspaceSync.association(for: historyRejoinID) {
+                    calendarMeeting = calendarCandidates.first { MeetingCalendarAssociation($0, room: incomingRoom).matches(saved) }
+                } else {
+                    calendarMeeting = explicitEvent ?? (calendarCandidates.count == 1 ? calendarCandidates.first : nil)
+                }
                 let association = calendarMeeting.flatMap { event in incomingRoom.map { MeetingCalendarAssociation(event, room: $0) } }
                 let locallyKnown = association.flatMap { candidate -> UUID? in
                     guard calendarCandidates.contains(where: { $0.id == calendarMeeting?.id }) else { return nil }
                     return workspaceSync.historySession(matching: candidate)
                 }
-                let historyID = historyRejoinID.flatMap { canResumeHistory($0, invitation: url) ? workspaceSync.canonicalSessionID($0) : nil }
+                let historyID = historyRejoinID.map { workspaceSync.canonicalSessionID($0) }
                 let resumedID = workspaceID.map { workspaceSync.canonicalSessionID($0) } ?? historyID ?? locallyKnown
                 let prior = if let resumedID { try? await attention.store.meetingLibrary.store.session(resumedID) } else { nil as MeetingSessionRecord? }
                 earlierRecord = prior
                 let initialTitle = prior?.title ?? (explicitTitle?.isEmpty == false ? explicitTitle : nil) ?? calendarMeeting?.title
                 let model = makeMeeting(destination, name, initialTitle, quiet)
+                if startNewHistory { model.ignoreCalendarOccurrencesStartingOnOrBefore = nowAtJoin }
                 ownedModel = model; joinModels[joinID] = ObjectIdentifier(model)
                 model.resolvedEndpoint = detectedEndpoint
                 if let resumedID { model.useInitialWorkspaceSession(resumedID) }
@@ -663,6 +677,7 @@ import UserNotifications
         for model in active {
             guard let conn = connection(for: model) else { continue }
             guard let scheduled = library.calendar.currentScheduledMeeting(matching: conn, at: now) else { continue }
+            if let cutoff = model.ignoreCalendarOccurrencesStartingOnOrBefore, scheduled.start <= cutoff { continue }
 
             if model.segments.last?.calendarEventID == scheduled.id {
                 let lastIndex = model.segments.count - 1

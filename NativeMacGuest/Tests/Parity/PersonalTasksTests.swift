@@ -514,10 +514,9 @@ final class PersonalTasksTests: XCTestCase {
 
         let assignees = PersonalTaskQuery.assignees(in: rows)
         XCTAssertTrue(assignees.hasUnassigned)
-        XCTAssertEqual(assignees.people.map(\.key), [
-            PersonalTaskProfile.normalized("Анна"),
-            PersonalTaskProfile.normalized("Vitalii"),
-        ])
+        XCTAssertEqual(assignees.people.map(\.key), ["Анна", "Vitalii"]
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map(PersonalTaskProfile.normalized))
         XCTAssertFalse(assignees.people.contains { $0.displayName == "Ghost" })
 
         let unassigned = PersonalTaskQuery.rows(rows, filter: .all, calendar: .current, assignee: .unassigned)
