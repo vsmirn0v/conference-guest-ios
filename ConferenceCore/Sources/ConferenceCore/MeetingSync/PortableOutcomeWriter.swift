@@ -332,6 +332,20 @@ public enum PortableOutcomePrompt {
     }
 }
 
+/// An approved AI endpoint receives meeting data directly. A redirect must not forward the request body.
+public enum MeetingAITransfer {
+    private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    public static func send(_ request: URLRequest, using session: URLSession) async throws -> (Data, URLResponse) {
+        try await session.data(for: request, delegate: RefuseRedirects())
+    }
+}
+
 public struct PortableOutcomeService: PortableOutcomeWriting {
     private let session: URLSession
     private let keychain: WorkspaceAPIKeychain
@@ -393,7 +407,7 @@ public struct PortableOutcomeService: PortableOutcomeWriting {
                 request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await MeetingAITransfer.send(request, using: session)
             guard let http = response as? HTTPURLResponse else {
                 throw PortableOutcomeError.invalidResponse
             }

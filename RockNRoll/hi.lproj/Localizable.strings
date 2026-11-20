@@ -3032,6 +3032,9 @@
 "Start or join a meeting on iPhone or Mac to capture synced notes, summaries, and tasks." = "iPhone या मैजियन पर एक सभा शुरू कीजिए, जिसमें यह लिखा है कि यह रिसर्च करना, साथ ही काम करना शुरू कीजिए।";
 "Stored locally or in transcript backup folder (aged out of iCloud sync)" = "स्थानीय रूप से या बैकअप फ़ोल्डर में भंडारित करें (बाहर से बाहर) iCloud सिंक";
 "Summary pending…" = "संक्षेप में…";
+"Allow meeting data sharing with %@" = "%@ के साथ मीटिंग का डेटा साझा करने की अनुमति दें";
+"For summaries and live assistance, this device can send meeting titles, participant names, transcripts, chat, notes and assistant instructions to %@. This includes automatic summaries when enabled." = "सारांश और लाइव सहायता के लिए यह डिवाइस मीटिंग के शीर्षक, प्रतिभागियों के नाम, प्रतिलिपियाँ, चैट, नोट्स और सहायक के लिए दिए गए निर्देश %@ को भेज सकता है। यह अनुमति चालू किए गए स्वचालित सारांशों पर भी लागू होती है।";
+"Allow meeting data sharing in Assistant settings before using this AI provider." = "इस AI प्रदाता का उपयोग करने से पहले सहायक की सेटिंग में मीटिंग का डेटा साझा करने की अनुमति दें।";
 "Summary provider" = "सारांश प्रदाता";
 "Sync Now" = "अब सिंक्रनाइज़ेशन";
 "Sync Workspace Now" = "Sync Workspace अब";

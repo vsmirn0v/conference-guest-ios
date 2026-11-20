@@ -73,6 +73,17 @@ struct IOSAssistantSettingsView: View {
                 }
 
                 if workspace.outcomeConfig.providerKind.needsKey {
+                    if let endpoint = workspace.outcomeConfig.endpoint, let host = endpoint.host {
+                        let recipient = endpoint.port.map { "\(host):\($0)" } ?? host
+                        Toggle(L("Allow meeting data sharing with %@", recipient), isOn: Binding(
+                            get: { workspace.remoteAISharingAllowed },
+                            set: { workspace.setRemoteAIConsent($0) }
+                        ))
+                        .accessibilityIdentifier("assistant.remoteDataConsent")
+                        Text(L("For summaries and live assistance, this device can send meeting titles, participant names, transcripts, chat, notes and assistant instructions to %@. This includes automatic summaries when enabled.", recipient))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                     Button {
                         choosingModel = true
                     } label: {
