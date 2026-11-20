@@ -33,6 +33,7 @@ final class AudioCoordinator {
     private var outputRecoveryTask: Task<Void, Never>?
     private var outputRecoveryRevision = 0
     private var callAudioActive = false
+    private let speakerPlayback = IPhoneSpeakerPlaybackProcessor()
     private var proximityRoutingNeeded = true
     private var ownsProximityMonitoring = false
     private var proximityPolicy = ProximityOutputPolicy()
@@ -45,6 +46,7 @@ final class AudioCoordinator {
     }
     private struct RouteSnapshot: Sendable {
         let output: Output
+        let outputPorts: [AVAudioSession.Port]
         let proximityRoute: ProximityOutputPolicy.Route
         let needsMixingRestore: Bool
         let debugSummary: String
@@ -89,6 +91,7 @@ final class AudioCoordinator {
     }
 
     isolated deinit {
+        speakerPlayback.setEnabled(false)
         stopProximityMonitoring()
         lease.invalidate(); configurationLease?.invalidate(); routeLease?.invalidate()
         mixingTask?.cancel(); resetTask?.cancel(); startupTask?.cancel(); outputRecoveryTask?.cancel()
@@ -187,7 +190,13 @@ final class AudioCoordinator {
     private func applyRouteSnapshot(_ snapshot: RouteSnapshot) {
         output = snapshot.output
         proximityRoute = snapshot.proximityRoute
+        speakerPlayback.setEnabled(callAudioActive && Self.usesIPhoneSpeaker(
+            idiom: UIDevice.current.userInterfaceIdiom, outputs: snapshot.outputPorts))
         updateProximityRouting()
+    }
+
+    static func usesIPhoneSpeaker(idiom: UIUserInterfaceIdiom, outputs: [AVAudioSession.Port]) -> Bool {
+        idiom == .phone && outputs == [.builtInSpeaker]
     }
 
     func setProximityRoutingNeeded(_ needed: Bool) {
@@ -295,6 +304,7 @@ final class AudioCoordinator {
         let needsMixing = session.category == .playAndRecord && !session.categoryOptions.contains(.mixWithOthers)
         let summary = "input=[\(inputs.map { $0.portType.rawValue }.joined(separator: ","))] output=[\(outputs.map { $0.portType.rawValue }.joined(separator: ","))]"
         return RouteSnapshot(output: Output(name: outputName, builtInSpeaker: speaker),
+                             outputPorts: outputs.map(\.portType),
                              proximityRoute: Self.proximityRoute(route),
                              needsMixingRestore: needsMixing, debugSummary: summary)
     }
@@ -314,6 +324,7 @@ final class AudioCoordinator {
     /// Hold retires optional category/route work without retiring the meeting.
     func suspendConfiguration() {
         callAudioActive = false
+        speakerPlayback.setEnabled(false)
         stopProximityMonitoring()
         configurationLease?.invalidate(); configurationLease = nil
         routeLease?.invalidate(); routeLease = nil

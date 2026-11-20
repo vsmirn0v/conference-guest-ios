@@ -8,6 +8,28 @@ import XCTest
 
 @MainActor
 final class StudioTests: XCTestCase {
+    func testSpeakerPlaybackGainRaisesQuietSpeechAndPreservesPeakHeadroom() {
+        let boost = IPhoneSpeakerPlaybackProcessor.boostedSample
+        for sample: Float in [-8_000, -1, 0, 1, 8_000] {
+            XCTAssertEqual(boost(sample), sample * 1.5)
+        }
+        for peak in [Float(Int16.min), Float(Int16.max)] {
+            let knee = peak / 3
+            XCTAssertEqual(boost(knee), peak / 2, accuracy: 0.002)
+            XCTAssertEqual(boost(knee + 1) - boost(knee - 1), 3, accuracy: 0.005)
+            XCTAssertEqual(boost(peak / 2), peak * 0.71875, accuracy: 0.005)
+            XCTAssertEqual(boost(peak), peak)
+            XCTAssertEqual(boost(peak * 1.1), peak)
+        }
+        var previous = boost(Float(Int16.min))
+        for sample in stride(from: Int(Int16.min), through: Int(Int16.max), by: 37) {
+            let output = boost(Float(sample))
+            XCTAssertGreaterThanOrEqual(output, previous)
+            XCTAssertGreaterThanOrEqual(abs(output), abs(Float(sample)))
+            previous = output
+        }
+    }
+
     private final class InventoryCamera: NSObject {
         let id: String
         @objc dynamic var connected = true

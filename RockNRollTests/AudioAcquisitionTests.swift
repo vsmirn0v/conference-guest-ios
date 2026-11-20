@@ -1,4 +1,6 @@
 import AVFoundation
+import LiveKit
+import UIKit
 import XCTest
 @testable import RockNRoll
 
@@ -18,6 +20,43 @@ final class AudioAcquisitionTests: XCTestCase {
         XCTAssertTrue(options.contains(.allowBluetoothA2DP))
         XCTAssertFalse(options.contains(.duckOthers))
         XCTAssertFalse(options.contains(.interruptSpokenAudioAndMixWithOthers))
+    }
+
+    func testPlaybackBoostRequiresIPhoneSpeakerAsSoleOutput() {
+        XCTAssertTrue(AudioCoordinator.usesIPhoneSpeaker(idiom: .phone, outputs: [.builtInSpeaker]))
+        XCTAssertFalse(AudioCoordinator.usesIPhoneSpeaker(idiom: .pad, outputs: [.builtInSpeaker]))
+        for port: AVAudioSession.Port in [.builtInReceiver, .headphones, .bluetoothHFP, .bluetoothA2DP,
+                                          .bluetoothLE, .usbAudio, .airPlay, .carAudio] {
+            XCTAssertFalse(AudioCoordinator.usesIPhoneSpeaker(idiom: .phone, outputs: [port]))
+            XCTAssertFalse(AudioCoordinator.usesIPhoneSpeaker(idiom: .phone, outputs: [.builtInSpeaker, port]))
+        }
+        XCTAssertFalse(AudioCoordinator.usesIPhoneSpeaker(idiom: .phone, outputs: []))
+    }
+
+    func testSpeakerProcessorFollowsCallActivationAndHoldWithoutChangingTheSessionMode() async throws {
+        let session = AVAudioSession.sharedInstance()
+        guard AudioCoordinator.usesIPhoneSpeaker(idiom: UIDevice.current.userInterfaceIdiom,
+                                                 outputs: session.currentRoute.outputs.map(\.portType)) else {
+            throw XCTSkip("Requires an iPhone speaker route")
+        }
+        let audio = AudioCoordinator(restoreMixingSession: {}, notifications: NotificationCenter())
+        let manager = AudioManager.shared
+        let mode = session.mode
+        audio.beginSession()
+        defer { audio.endSession() }
+
+        for _ in 0..<2 {
+            XCTAssertNil(manager.renderPreProcessingDelegate)
+            audio.callAudioDidActivate()
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while manager.renderPreProcessingDelegate == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertTrue(manager.renderPreProcessingDelegate is IPhoneSpeakerPlaybackProcessor)
+            XCTAssertEqual(session.mode, mode)
+            audio.suspendConfiguration()
+        }
+        XCTAssertNil(manager.renderPreProcessingDelegate)
     }
 
     func testJoinAndMediaServiceResetUseTheSameMixingPolicy() async throws {

@@ -16,6 +16,52 @@ enum StudioAudioPolicy {
     }
 }
 
+/// Applies speaker gain to WebRTC's mixed playback. The render callback uses
+/// float samples in the Int16 range and runs on WebRTC's audio thread.
+final class IPhoneSpeakerPlaybackProcessor: AudioCustomProcessingDelegate {
+    @MainActor private var installed = false
+
+    @MainActor func setEnabled(_ enabled: Bool) {
+        guard enabled || installed else { return }
+        let manager = AudioManager.shared
+        if enabled {
+            guard manager.renderPreProcessingDelegate == nil else { return }
+            manager.renderPreProcessingDelegate = self
+            installed = true
+        } else {
+            if manager.renderPreProcessingDelegate === self {
+                manager.renderPreProcessingDelegate = nil
+            }
+            installed = false
+        }
+    }
+
+    func audioProcessingInitialize(sampleRate _: Int, channels _: Int) {}
+    func audioProcessingRelease() {}
+
+    func audioProcessingProcess(audioBuffer: LKAudioBuffer) {
+        let frames = audioBuffer.frames
+        for channel in 0..<audioBuffer.channels {
+            let samples = audioBuffer.rawBuffer(forChannel: channel)
+            for frame in 0..<frames {
+                samples[frame] = Self.boostedSample(samples[frame])
+            }
+        }
+    }
+
+    static func boostedSample(_ sample: Float) -> Float {
+        let peak = sample < 0 ? -Float(Int16.min) : Float(Int16.max)
+        let magnitude = abs(sample)
+        if magnitude <= peak / 3 { return sample * 1.5 }
+
+        // Above one third of full scale, a quadratic joins the linear gain
+        // with the same slope and flattens smoothly at the original peak.
+        let headroom = max(0, peak - magnitude)
+        let limited = peak - (1.125 / peak) * headroom * headroom
+        return sample < 0 ? -limited : limited
+    }
+}
+
 /// Serializes runtime changes with mute/resume updates; retired requests cannot
 /// overwrite a newer selection. Each room has its own instance.
 @MainActor
