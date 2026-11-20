@@ -3032,6 +3032,9 @@
 "Start or join a meeting on iPhone or Mac to capture synced notes, summaries, and tasks." = "Mulai atau bergabung dengan pertemuan pada iPhone atau Mac untuk menangkap catatan, rangkuman, dan tugas.";
 "Stored locally or in transcript backup folder (aged out of iCloud sync)" = "Disimpan secara lokal atau dalam folder cadangan transkrip (berusia keluar dari iCloud sync)";
 "Summary pending…" = "Ringkasan tertunda…";
+"Allow meeting data sharing with %@" = "Izinkan berbagi data rapat dengan %@";
+"For summaries and live assistance, this device can send meeting titles, participant names, transcripts, chat, notes and assistant instructions to %@. This includes automatic summaries when enabled." = "Untuk ringkasan dan bantuan langsung, perangkat ini dapat mengirim judul rapat, nama peserta, transkrip, obrolan, catatan, dan instruksi asisten ke %@. Ini juga berlaku untuk ringkasan otomatis jika diaktifkan.";
+"Allow meeting data sharing in Assistant settings before using this AI provider." = "Izinkan berbagi data rapat di pengaturan asisten sebelum menggunakan penyedia AI ini.";
 "Summary provider" = "Penyedia ringkasan";
 "Sync Now" = "Selaraskan Sekarang";
 "Sync Workspace Now" = "Selaraskan Area Kerja Sekarang";

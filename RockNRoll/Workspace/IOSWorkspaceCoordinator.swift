@@ -1,8 +1,25 @@
 import Combine
 import ConferenceCore
+import CryptoKit
 import Foundation
 import Network
 import UserNotifications
+
+enum IOSRemoteAIConsentError: LocalizedError {
+    case permissionRequired
+
+    var errorDescription: String? {
+        L("Allow meeting data sharing in Assistant settings before using this AI provider.")
+    }
+}
+
+private extension PortableOutcomeConfiguration {
+    var consentIdentifier: String? {
+        guard providerKind.needsKey, let endpoint else { return nil }
+        let identifier = providerKind.rawValue + "|" + endpoint.absoluteString
+        return Data(SHA256.hash(data: Data(identifier.utf8))).base64EncodedString()
+    }
+}
 
 enum IOSSameRoomTransitionMode: String, CaseIterable, Codable, Sendable {
     case separateSessions
@@ -19,6 +36,7 @@ enum IOSSameRoomTransitionMode: String, CaseIterable, Codable, Sendable {
 @MainActor
 final class IOSWorkspaceCoordinator: ObservableObject {
     static weak var active: IOSWorkspaceCoordinator?
+    private static let remoteAIConsentKey = "workspace.remoteAIConsent.v1"
     static let outcomeConfigDefaultsKey = "workspace.portableOutcomeConfig"
     static let autoSeededTaskAliasesDefaultsKey = "ios.workspace.autoSeededTaskAliases"
 
@@ -30,8 +48,33 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     @Published private(set) var taskArchiveDates: [UUID: Date] = [:]
     @Published private(set) var contextSettings: [String: SyncedMeetingContextSettings] = [:]
     @Published var outcomeConfig: PortableOutcomeConfiguration {
-        didSet { persistOutcomeConfig() }
+        didSet {
+            if oldValue.consentIdentifier != outcomeConfig.consentIdentifier { setRemoteAIConsent(false) }
+            persistOutcomeConfig()
+        }
     }
+    @Published private var approvedRemoteAIID: String?
+    var remoteAISharingAllowed: Bool {
+        guard let current = outcomeConfig.consentIdentifier else { return false }
+        return approvedRemoteAIID == current
+    }
+
+    func setRemoteAIConsent(_ allowed: Bool) {
+        approvedRemoteAIID = allowed ? outcomeConfig.consentIdentifier : nil
+        preferences.set(approvedRemoteAIID, forKey: Self.remoteAIConsentKey)
+    }
+
+    func permittedAIConfiguration() throws -> PortableOutcomeConfiguration {
+        if outcomeConfig.providerKind.needsKey && !remoteAISharingAllowed {
+            throw IOSRemoteAIConsentError.permissionRequired
+        }
+        return outcomeConfig
+    }
+
+    var hasPermittedOutcomeWriter: Bool {
+        outcomeConfig.hasOnDeviceOrRemoteWriter && (!outcomeConfig.providerKind.needsKey || remoteAISharingAllowed)
+    }
+
     @Published private(set) var generatingSessionIDs: Set<UUID> = []
     @Published private(set) var outcomeErrors: [UUID: String] = [:]
     @Published private(set) var archiveStats = TranscriptArchiveStats(archivedCount: 0, totalBytes: 0, folderName: nil, usesCustomFolder: false)
@@ -112,6 +155,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         self.calendar = calendar
         self.syncPreferences = syncPreferences
         self.preferences = preferences
+        approvedRemoteAIID = preferences.string(forKey: Self.remoteAIConsentKey)
         self.outcomeWriter = outcomeWriter
         self.keychain = keychain
         self.archiveStore = archiveStore ?? TranscriptArchiveStore(preferences: preferences)
@@ -275,14 +319,14 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             deviceID: deviceID,
             deviceKind: .ios,
             joinedAt: now,
-            hasOutcomeWriter: outcomeConfig.autoGenerateOnLeave && outcomeConfig.hasOnDeviceOrRemoteWriter,
+            hasOutcomeWriter: outcomeConfig.autoGenerateOnLeave && hasPermittedOutcomeWriter,
             updatedAt: now
         )
         myLeg.joinedAt = min(myLeg.joinedAt, now)
         myLeg.endInterval(at: myLeg.leftAt ?? myLeg.updatedAt)
         myLeg.beginInterval(id: controllerID, at: now)
         myLeg.leftAt = nil
-        myLeg.hasOutcomeWriter = outcomeConfig.autoGenerateOnLeave && outcomeConfig.hasOnDeviceOrRemoteWriter
+        myLeg.hasOutcomeWriter = outcomeConfig.autoGenerateOnLeave && hasPermittedOutcomeWriter
         myLeg.updatedAt = now
         legs[deviceID] = myLeg
 
@@ -388,7 +432,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
                 deviceID: self.deviceID,
                 deviceKind: .ios,
                 joinedAt: session.startedAt,
-                hasOutcomeWriter: self.outcomeConfig.autoGenerateOnLeave && self.outcomeConfig.hasOnDeviceOrRemoteWriter,
+                hasOutcomeWriter: self.outcomeConfig.autoGenerateOnLeave && self.hasPermittedOutcomeWriter,
                 updatedAt: endedAt
             )
             myLeg.endInterval(id: controllerID, at: endedAt)
@@ -470,7 +514,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             return
         }
 
-        guard outcomeConfig.hasOnDeviceOrRemoteWriter else {
+        guard hasPermittedOutcomeWriter else {
             var fields = outcomeDiagnosticConfiguration(outcomeConfig)
             fields["reason"] = "writerUnavailable"
             AppDiagnostics.log("meeting-summary-skipped", fields)
@@ -485,6 +529,10 @@ final class IOSWorkspaceCoordinator: ObservableObject {
 
     func generateOutcomeNow(sessionID: UUID, automatic: Bool = false) async {
         let sid = replica.workspaceDoc.resolveCanonicalSessionID(for: sessionID)
+        if outcomeConfig.providerKind.needsKey && !remoteAISharingAllowed {
+            if !automatic { outcomeErrors[sid] = IOSRemoteAIConsentError.permissionRequired.localizedDescription }
+            return
+        }
         guard !generatingSessionIDs.contains(sid) else { return }
         generatingSessionIDs.insert(sid)
         outcomeErrors[sid] = nil
@@ -521,6 +569,8 @@ final class IOSWorkspaceCoordinator: ObservableObject {
 
         var stage = "generate"
         do {
+            // Reading the transcript can suspend while the user changes providers or revokes consent.
+            _ = try permittedAIConfiguration()
             let result = try await outcomeWriter.generateOutcome(
                 title: title,
                 endedAt: endedAt,

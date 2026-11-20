@@ -3032,6 +3032,9 @@
 "Start or join a meeting on iPhone or Mac to capture synced notes, summaries, and tasks." = "开始或加入iPhone或Mac会议,以获取同步的笔记、摘要和任务。";
 "Stored locally or in transcript backup folder (aged out of iCloud sync)" = "存储在本地或抄录备份文件夹中( 以iCloud同步时)";
 "Summary pending…" = "概述等待…";
+"Allow meeting data sharing with %@" = "允许与 %@ 共享会议数据";
+"For summaries and live assistance, this device can send meeting titles, participant names, transcripts, chat, notes and assistant instructions to %@. This includes automatic summaries when enabled." = "为生成摘要和提供实时协助，此设备可能会向 %@ 发送会议标题、参与者姓名、转录文本、聊天记录、笔记和助理指令。启用自动摘要后，此授权也适用于自动摘要。";
+"Allow meeting data sharing in Assistant settings before using this AI provider." = "使用此 AI 服务前，请在助理设置中允许共享会议数据。";
 "Summary provider" = "摘要服务";
 "Sync Now" = "现在的Sync";
 "Sync Workspace Now" = "Sync Workspace 现在";

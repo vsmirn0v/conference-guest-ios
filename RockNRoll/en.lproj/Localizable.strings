@@ -3258,6 +3258,9 @@
 "Start or join a meeting on iPhone or Mac to capture synced notes, summaries, and tasks." = "Start or join a meeting on iPhone or Mac to capture synced notes, summaries, and tasks.";
 "Stored locally or in transcript backup folder (aged out of iCloud sync)" = "Stored locally or in transcript backup folder (aged out of iCloud sync)";
 "Summary pending…" = "Summary pending…";
+"Allow meeting data sharing with %@" = "Allow meeting data sharing with %@";
+"For summaries and live assistance, this device can send meeting titles, participant names, transcripts, chat, notes and assistant instructions to %@. This includes automatic summaries when enabled." = "For summaries and live assistance, this device can send meeting titles, participant names, transcripts, chat, notes and assistant instructions to %@. This includes automatic summaries when enabled.";
+"Allow meeting data sharing in Assistant settings before using this AI provider." = "Allow meeting data sharing in Assistant settings before using this AI provider.";
 "Summary provider" = "Summary provider";
 "Sync Now" = "Sync Now";
 "Sync Workspace Now" = "Sync Workspace Now";

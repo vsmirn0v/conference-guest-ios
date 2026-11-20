@@ -3257,6 +3257,9 @@
 "Start or join a meeting on iPhone or Mac to capture synced notes, summaries, and tasks." = "Начните или подключитесь ко встрече на iPhone или Mac, чтобы сохранять заметки, итоги и задачи.";
 "Stored locally or in transcript backup folder (aged out of iCloud sync)" = "Хранится локально или в папке резервных копий (истёк срок синхронизации iCloud)";
 "Summary pending…" = "Итог готовится…";
+"Allow meeting data sharing with %@" = "Разрешить передачу данных встречи в %@";
+"For summaries and live assistance, this device can send meeting titles, participant names, transcripts, chat, notes and assistant instructions to %@. This includes automatic summaries when enabled." = "Для подготовки итогов и помощи во время встречи это устройство может отправлять в %@ названия встреч, имена участников, расшифровки, переписку, заметки и инструкции ассистенту. Это также относится к автоматическим итогам, если они включены.";
+"Allow meeting data sharing in Assistant settings before using this AI provider." = "Чтобы использовать этот ИИ-сервис, разрешите передачу данных встречи в настройках ассистента.";
 "Summary provider" = "Провайдер итогов";
 "Sync Now" = "Синхронизировать";
 "Sync Workspace Now" = "Синхронизировать сейчас";

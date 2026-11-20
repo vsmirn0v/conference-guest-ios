@@ -198,12 +198,12 @@ struct IOSAssistantSessionBridge {
 }
 
 struct IOSAssistantLLMService: IOSAssistantEvaluating {
-    let configProvider: @Sendable () async -> PortableOutcomeConfiguration
+    let configProvider: @Sendable () async throws -> PortableOutcomeConfiguration
     let apiKeyProvider: @Sendable (PortableOutcomeProviderKind) -> String?
     let urlSession: URLSession
 
     init(
-        configProvider: @escaping @Sendable () async -> PortableOutcomeConfiguration,
+        configProvider: @escaping @Sendable () async throws -> PortableOutcomeConfiguration,
         apiKeyProvider: @escaping @Sendable (PortableOutcomeProviderKind) -> String?,
         urlSession: URLSession = .shared
     ) {
@@ -213,7 +213,7 @@ struct IOSAssistantLLMService: IOSAssistantEvaluating {
     }
 
     func evaluate(_ request: IOSAssistantEvaluationRequest) async throws -> IOSAssistantVerdict {
-        let config = await configProvider()
+        let config = try await configProvider()
         let messages = Self.buildMessages(for: request)
 
         switch config.providerKind {
@@ -253,7 +253,7 @@ struct IOSAssistantLLMService: IOSAssistantEvaluating {
                 urlRequest.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             }
             urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await urlSession.data(for: urlRequest)
+            let (data, response) = try await MeetingAITransfer.send(urlRequest, using: urlSession)
             guard let http = response as? HTTPURLResponse else { throw PortableOutcomeError.invalidResponse }
             guard (200..<300).contains(http.statusCode) else {
                 throw PortableOutcomeService.httpError(status: http.statusCode, data: data)
@@ -440,7 +440,7 @@ final class IOSAssistantCoordinator: ObservableObject {
         } else {
             let keychain = workspace?.keychain ?? WorkspaceAPIKeychain()
             self.evaluator = IOSAssistantLLMService(
-                configProvider: { @MainActor [weak workspace] in workspace?.outcomeConfig ?? PortableOutcomeConfiguration() },
+                configProvider: { @MainActor [weak workspace] in try workspace?.permittedAIConfiguration() ?? PortableOutcomeConfiguration() },
                 apiKeyProvider: { keychain.read(kind: $0) }
             )
         }
@@ -549,7 +549,7 @@ final class IOSAssistantCoordinator: ObservableObject {
 
     func hasModelConfigured() -> Bool {
         modelAvailableOverride?()
-            ?? (workspace?.outcomeConfig.hasOnDeviceOrRemoteWriter ?? PortableOutcomeConfiguration.isAppleOnDeviceAvailable)
+            ?? (workspace?.hasPermittedOutcomeWriter ?? PortableOutcomeConfiguration.isAppleOnDeviceAvailable)
     }
 
     func setMode(_ mode: IOSMeetingAssistantMode, for controllerID: UUID, rememberForRoom: Bool = false) {

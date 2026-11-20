@@ -3032,6 +3032,9 @@
 "Start or join a meeting on iPhone or Mac to capture synced notes, summaries, and tasks." = "Comienza o únete a una reunión en iPhone o Mac para capturar notas sincronizadas, resúmenes y tareas.";
 "Stored locally or in transcript backup folder (aged out of iCloud sync)" = "Almacenado localmente o en la carpeta de copia de seguridad de la transcripción (envejecido de la sincronización iCloud)";
 "Summary pending…" = "Resumen pendiente…";
+"Allow meeting data sharing with %@" = "Permitir compartir datos de las reuniones con %@";
+"For summaries and live assistance, this device can send meeting titles, participant names, transcripts, chat, notes and assistant instructions to %@. This includes automatic summaries when enabled." = "Para generar resúmenes y ofrecer asistencia en directo, este dispositivo puede enviar a %@ los títulos de las reuniones, los nombres de los participantes, las transcripciones, el chat, las notas y las instrucciones para el asistente. Esto incluye los resúmenes automáticos si están activados.";
+"Allow meeting data sharing in Assistant settings before using this AI provider." = "Permite compartir los datos de las reuniones en los ajustes del asistente antes de usar este proveedor de IA.";
 "Summary provider" = "Proveedor de resúmenes";
 "Sync Now" = "Sincronizar ahora";
 "Sync Workspace Now" = "Sincronizar el espacio de trabajo ahora";

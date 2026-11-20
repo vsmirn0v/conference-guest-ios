@@ -205,6 +205,29 @@ final class IOSAssistantModeTests: XCTestCase {
         XCTAssertEqual(coordinator.alertCards.first?.reason, "Direct question")
     }
 
+    func testAssistantDoesNotReadCredentialsOrSendWhenMeetingDataPermissionIsMissing() async {
+        let evaluator = IOSAssistantLLMService(
+            configProvider: { throw IOSRemoteAIConsentError.permissionRequired },
+            apiKeyProvider: { _ in
+                XCTFail("The provider must not be contacted without permission")
+                return nil
+            }
+        )
+        let request = IOSAssistantEvaluationRequest(
+            mode: .follow, meetingTitle: "Private", participantNames: [], userAliases: [],
+            contextAbout: "", contextMatters: "", contextNever: "", guidanceRules: [],
+            participationGoal: "", replyStyle: "", notesDraft: "Private note", recentEvents: [], language: "en"
+        )
+        do {
+            _ = try await evaluator.evaluate(request)
+            XCTFail("Expected permission to be required")
+        } catch IOSRemoteAIConsentError.permissionRequired {
+            // No remote request was constructed.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testParticipateEvaluatesLastQuestionDuringCooldownAndSpeaksViaOpenAI() async {
         let id = UUID(), suite = SuiteBox()
         let sessionConfig = URLSessionConfiguration.ephemeral

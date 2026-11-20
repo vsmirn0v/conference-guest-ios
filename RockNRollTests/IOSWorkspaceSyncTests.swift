@@ -261,6 +261,7 @@ final class IOSWorkspaceSyncTests: XCTestCase {
             providerKind: .openAI,
             model: "gpt-4.1-mini"
         )
+        f.workspace.setRemoteAIConsent(true)
         f.workspace.saveAPIKey("sk-test-token", for: .openAI)
 
         let controllerID = UUID()
@@ -332,6 +333,7 @@ final class IOSWorkspaceSyncTests: XCTestCase {
             providerKind: .openAI,
             model: "gpt-4.1-mini"
         )
+        f.workspace.setRemoteAIConsent(true)
         f.workspace.saveAPIKey("sk-test-token", for: .openAI)
         await f.workspace.saveTaskProfile(IOSTaskProfile(profileID: "default", assigneeID: "Vlad", aliases: ["Vlad"]))
 
@@ -363,9 +365,40 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         XCTAssertNotNil(f.libraryCloud.records["outcome:" + sid.uuidString])
     }
 
+    func testRemoteConsentBlocksManualAndAutomaticSummariesAndFollowsTheExactRecipient() async throws {
+        let f = try await makeCoordinator()
+        let workspace = f.workspace
+        workspace.outcomeConfig = .init(providerKind: .custom, baseURL: "https://ai.example.test/team-a/v1", model: "fixture")
+        let id = UUID()
+        XCTAssertFalse(workspace.hasPermittedOutcomeWriter)
+        XCTAssertThrowsError(try workspace.permittedAIConfiguration())
+        await workspace.generateOutcomeNow(sessionID: id)
+        await workspace.generateOutcomeNow(sessionID: id, automatic: true)
+        let calls = await f.writer.calls()
+        XCTAssertEqual(calls, 0)
+        XCTAssertNotNil(workspace.outcomeErrors[id])
+
+        workspace.setRemoteAIConsent(true)
+        XCTAssertEqual(try workspace.permittedAIConfiguration().endpoint, workspace.outcomeConfig.endpoint)
+        XCTAssertTrue(f.reopenWorkspace().remoteAISharingAllowed)
+        workspace.outcomeConfig.model = "another-model"
+        XCTAssertTrue(workspace.remoteAISharingAllowed)
+        workspace.outcomeConfig.baseURL = "https://ai.example.test/team-b/v1"
+        XCTAssertFalse(workspace.remoteAISharingAllowed)
+        XCTAssertFalse(f.reopenWorkspace().remoteAISharingAllowed)
+        workspace.outcomeConfig.baseURL = "https://ai.example.test/team-a/v1"
+        XCTAssertFalse(workspace.remoteAISharingAllowed)
+        workspace.setRemoteAIConsent(true)
+        workspace.setRemoteAIConsent(false)
+        XCTAssertThrowsError(try workspace.permittedAIConfiguration())
+        workspace.outcomeConfig = .init(providerKind: .appleOnDevice)
+        XCTAssertEqual(try workspace.permittedAIConfiguration().providerKind, .appleOnDevice)
+    }
+
     func testSummaryHTTPFailureIsIncludedInExportDiagnostics() async throws {
         let f = try await makeCoordinator()
         f.workspace.outcomeConfig = .init(providerKind: .openAI, model: "gpt-5.4-mini")
+        f.workspace.setRemoteAIConsent(true)
         await f.writer.fail(with: .http(status: 400, code: "unsupported_parameter", parameter: "max_tokens"))
         let url = URL(string: "https://meet.example.com/diagnostics-fixture")!
         let sid = f.workspace.beginSession(
