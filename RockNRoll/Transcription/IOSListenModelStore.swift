@@ -21,7 +21,7 @@ enum IOSListenModel: String, CaseIterable, Identifiable, Codable {
     var subtitle: String {
         switch self {
         case .appleSpeech:
-            return L("Built into iOS. Supports Russian, English, and system languages without extra downloads.")
+            return L("Uses Apple Speech when on-device recognition is available for the selected language.")
         case .gigaamV3CoreML:
             return L("Downloaded once (~425 MB). Runs offline on Neural Engine for noisy Russian rooms.")
         }
@@ -218,8 +218,9 @@ final class IOSListenModelStore: ObservableObject {
         }
     }
 
-    func appleSpeechSupportsOnDevice(for lang: IOSTranscriptionLanguage? = nil) -> Bool {
-        SFSpeechRecognizer(locale: (lang ?? language).locale)?.supportsOnDeviceRecognition ?? false
+    func appleSpeechAvailableOnDevice() -> Bool {
+        guard let recognizer = SFSpeechRecognizer(locale: language.locale) else { return false }
+        return recognizer.isAvailable && recognizer.supportsOnDeviceRecognition
     }
 
     func downloadGigaAM() {

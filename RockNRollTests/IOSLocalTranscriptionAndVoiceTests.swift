@@ -1,4 +1,5 @@
 import AVFoundation
+import ConferenceCore
 import CoreML
 import CryptoKit
 import Foundation
@@ -490,6 +491,28 @@ final class IOSLocalTranscriptionAndVoiceTests: XCTestCase {
         store.selectedModel = .gigaamV3CoreML
         XCTAssertNotNil(store.installedGigaAMDirectoryIfReady())
         return store
+    }
+
+    func testUnavailableOnDeviceSpeechLeavesTranscriptionOff() async throws {
+        let store = try installedGigaAMStore()
+        store.selectedModel = .appleSpeech
+        var requestedOutput = false
+        let transcriber = IOSMeetingTranscriber(
+            modelStore: store,
+            localDisplayName: { "Tester" },
+            participantNameLookup: { _ in nil },
+            setOutputDemand: { enabled in
+                requestedOutput = enabled
+                return true
+            },
+            speechAuthorization: { true },
+            localAppleSpeechAvailable: { false }
+        )
+
+        let started = await transcriber.start()
+        XCTAssertFalse(started)
+        XCTAssertFalse(requestedOutput)
+        XCTAssertEqual(transcriber.state, .unavailable(L("On-device speech recognition is unavailable for %@.", store.language.title)))
     }
 
     func testStoppedTranscriptionStartupCannotRequestSpeechOrReplaceRestartedRun() async throws {

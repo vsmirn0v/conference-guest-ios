@@ -181,7 +181,7 @@ struct MeetingSetupView: View {
             }
             NavigationLink(L("More iCloud options")) { Form { RoomSyncSettingsView(sync: sync, continuation: continuation) }.navigationTitle(L("Across your devices")) }
         } footer: {
-            Text(L("Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device."))
+            Text(L("When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options."))
         }
         Section {
             Text(L("You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings."))

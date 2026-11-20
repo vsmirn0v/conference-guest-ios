@@ -279,7 +279,7 @@
 "Show floating video" = "إظهار الفيديو العائم";
 "Show local preview" = "إظهار المعاينة المحلية";
 "Show musicians" = "إظهار الموسيقيين";
-"Small music groups in Yerevan can plan sessions and share ideas live." = "يمكن للمجموعات الموسيقية الصغيرة في يريفان التخطيط للجلسات ومشاركة الأفكار مباشرة.";
+"Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation." = "انضم بدعوة إلى غرف LiveKit المتوافقة واجتماعات Yandex Telemost وTrueConf واجتماعات المؤسسات المتاحة للضيوف.";
 "Speaker" = "المتحدث";
 "Speaking" = "التحدث";
 "Star %@" = "نجمة %@";
@@ -533,7 +533,7 @@
 "Choose another room" = "اختر غرفة أخرى";
 "All day" = "طوال اليوم";
 "Show calendar meetings" = "إظهار اجتماعات التقويم";
-"Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited." = "البحث عن روابط الاجتماعات في التقويمات التي تختارها. تبقى تفاصيل الأحداث على هذا الجهاز ولا يُعدّل تقويمك مطلقًا.";
+"Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited." = "ابحث عن الاجتماعات في التقويمات التي تختارها. تتيح مشاركة الجدول مزامنة تفاصيل الاجتماعات عبر مساحة iCloud الخاصة بك. لا يعدّل التطبيق تقويمك.";
 "Allow full calendar access in Settings to read scheduled meetings." = "السماح بالوصول الكامل إلى التقويم في الإعدادات لقراءة الاجتماعات المجدولة.";
 "Allow calendar access" = "اسمح بالوصول إلى التقويم";
 "Join scheduled meetings when opening the app" = "انضم إلى الاجتماعات المجدولة عند فتح التطبيق";
@@ -884,7 +884,7 @@
 "Your current settings" = "إعداداتك الحالية";
 "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "موصى به: لا تذكير قبل البداية، وتنبيه في البداية، وتذكير هادئ بعد 30 ثانية أثناء فتح هذا التطبيق في اجتماع آخر. الصوت وتفاصيل الاجتماع قيد التشغيل؛ الوقت حساس هو خارج.";
 "More iCloud options" = "المزيد من الخيارات iCloud";
-"Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "استخدم نفس حساب Apple على أجهزتك. يمكن أن تتضمن الدعوات المحفوظة رموز الوصول. لا تتم مزامنة الصوت والفيديو والدردشة والنصوص. اختر التقويمات وقم بتمكين الإشعارات بشكل منفصل على كل جهاز.";
+"When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options." = "عند تشغيل مزامنة iCloud، قد تتضمن مساحة التخزين الخاصة بك دعوات برموز دخول وجداول التقويم وسجل الاجتماعات والملاحظات والمهام والدردشات والنصوص المفرّغة. راجع اختياراتك ضمن خيارات iCloud الإضافية.";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "يمكنك إنهاء الإعداد بينما يتصل iCloud، أو الاحتفاظ بكل شيء على هذا الجهاز. قم بتغيير هذه الخيارات في أي وقت في الإعدادات.";
 "Continue meeting setup" = "استمر في إعداد الاجتماع";
 "Join audio" = "الانضمام إلى الصوت";
@@ -2827,9 +2827,9 @@
 "Allow Speech Recognition in Settings to transcribe speech on this iPhone." = "اسمح بالتعرّف على الكلام في الإعدادات لنسخ الكلام على هذا الـ iPhone.";
 "Allow this app to use your Personal Voice in Settings → Privacy & Security → Personal Voice." = "اسمح لهذا التطبيق باستخدام صوتك الشخصي من الإعدادات ← الخصوصية والأمن ← الصوت الشخصي.";
 "Apple On-Device Speech" = "ابل على الجهاز الكلام";
-"Apple Speech Recognition is unavailable for %@ right now." = "Apple Speech Recognition غير متوفر الآن لـ %@.";
+"On-device speech recognition is unavailable for %@." = "التعرّف على الكلام على الجهاز غير متاح للغة %@.";
 "Automatic for language" = "تلقائي للغة";
-"Built into iOS. Supports Russian, English, and system languages without extra downloads." = "بنيت في iOS. يدعم الروسية والإنجليزية ولغات النظام دون تنزيلات إضافية.";
+"Uses Apple Speech when on-device recognition is available for the selected language." = "يستخدم التعرّف على الكلام من Apple عندما تتوفر معالجة اللغة المختارة على الجهاز.";
 "Cannot send a voice reply while the call is on hold." = "لا يمكن إرسال رد صوتي أثناء انتظار المكالمة.";
 "CoreML GigaAM inference failed at %@." = "فشل الاستدلال GigaAM CoreML في %@.";
 "CoreML GigaAM model file is missing: %@." = "ملف نموذج CoreML GigaAM مفقود: %@.";

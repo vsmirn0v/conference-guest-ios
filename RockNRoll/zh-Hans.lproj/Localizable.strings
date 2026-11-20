@@ -279,7 +279,7 @@
 "Show floating video" = "显示浮动视频";
 "Show local preview" = "显示地点预览";
 "Show musicians" = "展示音乐家";
-"Small music groups in Yerevan can plan sessions and share ideas live." = "埃里温的小型音乐团体可以计划会议,";
+"Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation." = "通过邀请加入兼容的 LiveKit 房间、Yandex Telemost 会议、TrueConf 会议及支持访客加入的企业会议。";
 "Speaker" = "发言者";
 "Speaking" = "正在发言";
 "Star %@" = "将 %@ 加入收藏";
@@ -533,7 +533,7 @@
 "Choose another room" = "选择另一个房间";
 "All day" = "全日制";
 "Show calendar meetings" = "显示日历会议";
-"Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited." = "在你选择的日历中查找会议链接。日程详情仅保存在此设备上，应用不会修改你的日历。";
+"Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited." = "在选定的日历中查找会议。开启日程共享后，会议详情可通过您的私人 iCloud 空间同步。此应用不会修改您的日历。";
 "Allow full calendar access in Settings to read scheduled meetings." = "允许在“ 设置” 中访问全部日历以读取已排定的会议。";
 "Allow calendar access" = "允许日历访问";
 "Join scheduled meetings when opening the app" = "应用程序启用时加入预定举行的会议";
@@ -884,7 +884,7 @@
 "Your current settings" = "您目前的设置";
 "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "建议: 启动前不要提醒, 启动时要提醒, 启动后30秒要安静地提醒, 而此应用程序将在另一次会议上开放。 声音和会议细节已打开; 时间敏感状态关闭。";
 "More iCloud options" = "更多 iCloud 选项";
-"Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "在您的设备上使用相同的苹果账户。 保存的邀请可以包括访问代码。 音频、 视频、 聊天和笔录不同步。 选择日历并允许每个设备单独通知。";
+"When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options." = "开启 iCloud 同步后，您的私人 iCloud 空间可能会存储带访问码的邀请、日程、会议历史记录、笔记、任务、聊天和转写内容。您可以在更多 iCloud 选项中查看这些设置。";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "您可以在 iCloud 连接时完成设置, 或者将所有内容保留在这个设备上。 在设置中随时更改这些选项。";
 "Continue meeting setup" = "继续会议设置";
 "Join audio" = "加入音频";
@@ -2827,9 +2827,9 @@
 "Allow Speech Recognition in Settings to transcribe speech on this iPhone." = "请在“设置”中允许语音识别，以便在此 iPhone 上转写语音。";
 "Allow this app to use your Personal Voice in Settings → Privacy & Security → Personal Voice." = "请在“设置”→“隐私与安全性”→“个人声音”中允许此应用使用你的个人声音。";
 "Apple On-Device Speech" = "Applic 上设计演讲";
-"Apple Speech Recognition is unavailable for %@ right now." = "苹果语音识别系统目前无法使用 %@。";
+"On-device speech recognition is unavailable for %@." = "此设备不支持 %@ 的本地语音识别。";
 "Automatic for language" = "语言自动";
-"Built into iOS. Supports Russian, English, and system languages without extra downloads." = "建于iOS. 支持俄文、英文和系统语文,不作额外下载。";
+"Uses Apple Speech when on-device recognition is available for the selected language." = "如果设备支持所选语言的本地语音识别，将使用 Apple 语音识别。";
 "Cannot send a voice reply while the call is on hold." = "电话被暂停时无法发送语音回复。";
 "CoreML GigaAM inference failed at %@." = "CoreML GigaAM 推论于%@时失败";
 "CoreML GigaAM model file is missing: %@." = "CoreML GigaAM 模型文件丢失: %@。";

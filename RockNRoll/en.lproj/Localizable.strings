@@ -280,7 +280,7 @@
 "Show floating video" = "Show floating video";
 "Show local preview" = "Show local preview";
 "Show musicians" = "Show musicians";
-"Small music groups in Yerevan can plan sessions and share ideas live." = "Small music groups in Yerevan can plan sessions and share ideas live.";
+"Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation." = "Join compatible LiveKit rooms, Yandex Telemost, TrueConf and enterprise guest meetings by invitation.";
 "Speaker" = "Speaker";
 "Speaking" = "Speaking";
 "Star %@" = "Star %@";
@@ -546,7 +546,7 @@
 "Choose another room" = "Choose another room";
 "All day" = "All day";
 "Show calendar meetings" = "Show calendar meetings";
-"Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited." = "Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited.";
+"Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited." = "Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited.";
 "Allow full calendar access in Settings to read scheduled meetings." = "Allow full calendar access in Settings to read scheduled meetings.";
 "Allow calendar access" = "Allow calendar access";
 "Join scheduled meetings when opening the app" = "Join scheduled meetings when opening the app";
@@ -1001,7 +1001,7 @@
 "Your current settings" = "Your current settings";
 "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off.";
 "More iCloud options" = "More iCloud options";
-"Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device.";
+"When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options." = "When iCloud sync is on, your private iCloud storage can include invitations with access codes, calendar schedules, meeting history, notes, tasks, chat and transcripts. Review these choices in More iCloud options.";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings.";
 "Continue meeting setup" = "Continue meeting setup";
 
@@ -3050,9 +3050,9 @@
 "Allow Speech Recognition in Settings to transcribe speech on this iPhone." = "Allow Speech Recognition in Settings to transcribe speech on this iPhone.";
 "Allow this app to use your Personal Voice in Settings → Privacy & Security → Personal Voice." = "Allow this app to use your Personal Voice in Settings → Privacy & Security → Personal Voice.";
 "Apple On-Device Speech" = "Apple On-Device Speech";
-"Apple Speech Recognition is unavailable for %@ right now." = "Apple Speech Recognition is unavailable for %@ right now.";
+"On-device speech recognition is unavailable for %@." = "On-device speech recognition is unavailable for %@.";
 "Automatic for language" = "Automatic for language";
-"Built into iOS. Supports Russian, English, and system languages without extra downloads." = "Built into iOS. Supports Russian, English, and system languages without extra downloads.";
+"Uses Apple Speech when on-device recognition is available for the selected language." = "Uses Apple Speech when on-device recognition is available for the selected language.";
 "Cannot send a voice reply while the call is on hold." = "Cannot send a voice reply while the call is on hold.";
 "CoreML GigaAM inference failed at %@." = "CoreML GigaAM inference failed at %@.";
 "CoreML GigaAM model file is missing: %@." = "CoreML GigaAM model file is missing: %@.";
