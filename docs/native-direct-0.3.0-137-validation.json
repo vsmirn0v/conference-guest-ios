@@ -1,0 +1,52 @@
+{
+  "version": "0.3.0",
+  "build": "137",
+  "channel": "beta",
+  "sourceCommit": "83abd49f26cff3e783a78f28f308ca7f3d2ce59d",
+  "sourceManifest": {
+    "path": ".build/native-beta-137/build/build-evidence.json",
+    "sha256": "ed512b47d445549c6569fb8589c8f53ca5817ca517bab73caed2f29fe704b8b7"
+  },
+  "validation": {
+    "conferenceCore": "178 passed, 0 failures",
+    "macFocused": "42 passed, 0 failures before final narrow changes",
+    "macBroad": "258 executed, 9 skipped; failures investigated and affected tests passed on retry; final changed notification and deterministic transcript checks passed",
+    "macSkips": "VoiceOver manual, Rapid-MLX unavailable (2), opt-in layout and mouse fixtures (2), ASR fixture unavailable (4)",
+    "distributionTests": "27 passed",
+    "signedBuildGates": [
+      "app-group IO and one-use ticket",
+      "embedded voice worker launch and exit"
+    ],
+    "limitations": [
+      "Physical cross-device iCloud sync and installed Sparkle upgrade not tested",
+      "Live provider meetings and hardware audio not tested"
+    ]
+  },
+  "export": {
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "archive": ".build/native-beta-137/build/RockNRollNativeGuest-0.3.0-137.xcarchive"
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "137",
+    "file": "RockNRoll-0.3.0-137-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-137-arm64.dmg",
+    "sha256": "24a5d91070b904a6dae5ef3deff0ac45a4ea708eee8eaac21194a6df85047ac1",
+    "length": 42652125,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/.codex-worktrees/nov20-review/.build/native-beta-137/package-137/RockNRoll-0.3.0-137-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "httpsVerified": true,
+    "appcastSHA256": "15cfa1fec27129f3978f3b9dd991afda86a616700f2531341788668fd464979a",
+    "inventorySHA256": "79c87100b12f9beccf313dd43de6d9807eafc046953de74ae980823976d5cb32",
+    "stableBuild": "53",
+    "betaBuild": "137"
+  }
+}
