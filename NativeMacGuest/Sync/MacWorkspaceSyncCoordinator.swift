@@ -45,6 +45,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     private let replicaIOQueue = DispatchQueue(label: "dev.vsmirn0v.mac.workspace.replica-io", qos: .utility)
     private var cloudBackoffUntil: Date = .distantPast
     private var consecutiveCloudBackoffs = 0
+    private enum DeferredHistoryMerge: Error { case unsavedNotes }
 
     private struct ReplicaState: Codable, Sendable {
         var workspaceDoc: MeetingWorkspaceSyncDocument
@@ -149,12 +150,10 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     }
 
     func scheduleSync(delayMilliseconds: Int = 600) {
-        let remainingMs = max(0, Int(ceil(cloudBackoffUntil.timeIntervalSinceNow * 1000)))
-        let effectiveDelay = max(delayMilliseconds, remainingMs)
         pendingSyncTask?.cancel()
         pendingSyncTask = Task { @MainActor [weak self] in
-            if effectiveDelay > 0 {
-                try? await Task.sleep(for: .milliseconds(effectiveDelay))
+            if delayMilliseconds > 0 {
+                try? await Task.sleep(for: .milliseconds(delayMilliseconds))
             }
             guard !Task.isCancelled else { return }
             await self?.synchronizeNow()
@@ -472,13 +471,14 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         repeat {
             needsAnotherPass = false
             do { try await reconcileLocalHistory() }
+            catch DeferredHistoryMerge.unsavedNotes { break }
             catch { syncError = error.localizedDescription; break }
             guard syncPreferences.enabled else {
                 calendar?.applyRemoteSchedule([], localDeviceID: deviceID)
                 break
             }
             if Date() < cloudBackoffUntil {
-                scheduleSync(delayMilliseconds: 0)
+                scheduleSync(delayMilliseconds: max(1, Int(ceil(cloudBackoffUntil.timeIntervalSinceNow * 1000))))
                 break
             }
 
@@ -492,6 +492,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                     lastLibrarySyncAt = Date()
                     try await syncTranscriptsPass(prefetched: prefetchedTranscripts)
                     anyPassSucceeded = true
+                } catch DeferredHistoryMerge.unsavedNotes {
+                    break
                 } catch {
                     syncError = syncErrorDescription(error)
                     let ns = error as NSError
@@ -541,7 +543,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                 persistReplica()
             }
             if hitRateLimit {
-                scheduleSync(delayMilliseconds: 0)
+                scheduleSync(delayMilliseconds: max(1, Int(ceil(cloudBackoffUntil.timeIntervalSinceNow * 1000))))
                 break
             }
         } while needsAnotherPass && !Task.isCancelled
@@ -559,6 +561,17 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         remoteApplyDepth += 1
         defer { remoteApplyDepth -= 1 }
         await meetingLibrary.prepare()
+        if let pending = replica.pendingHistoryApply, !pending.isEmpty {
+            guard !pending.contains(where: { notes.draft(sessionID: $0)?.isDirty == true }) else {
+                throw DeferredHistoryMerge.unsavedNotes
+            }
+            var recovery = MeetingWorkspaceSyncDocument.LibraryMergeOutcome()
+            recovery.changedSessions = pending
+            try await applyRemoteLibraryReport(recovery)
+            replica.pendingHistoryApply = nil
+            persistReplica()
+            for id in Set(pending.map(canonicalSessionID)) { onTranscriptChanged?(id) }
+        }
         let snapshot = try await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID)
         ingestLocalSnapshotIntoDocument(snapshot)
         ingestLocalContextSettings()
@@ -574,7 +587,6 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         for redirect in redirects {
             report.changedSessions.formUnion([redirect.winner, redirect.loser])
         }
-        report.changedSessions.formUnion(replica.pendingHistoryApply ?? [])
         replica.pendingHistoryApply = report.changedSessions
         persistReplica()
         guard !report.changedSessions.isEmpty else { return }
@@ -591,7 +603,6 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             self.replica.acknowledgedLibrary.removeAll()
         }
         let changes = try await libraryTransport.fetch(session: zoneSession, after: replica.libraryToken)
-        replica.libraryToken = changes.token
 
         var roomModes: [String: String] = [:]
         if let attentionStore {
@@ -611,6 +622,12 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             guard let roomIdentity else { return nil }
             return roomModes[roomIdentity.workspaceFolded]
         }
+        // Cloud fetch can finish while a source note is being edited. Keep the old
+        // token and document so the normal note-save notification can retry safely.
+        guard !drafts.contains(where: {
+            doc.resolveCanonicalSessionID(for: $0) != replica.workspaceDoc.resolveCanonicalSessionID(for: $0)
+        }) else { throw DeferredHistoryMerge.unsavedNotes }
+        replica.libraryToken = changes.token
         replica.workspaceDoc = doc
         for redirect in redirects {
             report.changedSessions.insert(redirect.winner)

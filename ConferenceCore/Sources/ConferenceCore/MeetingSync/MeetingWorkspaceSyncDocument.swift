@@ -485,6 +485,18 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
                 }
             }
         }
+        // Redirects may arrive after a local edit or before their child records.
+        // Normalize existing source content after the entire incoming batch.
+        for session in sessions.values where session.canonicalSessionID != nil {
+            let target = resolveCanonicalSessionID(for: session.id)
+            guard target != session.id,
+                  notes[session.id] != nil || outcomes[session.id] != nil ||
+                    tasks.values.contains(where: { $0.sessionID == session.id }) ||
+                    transcriptChunks.values.contains(where: { $0.sessionID == session.id }) else { continue }
+            let version = nextVersion()
+            reattributeChildren(from: session.id, to: target, version: version)
+            report.changedSessions.formUnion([session.id, target])
+        }
         return report
     }
 

@@ -61,6 +61,8 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         var deletedIDs: [String] = []
         var generation = "zone-gen-1"
         var failure: Error?
+        var onFetch: (() -> Void)?
+        var fetchedTokens: [Data?] = []
 
         func connect() async throws -> CloudZoneSession {
             if let failure { throw failure }
@@ -68,7 +70,9 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         }
 
         func fetch(session: CloudZoneSession, after token: Data?) async throws -> CloudZoneChanges<Record> {
-            CloudZoneChanges(records: Array(records.values), token: Data([1]))
+            fetchedTokens.append(token)
+            onFetch?()
+            return CloudZoneChanges(records: Array(records.values), token: Data([UInt8(fetchedTokens.count)]))
         }
 
         func save(_ values: [Record], session: CloudZoneSession) async throws -> [Record] {
@@ -185,6 +189,35 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
 
     // MARK: - Tests
 
+    func testIncomingRedirectWaitsForDirtyNoteAndPreservesSavedEditOnRetry() async throws {
+        let f = try await makeFixture()
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let target = MeetingSessionRecord(title: "First part", startedAt: start, endedAt: start + 60, state: .ended)
+        let source = MeetingSessionRecord(title: "Later part", startedAt: start + 120, endedAt: start + 180, state: .ended)
+        for session in [target, source] { try await f.library.store.upsertSession(session) }
+        _ = try await f.library.store.saveNote(sessionID: source.id, markdown: "Original note")
+        await f.notes.load(sessionID: source.id)
+        await f.sync.synchronizeNow()
+        let sourceKey = "session:" + source.id.uuidString
+        guard case .session(var redirected)? = f.libraryCloud.records[sourceKey] else { return XCTFail("Missing source") }
+        redirected.canonicalSessionID = SyncValue(target.id, version: SyncVersion(counter: 100, device: "phone"))
+        f.libraryCloud.records[sourceKey] = .session(redirected)
+        f.libraryCloud.onFetch = { f.notes.update(sessionID: source.id, text: "Edited while fetching") }
+        await f.sync.synchronizeNow()
+        XCTAssertEqual(f.sync.canonicalSessionID(source.id), source.id)
+        let deferredSource = try await f.library.store.session(source.id)
+        XCTAssertNotNil(deferredSource)
+        XCTAssertNil(f.sync.syncError)
+        f.libraryCloud.onFetch = nil
+        let saved = await f.notes.flush(sessionID: source.id)
+        XCTAssertTrue(saved)
+        await f.sync.synchronizeNow()
+        XCTAssertEqual(f.libraryCloud.fetchedTokens.suffix(2).first!, f.libraryCloud.fetchedTokens.last!)
+        XCTAssertEqual(f.sync.canonicalSessionID(source.id), target.id)
+        let merged = try await f.library.store.note(target.id)
+        XCTAssertTrue(merged?.markdown.contains("Edited while fetching") == true)
+    }
+
     func testLocalCalendarRejoinMergesDuringCloudOutageAndKeepsNotesTasksAndVersions() async throws {
         let f = try await makeFixture()
         let start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 3600)
@@ -224,6 +257,15 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         XCTAssertTrue(versions.contains { $0.outcome.summary == "Later summary" })
         XCTAssertNotNil(f.sync.nextRetryAt)
         XCTAssertNotNil(f.sync.syncError)
+        let third = MeetingSessionRecord(title: "Review", invitation: invitation, startedAt: start + 1500,
+                                         endedAt: start + 2200, state: .ended)
+        try await f.library.store.upsertSession(third)
+        f.sync.scheduleSync(delayMilliseconds: 0)
+        for _ in 0..<100 where f.sync.canonicalSessionID(third.id) != first.id {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(f.sync.canonicalSessionID(third.id), first.id,
+                       "Local reconciliation must run while cloud retries are delayed")
         f.roomSync.setEnabled(false)
         await f.sync.synchronizeNow()
         XCTAssertEqual(f.sync.canonicalSessionID(second.id), first.id)
