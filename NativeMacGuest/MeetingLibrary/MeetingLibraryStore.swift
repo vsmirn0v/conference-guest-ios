@@ -1507,8 +1507,8 @@ extension MeetingLibraryStore {
 // MARK: - Cards
 
 extension MeetingLibraryStore {
-    /// One row per session that has notes or an outcome (or is still active). A failed
-    /// join that produced neither is invisible history.
+    /// One row per attended session, including meetings that have no captured material.
+    /// Incomplete joins appear only when they contain a note or outcome.
     func cards() async throws -> [MeetingLibraryCard] {
         let db = try db()
         let rows = try db.rows("""
@@ -1526,7 +1526,7 @@ extension MeetingLibraryStore {
             let hasNote = row.text(6) != nil
             let hasOutcome = row.text(9) != nil
             let state = MeetingSessionRecord.State(rawValue: row.text(4) ?? "") ?? .active
-            guard hasNote || hasOutcome || state == .active || state == .reconnecting else { return nil }
+            guard hasNote || hasOutcome || state == .active || state == .reconnecting || state == .ended else { return nil }
             return MeetingLibraryCard(
                 sessionID: UUID(uuidString: row.text(0) ?? "") ?? UUID(),
                 title: row.text(1) ?? "",
