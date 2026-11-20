@@ -172,6 +172,7 @@ private struct CompactSettingsFixture: View {
         workspace.openMeetingHistory()
         let window = try XCTUnwrap(NSApp.windows.first { $0.delegate === workspace })
         let host = try XCTUnwrap(window.contentView)
+        window.makeKeyAndOrderFront(nil)
         await settleUI(host)
 
         let first = workspace.meetings[0], second = workspace.meetings[1]
@@ -185,7 +186,7 @@ private struct CompactSettingsFixture: View {
         }
         let originalTalkID = workspace.talkID
         for meeting in [second, first] {
-            try click(button("liveSidebar.meeting.\(meeting.sessionID)"), in: window)
+            try press("liveSidebar.meeting.\(meeting.sessionID)")
             try await eventually { workspace.selectedMeetingID == meeting.sessionID }
             XCTAssertEqual(workspace.talkID, originalTalkID)
             await settleUI(host)

@@ -1023,7 +1023,7 @@ struct NativeDesktopLiveMeetingControls: View {
                                 statusIcon.frame(width: 18)
                                 title
                             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                        }.buttonStyle(.plain).accessibilityLabel(model.title)
+                        }.buttonStyle(.borderless).foregroundStyle(.primary).accessibilityLabel(model.title)
                             .accessibilityIdentifier("liveSidebar.meeting.\(model.sessionID)")
                         indicators
                     }
