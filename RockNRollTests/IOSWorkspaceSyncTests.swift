@@ -715,9 +715,10 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         let now = Date()
         let start = now.addingTimeInterval(1800)
         let end = now.addingTimeInterval(3600)
-        let urlA = URL(string: "https://room.example.test/j1ds87")!
-        let urlAWithPwd = URL(string: "https://room.example.test/j1ds87?pwd=secret")!
-        let urlB = URL(string: "https://room.example.test/q01xx4")!
+        // Local discovery returns 404 so the synced binding supplies the invitation and engine.
+        let urlA = URL(string: "https://unsupported.example.test/j1ds87")!
+        let urlAWithPwd = URL(string: "https://unsupported.example.test/j1ds87?pwd=secret")!
+        let urlB = URL(string: "https://unsupported.example.test/q01xx4")!
 
         let localMeeting = CalendarMeeting(
             id: "ios-ev-1",
