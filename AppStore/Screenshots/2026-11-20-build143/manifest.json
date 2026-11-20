@@ -1,0 +1,112 @@
+{
+  "captured": "2026-11-20",
+  "appVersion": "0.2.0",
+  "build": "143",
+  "releaseArchiveSource": "3a314abf9f2144d6de76167caa73fc891979ec3a",
+  "captureCheckout": "8a25d488c1c2c826ea8bba1989668d0ea1a89c88",
+  "simulatorAppDebugDylibUUID": "EC1C7424-3CA4-3FE0-9D4D-BD56BB680A0F",
+  "locale": "en-US",
+  "appearance": "dark",
+  "capture": "Native iOS app in Apple Simulator. Workspace and transcript examples use fictional local records. Call images use the public test room https://rock.glowsoft.ru/jams/test, the simulator direct-media path, and the sample card shared by a browser participant. Final images preserve the native pixels and color profile with an opaque RGB PNG encoding.",
+  "devices": {
+    "iPhone-6.3": {
+      "model": "iPhone 18 Pro",
+      "simulatorOS": "27.2",
+      "simulatorOSBuild": "24B114"
+    },
+    "iPhone-6.9": {
+      "model": "iPhone 18 Pro Max",
+      "simulatorOS": "27.2",
+      "simulatorOSBuild": "24B114"
+    },
+    "iPhone-Duo": {
+      "model": "iPhone Duo",
+      "simulatorOS": "27.1",
+      "simulatorOSBuild": "24A94232"
+    },
+    "iPad-13": {
+      "model": "iPad Pro 13-inch (M4)",
+      "simulatorOS": "27.2",
+      "simulatorOSBuild": "24B114"
+    }
+  },
+  "images": [
+    {
+      "file": "iPhone-6.3/01-live-screen-sharing.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "e8125425b74c2ea2e363a18d3ee6436dde713efeabf93c8184dfb0312f58fd78",
+      "screen": "The native client receives the sample score from the public browser demo."
+    },
+    {
+      "file": "iPhone-6.3/02-join-another-meeting.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "56b23ea9141dc362f8498695e5099b4f3b18b7fc203f7a9d180d1958a6b5f0d8",
+      "screen": "The in-call More menu shows Assistant mode, Join another meeting and Return to Home."
+    },
+    {
+      "file": "iPhone-6.3/03-assistant-mode.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "aaf45237eff0a81c054421eba56dd785090a948bd7e19f54cc33cca77920a0c2",
+      "screen": "The native Assistant Mode sheet shows the optional Mentions, Follow and Participate settings, including chat and voice replies."
+    },
+    {
+      "file": "iPhone-6.9/01-meetings-and-tasks.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "4441cc7e27562de969ef4630b23ebc51918c41b5029474a19cc55471f156fce2",
+      "screen": "Assistant meeting list with a fictional design review, summary preview and two tasks."
+    },
+    {
+      "file": "iPhone-6.9/02-screen-sharing.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "7e50f9008f454e306664cb71129c7f42b83cbb3df0b075caede3cd83300e1b88",
+      "screen": "The native client receives the sample score from the public browser demo."
+    },
+    {
+      "file": "iPhone-6.9/03-join-another-meeting.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "6156c5c3643b210e277446497d68f0079485ca1c33108c47e015fa6f342869ac",
+      "screen": "The in-call More menu shows Assistant mode, Join another meeting and Return to Home."
+    },
+    {
+      "file": "iPhone-Duo/01-outer-meeting-transcript.png",
+      "width": 1398,
+      "height": 2034,
+      "sha256": "6f0edae1aba49eca7b2df2ea5ceadb8faccad5fe712f7a4bac30d2812e9468cf",
+      "screen": "Closed Duo. The meeting detail shows the fictional discussion between Maya and Alex in the Transcript tab."
+    },
+    {
+      "file": "iPhone-Duo/02-inner-calendar-setup.png",
+      "width": 2853,
+      "height": 2007,
+      "sha256": "ca9e3d01bca42faa6aa24f4b05d3ef3d00779ea670d974909d79ffeed43aa0c2",
+      "screen": "Partially open Duo. The native calendar setup appears next to the invitation and workspace."
+    },
+    {
+      "file": "iPhone-Duo/03-inner-meeting-summary.png",
+      "width": 2853,
+      "height": 2007,
+      "sha256": "e50d7feb65323b513decf6db46b51048c9037e373cfba809b701ffae27a2ecbf",
+      "screen": "Partially open Duo. The native meeting detail shows a fictional summary, decision and open question."
+    },
+    {
+      "file": "iPad-13/01-live-screen-sharing.png",
+      "width": 2064,
+      "height": 2752,
+      "sha256": "bfc20b75961f24dcdcbe96631082ebdf6e2de96951dd194d7698a43c5065a3fa",
+      "screen": "The native client receives the sample score from the public browser demo."
+    },
+    {
+      "file": "iPad-13/02-join-another-meeting.png",
+      "width": 2064,
+      "height": 2752,
+      "sha256": "bd244febb509070dc94e4bb7b08d4dd758a71f2f09a884f0dc08b36dd2e61809",
+      "screen": "The in-call More menu shows Assistant mode, Join another meeting and Return to Home."
+    }
+  ]
+}
