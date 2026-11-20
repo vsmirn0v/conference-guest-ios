@@ -715,9 +715,9 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         let now = Date()
         let start = now.addingTimeInterval(1800)
         let end = now.addingTimeInterval(3600)
-        let urlA = URL(string: "https://salutejazz.ru/j1ds87")!
-        let urlAWithPwd = URL(string: "https://salutejazz.ru/j1ds87?pwd=secret")!
-        let urlB = URL(string: "https://salutejazz.ru/q01xx4")!
+        let urlA = URL(string: "https://room.example.test/j1ds87")!
+        let urlAWithPwd = URL(string: "https://room.example.test/j1ds87?pwd=secret")!
+        let urlB = URL(string: "https://room.example.test/q01xx4")!
 
         let localMeeting = CalendarMeeting(
             id: "ios-ev-1",
@@ -733,7 +733,9 @@ final class IOSWorkspaceSyncTests: XCTestCase {
 
         let suite = "IOSWorkspaceSyncTests.CalendarDedup.\(UUID().uuidString)"
         let prefs = UserDefaults(suiteName: suite)!
-        let detector = MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: .ephemeral))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [CalendarMeetingStoreTests.Response.self]
+        let detector = MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config))
         let reminders = CalendarReminderCoordinator(
             preferences: prefs,
             storage: CalendarReminderTests.Storage(),
