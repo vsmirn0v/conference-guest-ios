@@ -64,27 +64,40 @@ final class MeetingAccessUITests: XCTestCase {
     func testFocusedShareUsesWholeWindowForPinchAndRetainsZoomWhenControlsToggle() throws {
         let app = launch(guest: true)
         defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
-        let window = app.windows.firstMatch
-        let viewport = app.scrollViews.matching(identifier: "share").firstMatch
-        XCTAssertTrue(viewport.waitForExistence(timeout: 15))
+        func covers(_ frame: CGRect, _ bounds: CGRect) -> Bool {
+            abs(frame.minX - bounds.minX) < 0.5 && abs(frame.minY - bounds.minY) < 0.5 &&
+                abs(frame.maxX - bounds.maxX) < 0.5 && abs(frame.maxY - bounds.maxY) < 0.5
+        }
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
             XCUIDevice.shared.orientation = orientation
+            let gestureApp = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+            let window = gestureApp.windows.firstMatch
+            let viewport = gestureApp.scrollViews.matching(identifier: "share").firstMatch
+            XCTAssertTrue(viewport.waitForExistence(timeout: 15))
             let fillsWindow = NSPredicate { _, _ in
                 let bounds = window.frame
-                return (bounds.width > bounds.height) == orientation.isLandscape && viewport.frame.equalTo(bounds)
+                return (bounds.width > bounds.height) == orientation.isLandscape && covers(viewport.frame, bounds)
             }
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: fillsWindow, object: nil)], timeout: 8), .completed)
-            XCTAssertTrue(app.buttons["call.view"].isHittable)
+            let viewButton = gestureApp.buttons["call.view"]
+            XCTAssertTrue(viewButton.isHittable)
+            if viewport.value as? String != "100%" {
+                gestureApp.buttons["Shared screen scale"].tap()
+                let fit = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "100%"), object: viewport)
+                XCTAssertEqual(XCTWaiter.wait(for: [fit], timeout: 5), .completed)
+            }
             window.pinch(withScale: 1.8, velocity: 1)
             let zoom = try XCTUnwrap(viewport.value as? String)
             XCTAssertNotEqual(zoom, "100%")
             let tap = window.coordinate(withNormalizedOffset: CGVector(dx: 0.32, dy: 0.55))
             tap.tap()
-            XCTAssertFalse(app.buttons["call.view"].exists)
-            XCTAssertEqual(viewport.frame, window.frame)
+            // The stage waits for its double-tap zoom recognizer before hiding chrome.
+            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: viewButton)
+            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+            XCTAssertTrue(covers(viewport.frame, window.frame))
             XCTAssertEqual(viewport.value as? String, zoom)
             tap.tap()
-            XCTAssertTrue(app.buttons["call.view"].waitForExistence(timeout: 5))
+            XCTAssertTrue(viewButton.waitForExistence(timeout: 5))
             XCTAssertEqual(viewport.value as? String, zoom)
             attach("Full-window share with floating controls \(orientation.rawValue)")
         }
