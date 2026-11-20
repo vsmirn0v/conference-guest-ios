@@ -289,22 +289,18 @@ import UniformTypeIdentifiers
             engine.setTranscriptionAudioHandler(nil)
             engine.setLocalAudioSink(nil)
             transcriber.stop(flushing: workspaceJournal != nil)
-            let drainID = UUID()
-            if workspaceJournal != nil {
-                transcriptionDrains[drainID] = Task { [weak self] in
-                    await transcriber.waitForDelivery()
-                    self?.transcriptionDrains[drainID] = nil
-                    self?.archivedLocalAttribution[generation] = nil
-                }
-            } else {
+            // Keep the model and speaker attribution alive until the final callbacks have
+            // reached the journal, even if the workspace has already dismissed the meeting.
+            transcriptionDrains[generation] = Task { [self] in
+                let summary = await transcriber.waitForDelivery()
+                LocalSpeechRecognizer.shared.release()
+                probeLog("local-transcription-stop", ["utterances": summary.utterances, "lines": summary.lines,
+                    "audioSeconds": summary.audioSeconds.rounded(), "decodeSeconds": summary.decodeSeconds.rounded(),
+                    "droppedSeconds": summary.droppedSeconds.rounded(), "micUtterances": summary.microphoneUtterances,
+                    "micSeconds": summary.microphoneSeconds.rounded()])
                 archivedLocalAttribution[generation] = nil
+                transcriptionDrains[generation] = nil
             }
-            LocalSpeechRecognizer.shared.release()
-            let summary = transcriber.currentSummary
-            probeLog("local-transcription-stop", ["utterances": summary.utterances, "lines": summary.lines,
-                "audioSeconds": summary.audioSeconds.rounded(), "decodeSeconds": summary.decodeSeconds.rounded(),
-                "droppedSeconds": summary.droppedSeconds.rounded(), "micUtterances": summary.microphoneUtterances,
-                "micSeconds": summary.microphoneSeconds.rounded()])
             if !closed { let engine = engine; Task { _ = await engine.setTranscriptionOutput(false) } }
             if !closed { observeTranscript(); observeParticipation() }
             objectWillChange.send()
@@ -533,6 +529,12 @@ import UniformTypeIdentifiers
                               localTranscript: participationLocalTranscript)
     }
 #if DEBUG
+    func installLocalTranscriberForTesting(_ transcriber: MeetingTranscriber, model: ListenRecognizerModel) {
+        precondition(localTranscriber == nil)
+        LocalSpeechRecognizer.shared.acquire(model)
+        localTranscriber = transcriber
+    }
+
     func receiveLocalLineForTesting(_ line: MeetingTranscriber.Line) { receiveLocalLine(line) }
     private var localParticipationTranscribingForTesting = false
     var participationAudienceForTesting: ParticipationAudience?
@@ -2166,10 +2168,10 @@ import UniformTypeIdentifiers
             }
             if let claim = self.mediaClaim { self.sharedMedia.resume(claim, clean: clean); self.mediaClaim = nil }
             self.captureCoordinator.finishLeaveLease(engineStopped: engineStopped)
-            await self.catchUp.finishMeeting().value
-            await self.finalizeWorkspaceCapture(leftAt: leftAt)
             if clean { self.snapshot = .init(phase: .left, playoutOn: false) }
             else { self.snapshot.phase = .failed }
+            await self.catchUp.finishMeeting().value
+            await self.finalizeWorkspaceCapture(leftAt: leftAt)
             self.engine.onState = nil; self.engine.onVideo = nil; self.engine.onLocalCamera = nil; self.engine.onTitle = nil
             return clean
         }

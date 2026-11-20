@@ -373,6 +373,95 @@ import XCTest
         _ = await model.leave()
     }
 
+    private var unavailableSpeechModel: ListenRecognizerModel {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        return .coreMLGigaAM(.init(encoder: missing, decoder: missing, joint: missing, tokens: missing, cache: missing))
+    }
+
+    func testIncomingAudioSharesOneBoundAcrossTracksAndMicrophone() async throws {
+        let worker = DispatchQueue(label: "test.transcription.audio-backlog")
+        var gaps: [DateInterval] = []
+        let transcriber = MeetingTranscriber(model: unavailableSpeechModel, vadModel: temporaryFolder(), queue: worker,
+            onDropped: { gaps.append(DateInterval(start: $0, end: $1)) }) { _ in }
+        var sinks: [MeetingAudioSink] = []
+        let sources = ["one", "two", "three"].map { trackID in
+            MeetingAudioSource(id: trackID, participantIdentity: trackID,
+                attach: { sinks.append($0) }, detach: { _ in })
+        }
+        transcriber.update(sources)
+        XCTAssertEqual(sinks.count, sources.count)
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        func buffer(_ frames: Int) throws -> AVAudioPCMBuffer {
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)))
+            buffer.frameLength = buffer.frameCapacity
+            return buffer
+        }
+        let frame = try buffer(160)
+        let oversized = try buffer(MeetingTranscriber.maxPendingBytes / MemoryLayout<Float>.size + 1)
+        let release = DispatchSemaphore(value: 0)
+        worker.async { XCTAssertEqual(release.wait(timeout: .now() + 10), .success) }
+        transcriber.feedLocal(oversized)  // Muted input must not consume the budget or register a gap.
+        transcriber.setLocalCapture(true)
+        sinks[0].render(pcmBuffer: oversized)
+        let extraFrames = 32
+        for i in 0..<(MeetingTranscriber.maxPendingBuffers + extraFrames) {
+            if i.isMultiple(of: 4) { transcriber.feedLocal(frame) }
+            else { sinks[i % sinks.count].render(pcmBuffer: frame) }
+        }
+        transcriber.stop()
+        sinks[0].render(pcmBuffer: oversized)  // A callback already in flight at detach.
+        release.signal()
+
+        let summary = await transcriber.waitForDelivery()
+        let expected = (Double(oversized.frameLength) + Double(extraFrames) * 160) / 16_000
+        XCTAssertEqual(summary.droppedSeconds, expected, accuracy: 0.0001)
+        XCTAssertEqual(gaps.count, 1, "The journal receives one gap for a burst of dropped buffers")
+        XCTAssertEqual(summary.audioSeconds, 0, "Cancelling discards pending raw audio before voice detection")
+        XCTAssertEqual(transcriber.trackCount, 0)
+    }
+
+    func testHangUpDisconnectsWhileTranscriptionWorkerIsBlocked() async throws {
+        let engine = LocalFallbackEngine()
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let listenStore = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: []),
+            root: temporaryFolder(), defaults: preferences)
+        let meeting = NativeDesktopMeetingModel(destination: try .verified(URL(string: "https://example.test/calls/leave")!, engine: .guest),
+            name: "Guest", title: "Hang up", engine: engine, joinReadiness: .init(microphone: .off, camera: .off),
+            listenStore: listenStore)
+        let library = MeetingLibraryController(root: temporaryFolder())
+        meeting.meetingLibrary = library
+        try await meeting.connect()
+        let worker = DispatchQueue(label: "test.transcription.blocked-leave")
+        let model = unavailableSpeechModel
+        let transcriber = MeetingTranscriber(model: model, vadModel: temporaryFolder(), queue: worker) { _ in }
+        meeting.installLocalTranscriberForTesting(transcriber, model: model)
+
+        let release = DispatchSemaphore(value: 0)
+        engine.onLeave = { release.signal() }
+        worker.async {
+            XCTAssertEqual(release.wait(timeout: .now() + 10), .success,
+                "Hang Up waited for transcription before disconnecting the engine")
+        }
+        let clean = await meeting.leave()
+        XCTAssertTrue(clean)
+        XCTAssertEqual(engine.snapshot.phase, .left)
+        _ = await transcriber.waitForDelivery()
+        XCTAssertNotNil(library.workspaceJournal.session(id: meeting.workspaceSessionID)?.endedAt)
+        await library.close()
+    }
+
+    func testFlushingStopDeliversFinalUtteranceBeforeReturningSummary() async throws {
+        let (speech, transcriber, lines) = try await speechFixture()
+        // Omit the fixture's trailing second of silence and leave immediately.
+        transcriber.feedForTesting(trackID: "speaker", samples: Array(speech.dropLast(16_000)))
+        transcriber.stop(flushing: true)
+        transcriber.stop()
+        let summary = await transcriber.waitForDelivery()
+        XCTAssertEqual(lines.value.count, 1)
+        XCTAssertTrue(lines.value.first?.text.contains("Молдавии") == true)
+        XCTAssertEqual(summary.lines, lines.value.count)
+    }
+
     /// Microphone capture is a gate: audio fed while it is off is dropped, and
     /// turning it off ends the open utterance instead of waiting for silence.
     func testMicrophoneCaptureGate() async throws {
@@ -383,6 +472,7 @@ import XCTest
             buffer.frameLength = AVAudioFrameCount(samples.count)
             for (i, s) in samples.enumerated() { buffer.floatChannelData![0][i] = s }
             transcriber.feedLocal(buffer)
+            transcriber.waitForTesting()
         }
         for offset in stride(from: 0, to: speech.count, by: 160) { feed(speech[offset..<min(speech.count, offset + 160)]) }
         transcriber.waitForTesting()
@@ -551,6 +641,7 @@ import XCTest
 }
 
 @MainActor private final class LocalFallbackEngine: NativeDesktopMeetingEngine {
+    var onLeave: (() -> Void)?
     var onState: ((NativeDesktopExternalSnapshot) -> Void)?
     var onVideo: (([NativeDesktopExternalVideo]) -> Void)?
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)?
@@ -569,5 +660,10 @@ import XCTest
     func setCamera(_ enabled: Bool) async throws {}
     func setPlayout(_ enabled: Bool) async throws { snapshot.playoutOn = enabled; onState?(snapshot) }
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {}
-    func leave() async -> Bool { snapshot.phase = .left; onState?(snapshot); return true }
+    func leave() async -> Bool {
+        snapshot.phase = .left
+        onLeave?()
+        onState?(snapshot)
+        return true
+    }
 }

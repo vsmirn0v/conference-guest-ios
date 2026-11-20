@@ -258,7 +258,20 @@ final class MeetingTranscriber: @unchecked Sendable {
     /// The speaker key of your own microphone.
     static let localTrackID = "local-microphone"
 
-    private let queue = DispatchQueue(label: "attention.listen.meeting", qos: .utility)
+    // All tracks and the microphone share a budget for PCM storage and worker jobs.
+    static let maxPendingBuffers = 128
+    static let maxPendingBytes = 4 * 1024 * 1024
+    private let queue: DispatchQueue
+    private let ingressLock = NSLock()
+    private let audioCopies = DispatchGroup()
+    private var acceptingAudio = true
+    private var discardQueuedAudio = false
+    private var localCapture = false
+    private var microphoneGeneration = 0
+    private var pendingBuffers = 0
+    private var pendingBytes = 0
+    private var droppedInputSeconds = 0.0
+    private var pendingGap: DateInterval?
     private let recognizer: LocalSpeechRecognizer
     private let model: ListenRecognizerModel
     private let vadModel: URL
@@ -267,12 +280,12 @@ final class MeetingTranscriber: @unchecked Sendable {
     private let deliveries = DispatchGroup()
     // Main actor: attached sinks by source id.
     private var taps: [String: (source: MeetingAudioSource, tap: MeetingAudioSink)] = [:]
+    @MainActor private var isStopping = false
     // Queue: per-speaker conversion and detection state.
     private var speakers: [String: Speaker] = [:]
     private var stopped = false
     private var finishDeliveries = false
-    private var localCapture = false
-    private(set) var summary = Summary()
+    private var summary = Summary()
     /// Wall clock for line times; replaced in tests.
     var now: () -> Date = Date.init
 
@@ -287,30 +300,41 @@ final class MeetingTranscriber: @unchecked Sendable {
     }
 
     init(model: ListenRecognizerModel, vadModel: URL, recognizer: LocalSpeechRecognizer = .shared,
+         queue: DispatchQueue = DispatchQueue(label: "attention.listen.meeting", qos: .utility),
          onDropped: (@MainActor (Date, Date) -> Void)? = nil,
          onLine: @escaping @MainActor (Line) -> Void) {
         self.model = model; self.vadModel = vadModel; self.recognizer = recognizer; self.onLine = onLine
-        self.onDropped = onDropped
+        self.onDropped = onDropped; self.queue = queue
     }
 
     /// Attaches to new sources and detaches from sources that ended.
     @MainActor func update(_ sources: [MeetingAudioSource]) {
+        guard !isStopping else { return }
         let current = Set(sources.map(\.id))
         for (id, entry) in taps where !current.contains(id) {
             entry.source.detach(entry.tap); taps[id] = nil
             queue.async { [self] in finish(id) }
         }
         for source in sources where taps[source.id] == nil {
-            let tap = MeetingAudioSink(trackID: source.id) { [weak self] id, buffer in self?.receive(id, buffer) }
+            let tap = MeetingAudioSink(borrowingBuffersFor: source.id) { [weak self] id, buffer in self?.receive(id, buffer) }
             source.attach(tap); taps[source.id] = (source, tap)
         }
     }
 
     @MainActor func stop(flushing: Bool = false) {
+        guard !isStopping else { return }
+        isStopping = true
+        ingressLock.withLock {
+            acceptingAudio = false
+            discardQueuedAudio = !flushing
+        }
         for entry in taps.values { entry.source.detach(entry.tap) }
         taps = [:]
-        queue.sync {
-            guard !stopped else { return }
+        // The last in-flight copy can still enqueue work. Keep the group open until
+        // the worker flushes that audio and registers every final recognition.
+        deliveries.enter()
+        audioCopies.notify(queue: queue) { [self] in
+            defer { deliveries.leave() }
             stopped = true
             finishDeliveries = flushing
             if flushing { for id in Array(speakers.keys) { finish(id) } }
@@ -318,32 +342,39 @@ final class MeetingTranscriber: @unchecked Sendable {
         }
     }
 
-    func waitForDelivery() async {
+    /// After stop, the group covers the worker flush and every final callback,
+    /// including its main-actor journal write.
+    func waitForDelivery() async -> Summary {
         await withCheckedContinuation { continuation in
-            deliveries.notify(queue: .main) { continuation.resume() }
+            deliveries.notify(queue: queue) { [self] in
+                continuation.resume(returning: summaryIncludingInputDrops)
+            }
         }
     }
 
     @MainActor var trackCount: Int { taps.count }
-    var currentSummary: Summary { queue.sync { summary } }
+    var currentSummary: Summary { queue.sync { summaryIncludingInputDrops } }
+
+    private var summaryIncludingInputDrops: Summary {
+        var result = summary
+        result.droppedSeconds += ingressLock.withLock { droppedInputSeconds }
+        return result
+    }
 
     /// Your microphone is transcribed only while this is on (the meeting confirmed
     /// it unmuted and holds physical input). Turning it off ends the utterance, so
     /// nothing said after muting is transcribed; buffers meanwhile are dropped.
     func setLocalCapture(_ enabled: Bool) {
-        queue.async { [self] in
-            guard localCapture != enabled else { return }
+        ingressLock.withLock {
+            guard acceptingAudio, localCapture != enabled else { return }
             localCapture = enabled
-            if !enabled { finish(Self.localTrackID) }
+            microphoneGeneration &+= 1
+            if !enabled { queue.async { [self] in finish(Self.localTrackID) } }
         }
     }
-    /// Your microphone's buffer, from the engine's input tap. Copies at once.
+    /// Your microphone's borrowed buffer from the engine's input tap.
     func feedLocal(_ buffer: AVAudioPCMBuffer) {
-        guard let copy = MeetingAudioSink.copy(buffer) else { return }
-        queue.async { [self] in
-            guard localCapture else { return }
-            receiveOnQueue(Self.localTrackID, copy)
-        }
+        receive(Self.localTrackID, buffer)
     }
 
     /// Test entry: 16 kHz mono samples for one speaker, as a track would deliver them.
@@ -357,18 +388,72 @@ final class MeetingTranscriber: @unchecked Sendable {
     }
     func waitForTesting() { queue.sync {} }
 
-    // MARK: Queue
+    // MARK: Audio callbacks
 
     private func receive(_ trackID: String, _ buffer: AVAudioPCMBuffer) {
-        queue.async { [self] in receiveOnQueue(trackID, buffer) }
+        guard buffer.frameLength > 0, buffer.format.sampleRate > 0 else { return }
+        let bytes = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+            .reduce(0) { $0 + Int($1.mDataByteSize) }
+        let receivedAt = now()
+        let isMicrophone = trackID == Self.localTrackID
+        let generation: Int? = ingressLock.withLock {
+            guard acceptingAudio, !isMicrophone || localCapture else { return nil }
+            guard pendingBuffers < Self.maxPendingBuffers, bytes <= Self.maxPendingBytes - pendingBytes else {
+                recordInputDrop(seconds: Double(buffer.frameLength) / buffer.format.sampleRate, at: receivedAt)
+                return nil
+            }
+            pendingBuffers += 1; pendingBytes += bytes
+            audioCopies.enter()
+            return microphoneGeneration
+        }
+        guard let generation else { return }
+        defer { audioCopies.leave() }
+        let copy = MeetingAudioSink.copy(buffer)
+        ingressLock.withLock {
+            // A microphone copy can race a mute and a subsequent unmute.
+            guard let copy, !discardQueuedAudio, !isMicrophone || generation == microphoneGeneration else {
+                pendingBuffers -= 1; pendingBytes -= bytes
+                return
+            }
+            queue.async { [self] in
+                defer { ingressLock.withLock { pendingBuffers -= 1; pendingBytes -= bytes } }
+                guard !ingressLock.withLock({ discardQueuedAudio }) else { return }
+                receiveOnQueue(trackID, copy, receivedAt: receivedAt)
+            }
+        }
     }
-    private func receiveOnQueue(_ trackID: String, _ buffer: AVAudioPCMBuffer) {
+
+    /// Called under ingressLock. One pending journal delivery covers a burst
+    /// of overflows across all tracks, even while the main actor is busy.
+    private func recordInputDrop(seconds: Double, at end: Date) {
+        droppedInputSeconds += seconds
+        guard let onDropped else { return }
+        let start = end.addingTimeInterval(-seconds)
+        if let gap = pendingGap {
+            pendingGap = DateInterval(start: min(gap.start, start), end: max(gap.end, end))
+            return
+        }
+        pendingGap = DateInterval(start: start, end: end)
+        deliveries.enter()
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(1)) { [self] in
+            let gap = ingressLock.withLock {
+                defer { pendingGap = nil }
+                return pendingGap
+            }
+            if let gap { onDropped(gap.start, gap.end) }
+            deliveries.leave()
+        }
+    }
+
+    // MARK: Queue
+
+    private func receiveOnQueue(_ trackID: String, _ buffer: AVAudioPCMBuffer, receivedAt: Date) {
         guard !stopped, let speaker = speaker(trackID), let samples = convert(buffer, speaker) else { return }
         // Sample counts advance only while audio flows; a playout stall (device change,
         // audio service restart) would date every later line early by the gap. Each
         // buffer re-anchors the timeline to the wall clock at its arrival.
         speaker.fed += Int64(samples.count)
-        speaker.origin = now().addingTimeInterval(-Double(speaker.fed) / 16_000)
+        speaker.origin = receivedAt.addingTimeInterval(-Double(speaker.fed) / 16_000)
         let seconds = Double(samples.count) / 16_000
         summary.audioSeconds += seconds
         if trackID == Self.localTrackID { summary.microphoneSeconds += seconds }

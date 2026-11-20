@@ -18,17 +18,24 @@ public extension GuestRemoteAudio {
     var source: MeetingAudioSource { .webRTC(track, identity: participantIdentity) }
 }
 
-/// A sink on one remote track. It copies each buffer and returns at once: the
-/// audio thread never waits for conversion or recognition.
+/// A sink on one remote track. By default its consumer receives a private copy.
 public final class MeetingAudioSink: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
     /// Opaque provider-owned renderer handle stored by the provider bridge so attach and detach share one instance.
     public var adapterRenderer: AnyObject?
     public let trackID: String
     public let deliver: (String, AVAudioPCMBuffer) -> Void
-    public init(trackID: String, deliver: @escaping (String, AVAudioPCMBuffer) -> Void) { self.trackID = trackID; self.deliver = deliver }
+    private let borrowsBuffers: Bool
+    public init(trackID: String, deliver: @escaping (String, AVAudioPCMBuffer) -> Void) {
+        self.trackID = trackID; self.deliver = deliver; borrowsBuffers = false
+    }
+    /// The consumer may inspect the renderer's buffer during this callback.
+    /// It must copy any audio it accepts for asynchronous processing.
+    public init(borrowingBuffersFor trackID: String, deliver: @escaping (String, AVAudioPCMBuffer) -> Void) {
+        self.trackID = trackID; self.deliver = deliver; borrowsBuffers = true
+    }
     public func render(pcmBuffer: AVAudioPCMBuffer) {
-        guard let copy = Self.copy(pcmBuffer) else { return }
-        deliver(trackID, copy)
+        if borrowsBuffers { deliver(trackID, pcmBuffer) }
+        else if let copy = Self.copy(pcmBuffer) { deliver(trackID, copy) }
     }
     public static func copy(_ pcmBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         guard pcmBuffer.frameLength > 0,
