@@ -1353,10 +1353,11 @@ struct NativeDesktopParticipantVolumeButton: View {
             .accessibilityIdentifier("participant.volume.\(person.id)")
             .popover(isPresented: $open, arrowEdge: .leading) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(person.name).font(.headline).lineLimit(1)
+                    Text(person.name).font(.headline).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         Slider(value: Binding(get: { level }, set: { model.setParticipantVolume(($0 * 20).rounded() / 20, participantID: person.id) }), in: 0...2)
                             .accessibilityLabel(L("Volume for %@", person.name))
+                            .accessibilityIdentifier("participant.volume.slider.\(person.id)")
                         Text("\(percent)%").font(.caption).monospacedDigit().frame(width: 42, alignment: .trailing)
                     }
                     HStack {
@@ -1737,7 +1738,6 @@ private struct NativeDesktopZoomIndicator: View {
 struct NativeDesktopParticipantsList: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     @State private var search = ""
-    private let volumeColumnWidth: CGFloat = 108
 
     var body: some View {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1753,13 +1753,6 @@ struct NativeDesktopParticipantsList: View {
                 }
             }.padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 14).padding(.vertical, 10)
-            if model.supportsParticipantVolume, people.contains(where: { !$0.isLocal }) {
-                Text(L("Volume for me")).font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1).minimumScaleFactor(0.75)
-                    .frame(width: volumeColumnWidth)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.horizontal, 14).padding(.bottom, 4)
-            }
             List(people) { person in
                 row(person).listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14))
             }.listStyle(.plain)
@@ -1779,26 +1772,31 @@ struct NativeDesktopParticipantsList: View {
     }
     private func row(_ person: NativeDesktopParticipant) -> some View {
         let speaking = person.speaking == true
-        return HStack(spacing: 10) {
+        return HStack(alignment: .top, spacing: 10) {
             Text(person.name.split(whereSeparator: \.isWhitespace).prefix(2).compactMap(\.first).map(String.init).joined().uppercased())
                 .font(.caption.bold()).frame(width: 30, height: 30).background(.quaternary, in: Circle())
                 .overlay(Circle().stroke(speaking ? Color.green : .clear, lineWidth: 2))
-            VStack(alignment: .leading, spacing: 1) {
-                Text(person.isLocal ? L("%@ (you)", person.name) : person.name).lineLimit(1)
-                Text(status(person)).font(.caption).foregroundStyle(speaking ? Color.green : .secondary)
-                    .lineLimit(1).frame(height: 15, alignment: .leading)
-            }
-            Spacer(minLength: 4)
-            ZStack {
-                if speaking { NativeDesktopLevelMeter(level: person.isLocal ? model.snapshot.microphoneLevel ?? 0.5 : 0.7) }
-                else if person.microphoneOn == false { Image(systemName: "mic.slash").foregroundStyle(.secondary) }
-            }.frame(width: 20, height: 16).accessibilityHidden(true)
-            if model.supportsParticipantVolume {
-                ZStack {
-                    if person.isLocal { Color.clear.accessibilityHidden(true) }
-                    else { NativeDesktopParticipantVolumeButton(model: model, person: person) }
-                }.frame(width: volumeColumnWidth)
-            }
-        }.frame(height: 46).accessibilityElement(children: .contain)
+                .padding(.top, 2).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(person.isLocal ? L("%@ (you)", person.name) : person.name)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("participant.name.\(person.id)")
+                HStack(spacing: 8) {
+                    Text(status(person)).font(.caption).foregroundStyle(speaking ? Color.green : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("participant.status.\(person.id)")
+                    ZStack {
+                        if speaking { NativeDesktopLevelMeter(level: person.isLocal ? model.snapshot.microphoneLevel ?? 0.5 : 0.7) }
+                        else if person.microphoneOn == false { Image(systemName: "mic.slash").foregroundStyle(.secondary) }
+                    }.frame(width: 20, height: 16).accessibilityHidden(true)
+                    if model.supportsParticipantVolume, !person.isLocal {
+                        NativeDesktopParticipantVolumeButton(model: model, person: person)
+                            .fixedSize()
+                    }
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(.vertical, 8).accessibilityElement(children: .contain)
     }
 }

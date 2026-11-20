@@ -1562,6 +1562,142 @@ private final class DesktopActivitySpy: NSUserActivity {
         try await spin { model.meetingVolume < 0.5 && engine.volumes.last == model.meetingVolume }
         XCTAssertEqual(UserDefaults.standard.double(forKey: model.meetingVolumeKey), model.meetingVolume, accuracy: 0.001)
     }
+    func testNarrowParticipantListKeepsNamesReadableAndVolumeUsable() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        // Publish isolated engine state without starting a real meeting or headset capture.
+        let people: [NativeDesktopParticipant] = [
+            .init(id: "me", name: "Виталий Александрович Смирнов", isLocal: true, microphoneOn: false),
+            .init(id: "artem", name: "Артём Максимович Волков", microphoneOn: true),
+            .init(id: "vyacheslav", name: "Вячеслав Александрович Соколов — инфраструктура платформы", microphoneOn: false),
+            .init(id: "dmitry", name: "Дмитрий Максимов (СДБ)", microphoneOn: true, sharing: true, speaking: true)
+        ]
+        engine.snapshot = .init(phase: .connected, participants: people)
+        engine.onState?(engine.snapshot)
+        XCTAssertEqual(model.participants.count, people.count)
+        addTeardownBlock { @MainActor in _ = await model.leave() }
+
+        let host = NSHostingView(rootView: NativeDesktopParticipantsList(model: model))
+        host.sizingOptions = []
+        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 540),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        panel.title = "Participant layout fixture \(UUID().uuidString)"
+        panel.isReleasedWhenClosed = false
+        panel.contentView = host
+        panel.setContentSize(NSSize(width: 320, height: 540))
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        defer { panel.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(300))
+
+        func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+        }
+        func find(_ element: AXUIElement, _ matches: (AXUIElement) -> Bool) -> AXUIElement? {
+            if matches(element) { return element }
+            for child in attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+                if let match = find(child, matches) { return match }
+            }
+            return nil
+        }
+        func frame(_ element: AXUIElement) throws -> CGRect {
+            let position = try XCTUnwrap(attribute(element, kAXPositionAttribute))
+            let dimensions = try XCTUnwrap(attribute(element, kAXSizeAttribute))
+            var origin = CGPoint.zero, size = CGSize.zero
+            XCTAssertTrue(AXValueGetValue(position as! AXValue, .cgPoint, &origin))
+            XCTAssertTrue(AXValueGetValue(dimensions as! AXValue, .cgSize, &size))
+            return CGRect(origin: origin, size: size)
+        }
+        let app = AXUIElementCreateApplication(getpid())
+        let window = try XCTUnwrap(find(app) { attribute($0, kAXTitleAttribute) as? String == panel.title })
+        func item(_ identifier: String, in root: AXUIElement? = nil) -> AXUIElement? {
+            find(root ?? window) { attribute($0, kAXIdentifierAttribute) as? String == identifier }
+        }
+        let windowFrame = try frame(window)
+        for person in people {
+            let name = try XCTUnwrap(item("participant.name.\(person.id)"))
+            let nameFrame = try frame(name)
+            let expected = person.isLocal ? L("%@ (you)", person.name) : person.name
+            XCTAssertTrue([kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute].contains {
+                attribute(name, $0) as? String == expected
+            }, "The full participant name must remain accessible")
+            XCTAssertGreaterThanOrEqual(nameFrame.minX, windowFrame.minX)
+            XCTAssertLessThanOrEqual(nameFrame.maxX, windowFrame.maxX + 1)
+            XCTAssertLessThanOrEqual(nameFrame.maxY, windowFrame.maxY)
+            let status = try frame(XCTUnwrap(item("participant.status.\(person.id)")))
+            XCTAssertGreaterThanOrEqual(status.minY, nameFrame.maxY - 1)
+            XCTAssertGreaterThan(status.height, 0)
+            XCTAssertLessThanOrEqual(status.maxY, windowFrame.maxY)
+            if person.isLocal {
+                XCTAssertNil(item("participant.volume.\(person.id)"), "Local participants have no listener volume control")
+            } else {
+                let volume = try frame(XCTUnwrap(item("participant.volume.\(person.id)")))
+                XCTAssertGreaterThanOrEqual(volume.minY, nameFrame.maxY - 1,
+                    "Volume controls must not consume the width needed to read a participant's name")
+                XCTAssertLessThanOrEqual(status.maxX, volume.minX,
+                    "Microphone and presenting status must not overlap the volume control")
+                XCTAssertLessThanOrEqual(volume.maxX, windowFrame.maxX + 1)
+            }
+        }
+        let longName = try frame(XCTUnwrap(item("participant.name.vyacheslav")))
+        XCTAssertGreaterThanOrEqual(longName.width, 220, "The 320pt panel must give long names most of the row width")
+        XCTAssertGreaterThan(longName.height, 25, "Long names must wrap instead of being clipped to one line")
+
+        func capture(_ width: Int) throws {
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let image = NSImage(size: host.bounds.size)
+            image.addRepresentation(bitmap)
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "Participant panel with Russian names at \(width)pt"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("native-participant-layout", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let path = directory.appendingPathComponent("participants-\(width).png")
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: path)
+            print("PARTICIPANT_LAYOUT_ARTIFACT=\(path.path)")
+        }
+        try capture(320)
+        panel.setContentSize(NSSize(width: 380, height: 540))
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        let widerName = try frame(XCTUnwrap(item("participant.name.vyacheslav")))
+        // Accessibility reports the rendered glyph bounds, not the enclosing
+        // flexible frame, so a wider proposal need not produce wider text.
+        XCTAssertGreaterThanOrEqual(widerName.width, 220)
+        XCTAssertLessThanOrEqual(widerName.height, longName.height)
+        for person in people where !person.isLocal {
+            let name = try frame(XCTUnwrap(item("participant.name.\(person.id)")))
+            let volume = try frame(XCTUnwrap(item("participant.volume.\(person.id)")))
+            XCTAssertGreaterThanOrEqual(volume.minY, name.maxY - 1)
+            XCTAssertLessThanOrEqual(volume.maxX, try frame(window).maxX + 1)
+        }
+        try capture(380)
+        panel.setContentSize(NSSize(width: 320, height: 540))
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+
+        let volume = try XCTUnwrap(item("participant.volume.dmitry"))
+        XCTAssertEqual(AXUIElementPerformAction(volume, kAXPressAction as CFString), .success)
+        try await spin { item("participant.volume.slider.dmitry", in: app) != nil }
+        let slider = try XCTUnwrap(item("participant.volume.slider.dmitry", in: app))
+        XCTAssertEqual(AXUIElementSetAttributeValue(slider, kAXValueAttribute as CFString, NSNumber(value: 0.5)), .success)
+        try await spin { engine.participantVolumeCommands.last?.id == "dmitry" && engine.participantVolumeCommands.last?.volume == 0.5 }
+        XCTAssertEqual(model.participantVolume("dmitry"), 0.5)
+        XCTAssertEqual(model.participantVolume("me"), 1)
+        // Close the popover before exercising the search field.
+        XCTAssertEqual(AXUIElementPerformAction(volume, kAXPressAction as CFString), .success)
+        try await Task.sleep(for: .milliseconds(150))
+        let search = try XCTUnwrap(item("meeting.participants.search"))
+        XCTAssertEqual(AXUIElementSetAttributeValue(search, kAXFocusedAttribute as CFString, kCFBooleanTrue), .success)
+        try await Task.sleep(for: .milliseconds(100))
+        let editor = try XCTUnwrap(panel.firstResponder as? NSTextView)
+        editor.insertText("Максимов", replacementRange: editor.selectedRange())
+        try await spin { item("participant.name.me") == nil && item("participant.name.dmitry") != nil }
+        XCTAssertNotNil(item("participant.volume.dmitry"), "Filtering must keep the matching participant's controls usable")
+    }
     func testOrganizerEndingMeetingLeavesItWithANoticeInsteadOfAnError() async throws {
         let engine = DesktopTestEngine()
         let workspace = multiWorkspace([engine])
