@@ -1113,6 +1113,8 @@
 "No text found. Try a clearer frame or return to Live." = "未找到文本。 尝试更清晰的框架或返回到 Live。";
 "Open Share" = "开放共享";
 "Screen share reconnecting…" = "屏幕共享重新连接中…";
+"Text" = "文本";
+
 "Select text" = "选择文本";
 "Selectable text · Live Text is unavailable on this device." = "可选择的文本 □ 现场文本无法在此设备上使用。";
 "Sending %@" = "正在发送 %@";
@@ -3179,3 +3181,9 @@
 "database is closed" = "数据库关闭";
 "task is no longer assigned to this profile" = "此配置文件不再被指定任务";
 "%@ is sharing" = "%@ 正在共享屏幕";
+
+/* Compact assistant status next to the meeting header symbol. */
+"assistant.compact.off" = "关";
+"assistant.compact.mentions" = "提及";
+"assistant.compact.follow" = "跟进";
+"assistant.compact.participating" = "参与";

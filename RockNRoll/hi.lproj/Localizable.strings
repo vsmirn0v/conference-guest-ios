@@ -1113,6 +1113,8 @@
 "No text found. Try a clearer frame or return to Live." = "कोई पाठ नहीं मिला. अधिक स्पष्ट फ्रेम की कोशिश करें या जीवित रहने के लिए वापस आएँ.";
 "Open Share" = "खुले शेयर";
 "Screen share reconnecting…" = "स्क्रीन से फिर से प्राप्त किया जा रहा है…";
+"Text" = "टेक्स्ट";
+
 "Select text" = "चुनें पाठ";
 "Selectable text · Live Text is unavailable on this device." = "इस उपकरण पर स्थिर पाठ चुनें.";
 "Sending %@" = "%@ भेजा जा रहा है";
@@ -3179,3 +3181,9 @@
 "database is closed" = "डेटाबेस बंद";
 "task is no longer assigned to this profile" = "इस प्रोफ़ाइल को अब कार्य आबंटित नहीं है";
 "%@ is sharing" = "%@ स्क्रीन शेयर कर रहे हैं";
+
+/* Compact assistant status next to the meeting header symbol. */
+"assistant.compact.off" = "बंद";
+"assistant.compact.mentions" = "उल्लेख";
+"assistant.compact.follow" = "अनुसरण";
+"assistant.compact.participating" = "सहभागी";

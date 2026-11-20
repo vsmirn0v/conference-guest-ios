@@ -1113,6 +1113,8 @@
 "No text found. Try a clearer frame or return to Live." = "Tak ada teks yang ditemukan. Coba bingkai yang lebih jelas atau kembali ke Live.";
 "Open Share" = "Buka Share";
 "Screen share reconnecting…" = "Berbagi layar menyambung kembali…";
+"Text" = "Teks";
+
 "Select text" = "Pilih teks";
 "Selectable text · Live Text is unavailable on this device." = "Teks yang dapat dipilih tidak tersedia pada perangkat ini.";
 "Sending %@" = "Mengirim %@";
@@ -3179,3 +3181,9 @@
 "database is closed" = "basis data ditutup";
 "task is no longer assigned to this profile" = "tugas tidak lagi ditugaskan ke profil ini";
 "%@ is sharing" = "%@ sedang berbagi layar";
+
+/* Compact assistant status next to the meeting header symbol. */
+"assistant.compact.off" = "Mati";
+"assistant.compact.mentions" = "Sebutan";
+"assistant.compact.follow" = "Ikuti";
+"assistant.compact.participating" = "Ikut serta";

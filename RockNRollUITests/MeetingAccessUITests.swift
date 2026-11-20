@@ -61,6 +61,35 @@ final class MeetingAccessUITests: XCTestCase {
         attach("Guest direct More and View")
     }
 
+    func testFocusedShareUsesWholeWindowForPinchAndRetainsZoomWhenControlsToggle() throws {
+        let app = launch(guest: true)
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        let window = app.windows.firstMatch
+        let viewport = app.scrollViews.matching(identifier: "share").firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 15))
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            let fillsWindow = NSPredicate { _, _ in
+                let bounds = window.frame
+                return (bounds.width > bounds.height) == orientation.isLandscape && viewport.frame.equalTo(bounds)
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: fillsWindow, object: nil)], timeout: 8), .completed)
+            XCTAssertTrue(app.buttons["call.view"].isHittable)
+            window.pinch(withScale: 1.8, velocity: 1)
+            let zoom = try XCTUnwrap(viewport.value as? String)
+            XCTAssertNotEqual(zoom, "100%")
+            let tap = window.coordinate(withNormalizedOffset: CGVector(dx: 0.32, dy: 0.55))
+            tap.tap()
+            XCTAssertFalse(app.buttons["call.view"].exists)
+            XCTAssertEqual(viewport.frame, window.frame)
+            XCTAssertEqual(viewport.value as? String, zoom)
+            tap.tap()
+            XCTAssertTrue(app.buttons["call.view"].waitForExistence(timeout: 5))
+            XCTAssertEqual(viewport.value as? String, zoom)
+            attach("Full-window share with floating controls \(orientation.rawValue)")
+        }
+    }
+
     func testScreenSharingOnlyShowsParticipantsInGalleryAndFocus() {
         let app = launch(guest: false, gallery: true)
         defer { app.terminate() }

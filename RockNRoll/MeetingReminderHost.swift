@@ -61,7 +61,7 @@ import UIKit
                 })
             }
         }
-        let state = LayoutState(bounds: surface.bounds, insets: surface.safeAreaInsets, access: access.frame,
+        let state = LayoutState(bounds: surface.bounds, insets: surface.safeAreaInsets, access: surface.convert(access.bounds, from: access),
             toolbar: toolbar.frame, hidden: access.isHidden, blocked: blocked(), privateContent: privateContent(), window: surface.window.map(ObjectIdentifier.init), usable: usable)
         if layoutState != state { layoutState = state; changed() }
     }

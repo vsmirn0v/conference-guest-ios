@@ -26,10 +26,10 @@ enum IOSMeetingAssistantMode: String, Codable, CaseIterable, Sendable, Identifia
 
     var shortTitle: String {
         switch self {
-        case .off: return L("Off")
-        case .mentions: return L("Mentions")
-        case .follow: return L("Follow")
-        case .participating: return L("Participate")
+        case .off: return L("assistant.compact.off")
+        case .mentions: return L("assistant.compact.mentions")
+        case .follow: return L("assistant.compact.follow")
+        case .participating: return L("assistant.compact.participating")
         }
     }
 

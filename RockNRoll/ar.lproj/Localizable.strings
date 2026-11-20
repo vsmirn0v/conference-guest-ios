@@ -1113,6 +1113,8 @@
 "No text found. Try a clearer frame or return to Live." = "لم يتم العثور على نص. جرّب إطارًا أكثر وضوحًا أو عد إلى Live.";
 "Open Share" = "فتح المشاركة";
 "Screen share reconnecting…" = "مشاركة الشاشة إعادة الاتصال…";
+"Text" = "النص";
+
 "Select text" = "تحديد النص";
 "Selectable text · Live Text is unavailable on this device." = "النص القابل للتحديد: النص المباشر غير متوفر على هذا الجهاز.";
 "Sending %@" = "جارٍ إرسال %@";
@@ -3179,3 +3181,9 @@
 "database is closed" = "قاعدة البيانات مغلقة";
 "task is no longer assigned to this profile" = "لم تعد المهمة مخصصة لهذا الملف الشخصي";
 "%@ is sharing" = "%@ يشارك الشاشة";
+
+/* Compact assistant status next to the meeting header symbol. */
+"assistant.compact.off" = "متوقف";
+"assistant.compact.mentions" = "إشارات";
+"assistant.compact.follow" = "متابعة";
+"assistant.compact.participating" = "مشاركة";
