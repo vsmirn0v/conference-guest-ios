@@ -5,3 +5,5 @@
 "NSCalendarsFullAccessUsageDescription" = "अपने चुने हुए कैलेंडर में मीटिंग ढूँढें। शेड्यूल शेयर करने पर मीटिंग का विवरण आपके निजी iCloud स्टोरेज के ज़रिए सिंक हो सकता है। ऐप आपका कैलेंडर नहीं बदलता।";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll इसी iPhone पर मीटिंग की बातचीत को टेक्स्ट में बदलने के लिए डिवाइस पर उपलब्ध वाक् पहचान का उपयोग करता है।";
 "NSPersonalVoiceUsageDescription" = "Rock’n’Roll, मीटिंग में आपके भेजे गए वॉइस जवाब पढ़कर सुनाने के लिए आपकी पर्सनल वॉइस का उपयोग कर सकता है।";
+"NSRemindersUsageDescription" = "मीटिंग के कार्य अपनी चुनी हुई Apple Reminders सूची से सिंक करें और Rock’n’Roll में कार्य आयात करें।";
+"NSRemindersFullAccessUsageDescription" = "मीटिंग के कार्य अपनी चुनी हुई Apple Reminders सूची से सिंक करें और Rock’n’Roll में कार्य आयात करें।";

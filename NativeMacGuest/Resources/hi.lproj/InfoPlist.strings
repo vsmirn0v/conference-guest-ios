@@ -1,4 +1,6 @@
 "NSCalendarsUsageDescription" = "आपके चुने हुए कैलेंडरों में मीटिंग के आमंत्रण ढूँढें और मीटिंग शुरू होने पर आपको याद दिलाएँ।";
 "NSCalendarsFullAccessUsageDescription" = "आपके चुने हुए कैलेंडरों में मीटिंग के आमंत्रण ढूँढें और आगामी मीटिंग दिखाएँ।";
+"NSRemindersUsageDescription" = "मीटिंग के कार्य अपनी चुनी हुई Apple Reminders सूची से सिंक करें और Rock'N'Roll for Mac में कार्य आयात करें।";
+"NSRemindersFullAccessUsageDescription" = "मीटिंग के कार्य अपनी चुनी हुई Apple Reminders सूची से सिंक करें और Rock'N'Roll for Mac में कार्य आयात करें।";
 "NSCameraUsageDescription" = "ऐप में अतिथि पूर्वावलोकन के दौरान वीडियो चालू करने पर कैमरे की तस्वीर साझा करें।";
 "NSMicrophoneUsageDescription" = "ऐप में अतिथि पूर्वावलोकन के दौरान म्यूट हटाने पर माइक्रोफ़ोन की आवाज़ साझा करें।";

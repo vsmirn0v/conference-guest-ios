@@ -394,7 +394,8 @@ extension MeetingLibraryStore {
                         dueDay: task.dueDay.value,
                         reminderAt: task.reminderAt.value,
                         done: task.done.value,
-                        completedAt: task.completedAt.value
+                        completedAt: task.completedAt.value,
+                        extended: task.extended?.value ?? .init()
                     )
                 }
 
@@ -408,7 +409,8 @@ extension MeetingLibraryStore {
                     dueDay: snap.dueDay,
                     reminderAt: snap.reminderAt,
                     done: snap.done,
-                    completedAt: snap.completedAt
+                    completedAt: snap.completedAt,
+                    extended: snap.extended
                 )
             }
 

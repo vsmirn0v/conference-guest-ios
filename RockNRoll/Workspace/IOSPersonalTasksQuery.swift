@@ -58,8 +58,16 @@ enum IOSPersonalTasksQuery {
             case .unassigned: guard IOSTaskProfile.cleanedAlias(task.owner).isEmpty else { return false }
             case .person(let key): guard IOSTaskProfile.normalized(task.owner) == key else { return false }
             }
-            return needle.isEmpty || [task.text, task.owner, meetings[task.sessionID]?.title ?? ""]
-                .contains { folded($0).contains(needle) }
+            return needle.isEmpty || [
+                task.text,
+                task.owner,
+                meetings[task.sessionID]?.title ?? "",
+                task.extended.contextNotes,
+                task.extended.workflowStatus.localizedTitle,
+                task.extended.issueKind.localizedTitle,
+                task.extended.parentEpicKey ?? "",
+                task.extended.externalBindings.compactMap { $0.externalKey ?? $0.externalID }.joined(separator: " ")
+            ].contains { folded($0).contains(needle) }
         }.sorted { lhs, rhs in
             if lhs.done != rhs.done { return !lhs.done }
             let lhsMeeting = meetings[lhs.sessionID]?.startedAt ?? .distantPast

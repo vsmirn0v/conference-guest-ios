@@ -6,3 +6,5 @@
 
 "NSSpeechRecognitionUsageDescription" = "Rock'n'Roll uses on-device Speech Recognition to transcribe meetings locally on this iPhone.";
 "NSPersonalVoiceUsageDescription" = "Rock'n'Roll can use your Personal Voice to speak voice replies you send into meetings.";
+"NSRemindersUsageDescription" = "Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock’n’Roll.";
+"NSRemindersFullAccessUsageDescription" = "Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock’n’Roll.";

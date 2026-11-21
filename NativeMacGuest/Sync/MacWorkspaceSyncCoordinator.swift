@@ -14,6 +14,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
     let deviceID: String
     var onTranscriptChanged: ((UUID) -> Void)?
+    var onTaskSyncPreferencesChanged: ((TaskSyncPreferences) -> Void)?
+    var onJiraHandoverPacketsChanged: (() -> Void)?
     private let meetingLibrary: MeetingLibraryController
     private let notes: MeetingNotesController
     private let assistant: AssistantDataStore
@@ -1051,7 +1053,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                         dueAt: $0.dueAt,
                         reminderAt: $0.reminderAt,
                         done: $0.done,
-                        completedAt: $0.completedAt
+                        completedAt: $0.completedAt,
+                        extended: $0.extended
                     )
                 }
                 let stateVal = syncValue(entry.state.rawValue, reusing: existing?.state)
@@ -1155,6 +1158,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             done: pick(task.done, existing?.done),
             completedAt: pick(task.completedAt, existing?.completedAt),
             archivedByProfile: archiveMap,
+            extended: pick(task.extended, existing?.extended),
             isDeleted: pick(false, existing?.isDeleted),
             updatedAt: (existing.map { $0.isDeleted.value ? Date() : $0.updatedAt }) ?? Date()
         )
@@ -1422,10 +1426,88 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         await meetingLibrary.refresh()
     }
 
+    func currentSyncedTaskSyncPreferences() -> TaskSyncPreferences? {
+        guard let json = replica.workspaceDoc.contextSettings[TaskSyncPreferences.syncScopeKey]?.about?.value else {
+            return nil
+        }
+        return TaskSyncPreferences.decodeSyncJSON(json)
+    }
+
+    func saveTaskSyncPreferences(_ preferences: TaskSyncPreferences) {
+        let json = preferences.encodeSyncJSON()
+        let existing = replica.workspaceDoc.contextSettings[TaskSyncPreferences.syncScopeKey]
+        if existing?.about?.value == json { return }
+        let v = replica.workspaceDoc.nextVersion()
+        var entry = existing ?? SyncedMeetingContextSettings(
+            scopeKey: TaskSyncPreferences.syncScopeKey,
+            scopeKind: .allMeetings,
+            title: SyncValue("Task Sync", version: v)
+        )
+        entry.about = SyncValue(json, version: replica.workspaceDoc.nextVersion())
+        replica.workspaceDoc.upsertContextSettings(entry)
+        persistReplica()
+        scheduleSync()
+    }
+
+    func currentJiraHandoverPackets() -> [MacJiraHandoverPacket] {
+        replica.workspaceDoc.contextSettings
+            .compactMap { key, settings -> MacJiraHandoverPacket? in
+                guard key.hasPrefix(MacJiraHandoverPacket.scopeKeyPrefix),
+                      let raw = settings.about?.value else { return nil }
+                return MacJiraHandoverPacket.decodeSyncJSON(raw)
+            }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    func saveJiraHandoverPacket(_ packet: MacJiraHandoverPacket) {
+        let json = packet.encodeSyncJSON()
+        let key = packet.scopeKey
+        let existing = replica.workspaceDoc.contextSettings[key]
+        if existing?.about?.value == json { return }
+        let v = replica.workspaceDoc.nextVersion()
+        var entry = existing ?? SyncedMeetingContextSettings(
+            scopeKey: key,
+            scopeKind: .allMeetings,
+            title: SyncValue("Jira Handover", version: v)
+        )
+        entry.about = SyncValue(json, version: replica.workspaceDoc.nextVersion())
+        replica.workspaceDoc.upsertContextSettings(entry)
+
+        // Prune completed/failed handovers older than 7 days to keep sync doc compact.
+        let cutoff = Date().addingTimeInterval(-7 * 86_400)
+        let staleKeys = replica.workspaceDoc.contextSettings.compactMap { k, val -> String? in
+            guard k.hasPrefix(MacJiraHandoverPacket.scopeKeyPrefix),
+                  k != key,
+                  let raw = val.about?.value,
+                  let decoded = MacJiraHandoverPacket.decodeSyncJSON(raw),
+                  decoded.status != .pendingMac,
+                  decoded.updatedAt < cutoff else { return nil }
+            return k
+        }
+        for stale in staleKeys {
+            replica.workspaceDoc.removeContextSettings(forKey: stale)
+        }
+
+        persistReplica()
+        scheduleSync()
+    }
+
     private func applyRemoteContextSettings(_ changedKeys: Set<String>) {
-        guard let attentionStore else { return }
+        var sawHandoverChange = false
         for key in changedKeys {
             guard let settings = replica.workspaceDoc.contextSettings[key] else { continue }
+            if key == TaskSyncPreferences.syncScopeKey {
+                if let json = settings.about?.value,
+                   let remotePrefs = TaskSyncPreferences.decodeSyncJSON(json) {
+                    onTaskSyncPreferencesChanged?(remotePrefs)
+                }
+                continue
+            }
+            if key.hasPrefix(MacJiraHandoverPacket.scopeKeyPrefix) {
+                sawHandoverChange = true
+                continue
+            }
+            guard let attentionStore else { continue }
             switch settings.scopeKind {
             case .allMeetings:
                 if let rawMode = settings.sameRoomTransition?.value,
@@ -1453,6 +1535,9 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                 applyPresetFields(settings, binding: .room(room), store: attentionStore)
                 applyGuidanceRules(settings.guidanceRules, scope: .room(room), store: attentionStore.workspaceGuidance)
             }
+        }
+        if sawHandoverChange {
+            onJiraHandoverPacketsChanged?()
         }
     }
 

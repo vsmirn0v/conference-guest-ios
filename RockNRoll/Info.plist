@@ -50,6 +50,10 @@
 	<string>Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock’n’Roll.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock’n’Roll.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Share video when you choose to turn on your camera in a jam.</string>
 	<key>NSCameraUseContinuityCameraDeviceType</key>

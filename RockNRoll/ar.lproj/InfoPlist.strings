@@ -5,3 +5,5 @@
 "NSCalendarsFullAccessUsageDescription" = "ابحث عن الاجتماعات في التقويمات التي تختارها. تتيح مشاركة الجدول مزامنة تفاصيل الاجتماعات عبر مساحة iCloud الخاصة بك. لا يعدّل التطبيق تقويمك.";
 "NSSpeechRecognitionUsageDescription" = "يستخدم Rock’n’Roll ميزة التعرف على الكلام على الجهاز لتفريغ الاجتماعات نصيًا على جهاز iPhone هذا.";
 "NSPersonalVoiceUsageDescription" = "يمكن لتطبيق Rock’n’Roll استخدام ميزة «الصوت الشخصي» لنطق الردود الصوتية التي ترسلها إلى الاجتماعات.";
+"NSRemindersUsageDescription" = "مزامنة مهام الاجتماعات مع قائمة تذكيرات Apple المختارة واستيراد المهام إلى Rock’n’Roll.";
+"NSRemindersFullAccessUsageDescription" = "مزامنة مهام الاجتماعات مع قائمة تذكيرات Apple المختارة واستيراد المهام إلى Rock’n’Roll.";

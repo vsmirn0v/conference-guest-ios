@@ -225,6 +225,12 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var calendarOccurrences: () -> [CalendarMeeting] = { [] }
     /// External tool source (the app's MCP loopback today; external MCP servers later).
     var externalToolProvider: (any AssistantExternalToolProviding)?
+    var saveTaskSyncPreferencesToCloud: (TaskSyncPreferences) -> Void = { _ in }
+    var saveJiraHandoverPacketToCloud: (MacJiraHandoverPacket) -> Void = { _ in }
+    var loadJiraHandoverPacketsFromCloud: () -> [MacJiraHandoverPacket] = { [] }
+    var onCalendarEventCreated: () -> Void = {}
+    private var lastRecurringReminderCheck: Date = .distantPast
+    private(set) lazy var taskSync: WorkspaceTaskSyncController = makeTaskSyncController()
 
     private var loop: Task<Void, Never>?
     private var calls: [Date] = []
@@ -301,9 +307,17 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 guard let self else { return }
                 await tick()
                 await reconcileTaskReminderCancellations()
+                if now().timeIntervalSince(lastRecurringReminderCheck) >= 60 {
+                    lastRecurringReminderCheck = now()
+                    await advanceRecurringTaskRemindersIfNeeded()
+                }
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+    }
+
+    func handleRemoteJiraHandovers() async {
+        await taskSync.processPendingHandoversFromIOS()
     }
     func stop() {
         loop?.cancel(); loop = nil
@@ -691,15 +705,38 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                     }
                     probeLog("assistant-outcome-failed", fields)
                 }
+                let reconciliation = failure == nil
+                    ? await reconcileAndEnrichTasks(sessionID: sessionID, outcome: &outcome, input: input)
+                    : nil
                 let ready = try await store.publishOutcomeMutation {
                     let commit = try await library.store.finishOutcome(outcome, owner: owner, errorCode: failure?.rawValue)
                     return failure == nil ? commit : nil
                 }
                 if ready != nil {
+                    if let reconciliation, !reconciliation.canonicalUpdates.isEmpty || !reconciliation.links.isEmpty {
+                        _ = try? await store.publishOutcomeMutation {
+                            let commits = try await library.store.applyCrossMeetingReconciliation(
+                                reconciliation,
+                                sourceOutcomeID: outcome.id
+                            )
+                            return commits.first
+                        }
+                    }
                     probeLog("assistant-outcome", ["lines": input.request.window.lines.count,
                         "decisions": outcome.decisions.count, "tasks": outcome.tasks.count])
                 }
                 await library.refresh()
+                if ready != nil,
+                   taskSync.preferences.autoSyncAfterMeetingOutcome,
+                   taskSync.preferences.anyProviderEnabled {
+                    let affectedIDs = Set(outcome.tasks.map(\.id))
+                        .union(reconciliation?.canonicalUpdates.map(\.existingTaskID) ?? [])
+                    if !affectedIDs.isEmpty {
+                        Task { @MainActor [weak self] in
+                            await self?.taskSync.runSync(explicitTaskIDs: affectedIDs, automaticTrigger: true)
+                        }
+                    }
+                }
             } catch {
                 let failure = error as? MeetingOutcomeFailure ?? .storage
                 outcomeError[sessionID] = failure.localizedDescription
@@ -749,13 +786,401 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                              accept: Bool, matchedTaskID: UUID? = nil) {
         guard var current = store.assistant.outcomes.first(where: { $0.id == outcome.id }),
               let index = current.taskReviewCandidates.firstIndex(where: { $0.id == candidate.id }) else { return }
+        var matchedCrossOutcome: MeetingOutcome?
         if let matchedTaskID {
-            guard current.tasks.contains(where: { $0.id == matchedTaskID }) else { return }
-            current.taskReviewMatches[candidate.id] = matchedTaskID
+            if current.tasks.contains(where: { $0.id == matchedTaskID }) {
+                current.taskReviewMatches[candidate.id] = matchedTaskID
+            } else if var otherOutcome = store.assistant.outcomes.first(where: { other in
+                other.id != current.id && other.tasks.contains(where: { $0.id == matchedTaskID })
+            }), let targetIdx = otherOutcome.tasks.firstIndex(where: { $0.id == matchedTaskID }) {
+                current.taskReviewMatches[candidate.id] = matchedTaskID
+                let detectedStatus = CrossMeetingTaskReconciler.detectStatusSignal(
+                    in: candidate.text + " " + candidate.extended.contextNotes
+                )
+                let oldStatus = otherOutcome.tasks[targetIdx].done
+                    ? .done
+                    : otherOutcome.tasks[targetIdx].extended.workflowStatus
+                if let detectedStatus {
+                    otherOutcome.tasks[targetIdx].extended.workflowStatus = detectedStatus
+                    if detectedStatus.isTerminalDone {
+                        otherOutcome.tasks[targetIdx].setDone(true, at: outcome.endedAt)
+                    }
+                }
+                let addition = candidate.extended.contextNotes.isEmpty ? candidate.text : candidate.extended.contextNotes
+                otherOutcome.tasks[targetIdx].extended.appendContextNote(addition)
+                otherOutcome.tasks[targetIdx].extended.appendHistory(TaskMeetingContextEntry(
+                    sessionID: outcome.meetingID,
+                    meetingTitle: outcome.meetingTitle,
+                    observedAt: outcome.endedAt,
+                    previousStatus: detectedStatus.map { _ in oldStatus },
+                    updatedStatus: detectedStatus,
+                    note: addition,
+                    evidenceQuote: candidate.text,
+                    source: .meetingFollowUp
+                ))
+                matchedCrossOutcome = otherOutcome
+            } else {
+                return
+            }
         }
         current.taskReviewCandidates.remove(at: index)
         if accept { current.tasks.append(candidate) }
         store.assistant.updateOutcome(current)
+        if let matchedCrossOutcome {
+            store.assistant.updateOutcome(matchedCrossOutcome)
+        }
+    }
+
+    private func makeTaskSyncController() -> WorkspaceTaskSyncController {
+        WorkspaceTaskSyncController(hooks: .init(
+            isMacPlatform: true,
+            deviceName: Host.current().localizedName ?? "Mac",
+            loadTasks: { [weak self] in
+                await self?.loadWorkspaceTaskRecords() ?? []
+            },
+            loadContacts: { [weak self] in
+                await self?.loadWorkspaceContacts() ?? []
+            },
+            loadMyAliases: { [weak self] in
+                self?.store.assistant.taskProfile.aliases ?? []
+            },
+            applyMutations: { [weak self] mutations in
+                guard let self else { return }
+                await self.store.waitForOutcomeWrites()
+                let _ = try await self.store.publishOutcomeMutation {
+                    let commits = try await self.store.meetingLibrary.store.applyExternalSyncMutations(mutations)
+                    return commits.first
+                }
+                await self.store.meetingLibrary.refresh()
+                await self.advanceRecurringTaskRemindersIfNeeded()
+            },
+            persistPreferences: { [weak self] prefs in
+                self?.saveTaskSyncPreferencesToCloud(prefs)
+            },
+            saveHandoverPacket: { [weak self] packet in
+                self?.saveJiraHandoverPacketToCloud(packet)
+            },
+            loadHandoverPackets: { [weak self] in
+                self?.loadJiraHandoverPacketsFromCloud() ?? []
+            },
+            onCalendarEventCreated: { [weak self] in
+                self?.onCalendarEventCreated()
+            }
+        ))
+    }
+
+    func loadWorkspaceTaskRecords() async -> [WorkspaceTaskRecord] {
+        await store.waitForMeetingLibrary()
+        let profile = store.assistant.taskProfile
+        guard let rows = try? await store.meetingLibrary.store.taskHistory(profile: profile, includeAll: true) else {
+            return []
+        }
+        return rows.map { row in
+            WorkspaceTaskRecord(
+                id: row.id,
+                sessionID: row.sessionID,
+                outcomeID: row.outcomeID,
+                meetingTitle: row.title,
+                meetingDate: row.meetingDate,
+                text: row.task.text,
+                owner: row.task.owner,
+                assigneeID: row.task.assigneeID,
+                dueDay: row.task.dueDay,
+                dueAt: row.task.dueAt,
+                reminderAt: row.task.reminderAt,
+                done: row.task.done,
+                completedAt: row.task.completedAt,
+                archivedAt: row.archivedAt,
+                updatedAt: row.task.extended.contextHistory.last?.observedAt ?? row.meetingDate ?? .distantPast,
+                isOwnedByCurrentUser: profile.owns(row.task),
+                extended: row.task.extended
+            )
+        }
+    }
+
+    func loadWorkspaceContacts() async -> [AppContactPerson] {
+        await store.waitForMeetingLibrary()
+        let profile = store.assistant.taskProfile
+        let rows = (try? await store.meetingLibrary.store.taskHistory(profile: profile, includeAll: true)) ?? []
+        var byKey: [String: AppContactPerson] = [:]
+
+        if let primaryAlias = profile.aliases.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            let key = JiraContactMatcher.normalizedKey(primaryAlias)
+            byKey[key] = AppContactPerson(
+                key: key,
+                displayName: primaryAlias,
+                aliases: profile.aliases,
+                isCurrentUser: true
+            )
+        }
+
+        for row in rows {
+            let cleaned = JiraContactMatcher.cleanedName(row.task.owner)
+            guard !cleaned.isEmpty else { continue }
+            let key = JiraContactMatcher.normalizedKey(cleaned)
+            let isMine = profile.owns(row.task)
+            if byKey[key] == nil {
+                byKey[key] = AppContactPerson(
+                    key: key,
+                    displayName: cleaned,
+                    aliases: isMine ? profile.aliases : [],
+                    isCurrentUser: isMine
+                )
+            }
+        }
+        for person in store.assistant.memories.flatMap(\.people) + store.presets.flatMap(\.people) {
+            let cleaned = JiraContactMatcher.cleanedName(person)
+            guard !cleaned.isEmpty else { continue }
+            let key = JiraContactMatcher.normalizedKey(cleaned)
+            if byKey[key] == nil {
+                byKey[key] = AppContactPerson(key: key, displayName: cleaned, isCurrentUser: false)
+            }
+        }
+        return byKey.values.sorted {
+            if $0.isCurrentUser != $1.isCurrentUser { return $0.isCurrentUser }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    func setTaskExtendedDetails(
+        row: PersonalTaskRow,
+        payload: TaskDetailEditPayload
+    ) async -> Bool {
+        await setOutcomeTaskExtendedDetails(
+            outcomeID: row.outcomeID,
+            sessionID: row.sessionID,
+            meetingTitle: row.title,
+            taskID: row.id,
+            payload: payload
+        )
+    }
+
+    func setOutcomeTaskExtendedDetails(
+        outcomeID: UUID,
+        sessionID: UUID,
+        meetingTitle: String,
+        taskID: UUID,
+        payload: TaskDetailEditPayload
+    ) async -> Bool {
+        await store.waitForOutcomeWrites()
+        await reconcileTaskReminderCancellations()
+        let editedAt = now()
+        do {
+            let committed = try await store.publishOutcomeMutation {
+                try await store.meetingLibrary.store.changeTask(outcomeID: outcomeID, taskID: taskID) { task in
+                    task.text = payload.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let cleanOwner = payload.owner.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if task.owner != cleanOwner {
+                        task.owner = cleanOwner
+                        task.assigneeID = nil
+                        task.reminderAt = nil
+                    }
+                    task.dueDay = payload.dueDay
+                    let oldStatus = task.done ? .done : task.extended.workflowStatus
+                    task.setDone(payload.status.isTerminalDone, at: editedAt)
+                    task.extended.workflowStatus = payload.status
+                    task.extended.priority = payload.priority
+                    task.extended.issueKind = payload.issueKind
+                    task.extended.parentEpicKey = payload.parentEpicKey
+                    task.extended.reminderRule = payload.reminderRule
+                    task.extended.scheduledDiscussions = payload.scheduledDiscussions
+                    task.extended.contextNotes = String(payload.contextNotes.prefix(8_000))
+                    if task.done || payload.reminderAt == nil {
+                        task.reminderAt = nil
+                    }
+                    if oldStatus != payload.status {
+                        task.extended.appendHistory(TaskMeetingContextEntry(
+                            sessionID: sessionID,
+                            meetingTitle: meetingTitle,
+                            observedAt: editedAt,
+                            previousStatus: oldStatus,
+                            updatedStatus: payload.status,
+                            note: L("Status changed to %@", payload.status.localizedTitle),
+                            source: .userEdit
+                        ))
+                    }
+                }
+            }
+            if committed != nil {
+                if let nextAt = payload.reminderAt, nextAt > editedAt, !payload.status.isTerminalDone {
+                    try? await store.meetingLibrary.store.acknowledgeTaskReminderCancellation(taskID)
+                    try? await scheduleEligibleTaskReminder(outcomeID: outcomeID, taskID: taskID, at: nextAt)
+                } else {
+                    cancelTaskReminder(taskID)
+                }
+                await store.meetingLibrary.refresh()
+                await reconcileTaskReminderCancellations()
+                return true
+            }
+            return false
+        } catch {
+            outcomeError[outcomeID] = error.localizedDescription
+            return false
+        }
+    }
+
+    func advanceRecurringTaskRemindersIfNeeded() async {
+        await store.waitForMeetingLibrary()
+        let profile = store.assistant.taskProfile
+        let current = now()
+        guard let rows = try? await store.meetingLibrary.store.taskHistory(profile: profile, includeAll: true) else { return }
+        for row in rows where row.archivedAt == nil && !row.task.done {
+            guard let rule = row.task.extended.reminderRule, rule.isEnabled else { continue }
+            if let existing = row.task.reminderAt, existing > current { continue }
+            if let nextFire = rule.nextFireDate(
+                after: current,
+                dueDay: row.task.dueDay,
+                dueAt: row.task.dueAt,
+                status: row.task.extended.workflowStatus,
+                done: row.task.done,
+                scheduledDiscussions: row.task.extended.scheduledDiscussions
+            ), nextFire > current {
+                try? await store.meetingLibrary.store.acknowledgeTaskReminderCancellation(row.id)
+                try? await scheduleEligibleTaskReminder(outcomeID: row.outcomeID, taskID: row.id, at: nextFire)
+            }
+        }
+    }
+
+    private func reconcileAndEnrichTasks(
+        sessionID: UUID,
+        outcome: inout MeetingOutcome,
+        input: MeetingOutcomeInput
+    ) async -> CrossMeetingReconciliationResult? {
+        guard !outcome.tasks.isEmpty || !input.request.window.lines.isEmpty else { return nil }
+        await store.waitForMeetingLibrary()
+        let existingCandidates = (try? await store.meetingLibrary.store.reconciliationCandidateTasks()) ?? []
+        let snapshots = outcome.tasks.map { task in
+            SyncedTaskSnapshot(
+                id: task.id,
+                text: task.text,
+                owner: task.owner,
+                assigneeID: task.assigneeID,
+                dueDay: task.dueDay,
+                dueAt: task.dueAt,
+                reminderAt: task.reminderAt,
+                done: task.done,
+                completedAt: task.completedAt,
+                extended: task.extended
+            )
+        }
+        let syncedEvents = input.request.window.lines.compactMap { line -> SyncedTranscriptEvent? in
+            guard line.source == .speech || line.source == .chat else { return nil }
+            return SyncedTranscriptEvent(
+                id: line.id,
+                kind: line.source == .chat ? "chat" : "transcript",
+                occurredAt: line.at ?? input.request.endedAt,
+                speaker: line.speaker,
+                isOwn: line.isYou,
+                text: line.text,
+                deviceID: "local"
+            )
+        }
+
+        let enrichment: TaskContextEnrichmentResult
+        let allowNetworkEnrichment = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+            && input.provider.host != "example.invalid"
+        if allowNetworkEnrichment, let portableConfig = portableConfiguration(for: input.provider) {
+            enrichment = await TaskContextLLMService.enrichAndMatch(
+                sessionID: sessionID,
+                meetingTitle: outcome.meetingTitle,
+                endedAt: outcome.endedAt,
+                events: syncedEvents,
+                notes: "",
+                decisions: outcome.decisions,
+                extractedTasks: snapshots,
+                existingOpenTasks: existingCandidates.filter { !$0.done && $0.sessionID != sessionID },
+                configuration: portableConfig
+            )
+        } else {
+            let enriched = snapshots.map {
+                CrossMeetingTaskReconciler.enrichExtractedTaskContext(
+                    snapshot: $0,
+                    meetingTitle: outcome.meetingTitle,
+                    endedAt: outcome.endedAt,
+                    sessionID: sessionID,
+                    events: syncedEvents,
+                    decisions: outcome.decisions
+                )
+            }
+            let followUps = CrossMeetingTaskReconciler.analyzeTranscriptUpdates(
+                meetingTitle: outcome.meetingTitle,
+                endedAt: outcome.endedAt,
+                sessionID: sessionID,
+                seriesID: outcome.seriesID,
+                roomIdentity: outcome.invitation.flatMap { MeetingRoomIdentity($0)?.displayDetails },
+                events: syncedEvents,
+                notes: "",
+                decisions: outcome.decisions,
+                existingTasks: existingCandidates.filter { !$0.done && $0.sessionID != sessionID },
+                onlyUpdateOwnedExistingTasks: taskSync.preferences.roleMode == .personalOwner,
+                myAliases: store.assistant.taskProfile.aliases
+            )
+            enrichment = TaskContextEnrichmentResult(enrichedSnapshots: enriched, standaloneFollowUps: followUps)
+        }
+
+        let reconciliation = CrossMeetingTaskReconciler.reconcile(
+            sessionID: sessionID,
+            meetingTitle: outcome.meetingTitle,
+            endedAt: outcome.endedAt,
+            seriesID: outcome.seriesID,
+            roomIdentity: outcome.invitation.flatMap { MeetingRoomIdentity($0)?.displayDetails },
+            extractedTasks: enrichment.enrichedSnapshots,
+            existingTasks: existingCandidates,
+            transcriptFollowUps: enrichment.standaloneFollowUps,
+            llmMatches: enrichment.followUpsByExtractedID,
+            myAliases: store.assistant.taskProfile.aliases,
+            onlyUpdateOwnedExistingTasks: taskSync.preferences.roleMode == .personalOwner
+        )
+
+        outcome.tasks = reconciliation.newTasks.map { item in
+            let s = item.snapshot
+            return MeetingOutcomeTask(
+                id: s.id,
+                text: s.text,
+                owner: s.owner,
+                assigneeID: s.assigneeID,
+                dueAt: s.dueAt,
+                dueDay: s.dueDay,
+                reminderAt: s.reminderAt,
+                done: s.done,
+                completedAt: s.completedAt,
+                extended: s.extended
+            )
+        }
+
+        let existingCandidateIDs = Set((outcome.tasks + outcome.taskReviewCandidates).map(\.id))
+        for review in reconciliation.reviewCandidates where !existingCandidateIDs.contains(review.snapshot.id) {
+            let s = review.snapshot
+            outcome.taskReviewCandidates.append(MeetingOutcomeTask(
+                id: s.id,
+                text: s.text,
+                owner: s.owner,
+                assigneeID: s.assigneeID,
+                dueAt: s.dueAt,
+                dueDay: s.dueDay,
+                reminderAt: s.reminderAt,
+                done: s.done,
+                completedAt: s.completedAt,
+                extended: s.extended
+            ))
+            if let suggested = review.suggestedMatchTaskID {
+                outcome.taskReviewMatches[s.id] = suggested
+            }
+        }
+        return reconciliation
+    }
+
+    private func portableConfiguration(for provider: AttentionProvider) -> PortableOutcomeConfiguration? {
+        switch provider.kind {
+        case .apple:
+            return PortableOutcomeConfiguration(providerKind: .appleOnDevice)
+        case .openAI:
+            return PortableOutcomeConfiguration(providerKind: .openAI, model: provider.model)
+        case .openRouter:
+            return PortableOutcomeConfiguration(providerKind: .openRouter, model: provider.model)
+        case .custom, .rapidMLX, .local:
+            return PortableOutcomeConfiguration(providerKind: .custom, baseURL: provider.baseURL, model: provider.model)
+        }
     }
 
     private func scheduleEligibleTaskReminder(outcomeID: UUID, taskID: UUID, at: Date) async throws {

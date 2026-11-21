@@ -1,75 +1,59 @@
+import ConferenceCore
 import SwiftUI
 
 struct IOSMeetingTaskEditor: View {
     @ObservedObject var workspace: IOSWorkspaceCoordinator
     let task: IOSMeetingTaskItem
-    @Environment(\.dismiss) private var dismiss
-    @State private var text: String
-    @State private var owner: String
-    @State private var saving = false
-    @State private var confirmingDelete = false
-    @State private var error: String?
+    var onOpenSession: ((UUID) -> Void)?
 
-    init(workspace: IOSWorkspaceCoordinator, task: IOSMeetingTaskItem) {
+    init(workspace: IOSWorkspaceCoordinator, task: IOSMeetingTaskItem, onOpenSession: ((UUID) -> Void)? = nil) {
         self.workspace = workspace
         self.task = task
-        _text = State(initialValue: task.text)
-        _owner = State(initialValue: task.owner)
+        self.onOpenSession = onOpenSession
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section(L("Task")) {
-                    TextField(L("What needs to be done?"), text: $text, axis: .vertical)
-                    TextField(L("Owner"), text: $owner)
-                }
-                Section {
-                    Button(L("Delete task"), role: .destructive) { confirmingDelete = true }
-                }
-                if let error { Text(error).foregroundStyle(.red) }
-            }
-            .disabled(saving)
-            .navigationTitle(L("Task"))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L("Cancel")) { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(L("Save")) {
-                        saving = true
-                        error = nil
-                        Task {
-                            guard let latest = workspace.tasks.first(where: { $0.id == task.id }) else {
-                                dismiss()
-                                return
-                            }
-                            let updated = latest.applyingEdits(from: task, text: text, owner: owner)
-                            if await workspace.updateTask(updated) {
-                                dismiss()
-                            } else {
-                                error = workspace.syncError ?? L("Sync changes are not saved on this device yet. Retry before closing the app.")
-                                saving = false
-                            }
-                        }
-                    }
-                    .disabled(saving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            .confirmationDialog(L("Delete task"), isPresented: $confirmingDelete, titleVisibility: .visible) {
-                Button(L("Delete task"), role: .destructive) {
-                    saving = true
-                    error = nil
-                    Task {
-                        if await workspace.deleteTask(task.id) {
-                            dismiss()
-                        } else {
-                            error = workspace.syncError ?? L("Sync changes are not saved on this device yet. Retry before closing the app.")
-                            saving = false
-                        }
-                    }
-                }
-            }
+        let session = workspace.sessions.first { $0.id == task.sessionID }
+        let record = WorkspaceTaskRecord(
+            id: task.id,
+            sessionID: task.sessionID,
+            outcomeID: task.outcomeID,
+            meetingTitle: session?.title ?? L("Meeting"),
+            meetingDate: session?.startedAt,
+            text: task.text,
+            owner: task.owner,
+            assigneeID: task.assigneeID,
+            dueDay: task.dueDay,
+            dueAt: task.dueAt,
+            reminderAt: task.reminderAt,
+            done: task.done,
+            completedAt: task.completedAt,
+            archivedAt: workspace.taskArchiveDates[task.id],
+            updatedAt: task.updatedAt,
+            isOwnedByCurrentUser: workspace.taskProfile.owns(task),
+            extended: task.extended
+        )
+        let knownEpics: [(key: String, title: String)] = workspace.tasks.compactMap { item in
+            guard item.extended.issueKind == .epic else { return nil }
+            let key = item.extended.binding(for: .jira)?.externalKey
+                ?? CrossMeetingTaskReconciler.extractIssueKeys(from: item.text).first
+            guard let key, !key.isEmpty else { return nil }
+            return (key: key, title: item.text)
         }
+        TaskDetailAndContextSheet(
+            task: record,
+            syncController: workspace.taskSync,
+            knownEpics: knownEpics,
+            onSave: { payload in
+                await workspace.updateTaskExtendedDetails(
+                    taskID: task.id,
+                    payload: payload
+                )
+            },
+            onDelete: {
+                await workspace.deleteTask(task.id)
+            },
+            onOpenMeeting: onOpenSession
+        )
     }
 }

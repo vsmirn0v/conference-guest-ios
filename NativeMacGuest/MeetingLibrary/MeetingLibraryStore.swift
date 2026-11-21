@@ -1488,7 +1488,7 @@ extension MeetingLibraryStore {
                 try Self.bindText($0, profile.id, at: 2)
             }), case .blob(let data)? = row[0] else { return false }
         let task = try JSONDecoder.attention.decode(MeetingOutcomeTask.self, from: data)
-        return !task.done && currentProfile.owns(task)
+        return !task.done && (currentProfile.owns(task) || task.extended.reminderRule?.isEnabled == true)
     }
 
     func recordTaskReminder(outcomeID: UUID, taskID: UUID, profile: PersonalTaskProfile,
@@ -1501,6 +1501,192 @@ extension MeetingLibraryStore {
         try db().run("DELETE FROM task_reminder_cancellations WHERE task_id=?") {
             try Self.bindText($0, id.uuidString, at: 1)
         }
+    }
+
+    func reconciliationCandidateTasks() throws -> [TaskReconciliationCandidateInput] {
+        let profile = try? taskProfile()
+        return try db().rows("""
+            SELECT t.payload_json, s.session_id, s.calendar_series_id, s.room_identity, o.updated_at
+            FROM meeting_tasks t
+            JOIN meeting_outcomes o ON t.outcome_id=o.outcome_id
+            JOIN meeting_sessions s ON o.session_id=s.session_id
+            """).compactMap { row in
+            guard case .blob(let data)? = row[0],
+                  let sessionID = row.text(1).flatMap(UUID.init(uuidString:)) else { return nil }
+            let task = try JSONDecoder.attention.decode(MeetingOutcomeTask.self, from: data)
+            return TaskReconciliationCandidateInput(
+                id: task.id,
+                sessionID: sessionID,
+                text: task.text,
+                owner: task.owner,
+                dueDay: task.dueDay,
+                dueAt: task.dueAt,
+                done: task.done,
+                completedAt: task.completedAt,
+                extended: task.extended,
+                seriesID: row.text(2),
+                roomIdentity: row.text(3),
+                isOwnedByCurrentUser: profile?.owns(task) ?? false,
+                updatedAt: Self.date(row.integer(4)) ?? Date()
+            )
+        }
+    }
+
+    @discardableResult
+    func applyCrossMeetingReconciliation(_ reconciliation: CrossMeetingReconciliationResult,
+                                         sourceOutcomeID: UUID) throws -> [MeetingOutcomeCommit] {
+        var commits: [MeetingOutcomeCommit] = []
+        let db = try db()
+
+        for update in reconciliation.canonicalUpdates {
+            guard let row = try db.one("""
+                SELECT outcome_id, task_id FROM meeting_tasks WHERE task_id=?1
+                UNION ALL
+                SELECT t.outcome_id, t.task_id FROM meeting_outcome_task_links l
+                JOIN meeting_tasks t ON t.task_id=l.canonical_task_id WHERE l.historical_task_id=?1 LIMIT 1
+                """, bind: { try Self.bindText($0, update.existingTaskID.uuidString, at: 1) }),
+                  let outcomeID = row.text(0).flatMap(UUID.init(uuidString:)),
+                  let taskID = row.text(1).flatMap(UUID.init(uuidString:)) else { continue }
+
+            if let commit = try changeTask(outcomeID: outcomeID, taskID: taskID, change: { task in
+                if let newStatus = update.newStatus {
+                    task.extended.workflowStatus = newStatus
+                    if newStatus.isTerminalDone {
+                        task.setDone(true, at: update.historyEntry.observedAt)
+                    } else if task.done && update.markDone == false {
+                        task.setDone(false, at: update.historyEntry.observedAt)
+                        task.extended.workflowStatus = newStatus
+                    }
+                }
+                if let dueDay = update.updatedDueDay, task.dueDay == nil { task.dueDay = dueDay }
+                if let dueAt = update.updatedDueAt, task.dueAt == nil { task.dueAt = dueAt }
+                task.extended.appendContextNote(update.contextAddition)
+                task.extended.appendHistory(update.historyEntry)
+                if let rule = task.extended.reminderRule, rule.isEnabled {
+                    task.reminderAt = rule.nextFireDate(
+                        after: Date(),
+                        dueDay: task.dueDay,
+                        dueAt: task.dueAt,
+                        status: task.extended.workflowStatus,
+                        done: task.done,
+                        scheduledDiscussions: task.extended.scheduledDiscussions
+                    )
+                }
+            }) {
+                commits.append(commit)
+            }
+        }
+
+        for link in reconciliation.links {
+            try db.run("""
+                INSERT OR IGNORE INTO meeting_outcome_task_links(outcome_id,historical_task_id,session_id,canonical_task_id)
+                VALUES(?,?,?,?)
+                """) {
+                try Self.bindText($0, sourceOutcomeID.uuidString, at: 1)
+                try Self.bindText($0, link.historicalTaskID.uuidString, at: 2)
+                try Self.bindText($0, link.sessionID.uuidString, at: 3)
+                try Self.bindText($0, link.canonicalTaskID.uuidString, at: 4)
+            }
+        }
+        return commits
+    }
+
+    @discardableResult
+    func applyExternalSyncMutations(_ mutations: [TaskSyncLocalMutation]) throws -> [MeetingOutcomeCommit] {
+        var commits: [MeetingOutcomeCommit] = []
+        let db = try db()
+        var pendingImports: [TaskSyncLocalMutation] = []
+
+        for mutation in mutations {
+            if let taskID = mutation.existingTaskID,
+               let row = try db.one("SELECT outcome_id FROM meeting_tasks WHERE task_id=?", bind: {
+                   try Self.bindText($0, taskID.uuidString, at: 1)
+               }),
+               let outcomeID = row.text(0).flatMap(UUID.init(uuidString:)) {
+                if let commit = try changeTask(outcomeID: outcomeID, taskID: taskID, change: { task in
+                    task.text = mutation.title
+                    if !mutation.owner.isEmpty { task.owner = mutation.owner }
+                    if let dueDay = mutation.dueDay { task.dueDay = dueDay }
+                    if let dueAt = mutation.dueAt { task.dueAt = dueAt }
+                    task.setDone(mutation.done, at: mutation.completedAt ?? mutation.historyEntry.observedAt)
+                    task.extended.workflowStatus = mutation.newStatus
+                    task.extended.applyDoneFlag(mutation.done)
+                    if let prio = mutation.priority { task.extended.priority = prio }
+                    if mutation.issueKind != .task { task.extended.issueKind = mutation.issueKind }
+                    if let epicKey = mutation.parentEpicKey, !epicKey.isEmpty { task.extended.parentEpicKey = epicKey }
+                    task.extended.appendContextNote(mutation.contextAddition)
+                    task.extended.appendHistory(mutation.historyEntry)
+                    task.extended.upsertBinding(mutation.binding)
+                    if let rule = task.extended.reminderRule, rule.isEnabled {
+                        task.reminderAt = rule.nextFireDate(
+                            after: Date(),
+                            dueDay: task.dueDay,
+                            dueAt: task.dueAt,
+                            status: task.extended.workflowStatus,
+                            done: task.done,
+                            scheduledDiscussions: task.extended.scheduledDiscussions
+                        )
+                    }
+                }) {
+                    commits.append(commit)
+                }
+            } else {
+                pendingImports.append(mutation)
+            }
+        }
+
+        if !pendingImports.isEmpty {
+            let importSessionID = TaskExtendedMetadata.externalImportsSessionID
+            let importOutcomeID = TaskExtendedMetadata.externalImportsOutcomeID
+            let existingOutcome = try Self.storedOutcome(db: db, id: importOutcomeID)
+            var outcome = existingOutcome ?? MeetingOutcome(
+                id: importOutcomeID,
+                meetingID: importSessionID,
+                meetingTitle: L("Imported Tasks"),
+                endedAt: Date(),
+                summary: L("Tasks imported from Jira or Apple Reminders.")
+            )
+            outcome.meetingID = importSessionID
+            if outcome.meetingTitle.isEmpty { outcome.meetingTitle = L("Imported Tasks") }
+
+            let allTasks = try taskHistory(profile: try taskProfile(), includeAll: true)
+            for mutation in pendingImports {
+                let alreadyBound = allTasks.contains { row in
+                    row.task.extended.externalBindings.contains { b in
+                        b.provider == mutation.binding.provider &&
+                            (b.externalID == mutation.binding.externalID ||
+                             (b.externalKey != nil && b.externalKey == mutation.binding.externalKey))
+                    }
+                }
+                guard !alreadyBound else { continue }
+                var ext = TaskExtendedMetadata(
+                    workflowStatus: mutation.newStatus,
+                    priority: mutation.priority,
+                    issueKind: mutation.issueKind,
+                    parentEpicKey: mutation.parentEpicKey,
+                    contextNotes: mutation.contextAddition,
+                    contextHistory: [mutation.historyEntry],
+                    externalBindings: [mutation.binding]
+                )
+                ext.applyDoneFlag(mutation.done)
+                let newTask = MeetingOutcomeTask(
+                    id: UUID(),
+                    text: mutation.title,
+                    owner: mutation.owner,
+                    dueAt: mutation.dueAt,
+                    dueDay: mutation.dueDay,
+                    done: mutation.done,
+                    completedAt: mutation.completedAt,
+                    extended: ext
+                )
+                outcome.tasks.append(newTask)
+            }
+
+            let commit = try commitOutcome(outcome, state: .ready)
+            commits.append(commit)
+        }
+
+        return commits
     }
 }
 

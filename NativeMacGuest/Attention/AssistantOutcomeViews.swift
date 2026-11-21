@@ -41,7 +41,14 @@ struct MeetingHistoryView: View {
     @State private var rename: Rename?
     @State private var exportRequest: ExportRequest?
     @State private var obsidianMessage: String?
+    @State private var editingOutcomeTask: OutcomeTaskSheetTarget?
     @Environment(\.locale) private var locale
+
+    private struct OutcomeTaskSheetTarget: Identifiable {
+        var id: UUID { task.id }
+        let outcome: MeetingOutcome
+        let task: MeetingOutcomeTask
+    }
 
     private struct Day: Hashable {
         let date: Date?
@@ -132,7 +139,7 @@ struct MeetingHistoryView: View {
         return nil
     }
 
-    var body: some View {
+    private var mainHistoryLayout: some View {
         GeometryReader { geometry in
             let narrow = readingMode || geometry.size.width < 615
             HStack(spacing: 0) {
@@ -178,26 +185,72 @@ struct MeetingHistoryView: View {
             calendar = Calendar.current
         }
         .onDisappear { data.flushOutcomeEdits() }
-        .sheet(item: $rename) { value in
-            RenameMeetingSheet(library: library, sessionID: value.id, currentTitle: value.title)
-        }
-        .sheet(item: $exportRequest) { value in
-            MeetingManualExportView(attention: attention, singleSessionID: value.sessionID)
-        }
-        .sheet(item: $reviewedDraft) { draft in
-            if let selectedCard, selectedCard.sessionID == draft.id {
-                HistoryOutcomeReview(card: selectedCard, draft: draft, attention: attention)
+    }
+
+    private func outcomeTaskDetailSheet(_ target: OutcomeTaskSheetTarget) -> some View {
+        let sessionID = target.outcome.meetingID
+            ?? library.cards.first(where: { $0.outcomeID == target.outcome.id })?.sessionID
+            ?? selectedCard?.sessionID
+            ?? target.outcome.id
+        let record = WorkspaceTaskRecord(
+            id: target.task.id,
+            sessionID: sessionID,
+            outcomeID: target.outcome.id,
+            meetingTitle: target.outcome.meetingTitle,
+            meetingDate: target.outcome.endedAt,
+            text: target.task.text,
+            owner: target.task.owner,
+            assigneeID: target.task.assigneeID,
+            dueDay: target.task.dueDay,
+            dueAt: target.task.dueAt,
+            reminderAt: target.task.reminderAt,
+            done: target.task.done,
+            completedAt: target.task.completedAt,
+            isOwnedByCurrentUser: data.taskProfile.owns(target.task),
+            extended: target.task.extended
+        )
+        return TaskDetailAndContextSheet(
+            task: record,
+            syncController: attention.taskSync,
+            onSave: { payload in
+                await attention.setOutcomeTaskExtendedDetails(
+                    outcomeID: target.outcome.id,
+                    sessionID: sessionID,
+                    meetingTitle: target.outcome.meetingTitle,
+                    taskID: target.task.id,
+                    payload: payload
+                )
+            },
+            onDelete: nil,
+            onOpenMeeting: nil
+        )
+    }
+
+    var body: some View {
+        mainHistoryLayout
+            .sheet(item: $rename) { value in
+                RenameMeetingSheet(library: library, sessionID: value.id, currentTitle: value.title)
             }
-        }
-        .sheet(isPresented: $showingGuidance) {
-            WorkspaceSavedGuidance(guidance: preferences.workspaceGuidance, journal: journal)
-        }
-        .alert(L("Save in Obsidian"), isPresented: Binding(get: { obsidianMessage != nil },
-            set: { shown in if !shown { obsidianMessage = nil } })) {
-            Button(L("OK"), role: .cancel) { obsidianMessage = nil }
-        } message: {
-            Text(obsidianMessage ?? "")
-        }
+            .sheet(item: $exportRequest) { value in
+                MeetingManualExportView(attention: attention, singleSessionID: value.sessionID)
+            }
+            .sheet(item: $reviewedDraft) { draft in
+                if let selectedCard, selectedCard.sessionID == draft.id {
+                    HistoryOutcomeReview(card: selectedCard, draft: draft, attention: attention)
+                }
+            }
+            .sheet(isPresented: $showingGuidance) {
+                WorkspaceSavedGuidance(guidance: preferences.workspaceGuidance, journal: journal)
+            }
+            .sheet(item: $editingOutcomeTask) { target in
+                outcomeTaskDetailSheet(target)
+            }
+            .alert(L("Save in Obsidian"), isPresented: Binding(get: { obsidianMessage != nil },
+                set: { shown in if !shown { obsidianMessage = nil } })) {
+                Button(L("OK"), role: .cancel) { obsidianMessage = nil }
+            } message: {
+                Text(obsidianMessage ?? "")
+            }
     }
 
     private var index: some View {
@@ -666,6 +719,13 @@ struct MeetingHistoryView: View {
                             }
                             Button(task.reminderAt == nil ? L("Remind me") : L("Reminder set")) { attention.remind(task, in: outcome) }
                                 .disabled(task.reminderAt != nil || task.done || !data.taskProfile.owns(task))
+                            Button {
+                                editingOutcomeTask = OutcomeTaskSheetTarget(outcome: outcome, task: task)
+                            } label: {
+                                Image(systemName: "slider.horizontal.3")
+                            }
+                            .buttonStyle(.borderless)
+                            .help(L("Task details, reminder rules & discussion meeting"))
                             Button { var copy = binding.wrappedValue; copy.tasks.removeAll { $0.id == task.id }; data.updateOutcome(copy) } label: {
                                 Image(systemName: "trash")
                             }.buttonStyle(.borderless).help(L("Delete task"))

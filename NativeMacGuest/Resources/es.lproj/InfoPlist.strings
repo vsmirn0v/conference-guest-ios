@@ -1,4 +1,6 @@
 "NSCalendarsUsageDescription" = "Buscar invitaciones a reuniones en los calendarios que elijas y avisarte cuando empiecen.";
 "NSCalendarsFullAccessUsageDescription" = "Buscar invitaciones a reuniones en los calendarios que elijas y mostrar las próximas reuniones.";
+"NSRemindersUsageDescription" = "Sincronizar las tareas de las reuniones con tu lista de Recordatorios de Apple e importar tareas en Rock'N'Roll for Mac.";
+"NSRemindersFullAccessUsageDescription" = "Sincronizar las tareas de las reuniones con tu lista de Recordatorios de Apple e importar tareas en Rock'N'Roll for Mac.";
 "NSCameraUsageDescription" = "Compartir la imagen de la cámara cuando actives el vídeo en la vista previa de invitado de la app.";
 "NSMicrophoneUsageDescription" = "Compartir el audio del micrófono cuando lo actives en la vista previa de invitado de la app.";

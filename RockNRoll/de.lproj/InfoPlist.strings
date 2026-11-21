@@ -5,3 +5,5 @@
 "NSCalendarsFullAccessUsageDescription" = "Suche Meetings in ausgewählten Kalendern. Wenn du den Zeitplan teilst, können Meetingdetails über deinen privaten iCloud-Speicher synchronisiert werden. Dein Kalender wird nicht bearbeitet.";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll verwendet die Spracherkennung auf dem Gerät, um Meetings lokal auf diesem iPhone zu transkribieren.";
 "NSPersonalVoiceUsageDescription" = "Rock’n’Roll kann deine eigene Stimme verwenden, um Sprachantworten vorzulesen, die du in Meetings sendest.";
+"NSRemindersUsageDescription" = "Synchronisiere Meeting-Aufgaben mit deiner gewählten Apple-Erinnerungen-Liste und importiere Aufgaben in Rock’n’Roll.";
+"NSRemindersFullAccessUsageDescription" = "Synchronisiere Meeting-Aufgaben mit deiner gewählten Apple-Erinnerungen-Liste und importiere Aufgaben in Rock’n’Roll.";

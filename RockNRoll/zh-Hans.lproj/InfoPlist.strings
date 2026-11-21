@@ -5,3 +5,5 @@
 "NSCalendarsFullAccessUsageDescription" = "在选定的日历中查找会议。开启日程共享后，会议详情可通过您的私人 iCloud 空间同步。此应用不会修改您的日历。";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll 使用设备端语音识别功能，在这台 iPhone 上本地转写会议内容。";
 "NSPersonalVoiceUsageDescription" = "Rock’n’Roll 可以用你的“个人声音”朗读你发送到会议中的语音回复。";
+"NSRemindersUsageDescription" = "将会议待办事项与你选择的 Apple 提醒事项列表同步，并将任务导入 Rock’n’Roll。";
+"NSRemindersFullAccessUsageDescription" = "将会议待办事项与你选择的 Apple 提醒事项列表同步，并将任务导入 Rock’n’Roll。";

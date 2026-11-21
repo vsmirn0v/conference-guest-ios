@@ -12,12 +12,17 @@ struct MeetingOutcomeTask: Codable, Identifiable, Equatable, Sendable {
     var reminderAt: Date?
     var done = false
     var completedAt: Date?
+    var extended: TaskExtendedMetadata = .init()
 
     init(id: UUID = UUID(), text: String, owner: String = "", assigneeID: String? = nil, dueAt: Date? = nil,
-         dueDay: String? = nil, reminderAt: Date? = nil, done: Bool = false, completedAt: Date? = nil) {
+         dueDay: String? = nil, reminderAt: Date? = nil, done: Bool = false, completedAt: Date? = nil,
+         extended: TaskExtendedMetadata = .init()) {
         self.id = id; self.text = text; self.owner = owner; self.assigneeID = assigneeID
         self.dueAt = dueAt; self.dueDay = dueDay; self.reminderAt = reminderAt
         self.done = done; self.completedAt = completedAt
+        var resolvedExtended = extended
+        resolvedExtended.applyDoneFlag(done)
+        self.extended = resolvedExtended
     }
 
     init(from decoder: Decoder) throws {
@@ -31,6 +36,9 @@ struct MeetingOutcomeTask: Codable, Identifiable, Equatable, Sendable {
         reminderAt = try c.decodeIfPresent(Date.self, forKey: .reminderAt)
         done = try c.decodeIfPresent(Bool.self, forKey: .done) ?? false
         completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+        var resolvedExtended = try c.decodeIfPresent(TaskExtendedMetadata.self, forKey: .extended) ?? .init()
+        resolvedExtended.applyDoneFlag(done)
+        extended = resolvedExtended
     }
 
     mutating func setDone(_ value: Bool, at date: Date = Date()) {
@@ -38,6 +46,7 @@ struct MeetingOutcomeTask: Codable, Identifiable, Equatable, Sendable {
         done = value
         completedAt = value ? date : nil
         if value { reminderAt = nil }
+        extended.applyDoneFlag(value)
     }
 }
 

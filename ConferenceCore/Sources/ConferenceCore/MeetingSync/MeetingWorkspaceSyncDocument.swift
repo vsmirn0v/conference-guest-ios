@@ -129,6 +129,15 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
         tasks[adjusted.id] = tasks[adjusted.id]?.merging(adjusted) ?? adjusted
     }
 
+    public mutating func upsertTaskLink(_ link: SyncedTaskLink) {
+        var adjusted = link
+        adjusted.sessionID = resolveCanonicalSessionID(for: link.sessionID)
+        if let existing = taskLinks[adjusted.syncID], existing.updatedAt > adjusted.updatedAt {
+            return
+        }
+        taskLinks[adjusted.syncID] = adjusted
+    }
+
     public mutating func upsertTaskProfile(_ profile: SyncedTaskProfile) {
         counter = max(counter, profile.maximumCounter)
         taskProfiles[profile.profileID] = taskProfiles[profile.profileID]?.merging(profile) ?? profile
@@ -150,6 +159,10 @@ public struct MeetingWorkspaceSyncDocument: Codable, Equatable, Sendable {
     public mutating func upsertContextSettings(_ settings: SyncedMeetingContextSettings) {
         counter = max(counter, settings.maximumCounter)
         contextSettings[settings.scopeKey] = contextSettings[settings.scopeKey]?.merging(settings) ?? settings
+    }
+
+    public mutating func removeContextSettings(forKey key: String) {
+        contextSettings.removeValue(forKey: key)
     }
 
     public mutating func upsertTranscriptChunk(_ chunk: SyncedTranscriptChunk) {

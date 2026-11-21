@@ -278,8 +278,35 @@ import UserNotifications
             try await self?.workspaceSync.clearCloudData()
         }
         self.workspaceSync.onTranscriptChanged = { [weak self] id in self?.offerHistoryRefresh(for: id) }
+        self.attention.saveTaskSyncPreferencesToCloud = { [weak self] prefs in
+            self?.workspaceSync.saveTaskSyncPreferences(prefs)
+        }
+        self.attention.saveJiraHandoverPacketToCloud = { [weak self] packet in
+            self?.workspaceSync.saveJiraHandoverPacket(packet)
+        }
+        self.attention.loadJiraHandoverPacketsFromCloud = { [weak self] in
+            self?.workspaceSync.currentJiraHandoverPackets() ?? []
+        }
+        self.attention.onCalendarEventCreated = { [weak self] in
+            self?.library.calendar.refresh()
+        }
+        self.workspaceSync.onTaskSyncPreferencesChanged = { [weak self] prefs in
+            self?.attention.taskSync.updatePreferencesFromRemoteSync(prefs)
+        }
+        self.workspaceSync.onJiraHandoverPacketsChanged = { [weak self] in
+            Task { @MainActor [weak self] in
+                await self?.attention.handleRemoteJiraHandovers()
+            }
+        }
+        if let syncedPrefs = self.workspaceSync.currentSyncedTaskSyncPreferences() {
+            self.attention.taskSync.updatePreferencesFromRemoteSync(syncedPrefs)
+        }
+        self.attention.taskSync.refreshHandoverState()
         self.attention.start()
         self.workspaceSync.start()
+        Task { @MainActor [weak self] in
+            await self?.attention.handleRemoteJiraHandovers()
+        }
     }
 
     /// The meeting is in front of you: shown in a visible main window, its own

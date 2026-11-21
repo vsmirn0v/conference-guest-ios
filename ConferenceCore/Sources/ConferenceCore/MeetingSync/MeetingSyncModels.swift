@@ -477,6 +477,7 @@ public struct SyncedTaskSnapshot: Codable, Equatable, Identifiable, Sendable {
     public var reminderAt: Date?
     public var done: Bool
     public var completedAt: Date?
+    public var extended: TaskExtendedMetadata
 
     public init(
         id: UUID,
@@ -487,7 +488,8 @@ public struct SyncedTaskSnapshot: Codable, Equatable, Identifiable, Sendable {
         dueAt: Date? = nil,
         reminderAt: Date? = nil,
         done: Bool = false,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        extended: TaskExtendedMetadata = .init()
     ) {
         self.id = id
         self.text = text
@@ -498,6 +500,21 @@ public struct SyncedTaskSnapshot: Codable, Equatable, Identifiable, Sendable {
         self.reminderAt = reminderAt
         self.done = done
         self.completedAt = completedAt
+        self.extended = extended
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        text = try c.decode(String.self, forKey: .text)
+        owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
+        assigneeID = try c.decodeIfPresent(String.self, forKey: .assigneeID)
+        dueDay = try c.decodeIfPresent(String.self, forKey: .dueDay)
+        dueAt = try c.decodeIfPresent(Date.self, forKey: .dueAt)
+        reminderAt = try c.decodeIfPresent(Date.self, forKey: .reminderAt)
+        done = try c.decodeIfPresent(Bool.self, forKey: .done) ?? false
+        completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+        extended = try c.decodeIfPresent(TaskExtendedMetadata.self, forKey: .extended) ?? .init()
     }
 }
 
@@ -582,6 +599,7 @@ public struct SyncedMeetingTask: Codable, Equatable, Identifiable, Sendable {
     public var done: SyncValue<Bool>
     public var completedAt: SyncValue<Date?>
     public var archivedByProfile: [String: SyncValue<Date?>]
+    public var extended: SyncValue<TaskExtendedMetadata>?
     public var isDeleted: SyncValue<Bool>
     public var updatedAt: Date
 
@@ -599,6 +617,7 @@ public struct SyncedMeetingTask: Codable, Equatable, Identifiable, Sendable {
         done: SyncValue<Bool>,
         completedAt: SyncValue<Date?>,
         archivedByProfile: [String: SyncValue<Date?>] = [:],
+        extended: SyncValue<TaskExtendedMetadata>? = nil,
         isDeleted: SyncValue<Bool>,
         updatedAt: Date = Date()
     ) {
@@ -615,8 +634,29 @@ public struct SyncedMeetingTask: Codable, Equatable, Identifiable, Sendable {
         self.done = done
         self.completedAt = completedAt
         self.archivedByProfile = archivedByProfile
+        self.extended = extended
         self.isDeleted = isDeleted
         self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        sessionID = try c.decode(UUID.self, forKey: .sessionID)
+        outcomeID = try c.decode(UUID.self, forKey: .outcomeID)
+        ordinal = try c.decode(SyncValue<Int>.self, forKey: .ordinal)
+        text = try c.decode(SyncValue<String>.self, forKey: .text)
+        owner = try c.decode(SyncValue<String>.self, forKey: .owner)
+        assigneeID = try c.decode(SyncValue<String?>.self, forKey: .assigneeID)
+        dueDay = try c.decode(SyncValue<String?>.self, forKey: .dueDay)
+        dueAt = try c.decode(SyncValue<Date?>.self, forKey: .dueAt)
+        reminderAt = try c.decode(SyncValue<Date?>.self, forKey: .reminderAt)
+        done = try c.decode(SyncValue<Bool>.self, forKey: .done)
+        completedAt = try c.decode(SyncValue<Date?>.self, forKey: .completedAt)
+        archivedByProfile = try c.decodeIfPresent([String: SyncValue<Date?>].self, forKey: .archivedByProfile) ?? [:]
+        extended = try c.decodeIfPresent(SyncValue<TaskExtendedMetadata>.self, forKey: .extended)
+        isDeleted = try c.decode(SyncValue<Bool>.self, forKey: .isDeleted)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
 
     public var maximumCounter: Int64 {
@@ -630,6 +670,7 @@ public struct SyncedMeetingTask: Codable, Equatable, Identifiable, Sendable {
             reminderAt.version.counter,
             done.version.counter,
             completedAt.version.counter,
+            extended?.version.counter ?? 0,
             isDeleted.version.counter
         ]
         let archiveMax = archivedByProfile.values.map(\.version.counter).max() ?? 0
@@ -650,6 +691,22 @@ public struct SyncedMeetingTask: Codable, Equatable, Identifiable, Sendable {
         result.completedAt = completedAt.merging(other.completedAt)
         if result.done.value {
             result.reminderAt.value = nil
+        }
+        switch (extended, other.extended) {
+        case (.some(let a), .some(let b)):
+            let preferB = a.version < b.version
+            let winning = preferB ? b.version : a.version
+            var mergedExt = a.value.merging(b.value, preferOtherScalars: preferB)
+            mergedExt.applyDoneFlag(result.done.value)
+            result.extended = SyncValue(mergedExt, version: winning)
+        case (.some(var a), .none):
+            a.value.applyDoneFlag(result.done.value)
+            result.extended = a
+        case (.none, .some(var b)):
+            b.value.applyDoneFlag(result.done.value)
+            result.extended = b
+        case (.none, .none):
+            result.extended = nil
         }
         var mergedArchive = archivedByProfile
         for (profileID, archived) in other.archivedByProfile {

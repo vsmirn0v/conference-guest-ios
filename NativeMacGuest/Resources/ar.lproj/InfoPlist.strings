@@ -1,4 +1,6 @@
 "NSCalendarsUsageDescription" = "البحث عن دعوات الاجتماعات في التقويمات التي تختارها وتذكيرك عند بدء الاجتماعات.";
 "NSCalendarsFullAccessUsageDescription" = "البحث عن دعوات الاجتماعات في التقويمات التي تختارها وعرض الاجتماعات القادمة.";
+"NSRemindersUsageDescription" = "مزامنة مهام الاجتماعات مع قائمة تذكيرات Apple المختارة واستيراد المهام إلى Rock'N'Roll for Mac.";
+"NSRemindersFullAccessUsageDescription" = "مزامنة مهام الاجتماعات مع قائمة تذكيرات Apple المختارة واستيراد المهام إلى Rock'N'Roll for Mac.";
 "NSCameraUsageDescription" = "مشاركة صورة الكاميرا عند تشغيل الفيديو في معاينة الضيف داخل التطبيق.";
 "NSMicrophoneUsageDescription" = "مشاركة صوت الميكروفون عندما تلغي كتمه في معاينة الضيف داخل التطبيق.";

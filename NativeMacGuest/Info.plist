@@ -24,6 +24,10 @@
 	<string>Find meeting invitations in calendars you choose and remind you when meetings start.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Find meeting invitations in calendars you choose and show upcoming meetings.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock'N'Roll for Mac.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock'N'Roll for Mac.</string>
 	<key>NSUserActivityTypes</key>
 	<array><string>dev.vsmirn0v.conferenceguest.continue-jam</string></array>
 	<key>CFBundleURLTypes</key>

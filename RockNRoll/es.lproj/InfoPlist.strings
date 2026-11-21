@@ -5,3 +5,5 @@
 "NSCalendarsFullAccessUsageDescription" = "Busca reuniones en los calendarios que elijas. Al compartir la agenda, los datos de las reuniones pueden sincronizarse mediante tu espacio privado de iCloud. La app no modifica tu calendario.";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll utiliza el reconocimiento de voz del dispositivo para transcribir las reuniones en este iPhone.";
 "NSPersonalVoiceUsageDescription" = "Rock’n’Roll puede usar tu voz personal para leer en voz alta las respuestas que envíes a las reuniones.";
+"NSRemindersUsageDescription" = "Sincroniza las tareas de las reuniones con tu lista de Recordatorios de Apple e importa tareas en Rock’n’Roll.";
+"NSRemindersFullAccessUsageDescription" = "Sincroniza las tareas de las reuniones con tu lista de Recordatorios de Apple e importa tareas en Rock’n’Roll.";

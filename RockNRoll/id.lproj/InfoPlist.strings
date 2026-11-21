@@ -5,3 +5,5 @@
 "NSCalendarsFullAccessUsageDescription" = "Temukan rapat di kalender yang Anda pilih. Jika jadwal dibagikan, detail rapat dapat disinkronkan melalui penyimpanan iCloud pribadi Anda. Aplikasi tidak mengubah kalender Anda.";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll menggunakan pengenalan ucapan di perangkat untuk mentranskripsikan rapat secara lokal di iPhone ini.";
 "NSPersonalVoiceUsageDescription" = "Rock’n’Roll dapat menggunakan Suara Personal Anda untuk membacakan balasan suara yang Anda kirim ke rapat.";
+"NSRemindersUsageDescription" = "Sinkronkan tugas rapat dengan daftar Pengingat Apple pilihan Anda dan impor tugas ke Rock’n’Roll.";
+"NSRemindersFullAccessUsageDescription" = "Sinkronkan tugas rapat dengan daftar Pengingat Apple pilihan Anda dan impor tugas ke Rock’n’Roll.";

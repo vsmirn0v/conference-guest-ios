@@ -182,6 +182,18 @@ public enum OutcomeAndTaskMergeEngine {
                 if candidate.reminderAt.version > target.reminderAt.version {
                     target.reminderAt = candidate.reminderAt
                 }
+                switch (target.extended, candidate.extended) {
+                case (.some(let a), .some(let b)):
+                    let preferB = a.version < b.version
+                    target.extended = SyncValue(
+                        a.value.merging(b.value, preferOtherScalars: preferB),
+                        version: preferB ? b.version : a.version
+                    )
+                case (.none, .some(let b)):
+                    target.extended = b
+                default:
+                    break
+                }
                 merged[index] = target
                 links.append(
                     SyncedTaskLink(
@@ -202,7 +214,8 @@ public enum OutcomeAndTaskMergeEngine {
                         dueAt: candidate.dueAt.value,
                         reminderAt: candidate.reminderAt.value,
                         done: candidate.done.value,
-                        completedAt: candidate.completedAt.value
+                        completedAt: candidate.completedAt.value,
+                        extended: candidate.extended?.value ?? .init()
                     )
                 )
             }

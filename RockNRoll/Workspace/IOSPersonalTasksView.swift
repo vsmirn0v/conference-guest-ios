@@ -23,22 +23,35 @@ struct IOSPersonalTasksView: View {
     @ObservedObject var workspace: IOSWorkspaceCoordinator
     var onOpenSession: (UUID) -> Void
 
+    @ObservedObject private var taskSync: WorkspaceTaskSyncController
     @AppStorage("ios.workspace.taskFilter") private var filter: IOSTaskFilter = .open
     @AppStorage("ios.workspace.tasksAssignedToMeOnly") private var myTasksOnly = true
     @AppStorage("ios.workspace.taskGrouping") private var grouping: IOSTaskGrouping = .list
     @Environment(\.calendar) private var calendar
     @Environment(\.timeZone) private var timeZone
+    @Environment(\.openURL) private var openURL
     @State private var searchText = ""
     @State private var selectedAssignee: IOSTaskAssigneeFilter = .all
     @State private var editingTask: IOSMeetingTaskItem?
     @State private var busy: Set<UUID> = []
     @State private var undoTaskID: UUID?
     @State private var showingProfileEditor = false
+    @State private var showingSyncSettings = false
+    @State private var isSelecting = false
+    @State private var selectedTaskIDs: Set<UUID> = []
+    @State private var schedulingDiscussionTask: IOSMeetingTaskItem?
     @State private var editingReminderTask: IOSMeetingTaskItem?
     @State private var reminderDateDraft = Date().addingTimeInterval(3600)
+    @State private var reminderRepeatDraft: TaskReminderRepeatRule = .none
 
     @State private var profileNameDraft = ""
     @State private var profileAliasesDraft = ""
+
+    init(workspace: IOSWorkspaceCoordinator, onOpenSession: @escaping (UUID) -> Void) {
+        self.workspace = workspace
+        self.onOpenSession = onOpenSession
+        _taskSync = ObservedObject(wrappedValue: workspace.taskSync)
+    }
 
     private var ownedTasks: [IOSMeetingTaskItem] {
         guard workspace.taskProfile.isConfigured else { return [] }
@@ -88,6 +101,46 @@ struct IOSPersonalTasksView: View {
                     }
                     .font(.subheadline)
                     Menu {
+                        Button(L("Sync Tasks…")) { Task { await taskSync.runSync() } }
+                        Button(L("Import from Jira / Reminders…")) {
+                            Task { await taskSync.runSync(directionOverride: .importOnly) }
+                        }
+                        Menu(L("Role Mode")) {
+                            ForEach(TaskSyncRoleMode.allCases) { mode in
+                                Button {
+                                    Task {
+                                        await taskSync.setRoleMode(mode)
+                                        if mode == .managerLead {
+                                            myTasksOnly = false
+                                        } else if mode == .personalOwner && workspace.taskProfile.isConfigured {
+                                            myTasksOnly = true
+                                        }
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text(mode.localizedTitle)
+                                        if taskSync.preferences.roleMode == mode {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Button(isSelecting ? L("Exit Selection") : L("Select Tasks…")) {
+                            isSelecting.toggle()
+                            if !isSelecting { selectedTaskIDs.removeAll() }
+                        }
+                        Divider()
+                        Button(L("Task Sync & Contacts…")) { showingSyncSettings = true }
+                    } label: {
+                        if taskSync.isBusy {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                    .accessibilityLabel(L("External Task Sync"))
+                    Menu {
                         Picker(L("Group by"), selection: $grouping) {
                             Label(L("Flat list"), systemImage: "list.bullet").tag(IOSTaskGrouping.list)
                             Label(L("Group by meeting"), systemImage: "rectangle.3.group").tag(IOSTaskGrouping.byMeeting)
@@ -96,6 +149,50 @@ struct IOSPersonalTasksView: View {
                         Image(systemName: grouping == .list ? "list.bullet" : "rectangle.3.group")
                     }
                     .accessibilityLabel(L("Group by"))
+                }
+                if isSelecting {
+                    HStack {
+                        Text(L("%ld selected", selectedTaskIDs.count))
+                            .font(.caption.weight(.medium))
+                        Button(L("Select All")) {
+                            selectedTaskIDs.formUnion(filteredTasks.map(\.id))
+                        }
+                        .font(.caption)
+                        Spacer()
+                        Button(L("Sync (%ld)", selectedTaskIDs.count)) {
+                            let picked = selectedTaskIDs
+                            isSelecting = false
+                            selectedTaskIDs.removeAll()
+                            Task { await taskSync.runSync(explicitTaskIDs: picked) }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .disabled(selectedTaskIDs.isEmpty || taskSync.isBusy)
+                        Button(L("Done")) {
+                            isSelecting = false
+                            selectedTaskIDs.removeAll()
+                        }
+                        .font(.caption)
+                    }
+                }
+                if !taskSync.pendingMacHandovers.isEmpty {
+                    Label(
+                        L("%ld Jira action(s) queued for your Mac via iCloud", taskSync.pendingMacHandovers.count),
+                        systemImage: "laptopcomputer.and.iphone"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.blue)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let status = taskSync.statusMessage {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if let syncErr = taskSync.errorMessage {
+                    Text(syncErr)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if !(myTasksOnly && !workspace.taskProfile.isConfigured) {
@@ -236,7 +333,17 @@ struct IOSPersonalTasksView: View {
                 undoTaskID = nil
             } catch { }
         }
-        .sheet(item: $editingTask) { task in IOSMeetingTaskEditor(workspace: workspace, task: task) }
+        .sheet(item: $editingTask) { task in
+            IOSMeetingTaskEditor(workspace: workspace, task: task) { sid in
+                onOpenSession(sid)
+            }
+        }
+        .sheet(isPresented: $showingSyncSettings) {
+            TaskSyncSettingsSheet(controller: taskSync)
+        }
+        .sheet(item: $taskSync.pendingPacket) { packet in
+            TaskSyncPacketReviewSheet(controller: taskSync, packet: packet)
+        }
         .sheet(isPresented: $showingProfileEditor) {
             NavigationStack {
                 Form {
@@ -269,11 +376,43 @@ struct IOSPersonalTasksView: View {
         .sheet(item: $editingReminderTask) { task in
             NavigationStack {
                 Form {
-                    DatePicker(L("Remind me at"), selection: $reminderDateDraft, in: Date()..., displayedComponents: [.date, .hourAndMinute])
-                    if task.reminderAt != nil {
+                    Section(L("Quick Presets")) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                Button(L("+1 hour")) {
+                                    reminderDateDraft = Date().addingTimeInterval(3600)
+                                    reminderRepeatDraft = .none
+                                }
+                                Button(L("Tomorrow 09:00")) {
+                                    reminderDateDraft = TaskReminderRule.tomorrowMorning().customDate ?? Date().addingTimeInterval(86_400)
+                                    reminderRepeatDraft = .none
+                                }
+                                Button(L("Next Mon 09:00")) {
+                                    reminderDateDraft = TaskReminderRule.nextMondayMorning().customDate ?? Date().addingTimeInterval(7 * 86_400)
+                                    reminderRepeatDraft = .none
+                                }
+                                Button(L("Daily 09:00")) {
+                                    let rule = TaskReminderRule.dailyFollowUp()
+                                    reminderDateDraft = rule.customDate ?? Date().addingTimeInterval(86_400)
+                                    reminderRepeatDraft = .daily
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                    Section(L("Reminder Schedule")) {
+                        DatePicker(L("Remind me at"), selection: $reminderDateDraft, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                        Picker(L("Repeat Rule"), selection: $reminderRepeatDraft) {
+                            ForEach(TaskReminderRepeatRule.allCases) { rule in
+                                Text(rule.localizedTitle).tag(rule)
+                            }
+                        }
+                    }
+                    if task.reminderAt != nil || task.extended.reminderRule != nil {
                         Button(L("Clear Reminder"), role: .destructive) {
                             editingReminderTask = nil
-                            updateReminder(task.id, date: nil)
+                            updateReminder(task.id, date: nil, repeatRule: nil)
                         }
                     }
                 }
@@ -285,10 +424,76 @@ struct IOSPersonalTasksView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button(L("Save")) {
                             editingReminderTask = nil
-                            updateReminder(task.id, date: reminderDateDraft)
+                            updateReminder(task.id, date: reminderDateDraft, repeatRule: reminderRepeatDraft)
                         }
                     }
                 }
+            }
+        }
+        .sheet(item: $schedulingDiscussionTask) { task in
+            let session = workspace.sessions.first { $0.id == task.sessionID }
+            let record = WorkspaceTaskRecord(
+                id: task.id,
+                sessionID: task.sessionID,
+                outcomeID: task.outcomeID,
+                meetingTitle: session?.title ?? L("Meeting"),
+                meetingDate: session?.startedAt,
+                text: task.text,
+                owner: task.owner,
+                assigneeID: task.assigneeID,
+                dueDay: task.dueDay,
+                dueAt: task.dueAt,
+                reminderAt: task.reminderAt,
+                done: task.done,
+                completedAt: task.completedAt,
+                archivedAt: workspace.taskArchiveDates[task.id],
+                updatedAt: task.updatedAt,
+                isOwnedByCurrentUser: workspace.taskProfile.owns(task),
+                extended: task.extended
+            )
+            TaskDiscussionMeetingSheet(task: record, syncController: taskSync) { linked, addPreReminder in
+                var discussions = task.extended.scheduledDiscussions
+                if !discussions.contains(where: {
+                    $0.id == linked.id ||
+                        (linked.calendarEventIdentifier != nil && $0.calendarEventIdentifier == linked.calendarEventIdentifier)
+                }) {
+                    discussions.append(linked)
+                    discussions.sort { $0.startAt < $1.startAt }
+                }
+                var updatedRule = task.extended.reminderRule
+                var nextAlert = task.reminderAt
+                if addPreReminder {
+                    let rule = TaskReminderRule(
+                        isEnabled: true,
+                        triggerMode: .beforeLinkedMeeting,
+                        offsetMinutesBefore: 15,
+                        repeatRule: task.extended.reminderRule?.repeatRule ?? .none,
+                        escalateWhenBlockedOrOverdue: task.extended.reminderRule?.escalateWhenBlockedOrOverdue ?? false
+                    )
+                    updatedRule = rule
+                    nextAlert = rule.nextFireDate(
+                        after: Date(),
+                        dueDay: task.dueDay,
+                        dueAt: task.dueAt,
+                        status: task.extended.workflowStatus,
+                        done: task.done,
+                        scheduledDiscussions: discussions
+                    )
+                }
+                let payload = TaskDetailEditPayload(
+                    text: task.text,
+                    owner: task.owner,
+                    status: task.done ? .done : task.extended.workflowStatus,
+                    priority: task.extended.priority,
+                    issueKind: task.extended.issueKind,
+                    parentEpicKey: task.extended.parentEpicKey,
+                    dueDay: task.dueDay,
+                    reminderAt: nextAlert,
+                    reminderRule: updatedRule,
+                    scheduledDiscussions: discussions,
+                    contextNotes: task.extended.contextNotes
+                )
+                _ = await workspace.updateTaskExtendedDetails(taskID: task.id, payload: payload)
             }
         }
     }
@@ -299,6 +504,17 @@ struct IOSPersonalTasksView: View {
         let isOwned = workspace.taskProfile.owns(task)
 
         return HStack(alignment: .top, spacing: 12) {
+            if isSelecting {
+                Button {
+                    if selectedTaskIDs.contains(task.id) { selectedTaskIDs.remove(task.id) }
+                    else { selectedTaskIDs.insert(task.id) }
+                } label: {
+                    Image(systemName: selectedTaskIDs.contains(task.id) ? "checkmark.square.fill" : "square")
+                        .font(.title3)
+                        .foregroundStyle(selectedTaskIDs.contains(task.id) ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
             Button {
                 mutate(task.id) { await workspace.toggleTaskDone(task.id) }
             } label: {
@@ -318,6 +534,27 @@ struct IOSPersonalTasksView: View {
                     .foregroundStyle(task.done ? .secondary : .primary)
 
                 HStack(spacing: 8) {
+                    if task.extended.issueKind != .task {
+                        Text(task.extended.issueKind.localizedTitle.uppercased())
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(task.extended.issueKind == .epic ? Color.purple.opacity(0.18) : Color.secondary.opacity(0.16), in: Capsule())
+                            .foregroundStyle(task.extended.issueKind == .epic ? Color.purple : Color.secondary)
+                    }
+                    if task.extended.workflowStatus != .todo && !task.done {
+                        Text(task.extended.workflowStatus.localizedTitle)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(statusColor(task.extended.workflowStatus).opacity(0.16), in: Capsule())
+                            .foregroundStyle(statusColor(task.extended.workflowStatus))
+                    }
+                    if let epicKey = task.extended.parentEpicKey, !epicKey.isEmpty {
+                        Text("↳ \(epicKey)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.purple)
+                    }
                     if !task.owner.isEmpty {
                         Text(task.owner)
                             .font(.caption.weight(!myTasksOnly && isOwned ? .semibold : .medium))
@@ -327,6 +564,30 @@ struct IOSPersonalTasksView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    ForEach(task.extended.externalBindings) { binding in
+                        let label = binding.externalKey ?? binding.provider.localizedTitle
+                        if let urlStr = binding.externalURL, let url = URL(string: urlStr) {
+                            Button(label) { openURL(url) }
+                                .font(.caption2.monospaced())
+                                .buttonStyle(.borderless)
+                        } else {
+                            Text(label)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if task.extended.contextHistory.count > 1 {
+                        Text(L("%ld meetings", task.extended.contextHistory.count))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                let notesSnippet = task.extended.contextNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !notesSnippet.isEmpty {
+                    Text(notesSnippet)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 if let due = task.dateForDisplay(calendar: displayCalendar) {
                     TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -337,11 +598,22 @@ struct IOSPersonalTasksView: View {
                     }.font(.caption)
                 }
                 if let reminderAt = task.reminderAt, !task.done {
-                    Label(reminderAt.formatted(date: .abbreviated, time: .shortened), systemImage: "bell.fill")
+                    let repeatIcon = (task.extended.reminderRule?.repeatRule ?? .none) != .none ? "repeat" : "bell.fill"
+                    Label(reminderAt.formatted(date: .abbreviated, time: .shortened), systemImage: repeatIcon)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if let rule = task.extended.reminderRule, rule.isEnabled, !task.done {
+                    Label(rule.summaryLabel(calendar: displayCalendar), systemImage: "bell.badge")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-                if showMeeting {
+                if let nextMeeting = task.extended.scheduledDiscussions.first(where: { $0.endAt > Date() }) {
+                    Label("\(nextMeeting.startAt.formatted(date: .abbreviated, time: .shortened)) · \(nextMeeting.title)", systemImage: "calendar.badge.clock")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                        .lineLimit(1)
+                }
+                if showMeeting && task.sessionID != TaskExtendedMetadata.externalImportsSessionID {
                     Button {
                         onOpenSession(task.sessionID)
                     } label: {
@@ -350,14 +622,47 @@ struct IOSPersonalTasksView: View {
                             .foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain)
+                } else if showMeeting && !sessionTitle.isEmpty {
+                    Text(sessionTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             Spacer()
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
+        .onTapGesture { editingTask = task }
         .contextMenu {
-            Button(L("Edit")) { editingTask = task }
+            Button(L("Details & Reminder Rules…")) { editingTask = task }
+            Button(L("Schedule Discussion…")) { schedulingDiscussionTask = task }
+            Menu(L("Status")) {
+                ForEach(TaskWorkflowStatus.allCases) { st in
+                    Button(st.localizedTitle) {
+                        mutate(task.id) {
+                            let payload = TaskDetailEditPayload(
+                                text: task.text,
+                                owner: task.owner,
+                                status: st,
+                                priority: task.extended.priority,
+                                issueKind: task.extended.issueKind,
+                                parentEpicKey: task.extended.parentEpicKey,
+                                dueDay: task.dueDay,
+                                reminderAt: st.isTerminalDone ? nil : task.reminderAt,
+                                reminderRule: task.extended.reminderRule,
+                                scheduledDiscussions: task.extended.scheduledDiscussions,
+                                contextNotes: task.extended.contextNotes
+                            )
+                            _ = await workspace.updateTaskExtendedDetails(taskID: task.id, payload: payload)
+                        }
+                    }
+                }
+            }
+            if taskSync.preferences.anyProviderEnabled {
+                Button(L("Sync Task…")) {
+                    Task { await taskSync.runSync(explicitTaskIDs: [task.id]) }
+                }
+            }
             if isArchived || isOwned {
                 Button(isArchived ? L("Restore") : L("Archive")) { archive(task.id, archived: !isArchived) }
             }
@@ -373,13 +678,24 @@ struct IOSPersonalTasksView: View {
                 .tint(.indigo)
                 .disabled(busy.contains(task.id))
             }
-            if isOwned && !task.done && !isArchived {
+            if (isOwned || task.extended.reminderRule?.isEnabled == true) && !task.done && !isArchived {
                 Button(L("Remind")) {
                     reminderDateDraft = max(task.reminderAt ?? Date().addingTimeInterval(3600), Date())
+                    reminderRepeatDraft = task.extended.reminderRule?.repeatRule ?? .none
                     editingReminderTask = task
                 }
                 .tint(.orange)
             }
+        }
+    }
+
+    private func statusColor(_ status: TaskWorkflowStatus) -> Color {
+        switch status {
+        case .blocked: return .red
+        case .inProgress: return .blue
+        case .inReview: return .purple
+        case .done: return .green
+        case .cancelled, .todo: return .secondary
         }
     }
 
@@ -407,11 +723,29 @@ struct IOSPersonalTasksView: View {
         }
     }
 
-    private func updateReminder(_ id: UUID, date: Date?) {
+    private func updateReminder(_ id: UUID, date: Date?, repeatRule: TaskReminderRepeatRule? = nil) {
         mutate(id) {
             guard var latest = workspace.tasks.first(where: { $0.id == id }),
-                  !latest.done, workspace.taskProfile.owns(latest), archiveDates[id] == nil else { return }
-            latest.reminderAt = date
+                  !latest.done,
+                  (workspace.taskProfile.owns(latest) || latest.extended.reminderRule?.isEnabled == true),
+                  archiveDates[id] == nil else { return }
+            if let date {
+                let comps = displayCalendar.dateComponents([.hour, .minute], from: date)
+                let rule = TaskReminderRule(
+                    isEnabled: true,
+                    triggerMode: .atSpecificTime,
+                    customDate: date,
+                    hourOfDay: comps.hour ?? 9,
+                    minuteOfHour: comps.minute ?? 0,
+                    repeatRule: repeatRule ?? latest.extended.reminderRule?.repeatRule ?? .none,
+                    escalateWhenBlockedOrOverdue: latest.extended.reminderRule?.escalateWhenBlockedOrOverdue ?? false
+                )
+                latest.extended.reminderRule = rule
+                latest.reminderAt = date
+            } else {
+                latest.extended.reminderRule = nil
+                latest.reminderAt = nil
+            }
             latest.updatedAt = Date()
             _ = await workspace.updateTask(latest)
         }

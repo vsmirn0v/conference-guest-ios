@@ -133,6 +133,13 @@ enum PersonalTaskQuery {
                 let matches = searchFolded(row.task.text).contains(needle)
                     || searchFolded(row.task.owner).contains(needle)
                     || searchFolded(row.title).contains(needle)
+                    || searchFolded(row.task.extended.contextNotes).contains(needle)
+                    || searchFolded(row.task.extended.workflowStatus.localizedTitle).contains(needle)
+                    || searchFolded(row.task.extended.issueKind.localizedTitle).contains(needle)
+                    || searchFolded(row.task.extended.parentEpicKey ?? "").contains(needle)
+                    || row.task.extended.externalBindings.contains { binding in
+                        searchFolded(binding.externalKey ?? binding.externalID).contains(needle)
+                    }
                 guard matches else { return false }
             }
             return true
@@ -263,7 +270,9 @@ private extension MeetingOutcomeTask {
         if baseline.dueAt != edited.dueAt { result.dueAt = edited.dueAt }
         if baseline.dueDay != edited.dueDay { result.dueDay = edited.dueDay }
         if baseline.reminderAt != edited.reminderAt { result.reminderAt = edited.reminderAt }
+        if baseline.extended != edited.extended { result.extended = edited.extended }
         if result.done { result.reminderAt = nil }
+        result.extended.applyDoneFlag(result.done)
         return result
     }
 }

@@ -2,3 +2,5 @@
 "NSCalendarsFullAccessUsageDescription" = "Find meeting invitations in calendars you choose and show upcoming meetings.";
 "NSCameraUsageDescription" = "Share your camera when you turn video on in the native guest preview.";
 "NSMicrophoneUsageDescription" = "Share your microphone when you unmute in the native guest preview.";
+"NSRemindersUsageDescription" = "Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock'N'Roll for Mac.";
+"NSRemindersFullAccessUsageDescription" = "Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock'N'Roll for Mac.";

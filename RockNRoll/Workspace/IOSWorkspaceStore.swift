@@ -71,6 +71,7 @@ struct IOSMeetingTaskItem: Codable, Equatable, Identifiable, Sendable {
     var done: Bool
     var completedAt: Date?
     var updatedAt: Date
+    var extended: TaskExtendedMetadata = .init()
 }
 
 struct IOSTaskProfile: Codable, Equatable, Sendable {
@@ -270,7 +271,8 @@ actor IOSWorkspaceStore {
                 reminder_at INTEGER,
                 done INTEGER NOT NULL DEFAULT 0,
                 completed_at INTEGER,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                extended_json BLOB
             );
             CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id, ordinal);
 
@@ -308,6 +310,16 @@ actor IOSWorkspaceStore {
                 payload_json BLOB NOT NULL
             );
             """)
+        try ensureTasksExtendedColumn()
+    }
+
+    private func ensureTasksExtendedColumn() throws {
+        let columns = try query("PRAGMA table_info(tasks)") { stmt in
+            colText(stmt, 1)
+        }
+        if !columns.contains("extended_json") {
+            try exec("ALTER TABLE tasks ADD COLUMN extended_json BLOB;")
+        }
     }
 
     // MARK: - Sessions
@@ -618,7 +630,7 @@ actor IOSWorkspaceStore {
 
     func allTasks() throws -> [IOSMeetingTaskItem] {
         try prepare()
-        return try query("SELECT task_id,session_id,outcome_id,ordinal,text,owner,assignee_id,due_day,due_at,reminder_at,done,completed_at,updated_at FROM tasks ORDER BY updated_at DESC, ordinal ASC") { stmt in
+        return try query("SELECT task_id,session_id,outcome_id,ordinal,text,owner,assignee_id,due_day,due_at,reminder_at,done,completed_at,updated_at,extended_json FROM tasks ORDER BY updated_at DESC, ordinal ASC") { stmt in
             decodeTaskRow(stmt)
         }
     }
@@ -637,11 +649,14 @@ actor IOSWorkspaceStore {
     func upsertTask(_ task: IOSMeetingTaskItem) throws {
         try prepare()
         try ensureSessionExists(task.sessionID)
+        var resolvedExtended = task.extended
+        resolvedExtended.applyDoneFlag(task.done)
+        let extendedData = resolvedExtended.isEmpty ? nil : (try? encoder.encode(resolvedExtended))
         try run("""
             INSERT INTO tasks(
                 task_id,session_id,outcome_id,ordinal,text,text_folded,owner,assignee_id,
-                due_day,due_at,reminder_at,done,completed_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                due_day,due_at,reminder_at,done,completed_at,updated_at,extended_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(task_id) DO UPDATE SET
                 ordinal=excluded.ordinal,
                 text=excluded.text,
@@ -653,7 +668,8 @@ actor IOSWorkspaceStore {
                 reminder_at=excluded.reminder_at,
                 done=excluded.done,
                 completed_at=excluded.completed_at,
-                updated_at=excluded.updated_at
+                updated_at=excluded.updated_at,
+                extended_json=excluded.extended_json
             """) { stmt in
             bindText(stmt, task.id.uuidString, at: 1)
             bindText(stmt, task.sessionID.uuidString, at: 2)
@@ -669,6 +685,7 @@ actor IOSWorkspaceStore {
             bindInt(stmt, task.done ? 1 : 0, at: 12)
             bindOptionalInt(stmt, task.completedAt?.syncMilliseconds, at: 13)
             bindInt(stmt, task.updatedAt.syncMilliseconds, at: 14)
+            bindBlob(stmt, extendedData, at: 15)
         }
     }
 
@@ -729,7 +746,8 @@ actor IOSWorkspaceStore {
                         reminderAt: task.done.value ? nil : task.reminderAt.value,
                         done: task.done.value,
                         completedAt: task.completedAt.value,
-                        updatedAt: task.updatedAt
+                        updatedAt: task.updatedAt,
+                        extended: task.extended?.value ?? .init()
                     )
                 }
             try replaceTasks(for: sessionID, tasks: active)
@@ -975,7 +993,7 @@ actor IOSWorkspaceStore {
         }) { _ in true }
         guard existing.isEmpty else { return }
         let now = Date()
-        let placeholder = L("Meeting")
+        let placeholder = sessionID == TaskExtendedMetadata.externalImportsSessionID ? L("Imported Tasks") : L("Meeting")
         try upsertSession(
             IOSMeetingSessionItem(
                 id: sessionID,
@@ -1072,12 +1090,29 @@ actor IOSWorkspaceStore {
         )
     }
 
+    func saveTaskLinks(_ links: [SyncedTaskLink]) throws {
+        try prepare()
+        try transaction {
+            for link in links {
+                try ensureSessionExists(link.sessionID)
+                try run("INSERT OR IGNORE INTO task_links(session_id,historical_task_id,canonical_task_id) VALUES(?,?,?)") { stmt in
+                    bindText(stmt, link.sessionID.uuidString, at: 1)
+                    bindText(stmt, link.historicalTaskID.uuidString, at: 2)
+                    bindText(stmt, link.canonicalTaskID.uuidString, at: 3)
+                }
+            }
+        }
+    }
+
     private func decodeTaskRow(_ stmt: OpaquePointer) -> IOSMeetingTaskItem? {
         guard let tid = colText(stmt, 0).flatMap(UUID.init(uuidString:)),
               let sid = colText(stmt, 1).flatMap(UUID.init(uuidString:)),
               let oid = colText(stmt, 2).flatMap(UUID.init(uuidString:)),
               let text = colText(stmt, 4),
               let updatedMs = colInt(stmt, 12) else { return nil }
+        let done = (colInt(stmt, 10) ?? 0) == 1
+        var extended = colBlob(stmt, 13).flatMap { try? decoder.decode(TaskExtendedMetadata.self, from: $0) } ?? .init()
+        extended.applyDoneFlag(done)
         return IOSMeetingTaskItem(
             id: tid,
             sessionID: sid,
@@ -1089,9 +1124,10 @@ actor IOSWorkspaceStore {
             dueDay: colText(stmt, 7),
             dueAt: colInt(stmt, 8).map(Date.fromSyncMilliseconds),
             reminderAt: colInt(stmt, 9).map(Date.fromSyncMilliseconds),
-            done: (colInt(stmt, 10) ?? 0) == 1,
+            done: done,
             completedAt: colInt(stmt, 11).map(Date.fromSyncMilliseconds),
-            updatedAt: Date.fromSyncMilliseconds(updatedMs)
+            updatedAt: Date.fromSyncMilliseconds(updatedMs),
+            extended: extended
         )
     }
 
