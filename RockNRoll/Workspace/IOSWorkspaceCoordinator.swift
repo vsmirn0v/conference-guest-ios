@@ -1492,7 +1492,6 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         } while needsAnotherPass && !Task.isCancelled
     }
 
-<<<<<<< HEAD
     private func recoverPersistedTasks() async throws {
         // Older versions saved edits only in SQLite until a cloud pass succeeded.
         // Rehydrate missing/newer task fields without retimestamping unchanged ones.
