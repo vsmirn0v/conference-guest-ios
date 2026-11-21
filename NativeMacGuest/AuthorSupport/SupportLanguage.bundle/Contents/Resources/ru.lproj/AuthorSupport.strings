@@ -46,3 +46,11 @@
 "Monthly or one-time support for the developer." = "Ежемесячная или разовая поддержка разработчика.";
 "Linking sends a random device identifier and a claim reference to rock.glowsoft.ru so this Mac can check your support period." = "При привязке на rock.glowsoft.ru отправляются случайный идентификатор устройства и номер запроса, чтобы этот Mac мог проверить оплаченный период подписки.";
 "Open the author’s Boosty page" = "Открыть страницу автора на Boosty";
+"Cooperation inquiries with the app developer:" = "По вопросам сотрудничества с разработчиком:";
+"Cryptocurrency · International" = "Криптовалюта · Из других стран";
+"Asset and network" = "Актив и сеть";
+"Select this asset and network in your wallet, then verify the full receiving address before sending. You choose the amount." = "Выберите этот актив и сеть в своём кошельке, затем сверьте полный адрес получателя перед отправкой. Сумму вы выбираете сами.";
+"For manual entry, select this token on Ethereum mainnet and paste the receiving address." = "Для ручного ввода выберите этот токен в сети Ethereum mainnet и вставьте адрес получателя.";
+"Receiving address" = "Адрес получателя";
+"Copy address" = "Скопировать адрес";
+"QR code for the receiving address" = "QR-код адреса получателя";

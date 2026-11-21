@@ -46,3 +46,11 @@
 "Monthly or one-time support for the developer." = "डेवलपर को मासिक या एक बार सहयोग दें।";
 "Linking sends a random device identifier and a claim reference to rock.glowsoft.ru so this Mac can check your support period." = "लिंक करते समय यह Mac, rock.glowsoft.ru पर डिवाइस की एक रैंडम आईडी और अनुरोध का संदर्भ भेजता है, ताकि आपके सहयोग की अवधि की जाँच हो सके।";
 "Open the author’s Boosty page" = "डेवलपर का Boosty पेज खोलें";
+"Cooperation inquiries with the app developer:" = "ऐप डेवलपर के साथ सहयोग संबंधी पूछताछ के लिए:";
+"Cryptocurrency · International" = "क्रिप्टोकरेंसी · अंतर्राष्ट्रीय";
+"Asset and network" = "एसेट और नेटवर्क";
+"Select this asset and network in your wallet, then verify the full receiving address before sending. You choose the amount." = "अपने वॉलेट में यह एसेट और नेटवर्क चुनें, फिर भेजने से पहले पूरा प्राप्तकर्ता पता जाँच लें। राशि आप स्वयं चुनते हैं।";
+"For manual entry, select this token on Ethereum mainnet and paste the receiving address." = "मैन्युअल प्रविष्टि के लिए, Ethereum मेननेट पर यह टोकन चुनें और प्राप्तकर्ता पता पेस्ट करें।";
+"Receiving address" = "प्राप्तकर्ता पता";
+"Copy address" = "पता कॉपी करें";
+"QR code for the receiving address" = "प्राप्तकर्ता पते के लिए QR कोड";

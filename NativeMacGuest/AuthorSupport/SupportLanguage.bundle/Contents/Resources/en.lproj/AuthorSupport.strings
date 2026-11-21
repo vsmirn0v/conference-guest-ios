@@ -46,3 +46,11 @@
 "Monthly or one-time support for the developer." = "Monthly or one-time support for the developer.";
 "Linking sends a random device identifier and a claim reference to rock.glowsoft.ru so this Mac can check your support period." = "Linking sends a random device identifier and a claim reference to rock.glowsoft.ru so this Mac can check your support period.";
 "Open the author’s Boosty page" = "Open the author’s Boosty page";
+"Cooperation inquiries with the app developer:" = "Cooperation inquiries with the app developer:";
+"Cryptocurrency · International" = "Cryptocurrency · International";
+"Asset and network" = "Asset and network";
+"Select this asset and network in your wallet, then verify the full receiving address before sending. You choose the amount." = "Select this asset and network in your wallet, then verify the full receiving address before sending. You choose the amount.";
+"For manual entry, select this token on Ethereum mainnet and paste the receiving address." = "For manual entry, select this token on Ethereum mainnet and paste the receiving address.";
+"Receiving address" = "Receiving address";
+"Copy address" = "Copy address";
+"QR code for the receiving address" = "QR code for the receiving address";

@@ -103,5 +103,15 @@ private struct SupportLayoutProbe: View {
             }
         }
     }
+
+    func testCryptoSupportVisibilityDependsOnRegionAndTimeZoneNotLanguage() throws {
+        XCTAssertTrue(SupportCopy.isOutsideRussia(locale: Locale(identifier: "en_US"), timeZone: try XCTUnwrap(TimeZone(identifier: "America/New_York"))))
+        XCTAssertTrue(SupportCopy.isOutsideRussia(locale: Locale(identifier: "ru_DE"), timeZone: try XCTUnwrap(TimeZone(identifier: "Europe/Berlin"))))
+        XCTAssertFalse(SupportCopy.isOutsideRussia(locale: Locale(identifier: "ru_RU"), timeZone: try XCTUnwrap(TimeZone(identifier: "Europe/Berlin"))))
+        XCTAssertFalse(SupportCopy.isOutsideRussia(locale: Locale(identifier: "en_US"), timeZone: try XCTUnwrap(TimeZone(identifier: "Europe/Moscow"))))
+        XCTAssertFalse(SupportCopy.isOutsideRussia(locale: Locale(identifier: "en_US"), timeZone: try XCTUnwrap(TimeZone(identifier: "Asia/Vladivostok"))))
+        XCTAssertEqual(SupportCryptoWallet.all.count, 8)
+        XCTAssertTrue(SupportCryptoWallet.all.allSatisfy { !$0.address.isEmpty && !$0.qrPayload.isEmpty })
+    }
 }
 #endif
