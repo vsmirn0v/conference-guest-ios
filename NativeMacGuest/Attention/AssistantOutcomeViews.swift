@@ -341,12 +341,16 @@ struct MeetingHistoryView: View {
                         .labelStyle(.iconOnly).help(L("Participation and calendar"))
                 }
             }.padding(16)
-            Picker(L("Meeting history"), selection: Binding(get: {
-                navigation.tab == .transcript ? MeetingHistoryTab.transcript : .summary
-            }, set: { navigation.tab = $0 })) {
-                Text(L("Summary")).tag(MeetingHistoryTab.summary)
-                Text(L("Transcript")).tag(MeetingHistoryTab.transcript)
-            }.labelsHidden().pickerStyle(.segmented).padding([.horizontal, .bottom], 10)
+            NativeSegmentedControl(
+                label: L("Meeting history"),
+                selection: Binding(get: {
+                    navigation.tab == .transcript ? MeetingHistoryTab.transcript : .summary
+                }, set: { navigation.tab = $0 }),
+                options: [
+                    .init(value: .summary, title: L("Summary")),
+                    .init(value: .transcript, title: L("Transcript")),
+                ]
+            ).padding([.horizontal, .bottom], 10)
             Divider()
             switch navigation.tab {
             case .summary, .tasks, .notes: overview(card, sources: sources)

@@ -362,9 +362,17 @@ struct MeetingPresetEditor: View {
                         Text(L("By situation")).tag(AttentionMode?.none)
                         ForEach(AttentionMode.allCases, id: \.self) { Text($0.title).tag(AttentionMode?.some($0)) }
                     }
-                    Picker(L("Urgency"), selection: $preset.urgency) {
-                        Text(L("Quiet")).tag(AttentionUrgency.quiet); Text(L("Normal")).tag(AttentionUrgency.normal); Text(L("Eager")).tag(AttentionUrgency.eager)
-                    }.pickerStyle(.segmented)
+                    LabeledContent(L("Urgency")) {
+                        NativeSegmentedControl(
+                            label: L("Urgency"),
+                            selection: $preset.urgency,
+                            options: [
+                                .init(value: .quiet, title: L("Quiet")),
+                                .init(value: .normal, title: L("Normal")),
+                                .init(value: .eager, title: L("Eager")),
+                            ]
+                        )
+                    }
                     Text(L("Threshold %.2f. Your approvals lower it and declines raise it.", preset.threshold)).font(.caption).foregroundStyle(.secondary)
                     Toggle(L("Draft chat replies and reactions for this meeting"),
                            isOn: Binding(get: { preset.repliesAllowed }, set: { preset.suggestReplies = $0 }))

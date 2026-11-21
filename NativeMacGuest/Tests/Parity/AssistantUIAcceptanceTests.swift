@@ -676,6 +676,58 @@ import XCTest
         }
     }
 
+    func testMomentsAndTasksSegmentedControlsKeepStableWidthOnSelectionChange() async throws {
+        try await withRussianBundle {
+            let store = store(); await store.waitForMoments()
+            let coordinator = AttentionCoordinator(store: store)
+            coordinator.opensAssistantMoments = true
+            let momentsRendered = await present(AttentionMomentsView(attention: coordinator, store: store),
+                size: NSSize(width: 900, height: 560), name: "moments-stable-width")
+            let momentsControl = try XCTUnwrap(views(momentsRendered.hosting).compactMap { $0 as? NSSegmentedControl }.first { control in
+                (0..<control.segmentCount).contains { control.label(forSegment: $0) == AttentionMoment.State.live.title }
+            })
+
+            let taskDefaultsName = "tasks-stable-width-\(UUID().uuidString)"
+            let taskDefaults = try XCTUnwrap(UserDefaults(suiteName: taskDefaultsName))
+            addTeardownBlock { taskDefaults.removePersistentDomain(forName: taskDefaultsName) }
+            let tasksRendered = await present(
+                PersonalTasksView(attention: coordinator, openOutcome: { _, _ in }).defaultAppStorage(taskDefaults),
+                size: NSSize(width: 760, height: 520), name: "tasks-stable-width", sizeToContent: false)
+            let tasksControl = try XCTUnwrap(views(tasksRendered.hosting).compactMap { $0 as? NSSegmentedControl }.first { control in
+                (0..<control.segmentCount).contains { control.label(forSegment: $0) == L("Open") }
+            })
+
+            @MainActor func assertStableWidth(_ control: NSSegmentedControl, name: String) async {
+                XCTAssertGreaterThanOrEqual(control.frame.width, control.intrinsicContentSize.width - 0.5,
+                    "\(name) fits its intrinsic width without overflow")
+                let initialWidth = control.frame.width
+                control.postsFrameChangedNotifications = true
+                var observedWidths: [CGFloat] = []
+                let observer = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification,
+                                                                      object: control, queue: nil) { _ in
+                    MainActor.assumeIsolated { observedWidths.append(control.frame.width) }
+                }
+                defer { NotificationCenter.default.removeObserver(observer) }
+
+                let toggles = control.selectedSegment == 0 ? [1, 0, 1, 0] : [0, 1, 0, 1]
+                for index in toggles {
+                    control.selectedSegment = index
+                    XCTAssertTrue(control.sendAction(control.action, to: control.target),
+                        "\(name) handles segment selection action")
+                    await settle()
+                    XCTAssertEqual(control.selectedSegment, index, "\(name) keeps selected segment \(index)")
+                    XCTAssertEqual(control.frame.width, initialWidth, accuracy: 0.5,
+                        "\(name) keeps constant width when switching to segment \(index)")
+                }
+                XCTAssertTrue(observedWidths.allSatisfy { abs($0 - initialWidth) <= 0.5 },
+                    "\(name) never bounced width during transitions: \(observedWidths)")
+            }
+
+            await assertStableWidth(momentsControl, name: "Moments filter")
+            await assertStableWidth(tasksControl, name: "Tasks filter")
+        }
+    }
+
     func testOverflowButtonUsesAccessibilityActionWithoutDelivery() async throws {
         let store = store(); await store.waitForMoments()
         store.situationModes[.background] = .mentions

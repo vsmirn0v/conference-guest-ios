@@ -53,11 +53,15 @@ import SwiftUI
                 Text(t("Rock’n’Roll is free and open source. Your support helps me test calls, fix audio issues, and ship macOS updates."))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker(t("Support frequency"), selection: $monthly) {
-                        Text(t("Monthly")).tag(true)
-                        Text(t("One time")).tag(false)
-                    }.pickerStyle(.segmented).labelsHidden().fixedSize(horizontal: true, vertical: false)
-                        .accessibilityIdentifier("author-support.frequency")
+                    NativeSegmentedControl(
+                        label: t("Support frequency"),
+                        selection: $monthly,
+                        options: [
+                            .init(value: true, title: t("Monthly")),
+                            .init(value: false, title: t("One time")),
+                        ],
+                        accessibilityID: "author-support.frequency"
+                    )
                     if monthly { monthlyContent(claim) } else { oneTimeContent }
                 }
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)

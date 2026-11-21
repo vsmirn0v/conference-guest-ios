@@ -67,11 +67,15 @@ struct PersonalTasksView: View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
                 HStack(spacing: 12) {
-                    Picker(L("Filter"), selection: $filter) {
-                        Text(L("All")).tag(PersonalTaskFilter.all)
-                        Text(L("Open")).tag(PersonalTaskFilter.open)
-                        Text(L("Completed")).tag(PersonalTaskFilter.completed)
-                    }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 240)
+                    NativeSegmentedControl(
+                        label: L("Filter"),
+                        selection: $filter,
+                        options: [
+                            .init(value: .all, title: L("All")),
+                            .init(value: .open, title: L("Open")),
+                            .init(value: .completed, title: L("Completed")),
+                        ]
+                    )
                     Spacer(minLength: 8)
                     Toggle(L("Assigned to me"), isOn: $assignedToMeOnly)
                         .toggleStyle(.switch)

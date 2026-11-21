@@ -168,11 +168,14 @@ struct ParticipationSetupView: View {
         }
         Divider()
         VStack(alignment: .leading, spacing: 6) {
-            Picker(L("Reply in this meeting"), selection: $output) {
-                ForEach(ParticipationOutput.allCases) { Text($0.title).tag($0) }
+            LabeledContent(L("Reply in this meeting")) {
+                NativeSegmentedControl(
+                    label: L("Reply in this meeting"),
+                    selection: $output,
+                    options: ParticipationOutput.allCases.map { .init(value: $0, title: $0.title) },
+                    accessibilityID: "participation.output"
+                )
             }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("participation.output")
             Text(L("Replies are sent on your behalf. A prefix is added only when your instructions request one."))
             if output == .voice {
                 Text(L("Automatic voice · %@", reviewed.voice.title)).font(.callout.weight(.semibold))

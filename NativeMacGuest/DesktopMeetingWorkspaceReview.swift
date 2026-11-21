@@ -133,9 +133,12 @@ struct WorkspaceSessionReview: View {
     }
 
     private var filterPicker: some View {
-        Picker(L("Conversation filter"), selection: $filter) {
-            ForEach(Filter.allCases, id: \.self) { option in Text(option.title).tag(option) }
-        }.labelsHidden().pickerStyle(.segmented).accessibilityIdentifier("meetingWorkspace.reviewFilter")
+        NativeSegmentedControl(
+            label: L("Conversation filter"),
+            selection: $filter,
+            options: Filter.allCases.map { .init(value: $0, title: $0.title) },
+            accessibilityID: "meetingWorkspace.reviewFilter"
+        )
     }
 
     private var searchField: some View {

@@ -75,10 +75,14 @@ struct MeetingManualExportView: View {
 
     private var selection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Picker(L("Selection"), selection: $scope) {
-                Text(L("Select meetings")).tag(Scope.meetings)
-                Text(L("Date range")).tag(Scope.period)
-            }.pickerStyle(.segmented).labelsHidden()
+            NativeSegmentedControl(
+                label: L("Selection"),
+                selection: $scope,
+                options: [
+                    .init(value: .meetings, title: L("Select meetings")),
+                    .init(value: .period, title: L("Date range")),
+                ]
+            )
             switch scope {
             case .meetings:
                 List(library.cards) { card in

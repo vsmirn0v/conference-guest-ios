@@ -1034,10 +1034,16 @@ struct NativeDesktopConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             let unread = model.catchUp.timeline.unreadCount
-            Picker(L("Conversation"), selection: $model.conversationTab) {
-                Text(L("Chat")).tag(0); Text(L("Live text")).tag(1)
-                Text(unread > 0 ? L("Catch up (%ld)", unread) : L("Catch up")).tag(2)
-            }.pickerStyle(.segmented).labelsHidden().padding(12)
+            NativeSegmentedControl(
+                label: L("Conversation"),
+                selection: $model.conversationTab,
+                options: [
+                    .init(value: 0, title: L("Chat")),
+                    .init(value: 1, title: L("Live text")),
+                    .init(value: 2, title: unread > 0 ? L("Catch up (%ld)", unread) : L("Catch up")),
+                ],
+                expandsToFill: true
+            ).padding(12)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {

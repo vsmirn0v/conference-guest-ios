@@ -23,10 +23,14 @@ struct AttentionMomentsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker(L("Assistant section"), selection: $area) {
-                Text(L("Talk")).tag(Section.talk)
-                Text(L("Moments")).tag(Section.moments)
-            }.pickerStyle(.segmented).labelsHidden().padding(12)
+            NativeSegmentedControl(
+                label: L("Assistant section"),
+                selection: $area,
+                options: [
+                    .init(value: .talk, title: L("Talk")),
+                    .init(value: .moments, title: L("Moments")),
+                ]
+            ).padding(12)
             Divider()
             switch area {
             case .talk: AssistantTalkView(attention: attention)
@@ -61,14 +65,17 @@ struct AttentionMomentsView: View {
     private var momentsView: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                Picker(L("Filter"), selection: Binding(get: { filter }, set: { value in
-                    filter = value
-                    selectedID = nil
-                    attention.selectedCard = nil
-                })) {
-                    Text(L("All")).tag(AttentionMoment.State?.none)
-                    ForEach([AttentionMoment.State.live, .missed, .answered], id: \.self) { Text($0.title).tag(Optional($0)) }
-                }.pickerStyle(.segmented).labelsHidden().controlSize(.small).padding(12)
+                NativeSegmentedControl(
+                    label: L("Filter"),
+                    selection: Binding(get: { filter }, set: { value in
+                        filter = value
+                        selectedID = nil
+                        attention.selectedCard = nil
+                    }),
+                    options: [.init(value: nil, title: L("All"))]
+                        + [AttentionMoment.State.live, .missed, .answered].map { .init(value: Optional($0), title: $0.title) },
+                    expandsToFill: true
+                ).controlSize(.small).padding(12)
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 2) {

@@ -159,9 +159,13 @@ private struct AssistantMemoryEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L("Edit memory")).font(.title3.bold())
-            Picker(L("Store"), selection: $item.kind) {
-                ForEach(AssistantMemoryKind.allCases, id: \.self) { Text($0.title).tag($0) }
-            }.pickerStyle(.segmented)
+            LabeledContent(L("Store")) {
+                NativeSegmentedControl(
+                    label: L("Store"),
+                    selection: $item.kind,
+                    options: AssistantMemoryKind.allCases.map { .init(value: $0, title: $0.title) }
+                )
+            }
             TextField(L("Memory"), text: $item.text, axis: .vertical).lineLimit(4...10)
             HStack {
                 Button(L("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
