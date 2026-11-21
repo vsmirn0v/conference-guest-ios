@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import ConferenceCore
 import Foundation
 #if canImport(CoreAI)
 import CoreAI
@@ -667,6 +668,27 @@ struct StoredClonedVoice: Codable, Equatable {
     }
 
     func cancelGPURequest(_ request: UUID) async { await router.cancelGPURequest(request) }
+
+    func speakPreset(_ text: String, preset: AssistantVoxVoicePreset) async throws -> [Float] {
+        try Task.checkCancellation()
+        let prompt = preset.formattedPrompt(for: text)
+        guard !prompt.isEmpty else { throw VoiceSynthesisError.empty }
+        restorePreparation()
+        prepareGPUIfNeeded()
+        let aneReady = !deleting && installed && preparation == .ready
+        if aneReady, let folder = bundleFolder {
+            let samples = try await engine.speakZeroShot(prompt, folder: folder)
+            try ClonedVoiceWire.validatePCM(samples)
+            return samples
+        }
+        if !gpuDeleting && gpuInstalled, let gpuFolder = gpuModel.map(listen.folder) {
+            let samples = try await gpuEngine.speakZeroShot(prompt, folder: gpuFolder)
+            try ClonedVoiceWire.validatePCM(samples)
+            return samples
+        }
+        if gpuPreparation == .preparing || preparation == .preparing { throw VoiceSynthesisError.clonePreparing }
+        throw installed ? VoiceSynthesisError.clonePreparing : VoiceSynthesisError.cloneModelMissing
+    }
 
     func speak(_ text: String, recordedAt: Date? = nil, request: UUID = UUID(), expiresAt: Date? = nil) async throws -> [Float] {
         try Task.checkCancellation()

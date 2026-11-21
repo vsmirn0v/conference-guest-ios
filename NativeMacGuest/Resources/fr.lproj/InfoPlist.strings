@@ -4,3 +4,4 @@
 "NSRemindersFullAccessUsageDescription" = "Synchroniser les tâches des réunions avec la liste Rappels Apple choisie et importer des tâches dans Rock'N'Roll for Mac.";
 "NSCameraUsageDescription" = "Partager l’image de votre caméra lorsque vous activez la vidéo dans l’aperçu invité de l’application.";
 "NSMicrophoneUsageDescription" = "Partager le son de votre micro lorsque vous l’activez dans l’aperçu invité de l’application.";
+"NSSpeechRecognitionUsageDescription" = "Reconnaître les commandes vocales adressées à Rock sur ce Mac lorsque les modèles de transcription locaux ne sont pas installés.";

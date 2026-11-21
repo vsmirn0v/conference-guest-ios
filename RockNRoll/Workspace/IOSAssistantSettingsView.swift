@@ -6,6 +6,8 @@ struct IOSAssistantSettingsView: View {
     @ObservedObject var workspace: IOSWorkspaceCoordinator
     @ObservedObject var sync: RoomSyncCoordinator
     @ObservedObject var assistant: IOSAssistantCoordinator
+    @ObservedObject private var voiceStore = IOSVoiceStore.shared
+    @ObservedObject private var voxStore = IOSVoxCPM2Store.shared
 
     @State private var apiKeyDraft = ""
     @State private var choosingModel = false
@@ -44,6 +46,33 @@ struct IOSAssistantSettingsView: View {
                 Text(L("Live Meeting Assistant"))
             } footer: {
                 Text(L("Modes can be changed per meeting from the call header or active meetings list. Participation automatically pauses whenever your microphone is unmuted."))
+            }
+
+            Section {
+                Toggle(L("Hands-free “Rock” wake word"), isOn: $voiceStore.wakeWordEnabled)
+                    .accessibilityIdentifier("assistant.wakeWord")
+                Picker(L("Assistant reply voice"), selection: $voiceStore.assistantAuditionVoice) {
+                    Section(L("Neural presets (VoxCPM2)")) {
+                        ForEach(AssistantVoxVoicePreset.allCases) { preset in
+                            Text(preset.localizedTitle).tag(AssistantAuditionVoiceSelection.voxPreset(preset))
+                        }
+                    }
+                    Section(L("Personal & Cloned")) {
+                        if voxStore.isDeviceSupported {
+                            Text(L("My cloned voice")).tag(AssistantAuditionVoiceSelection.clonedVoice)
+                        }
+                        Text(L("Personal Voice")).tag(AssistantAuditionVoiceSelection.personalVoice)
+                    }
+                    Section(L("iPhone system voices")) {
+                        Text(L("System voice (automatic)")).tag(AssistantAuditionVoiceSelection.systemVoice(identifier: ""))
+                    }
+                }
+                Toggle(L("Speak voice-triggered replies aloud"), isOn: $voiceStore.autoAuditionVoiceReplies)
+                Toggle(L("Speak typed replies aloud"), isOn: $voiceStore.autoAuditionTypedReplies)
+            } header: {
+                Text(L("Voice Commands & Audition"))
+            } footer: {
+                Text(L("Always ready while you are in the app or muted in a call, and paused when your meeting microphone is unmuted."))
             }
 
             Section {

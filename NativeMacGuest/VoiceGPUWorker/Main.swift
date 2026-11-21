@@ -93,7 +93,18 @@ private final class GPUVoiceWorkerRuntime {
             voice = VoxVoice(mode: .clone, transcript: "", reference: (0..<256).map { 0.25 * sin(Float($0) * 0.1) }, continuation: nil, patches: 1)
         case .speak:
             progress(.synthesize)
-            guard let inputText = request.text, let inputVoice = request.voice else { throw ClonedVoiceWorkerError.protocolFailure }
+            guard let inputText = request.text else { throw ClonedVoiceWorkerError.protocolFailure }
+            guard let inputVoice = request.voice else {
+                guard let tokenizer else { throw ClonedVoiceWorkerError.protocolFailure }
+                let clean = inputText.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                let ids = tokenizer.encode(clean)
+                let samples = try await loaded.synthesizeZeroShotSamples(text: clean, tokenIDs: ids, maxTokens: 256)
+                guard samples.count <= ClonedVoiceWire.pcmLimit / MemoryLayout<Float>.size else {
+                    throw ClonedVoiceWorkerError.protocolFailure
+                }
+                try ClonedVoiceWire.validatePCM(samples)
+                return samples
+            }
             text = inputText
             voice = inputVoice
         case .ping, .cacheScope, .verify: return nil

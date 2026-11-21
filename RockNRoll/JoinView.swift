@@ -113,7 +113,7 @@ struct JoinView: View {
             .navigationTitle("Rock’n’Roll")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItemGroup(placement: .topBarLeading) {
                     Button {
                         workspaceTab = .history
                         showingWorkspace = true
@@ -122,6 +122,15 @@ struct JoinView: View {
                     }
                     .accessibilityIdentifier("home.assistant")
                     .accessibilityLabel(L("Assistant"))
+
+                    Button {
+                        workspaceTab = .ask
+                        showingWorkspace = true
+                    } label: {
+                        Image(systemName: "waveform.circle")
+                    }
+                    .accessibilityIdentifier("home.ask")
+                    .accessibilityLabel(L("Ask Rock"))
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
@@ -130,6 +139,14 @@ struct JoinView: View {
             }
             .safeAreaInset(edge: .bottom) {
               VStack(spacing: 4) {
+                IOSAssistantVoiceHUDBanner(
+                    talk: model.assistantTalk,
+                    speech: model.assistantSpeech,
+                    openAsk: {
+                        workspaceTab = .ask
+                        showingWorkspace = true
+                    }
+                )
                 automaticJoinBanner
                 if showingUndo {
                     Button(L("Room removed · Undo")) {
@@ -160,7 +177,14 @@ struct JoinView: View {
             .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { !showingAgenda }))
             .sheet(isPresented: $showingAgenda) { agendaSheet }
             .sheet(isPresented: $showingWorkspace) {
-                IOSWorkspaceHubView(workspace: model.workspace, sync: sync, assistant: model.assistant, initialTab: workspaceTab)
+                IOSWorkspaceHubView(
+                    workspace: model.workspace,
+                    sync: sync,
+                    assistant: model.assistant,
+                    talk: model.assistantTalk,
+                    speech: model.assistantSpeech,
+                    initialTab: workspaceTab
+                )
             }
             .sheet(item: Binding<IOSMeetingSessionController?>(
                 get: { model.sessions.first { $0.id == assistantSheetSessionID } },
@@ -171,6 +195,7 @@ struct JoinView: View {
                     meetingTitle: session.title,
                     canSendChat: session.canSendAssistantChat,
                     assistant: model.assistant,
+                    speech: model.assistantSpeech,
                     onFocusMeeting: { model.presentSession(id: session.id) }
                 )
             }

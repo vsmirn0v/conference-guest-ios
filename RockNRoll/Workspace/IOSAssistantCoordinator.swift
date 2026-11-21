@@ -959,6 +959,15 @@ final class IOSAssistantCoordinator: ObservableObject {
         alertCards.removeAll { $0.id == cardID }
     }
 
+    func sendManualChat(controllerID: UUID, text: String) async throws {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        guard let bridge = resolveBridge(controllerID) else { throw MeetingSessionError.notConnected }
+        try await bridge.sendChat(clean)
+        recordActivity(controllerID: controllerID, title: bridge.title, mode: resolvedMode(for: controllerID),
+                       summary: clean, channel: L("Chat"))
+    }
+
     func sendCardToChat(_ cardID: UUID) async throws {
         guard let idx = alertCards.firstIndex(where: { $0.id == cardID }) else { return }
         let card = alertCards[idx]

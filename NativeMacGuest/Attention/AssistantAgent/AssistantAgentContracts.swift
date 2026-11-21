@@ -196,6 +196,7 @@ struct AssistantCanonicalAction: Codable, Equatable, Identifiable, Sendable {
     var reaction: MeetingReaction?
     var minutes = 10
     var at: Date?
+    var participate = false
     /// Stable idempotency/hash data for the shared action framework.
     var payloadHash: String
 }

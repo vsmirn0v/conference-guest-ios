@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import ConferenceCore
 import Foundation
 import MLXAudioTTS
 import UIKit
@@ -810,6 +811,61 @@ final class IOSVoxCPM2Store: ObservableObject {
         let activeVoice = useClonedVoice ? storedVoice?.voice : nil
         do {
             let samples = try await runtime.synthesize(text: clean, voice: activeVoice, in: modelDirectory)
+            return try IOSVoiceSampleAudio.buffer(samples, rate: Double(IOSVoiceSampleAudio.outputSampleRate))
+        } catch let error as IOSVoiceSynthesisError {
+            throw error
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw IOSVoiceSynthesisError.voxRuntimeFailed(error.localizedDescription)
+        }
+    }
+
+    func speakPreset(_ text: String, preset: AssistantVoxVoicePreset) async throws -> AVAudioPCMBuffer {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { throw IOSVoiceSynthesisError.empty }
+        guard isDeviceSupported else {
+            throw IOSVoiceSynthesisError.voxUnsupportedDevice(unsupportedReason)
+        }
+        guard Self.hasAllFilesInstalled(in: modelDirectory) else {
+            throw IOSVoiceSynthesisError.voxModelNotInstalled
+        }
+        let prompt = preset.formattedPrompt(for: clean)
+        guard !prompt.isEmpty else { throw IOSVoiceSynthesisError.empty }
+
+        isWorking = true
+        defer { isWorking = false }
+
+        do {
+            let samples = try await runtime.synthesize(text: prompt, voice: nil, in: modelDirectory)
+            return try IOSVoiceSampleAudio.buffer(samples, rate: Double(IOSVoiceSampleAudio.outputSampleRate))
+        } catch let error as IOSVoiceSynthesisError {
+            throw error
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw IOSVoiceSynthesisError.voxRuntimeFailed(error.localizedDescription)
+        }
+    }
+
+    func speakClonedForAssistant(_ text: String) async throws -> AVAudioPCMBuffer {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { throw IOSVoiceSynthesisError.empty }
+        guard isDeviceSupported else {
+            throw IOSVoiceSynthesisError.voxUnsupportedDevice(unsupportedReason)
+        }
+        guard Self.hasAllFilesInstalled(in: modelDirectory) else {
+            throw IOSVoiceSynthesisError.voxModelNotInstalled
+        }
+        guard let voice = storedVoice?.voice else {
+            throw IOSVoiceSynthesisError.voxVoiceNotRecorded
+        }
+
+        isWorking = true
+        defer { isWorking = false }
+
+        do {
+            let samples = try await runtime.synthesize(text: clean, voice: voice, in: modelDirectory)
             return try IOSVoiceSampleAudio.buffer(samples, rate: Double(IOSVoiceSampleAudio.outputSampleRate))
         } catch let error as IOSVoiceSynthesisError {
             throw error

@@ -4,3 +4,4 @@
 "NSRemindersFullAccessUsageDescription" = "مزامنة مهام الاجتماعات مع قائمة تذكيرات Apple المختارة واستيراد المهام إلى Rock'N'Roll for Mac.";
 "NSCameraUsageDescription" = "مشاركة صورة الكاميرا عند تشغيل الفيديو في معاينة الضيف داخل التطبيق.";
 "NSMicrophoneUsageDescription" = "مشاركة صوت الميكروفون عندما تلغي كتمه في معاينة الضيف داخل التطبيق.";
+"NSSpeechRecognitionUsageDescription" = "التعرف على الأوامر الصوتية لـ Rock على هذا Mac عندما لا تكون نماذج النسخ المحلية مثبتة.";

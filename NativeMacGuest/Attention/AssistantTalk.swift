@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Carbon.HIToolbox
 import Combine
+import ConferenceCore
 import CoreAudio
 import SwiftUI
 
@@ -29,10 +30,14 @@ import SwiftUI
     @Published private(set) var listening = false
     @Published var targetMeetingID: UUID?
     @Published private(set) var audioError: String?
+    @Published private(set) var auditioningItemID: UUID?
+    @Published var lastVoiceAnswer: String?
     /// Session-scoped per-meeting send overrides on top of the persisted global default.
     @Published private(set) var sendPolicyOverrides: [UUID: AssistantMeetingSendPolicy] = [:]
     /// MCP requests are external callers: the native confirmation gate cannot be bypassed.
     private var externalMCPRequest = false
+    var activeInputSource: AssistantInputSource = .typed
+    private var auditionTask: Task<Void, Never>?
     // MARK: Agent runtime (typed tools, bounded loop; off unless the store flag is on)
     let agentRuntime = AssistantRuntime()
     @Published var agentPending: AssistantAgentApproval?
@@ -41,9 +46,7 @@ import SwiftUI
 
     weak var attention: AttentionCoordinator?
     private var captureTask: Task<Void, Never>?
-    private var captureEngine: AVAudioEngine?
     private var captureMeeting: NativeDesktopMeetingModel?
-    private var captureSamples: AssistantCaptureBuffer?
     private var captureRecognizerAcquired = false
     private var captureGeneration = UUID()
     /// Wall-clock limit for one hold. Cancelled on release, disable, and unregister.
@@ -81,6 +84,7 @@ import SwiftUI
 
     deinit {
         holdLimit?.cancel()
+        auditionTask?.cancel()
         if let carbonHotKey { UnregisterEventHotKey(carbonHotKey) }
         if let carbonHandler { RemoveEventHandler(carbonHandler) }
         for monitor in monitors { NSEvent.removeMonitor(monitor) }
@@ -90,23 +94,32 @@ import SwiftUI
     func submit(_ text: String) {
         let clean = text.trimmed
         guard !clean.isEmpty else { return }
-        Task { @MainActor [weak self] in await self?.run(clean) }
+        Task { @MainActor [weak self] in await self?.run(clean, source: .typed) }
     }
 
     /// Typed text and recognized speech both arrive here. No command executes before
     /// the structured response has been parsed and checked against this context.
-    func run(_ input: String) async {
+    func run(_ input: String, source: AssistantInputSource = .typed) async {
         guard let attention, !working else { return }
         let clean = String(input.trimmed.prefix(2000))
         guard !clean.isEmpty else { return }
+        let effectiveSource: AssistantInputSource = externalMCPRequest ? .externalMCP : source
+        activeInputSource = effectiveSource
         guard pending == nil else { append(.assistant, L("Confirm or cancel the pending action first.")); return }
-        if attention.store.agentAssistantEnabled {
+        if attention.store.agentAssistantEnabled && interpretOverride == nil {
             // The bounded agent runtime owns the conversation state; its items render instead of `entries`.
             guard agentPending == nil, ruleProposalReview == nil else {
                 append(.assistant, L("Confirm or cancel the pending action first.")); return
             }
             working = true; defer { working = false }
-            await runAgent(clean, external: externalMCPRequest)
+            if !externalMCPRequest,
+               let answer = await runDeterministicCommandIfApplicable(clean, source: effectiveSource) {
+                let itemID = agentRuntime.appendDeterministicTurnForUI(userText: clean, assistantText: answer)
+                if effectiveSource.isVoice { lastVoiceAnswer = answer }
+                autoAuditionIfNeeded(id: itemID, text: answer, source: effectiveSource)
+                return
+            }
+            await runAgent(clean, external: externalMCPRequest, source: effectiveSource)
             return
         }
         entries.append(.init(role: .user, text: clean)); trimEntries()
@@ -119,9 +132,19 @@ import SwiftUI
             } else {
                 try await provider.commandInterpreter(key: attention.store.apiKey(for: provider)).interpret(.init(input: clean, context: context))
             }
-            try prepare(command, context: context, external: externalMCPRequest, originalInput: clean)
+            try prepare(command, context: context, external: externalMCPRequest, source: effectiveSource, originalInput: clean)
         } catch is CancellationError { return }
-        catch { append(.assistant, error.localizedDescription) }
+        catch {
+            if interpretOverride == nil, !externalMCPRequest,
+               let fallback = await runDeterministicCommandIfApplicable(clean, source: effectiveSource) {
+                let entry = Entry(role: .assistant, text: fallback)
+                entries.append(entry); trimEntries()
+                if effectiveSource.isVoice { lastVoiceAnswer = fallback }
+                autoAuditionIfNeeded(id: entry.id, text: fallback, source: effectiveSource)
+            } else {
+                append(.assistant, error.localizedDescription)
+            }
+        }
     }
 
     /// MCP callers use the same interpreter and confirmation state machine, but can never
@@ -167,7 +190,7 @@ import SwiftUI
     }
 
     private func prepare(_ command: AssistantCommand, context: AssistantCommandContext, external: Bool,
-                         originalInput: String? = nil) throws {
+                         source: AssistantInputSource = .typed, originalInput: String? = nil) throws {
         var command = command
         // Resolve an implicit target before a confirmation can outlive the current selection.
         if command.meetingID == nil, [.setAttention, .leave, .mute, .sendChat, .say, .react, .readChat, .catchUp].contains(command.action) {
@@ -176,37 +199,47 @@ import SwiftUI
         }
         if command.meetingID != nil { targetMeetingID = command.meetingID }
         if command.needsConfirmation {
-            let bypass = AssistantMeetingSendGate.bypass(
+            let sendBypass = AssistantMeetingSendGate.bypass(
                 external: external, sendBypassAllowed: command.sendBypassAllowed,
                 meetingID: command.meetingID,
                 policy: command.meetingID.flatMap { sendPolicyOverrides[$0] },
                 globalDefault: attention?.store.agentMeetingSendDefault ?? .sendImmediately)
-            if !bypass {
+            let voiceBypass = !external && AssistantVoiceApprovalPolicy.shouldAutoApprove(
+                actionKind: command.action.rawValue,
+                inputSource: source,
+                sendsWithoutAsking: sendBypass)
+            if !(sendBypass || voiceBypass) {
                 pending = .init(command: command, context: context, title: confirmationTitle(command, context: context),
                     detail: confirmationDetail(command), originalInput: originalInput)
                 return
             }
         }
         Task { @MainActor [weak self] in
-            await self?.execute(command, context: context, id: UUID(), originalInput: originalInput)
+            await self?.execute(command, context: context, id: UUID(), originalInput: originalInput, source: source)
         }
     }
 
     func confirmPending() {
         guard let pending else { return }
+        let source = activeInputSource
         self.pending = nil
         Task { @MainActor [weak self] in
-            await self?.execute(pending.command, context: pending.context, id: pending.id, originalInput: pending.originalInput)
+            await self?.execute(pending.command, context: pending.context, id: pending.id, originalInput: pending.originalInput, source: source)
         }
     }
     func cancelPending() { pending = nil; append(.assistant, L("Cancelled. Nothing was sent.")) }
 
-    private func execute(_ command: AssistantCommand, context: AssistantCommandContext, id: UUID, originalInput: String?) async {
+    private func execute(_ command: AssistantCommand, context: AssistantCommandContext, id: UUID, originalInput: String?, source: AssistantInputSource = .typed) async {
         guard let attention else { return }
         do {
             let answer = try await execute(command, context: context, attention: attention, id: id, originalInput: originalInput)
-            append(.assistant, answer)
+            let entry = Entry(role: .assistant, text: answer)
+            entries.append(entry); trimEntries()
+            if source.isVoice { lastVoiceAnswer = answer }
             await speakAnswer(answer)
+            if !attention.store.talkBack {
+                autoAuditionIfNeeded(id: entry.id, text: answer, source: source)
+            }
         } catch { append(.assistant, error.localizedDescription) }
     }
 
@@ -220,7 +253,14 @@ import SwiftUI
         } ?? []
         switch command.action {
         case .setAttention:
-            guard let target, let model = activeModel(target.id), let mode = command.mode else { throw AssistantCommandError.missingField }
+            guard let target, let model = activeModel(target.id) else { throw AssistantCommandError.missingField }
+            if command.participate {
+                attention.onRequestParticipationMode?(model, command.text)
+                return command.text.trimmed.isEmpty
+                    ? L("Speak the meeting context to start Participation in “%@”.", target.title)
+                    : L("Participation enabled for “%@”.", target.title)
+            }
+            guard let mode = command.mode else { throw AssistantCommandError.missingField }
             attention.setMode(mode, for: model, scope: command.scope.modeScope)
             return L("Attention for “%@” is now %@.", target.title, mode.title)
         case .join:
@@ -294,6 +334,12 @@ import SwiftUI
             AssistantMeetingReference(id: $0.sessionID, title: $0.title, invitation: $0.invitation, active: true)
         }
         var known = Set(active.map(\.id)), refs = active
+        for candidate in attention.joinableTargets(attention.now()) where refs.count < 20 {
+            let id = candidate.activeSessionID ?? candidate.id
+            guard !known.contains(id) else { continue }
+            known.insert(id)
+            refs.append(AssistantMeetingReference(id: id, title: candidate.title, invitation: candidate.invitation, active: candidate.activeSessionID != nil))
+        }
         let historical = attention.store.assistant.outcomes.map {
             AssistantMeetingReference(id: $0.meetingID ?? $0.id, title: $0.meetingTitle, invitation: $0.invitation, active: false)
         } + attention.store.momentHistory.moments.compactMap { moment in
@@ -371,8 +417,69 @@ import SwiftUI
         do {
             let buffer = try await attention.synthesize(text)
             guard headphoneRoute() else { audioError = L("Talk-back stopped because headphones are no longer the output."); return }
-            try VoicePreviewPlayer.shared.play(buffer)
+            try VoicePreviewPlayer.shared.play(buffer) { [weak self] in
+                self?.attention?.speech.setSpeakingResponse(false)
+            }
         } catch { audioError = error.localizedDescription }
+    }
+
+    // MARK: - Response Auditioning
+
+    func autoAuditionIfNeeded(id: UUID, text: String, source: AssistantInputSource) {
+        guard let store = attention?.store else { return }
+        let shouldSpeak = (source.isVoice && store.autoAuditionVoiceReplies)
+            || (!source.isVoice && source != .externalMCP && store.autoAuditionTypedReplies)
+        guard shouldSpeak else { return }
+        startAudition(id: id, text: text)
+    }
+
+    func toggleAudition(id: UUID, text: String) {
+        if auditioningItemID == id {
+            stopAudition()
+        } else {
+            startAudition(id: id, text: text)
+        }
+    }
+
+    func stopAudition() {
+        auditionTask?.cancel()
+        auditionTask = nil
+        auditioningItemID = nil
+        VoicePreviewPlayer.shared.stop()
+        attention?.speech.setSpeakingResponse(false)
+    }
+
+    private func startAudition(id: UUID, text: String) {
+        guard let attention else { return }
+        let clean = text.trimmed
+        guard !clean.isEmpty else { return }
+        stopAudition()
+        auditioningItemID = id
+        audioError = nil
+        let selection = attention.store.assistantAuditionVoice
+        attention.speech.setSpeakingResponse(true)
+        auditionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let buffer = try await VoiceSynthesis.audition(clean, selection: selection)
+                guard !Task.isCancelled, self.auditioningItemID == id else { return }
+                try VoicePreviewPlayer.shared.play(buffer) { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.auditioningItemID == id else { return }
+                        self.auditioningItemID = nil
+                        self.attention?.speech.setSpeakingResponse(false)
+                    }
+                }
+            } catch is CancellationError {
+                self.attention?.speech.setSpeakingResponse(false)
+            } catch {
+                if self.auditioningItemID == id {
+                    self.auditioningItemID = nil
+                    self.audioError = error.localizedDescription
+                }
+                self.attention?.speech.setSpeakingResponse(false)
+            }
+        }
     }
 
     // MARK: Push to talk
@@ -522,24 +629,15 @@ import SwiftUI
 
     func startPushToTalk() {
         guard let attention, attention.store.pushToTalk, !listening, captureTask == nil, !working else { return }
-        guard let model = ListenModelStore.shared.recognizerModel() else {
-            append(.assistant, L("Install a local transcription model in Settings → Assistant → Models first.")); return
-        }
+        let localModel = ListenModelStore.shared.recognizerModel()
         armHoldLimit()
         let generation = UUID(); captureGeneration = generation; audioError = nil
         captureTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-                    _ = await AVCaptureDevice.requestAccess(for: .audio)
-                }
-                guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw VoiceSynthesisError.microphoneDenied }
+                let authorized = await attention.speech.requestAudioPermissionsIfNeeded()
+                guard authorized else { throw VoiceSynthesisError.microphoneDenied }
                 guard generation == captureGeneration else { return }
-                // The microphone owner is the natural host; when nothing owns it
-                // (a stale talk role, a concurrent join that never claimed) fall back
-                // to the explicit target, then any live meeting — holdMicrophoneForAssistant
-                // claims the microphone role when the chosen meeting does not hold it.
-                // With no live meeting the hold is skipped: there is no send gate to close.
                 let live = attention.meetings().filter { !$0.isClosed }
                 let meeting = live.first(where: { $0.ownsMicrophone })
                     ?? targetMeetingID.flatMap { id in live.first(where: { $0.sessionID == id }) }
@@ -552,29 +650,15 @@ import SwiftUI
                     guard generation == captureGeneration else { await meeting.releaseMicrophoneForAssistant(); return }
                 }
                 captureMeeting = meeting // from here every failure goes through stopPushToTalk's release
-                let engine = AVAudioEngine(), input = engine.inputNode
-                let inputFormat = input.outputFormat(forBus: 0)
-                guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false),
-                      let converter = AVAudioConverter(from: inputFormat, to: format) else { throw AssistantCaptureError.audio }
-                let samples = AssistantCaptureBuffer()
-                input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
-                    let capacity = AVAudioFrameCount(max(1, Int((Double(buffer.frameLength) * 16_000 / inputFormat.sampleRate).rounded(.up)) + 32))
-                    guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return }
-                    var error: NSError?
-                    var supplied = false
-                    let status = converter.convert(to: output, error: &error) { _, status in
-                        if supplied { status.pointee = .noDataNow; return nil }
-                        supplied = true; status.pointee = .haveData; return buffer
-                    }
-                    if error != nil || status == .error { Task { @MainActor in self?.failCapture(AssistantCaptureError.audio) }; return }
-                    guard let channel = output.floatChannelData?[0], output.frameLength > 0 else { return }
-                    let full = samples.append(channel, count: Int(output.frameLength))
-                    if full { Task { @MainActor in self?.stopPushToTalk() } }
+                let hasUnmutedMeeting = meeting?.snapshot.microphoneOn == true
+                guard attention.speech.beginPushToTalkCapture(hasUnmutedMeeting: hasUnmutedMeeting) else {
+                    throw AssistantCaptureError.audio
                 }
-                captureEngine = engine; captureSamples = samples
-                engine.prepare(); try engine.start()
                 listening = true
-                LocalSpeechRecognizer.shared.acquire(model); captureRecognizerAcquired = true
+                if let localModel {
+                    LocalSpeechRecognizer.shared.acquire(localModel)
+                    captureRecognizerAcquired = true
+                }
                 probeLog("assistant-capture-start", ["meeting": meeting?.sessionID.uuidString ?? "local"])
             } catch {
                 failCapture(error)
@@ -585,33 +669,27 @@ import SwiftUI
     func stopPushToTalk() {
         cancelHoldLimit()
         captureGeneration = UUID()
-        // A buffer limit and the wall-clock limit can both ask to stop. The first one
-        // clears this state, so the second returns without starting another transcription.
-        guard captureEngine != nil || captureMeeting != nil || captureTask != nil else { return }
+        guard listening || captureMeeting != nil || captureTask != nil else { return }
         captureTask?.cancel(); captureTask = nil
-        captureEngine?.inputNode.removeTap(onBus: 0); captureEngine?.stop(); captureEngine = nil
         listening = false
-        let meeting = captureMeeting, samples = captureSamples?.values ?? []
+        let meeting = captureMeeting
         let acquired = captureRecognizerAcquired
-        captureMeeting = nil; captureSamples = nil; captureRecognizerAcquired = false
+        captureMeeting = nil; captureRecognizerAcquired = false
+        let samples = attention?.speech.finishPushToTalkCapture() ?? []
         Task { @MainActor [weak self] in
             defer { if acquired { LocalSpeechRecognizer.shared.release() } }
             if let meeting { await meeting.releaseMicrophoneForAssistant() }
             let rms = AssistantCaptureBuffer.rms(samples)
             probeLog("assistant-capture-stop", ["samples": samples.count, "rms": String(format: "%.5f", rms)])
-            guard let self, samples.count >= 3200, let model = ListenModelStore.shared.recognizerModel() else { return }
-            let text: String? = await withCheckedContinuation { continuation in
-                LocalSpeechRecognizer.shared.transcribe(samples, model: model) { text, _, _ in continuation.resume(returning: text) }
-            }
+            guard let self, let speech = self.attention?.speech, samples.count >= 3200 else { return }
+            let text = await speech.transcribeSamples(samples)
             guard let clean = text?.trimmed, !clean.isEmpty else {
-                // Empty text with a silent buffer means the tap captured nothing — another
-                // app (or app instance) is holding the microphone, not a recognition miss.
                 let message = rms < 0.001
                     ? L("No microphone audio was captured — the microphone may be in use by another app.")
                     : L("No speech was recognized. Nothing was sent.")
                 append(.assistant, message); return
             }
-            await run(clean)
+            await run(clean, source: .voicePushToTalk)
         }
     }
 
@@ -942,7 +1020,11 @@ struct AssistantTalkView: View {
                     }.frame(maxWidth: .infinity).padding(.vertical, 50)
                 }
                 ForEach(agentRuntime.turns) { turn in
-                    AssistantAgentTurnView(turn: turn, historyAction: historyAction)
+                    AssistantAgentTurnView(
+                        turn: turn,
+                        historyAction: historyAction,
+                        auditioningItemID: talk.auditioningItemID,
+                        onToggleAudition: { item in talk.toggleAudition(id: item.id, text: item.text) })
                 }
             } else if talk.entries.isEmpty {
                 VStack(spacing: 8) {
@@ -952,16 +1034,27 @@ struct AssistantTalkView: View {
                         Text(L("Ask about %@ or choose another meeting below.", targetMeeting.title))
                             .foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
-                    Text(L("Type a request, or hold ⌥Space. Your speech is recognized on this Mac."))
+                    Text(L("Type a request, hold ⌥Space, or say “Rock…” to speak directly on this Mac."))
                         .foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }.frame(maxWidth: .infinity).padding(.vertical, 50)
             }
             if !store.agentAssistantEnabled {
                 ForEach(talk.entries) { entry in
-                    Text(entry.text).textSelection(.enabled).padding(10)
-                        .background(entry.role == .user ? Color.accentColor.opacity(0.1) : Color(nsColor: .controlBackgroundColor),
-                            in: RoundedRectangle(cornerRadius: 8))
-                        .frame(maxWidth: .infinity, alignment: entry.role == .user ? .trailing : .leading)
+                    VStack(alignment: entry.role == .user ? .trailing : .leading, spacing: 4) {
+                        Text(entry.text).textSelection(.enabled).padding(10)
+                            .background(entry.role == .user ? Color.accentColor.opacity(0.1) : Color(nsColor: .controlBackgroundColor),
+                                in: RoundedRectangle(cornerRadius: 8))
+                        if entry.role == .assistant {
+                            let playing = talk.auditioningItemID == entry.id
+                            Button { talk.toggleAudition(id: entry.id, text: entry.text) } label: {
+                                Label(playing ? L("Stop") : L("Speak"), systemImage: playing ? "stop.circle.fill" : "speaker.wave.2")
+                                    .font(.caption2)
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(playing ? Color.accentColor : .secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: entry.role == .user ? .trailing : .leading)
                 }
             }
         }.padding(16)

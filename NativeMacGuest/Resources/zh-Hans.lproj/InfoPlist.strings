@@ -4,3 +4,4 @@
 "NSRemindersFullAccessUsageDescription" = "将会议待办事项与你选择的 Apple 提醒事项列表同步，并将任务导入 Rock'N'Roll for Mac。";
 "NSCameraUsageDescription" = "在应用的访客预览中开启视频时共享摄像头画面。";
 "NSMicrophoneUsageDescription" = "在应用的访客预览中取消静音时共享麦克风音频。";
+"NSSpeechRecognitionUsageDescription" = "在未安装本地转写模型时，在此 Mac 上识别对 Rock 发出的语音指令。";

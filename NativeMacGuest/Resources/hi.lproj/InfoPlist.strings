@@ -4,3 +4,4 @@
 "NSRemindersFullAccessUsageDescription" = "मीटिंग के कार्य अपनी चुनी हुई Apple Reminders सूची से सिंक करें और Rock'N'Roll for Mac में कार्य आयात करें।";
 "NSCameraUsageDescription" = "ऐप में अतिथि पूर्वावलोकन के दौरान वीडियो चालू करने पर कैमरे की तस्वीर साझा करें।";
 "NSMicrophoneUsageDescription" = "ऐप में अतिथि पूर्वावलोकन के दौरान म्यूट हटाने पर माइक्रोफ़ोन की आवाज़ साझा करें।";
+"NSSpeechRecognitionUsageDescription" = "जब स्थानीय ट्रांसक्रिप्शन मॉडल इंस्टॉल न हों, तो इस Mac पर Rock के लिए बोलकर दिए गए कमांड पहचानें।";

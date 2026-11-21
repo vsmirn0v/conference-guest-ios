@@ -276,8 +276,20 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     @Published var remoteOutcomes: Bool { didSet { defaults.set(remoteOutcomes, forKey: Self.remoteOutcomesKey) } }
     @Published var pushToTalk: Bool { didSet { defaults.set(pushToTalk, forKey: Self.pushToTalkKey) } }
     @Published var talkBack: Bool { didSet { defaults.set(talkBack, forKey: Self.talkBackKey) } }
-    /// The bounded agent runtime over typed tools. Off by default; the existing
-    /// single-command interpreter remains the fallback while this is off.
+    @Published var wakeWordEnabled: Bool {
+        didSet { defaults.set(wakeWordEnabled, forKey: AssistantVoicePreferences.wakeWordEnabledKey) }
+    }
+    @Published var assistantAuditionVoice: AssistantAuditionVoiceSelection {
+        didSet { AssistantVoicePreferences.saveAuditionVoice(assistantAuditionVoice, to: defaults) }
+    }
+    @Published var autoAuditionVoiceReplies: Bool {
+        didSet { defaults.set(autoAuditionVoiceReplies, forKey: AssistantVoicePreferences.autoSpeakVoiceRepliesKey) }
+    }
+    @Published var autoAuditionTypedReplies: Bool {
+        didSet { defaults.set(autoAuditionTypedReplies, forKey: AssistantVoicePreferences.autoSpeakTypedRepliesKey) }
+    }
+    /// The bounded agent runtime over typed tools. On by default; single-command
+    /// interpreter remains fallback when explicitly disabled.
     @Published var agentAssistantEnabled: Bool { didSet { defaults.set(agentAssistantEnabled, forKey: Self.agentAssistantKey) } }
     static let agentAssistantKey = "assistant.agent.enabled"
     /// Expose read-only MCP tools (the app's own MCP backend today; external
@@ -430,7 +442,11 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         // this key, so an absent value must keep working. An explicit off value is unchanged.
         pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? true
         talkBack = defaults.bool(forKey: Self.talkBackKey)
-        agentAssistantEnabled = defaults.bool(forKey: Self.agentAssistantKey)
+        wakeWordEnabled = AssistantVoicePreferences.loadWakeWordEnabled(from: defaults)
+        assistantAuditionVoice = AssistantVoicePreferences.loadAuditionVoice(from: defaults)
+        autoAuditionVoiceReplies = AssistantVoicePreferences.loadAutoSpeakVoiceReplies(from: defaults)
+        autoAuditionTypedReplies = AssistantVoicePreferences.loadAutoSpeakTypedReplies(from: defaults)
+        agentAssistantEnabled = defaults.object(forKey: Self.agentAssistantKey) as? Bool ?? true
         agentExternalToolsEnabled = defaults.bool(forKey: Self.agentExternalToolsKey)
         // An absent value keeps the previous implicit behavior for upgraded installs:
         // direct sends to the selected meeting went through after one approval in a session.

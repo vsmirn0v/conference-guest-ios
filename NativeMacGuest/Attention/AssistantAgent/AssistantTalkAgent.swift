@@ -8,10 +8,11 @@ import SwiftUI
 extension AssistantTalkController {
     /// The bounded agent loop for one user turn. `external` callers (MCP) can
     /// never inherit a meeting's send-without-asking privilege.
-    func runAgent(_ input: String, external: Bool = false) async {
-        guard let attention else { return }
+    func runAgent(_ input: String, external: Bool = false, source: AssistantInputSource = .typed) async {
+        guard attention != nil else { return }
+        activeInputSource = external ? .externalMCP : source
         do {
-            let environment = try await makeAgentEnvironment(external: external)
+            let environment = try await makeAgentEnvironment(external: external, source: activeInputSource)
             agentEnvironment = environment
             let result = await agentRuntime.submit(input, environment: environment)
             handleAgentOutcome(result)
@@ -25,7 +26,14 @@ extension AssistantTalkController {
             agentPending = approval
         case .success(.completed(_, _, let proposal)):
             // A proposal only opens a native review card; enabling is a separate act.
-            if let proposal { ruleProposalReview = proposal }
+            if let proposal {
+                ruleProposalReview = proposal
+            } else if let answer = agentRuntime.items.last(where: { $0.kind == .assistant }) {
+                if activeInputSource.isVoice {
+                    lastVoiceAnswer = answer.text
+                }
+                autoAuditionIfNeeded(id: answer.id, text: answer.text, source: activeInputSource)
+            }
         case .success(.needsUserInput):
             break
         case .failure(let error):
@@ -73,7 +81,7 @@ extension AssistantTalkController {
 
     // MARK: Environment
 
-    private func makeAgentEnvironment(external: Bool) async throws -> AssistantAgentEnvironment {
+    private func makeAgentEnvironment(external: Bool, source: AssistantInputSource = .typed) async throws -> AssistantAgentEnvironment {
         guard let attention else { throw AssistantAgentError.unsupported }
         let snapshot = makeAgentSnapshot()
         let provider = attention.store.provider
@@ -98,13 +106,20 @@ extension AssistantTalkController {
             context: AssistantNativeToolProvider.context(snapshot: snapshot),
             approvalPolicy: { _, action in
                 // The app owns this gate. External callers can never inherit any send
-                // privilege; direct chat/voice/reaction sends to the selected active
-                // meeting follow the persisted default and the per-meeting override
-                // captured when this environment was built.
-                AssistantMeetingSendGate.approval(
+                // privilege; direct chat/voice/reaction sends follow persisted/per-meeting
+                // policy while voice commands auto-run safe control actions.
+                let sendDecision = AssistantMeetingSendGate.approval(
                     external: external, action: action, selectedMeetingID: snapshot.contextMeetingID,
                     override: action.meetingID.flatMap { overrides[$0] },
                     globalDefault: globalDefault)
+                if external { return sendDecision }
+                if AssistantVoiceApprovalPolicy.shouldAutoApprove(
+                    actionKind: action.kind.rawValue,
+                    inputSource: source,
+                    sendsWithoutAsking: sendDecision == .allow) {
+                    return .allow
+                }
+                return sendDecision
             },
             actionCoordinator: attention.actionCoordinator,
             approvalTitle: { call, action in Self.agentApprovalTitle(call, action) },
@@ -135,7 +150,8 @@ extension AssistantTalkController {
         let command: AssistantCommand
         switch action.kind {
         case .setAttention:
-            command = .init(action: .setAttention, meetingID: action.meetingID, mode: action.mode, scope: action.scope)
+            command = .init(action: .setAttention, meetingID: action.meetingID, mode: action.mode,
+                            scope: action.scope, text: action.text, participate: action.participate)
         case .join:
             command = .init(action: .join, meetingID: action.meetingID)
         case .leave:
@@ -259,6 +275,137 @@ extension AssistantTalkController {
         // Errors outside a run surface as a system entry in the agent conversation.
         agentRuntime.appendSystemForUI(text)
     }
+
+    // MARK: - Deterministic Voice & Offline Shortcuts
+
+    /// Handles unambiguous voice/offline commands (monthly counts, joining current meeting,
+    /// muting mic, switching into Participate mode) without requiring a remote LLM round-trip.
+    func runDeterministicCommandIfApplicable(_ input: String, source: AssistantInputSource) async -> String? {
+        guard let attention else { return nil }
+        let lower = input.lowercased().replacingOccurrences(of: "ё", with: "е")
+        let isRussian = lower.range(of: #"\p{Cyrillic}"#, options: .regularExpression) != nil || attention.language.hasPrefix("ru")
+        let now = attention.now()
+
+        // 1. Meeting count query (e.g. "сколько было встреч в этом месяце?" / "how many meetings this month?")
+        let asksCount = lower.contains("сколько") || lower.contains("количеств") || lower.contains("how many") || lower.contains("count of")
+        let mentionsMeeting = lower.contains("встреч") || lower.contains("созвон") || lower.contains("митинг") || lower.contains("meeting") || lower.contains("call")
+        if asksCount && mentionsMeeting {
+            let cal = Calendar.current
+            let scopeMonth = lower.contains("месяц") || lower.contains("month")
+            let scopeWeek = lower.contains("недел") || lower.contains("week")
+            let scopeToday = lower.contains("сегодн") || lower.contains("today")
+
+            struct CountedMeeting { let title: String; let date: Date }
+            var seenIDs = Set<UUID>()
+            var matched: [CountedMeeting] = []
+
+            func matchesPeriod(_ date: Date) -> Bool {
+                if scopeToday { return cal.isDate(date, inSameDayAs: now) }
+                if scopeWeek { return cal.isDate(date, equalTo: now, toGranularity: .weekOfYear) }
+                // Default to current month when "this month" or unqualified count is asked
+                if scopeMonth || (!scopeWeek && !scopeToday) {
+                    return cal.isDate(date, equalTo: now, toGranularity: .month)
+                }
+                return true
+            }
+
+            for outcome in attention.store.assistant.outcomes {
+                let referenceDate = outcome.endedAt
+                guard matchesPeriod(referenceDate) else { continue }
+                let dedupeID = outcome.meetingID ?? outcome.id
+                guard seenIDs.insert(dedupeID).inserted else { continue }
+                matched.append(.init(title: outcome.meetingTitle, date: referenceDate))
+            }
+            for live in attention.meetings() where !live.isClosed {
+                guard seenIDs.insert(live.workspaceSessionID).inserted else { continue }
+                matched.append(.init(title: live.title, date: now))
+            }
+
+            let count = matched.count
+            if isRussian {
+                if count == 0 {
+                    return scopeToday ? "Сегодня встреч пока не было." : (scopeWeek ? "На этой неделе встреч пока не было." : "В этом месяце записанных встреч пока не было.")
+                }
+                let titles = matched.prefix(4).map { "«\($0.title)»" }.joined(separator: ", ")
+                let suffix = count > 4 ? " и ещё \(count - 4)" : ""
+                let period = scopeToday ? "Сегодня" : (scopeWeek ? "На этой неделе" : "В этом месяце")
+                return "\(period) было \(count) встреч: \(titles)\(suffix)."
+            } else {
+                if count == 0 {
+                    return scopeToday ? "You have had no meetings today." : (scopeWeek ? "You have had no meetings this week." : "You have had no recorded meetings this month.")
+                }
+                let titles = matched.prefix(4).map { $0.title }.joined(separator: ", ")
+                let suffix = count > 4 ? " and \(count - 4) more" : ""
+                let period = scopeToday ? "Today" : (scopeWeek ? "This week" : "This month")
+                return "\(period) you had \(count) meeting(s): \(titles)\(suffix)."
+            }
+        }
+
+        // 2. Join current meeting (auto-executes immediately for voice input)
+        let asksJoin = lower.contains("подключ") || lower.contains("зайди") || lower.contains("войди")
+            || lower.contains("join") || lower.contains("connect me")
+        let mentionsCurrentOrMeeting = lower.contains("текущ") || lower.contains("сейчас") || lower.contains("current")
+            || lower.contains("следующ") || lower.contains("next") || mentionsMeeting
+        if asksJoin && mentionsCurrentOrMeeting && AssistantVoiceApprovalPolicy.shouldAutoApprove(
+            actionKind: "join", inputSource: source, sendsWithoutAsking: false) {
+            let candidates = attention.joinableTargets(now)
+            if let best = CurrentMeetingTargetResolver.bestCurrentMeeting(from: candidates, now: now) {
+                let targetID = best.activeSessionID ?? best.id
+                let command = AssistantCommand(action: .join, meetingID: targetID)
+                do {
+                    return try await execute(command, context: makeContext(), attention: attention, originalInput: input)
+                } catch {
+                    return error.localizedDescription
+                }
+            }
+            return isRussian ? "Не найдена текущая или ближайшая встреча со ссылкой для подключения." : "No ongoing or upcoming meeting with a join link was found."
+        }
+
+        // 3. Mute microphone
+        let asksMute = lower.contains("замут") || lower.contains("выключи микрофон") || lower.contains("отключи микрофон")
+            || (lower.contains("mute") && (lower.contains("mic") || lower.contains("микрофон") || lower == "mute"))
+        if asksMute {
+            let command = AssistantCommand(action: .mute, meetingID: reconcileMeetingTarget())
+            return try? await execute(command, context: makeContext(), attention: attention, originalInput: input)
+        }
+
+        // 4. Switch to Participate mode (with optional spoken context)
+        let asksParticipate = lower.contains("режим участия") || lower.contains("включи участие")
+            || lower.contains("participat")
+        if asksParticipate {
+            guard let id = reconcileMeetingTarget(),
+                  let model = attention.meetings().first(where: { $0.sessionID == id && !$0.isClosed }) else {
+                return isRussian ? "Сначала откройте или подключитесь к встрече." : "Join or open a meeting first."
+            }
+            let objective = Self.extractParticipationObjective(from: input)
+            attention.onRequestParticipationMode?(model, objective)
+            if objective.isEmpty {
+                return isRussian
+                    ? "Включаю режим участия для «\(model.title)» — надиктуйте контекст или цель."
+                    : "Opening Participation mode for “\(model.title)” — speak your context or goal."
+            } else {
+                return isRussian
+                    ? "Режим участия включён для «\(model.title)» с задачей: \(objective)"
+                    : "Participation enabled for “\(model.title)”: \(objective)"
+            }
+        }
+
+        return nil
+    }
+
+    private nonisolated static func extractParticipationObjective(from input: String) -> String {
+        let lower = input.lowercased().replacingOccurrences(of: "ё", with: "е")
+        for marker in ["с контекстом ", "контекст:", "контекст ", "с целью ", "цель:", "цель ", "with context ", "context:", "goal:"] {
+            if let range = lower.range(of: marker) {
+                let tailStart = input.index(input.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.upperBound))
+                let extracted = String(input[tailStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !extracted.isEmpty {
+                    return String(extracted.prefix(180))
+                }
+            }
+        }
+        return ""
+    }
 }
 
 // MARK: - Conversation rendering
@@ -269,6 +416,8 @@ extension AssistantTalkController {
 struct AssistantAgentTurnView: View {
     let turn: AssistantAgentTurn
     var historyAction: ((AssistantEvidenceSource) -> (() -> Void)?)? = nil
+    var auditioningItemID: UUID? = nil
+    var onToggleAudition: ((AssistantConversationItem) -> Void)? = nil
     @State private var showsDetails = false
 
     private var answer: AssistantConversationItem? { turn.activity.last(where: { $0.kind == .assistant }) }
@@ -324,7 +473,11 @@ struct AssistantAgentTurnView: View {
                     AssistantAgentItemView(item: item)
                 }
                 if let answer {
-                    AssistantAgentItemView(item: answer, historyAction: historyAction)
+                    AssistantAgentItemView(
+                        item: answer,
+                        historyAction: historyAction,
+                        isAuditioning: auditioningItemID == answer.id,
+                        onToggleAudition: onToggleAudition.map { toggle in { toggle(answer) } })
                 }
                 ForEach(clarifications) { item in
                     AssistantAgentItemView(item: item)
@@ -345,6 +498,8 @@ struct AssistantAgentTurnView: View {
 struct AssistantAgentItemView: View {
     let item: AssistantConversationItem
     var historyAction: ((AssistantEvidenceSource) -> (() -> Void)?)? = nil
+    var isAuditioning = false
+    var onToggleAudition: (() -> Void)? = nil
 
     private var isUser: Bool { item.kind == .user }
     private var chip: String? {
@@ -367,6 +522,16 @@ struct AssistantAgentItemView: View {
             Text(item.text).textSelection(.enabled).padding(10)
                 .background(isUser ? Color.accentColor.opacity(0.1)
                             : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            if item.kind == .assistant, let onToggleAudition {
+                Button(action: onToggleAudition) {
+                    Label(isAuditioning ? L("Stop") : L("Speak"),
+                          systemImage: isAuditioning ? "stop.circle.fill" : "speaker.wave.2")
+                        .font(.caption2)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(isAuditioning ? Color.accentColor : .secondary)
+                .accessibilityIdentifier("assistant.agent.audition")
+            }
             if !item.sources.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {

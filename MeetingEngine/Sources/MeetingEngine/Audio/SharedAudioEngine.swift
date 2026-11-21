@@ -15,6 +15,7 @@ import LiveKitWebRTC
 @MainActor public protocol SharedAudioModule: AnyObject {
     var factory: LKRTCPeerConnectionFactory { get }
     func prepareIdleInput(timeout: TimeInterval) async -> Bool
+    func ensureAssistantMutedInput(timeout: TimeInterval) async -> Bool
     func activateMicrophone(timeout: TimeInterval?) async -> Bool
     func setMicrophoneMuted(_ muted: Bool, timeout: TimeInterval) async -> Bool
     func suppressMicrophone()
@@ -41,6 +42,7 @@ import LiveKitWebRTC
 extension GuestSystemAudio: SharedAudioModule {}
 
 public extension SharedAudioModule {
+    func ensureAssistantMutedInput(timeout: TimeInterval) async -> Bool { false }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer, localGain: Float) async -> Bool { await playVoiceReply(buffer) }
     func setVoiceReplyMonitorGain(_ gain: Float) {}
     var hasParticipationVoiceGraph: Bool { false }
@@ -105,6 +107,7 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
     private var order: [UUID] = []
     private let work = SharedAudioSerialWork()
     private let inputSink = SharedAudioSinkBox()
+    private let assistantInputSink = SharedAudioSinkBox()
     /// The meeting whose sender may be enabled; changes bump the epoch so a stale
     /// meeting's unmute is refused.
     public private(set) var talkMeetingID: UUID?
@@ -135,6 +138,7 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
     private var sleepObservers: [NSObjectProtocol] = []
     public private(set) var foreground = false
     public private(set) var foregroundMicrophone = false
+    public private(set) var assistantWakeListening = false
     private var foregroundPrepared = false
     private var idleSuspended = false
     private var idleRevision = UUID()
@@ -211,7 +215,52 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
     public func waitForWork() async { await work.wait() }
 
     private var shouldPrepareForegroundInput: Bool {
-        foreground && foregroundMicrophone && !idleSuspended && !cleanupFailed && authorized()
+        foreground && (foregroundMicrophone || assistantWakeListening) && !idleSuspended && !cleanupFailed && authorized()
+    }
+
+    public func setAssistantInputObserver(_ handler: ((AVAudioPCMBuffer) -> Void)?) {
+        assistantInputSink.set(handler)
+    }
+
+    public func setAssistantWakeListening(_ enabled: Bool) {
+        guard assistantWakeListening != enabled else { return }
+        assistantWakeListening = enabled
+        guard attachments.isEmpty, !privateCheckActive, !idleSuspended, !cleanupFailed else { return }
+        idleRevision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
+        if foreground {
+            scheduleForegroundPreparation()
+        } else if !shouldPrepareForegroundInput {
+            let token = idleRevision
+            idleDeadline = Task { [weak self, sleep, grace] in
+                do { try await sleep(grace) } catch { return }
+                guard let self, self.idleRevision == token, !self.foreground, self.attachments.isEmpty, !self.privateCheckActive else { return }
+                _ = await self.work.run {
+                    guard self.idleRevision == token, !self.foreground, self.attachments.isEmpty, !self.privateCheckActive else { return true }
+                    return await self.retireIdleLocked()
+                }
+            }
+        }
+    }
+
+    /// Ensures muted local microphone input is running for wake-word detection without altering playout or senders.
+    public func ensureMutedAssistantCapture() async -> Bool {
+        await work.run { [self] in
+            guard assistantWakeListening, !cleanupFailed, !privateCheckActive, authorized() else { return false }
+            if attachments.isEmpty {
+                guard foreground else { return false }
+                guard case .success(let module) = await ensureModuleLocked() else { return false }
+                guard attachments.isEmpty, !privateCheckActive, foreground, assistantWakeListening else { return false }
+                if foregroundPrepared, guestOwner?.snapshot["recording"] as? Bool == true { return true }
+                guard await module.prepareIdleInput(timeout: timeouts.activation) else { return false }
+                foregroundPrepared = true
+                moduleMuted = true
+                rebuilding = false
+                return true
+            }
+            guard let module, talkMeetingID != nil, !talkUnmuted, moduleMuted else { return false }
+            if guestOwner?.snapshot["recording"] as? Bool == true { return true }
+            return await module.ensureAssistantMutedInput(timeout: timeouts.activation)
+        }
     }
 
     // MARK: Foreground readiness
@@ -691,7 +740,10 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
         if let module { return .success(module) }
         do {
             let created = try await makeModule()
-            created.setInputTranscriptionSink { [inputSink] buffer in inputSink.deliver(buffer) }
+            created.setInputTranscriptionSink { [inputSink, assistantInputSink] buffer in
+                inputSink.deliver(buffer)
+                assistantInputSink.deliver(buffer)
+            }
             created.onSpontaneousEngineChange = { [weak self] change in
                 Task { @MainActor in self?.engineChanged(change) }
             }

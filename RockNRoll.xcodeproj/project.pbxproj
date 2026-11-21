@@ -130,6 +130,9 @@
 		64A07CCD9B143CBA1425AFAF /* VideoPreviewPacingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D480771A01CE4752084642A /* VideoPreviewPacingTests.swift */; };
 		66141605982773EDD3BD3F08 /* MeetingContainerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D353B40533B1DDB10C100095 /* MeetingContainerViewController.swift */; };
 		67BDE67D49BC50BD6483D464 /* IOSAssistantCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D13C9EA7646A4B0CBDC943F /* IOSAssistantCoordinator.swift */; };
+		A1A2B3C4D5E6000100000001 /* IOSAssistantSpeechCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A2B3C4D5E6000100000002 /* IOSAssistantSpeechCoordinator.swift */; };
+		A1A2B3C4D5E6000100000003 /* IOSAssistantTalkController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A2B3C4D5E6000100000004 /* IOSAssistantTalkController.swift */; };
+		A1A2B3C4D5E6000100000005 /* IOSAssistantTalkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A2B3C4D5E6000100000006 /* IOSAssistantTalkView.swift */; };
 		67D7AF6F2E0AEED96F09CD1B /* OutgoingVideoCadence.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC2611EBA8D1D1AD70D95AC9 /* OutgoingVideoCadence.swift */; };
 		68AC9157497223ACAFCFA3DA /* MeetingReminderPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7F62EA093D3CDBB70BFD1C0 /* MeetingReminderPresenter.swift */; };
 		6B05F37A71D4665918704EE3 /* CalendarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E05D0AC6C01910B81BEDBE /* CalendarUITests.swift */; };
@@ -265,6 +268,7 @@
 		CDDEE70553C1B8CF7AABD492 /* ConversationPanelViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DD12DC1E0D2B670F8DE1382 /* ConversationPanelViewController.swift */; };
 		CE03D419D491C490FEEAF090 /* MeetingActivitySessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80E482B5E0DED4C45A090A5F /* MeetingActivitySessionTests.swift */; };
 		CF2F02BADFFCFD8467CBE85D /* IOSAssistantModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BD7ADEA08EA8EDA44BD645 /* IOSAssistantModeTests.swift */; };
+		A1A2B3C4D5E6000100000007 /* IOSAssistantTalkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A2B3C4D5E6000100000008 /* IOSAssistantTalkTests.swift */; };
 		CFE902B2CA9F50840A8AE214 /* MeetingActionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C23C1B2AAAA270F064932F8 /* MeetingActionsTests.swift */; };
 		D0ED219A00EB397EE64A97D5 /* CalendarReminderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F26F9772780B3E0C65A1573 /* CalendarReminderViews.swift */; };
 		D2A8C899759ADD3E2DC01383 /* AppleCalendarReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBD5B5CF327FC6506710905 /* AppleCalendarReader.swift */; };
@@ -470,6 +474,7 @@
 		43C1E7592FD9E7786EBD187B /* CatchUpCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpCardsView.swift; sourceTree = "<group>"; };
 		46FDF50D630C8064BE866093 /* CallVideoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallVideoView.swift; sourceTree = "<group>"; };
 		48BD7ADEA08EA8EDA44BD645 /* IOSAssistantModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAssistantModeTests.swift; sourceTree = "<group>"; };
+		A1A2B3C4D5E6000100000008 /* IOSAssistantTalkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAssistantTalkTests.swift; sourceTree = "<group>"; };
 		48C7D263FA5D790DAD2BFAD3 /* ApplicationMicrophoneMuteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationMicrophoneMuteTests.swift; sourceTree = "<group>"; };
 		4A32DC8EB0D1E6B971327F41 /* ReminderCallFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderCallFixture.swift; sourceTree = "<group>"; };
 		4AA7158E44DFAF1E76780DB0 /* CameraOutputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraOutputTests.swift; sourceTree = "<group>"; };
@@ -548,6 +553,9 @@
 		7B3C0AA066204EFCFAFDF89F /* ApplicationMicrophoneMute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationMicrophoneMute.swift; sourceTree = "<group>"; };
 		7BF7621A80A949572423961A /* RoomMediaPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMediaPolicy.swift; sourceTree = "<group>"; };
 		7D13C9EA7646A4B0CBDC943F /* IOSAssistantCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAssistantCoordinator.swift; sourceTree = "<group>"; };
+		A1A2B3C4D5E6000100000002 /* IOSAssistantSpeechCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAssistantSpeechCoordinator.swift; sourceTree = "<group>"; };
+		A1A2B3C4D5E6000100000004 /* IOSAssistantTalkController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAssistantTalkController.swift; sourceTree = "<group>"; };
+		A1A2B3C4D5E6000100000006 /* IOSAssistantTalkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAssistantTalkView.swift; sourceTree = "<group>"; };
 		7DD0C656AA69D8C696A5B5DB /* IOSWorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSWorkspaceStore.swift; sourceTree = "<group>"; };
 		7DE19440BEE492AE93AE4062 /* MeetingRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingRecording.swift; sourceTree = "<group>"; };
 		7DFB7DF77E8CDDC8A654DF2E /* IOSPersonalTasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSPersonalTasksView.swift; sourceTree = "<group>"; };
@@ -882,6 +890,9 @@
 			isa = PBXGroup;
 			children = (
 				7D13C9EA7646A4B0CBDC943F /* IOSAssistantCoordinator.swift */,
+				A1A2B3C4D5E6000100000002 /* IOSAssistantSpeechCoordinator.swift */,
+				A1A2B3C4D5E6000100000004 /* IOSAssistantTalkController.swift */,
+				A1A2B3C4D5E6000100000006 /* IOSAssistantTalkView.swift */,
 				6CFF837F8305839CF363F81C /* IOSAssistantModeViews.swift */,
 				113876221C2B9AF9F98EE91D /* IOSAssistantSettingsView.swift */,
 				4144D4A5B318797223E904FC /* IOSInCallNotesView.swift */,
@@ -1108,6 +1119,7 @@
 				3F7A8F59787FB9FB78206745 /* GuestSiteLinkAdapterTests.swift */,
 				8B7AD2D01EA5113094322619 /* H264InputColorSignallingTests.swift */,
 				48BD7ADEA08EA8EDA44BD645 /* IOSAssistantModeTests.swift */,
+				A1A2B3C4D5E6000100000008 /* IOSAssistantTalkTests.swift */,
 				985A2B360B50E4A8700B3ED2 /* IOSCaptureBridgeTests.swift */,
 				0F09328762DCF8EB21F20ADC /* IOSLocalTranscriptionAndVoiceTests.swift */,
 				51E69EB969FD513C7C9B24DB /* IOSMultiMeetingTests.swift */,
@@ -1540,6 +1552,9 @@
 				C8AF96D7FA1436CEDAEE8E5F /* GuestSampleBufferView.swift in Sources */,
 				25D4C5B657E2F2F512CDEE17 /* HomeMeetingCard.swift in Sources */,
 				67BDE67D49BC50BD6483D464 /* IOSAssistantCoordinator.swift in Sources */,
+				A1A2B3C4D5E6000100000001 /* IOSAssistantSpeechCoordinator.swift in Sources */,
+				A1A2B3C4D5E6000100000003 /* IOSAssistantTalkController.swift in Sources */,
+				A1A2B3C4D5E6000100000005 /* IOSAssistantTalkView.swift in Sources */,
 				24ED1479E5C89E7855FCD271 /* IOSAssistantModeViews.swift in Sources */,
 				2F1FC5AB469D9844AA59FFD7 /* IOSAssistantSettingsView.swift in Sources */,
 				21234D1450F42808BEA1C681 /* IOSCameraCapture.swift in Sources */,
@@ -1739,6 +1754,7 @@
 				ECB1DF9730064526359FD8D8 /* GuestSiteLinkAdapterTests.swift in Sources */,
 				DCF7A47C1E95326FAEE5A860 /* H264InputColorSignallingTests.swift in Sources */,
 				CF2F02BADFFCFD8467CBE85D /* IOSAssistantModeTests.swift in Sources */,
+				A1A2B3C4D5E6000100000007 /* IOSAssistantTalkTests.swift in Sources */,
 				6FE7CFC823B30DE0F99C5286 /* IOSCaptureBridgeTests.swift in Sources */,
 				BD77F6D1988D2285626E2A8C /* IOSLocalTranscriptionAndVoiceTests.swift in Sources */,
 				5D7D0FC0980D60BB15992594 /* IOSMultiMeetingTests.swift in Sources */,

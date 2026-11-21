@@ -1,4 +1,5 @@
 import AVFoundation
+import ConferenceCore
 import Foundation
 import NaturalLanguage
 
@@ -87,18 +88,51 @@ enum VoiceSynthesisError: LocalizedError, Equatable {
 }
 
 /// Plays a synthesized reply on this Mac only, for trying a voice in Settings.
-@MainActor final class VoicePreviewPlayer {
+@MainActor final class VoicePreviewPlayer: ObservableObject {
     static let shared = VoicePreviewPlayer()
+    @Published private(set) var isPlaying = false
     private var engine: AVAudioEngine?
-    func play(_ buffer: AVAudioPCMBuffer) throws {
-        engine?.stop()
+    private var player: AVAudioPlayerNode?
+    private var generation = UUID()
+    private var completionHandler: (() -> Void)?
+
+    func play(_ buffer: AVAudioPCMBuffer, onComplete: (() -> Void)? = nil) throws {
+        stop()
+        let token = UUID()
+        generation = token
+        completionHandler = onComplete
         let engine = AVAudioEngine(), player = AVAudioPlayerNode()
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
         try engine.start()
-        player.scheduleBuffer(buffer, completionHandler: nil)
+        isPlaying = true
+        player.scheduleBuffer(buffer) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == token else { return }
+                let completion = self.completionHandler
+                self.completionHandler = nil
+                self.player = nil
+                self.engine?.stop()
+                self.engine = nil
+                self.isPlaying = false
+                completion?()
+            }
+        }
         player.play()
         self.engine = engine
+        self.player = player
+    }
+
+    func stop() {
+        generation = UUID()
+        player?.stop()
+        player = nil
+        engine?.stop()
+        engine = nil
+        let hadCompletion = completionHandler
+        completionHandler = nil
+        isPlaying = false
+        hadCompletion?()
     }
 }
 
@@ -215,6 +249,48 @@ enum VoiceSynthesis {
             throw VoiceSynthesisError.server(status, message)
         }
         return try buffer(fromAudio: data)
+    }
+
+    /// Synthesizes local audio for an Assistant response using the user's chosen audition voice
+    /// (curated VoxCPM2 neural preset, cloned voice, Personal Voice, or macOS system voice),
+    /// falling back to the local macOS system voice if a neural/cloned voice is not ready yet.
+    static func audition(_ text: String, selection: AssistantAuditionVoiceSelection) async throws -> AVAudioPCMBuffer {
+        let clean = text.trimmed
+        guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
+        switch selection {
+        case .voxPreset(let preset):
+            do {
+                let samples = try await VoiceCloneStore.shared.speakPreset(clean, preset: preset)
+                return try VoiceSampleAudio.buffer(samples, rate: 48_000)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return try await system(clean)
+            }
+        case .clonedVoice:
+            do {
+                return try await cloned(clean)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return try await system(clean)
+            }
+        case .personalVoice:
+            do {
+                return try await personal(clean)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return try await system(clean)
+            }
+        case .systemVoice(let identifier):
+            if !identifier.isEmpty,
+               let specific = AVSpeechSynthesisVoice(identifier: identifier),
+               let specificBuffer = await VoiceReplySample.make(text: clean, voice: specific) {
+                return specificBuffer
+            }
+            return try await system(clean)
+        }
     }
 
     /// Reads WAV (or any format AVAudioFile knows) through a private temporary file.

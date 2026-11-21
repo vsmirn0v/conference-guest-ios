@@ -102,10 +102,10 @@ protocol AssistantAgentActionTool: AssistantAgentTool {
 extension AssistantCanonicalAction {
     init(id: UUID? = nil, kind: AssistantCanonicalActionKind, meetingID: UUID? = nil, momentID: UUID? = nil,
          mode: AttentionMode? = nil, scope: AssistantCommandScope = .untilLeave, text: String = "",
-         reaction: MeetingReaction? = nil, minutes: Int = 10, at: Date? = nil) {
+         reaction: MeetingReaction? = nil, minutes: Int = 10, at: Date? = nil, participate: Bool = false) {
         self.kind = kind; self.meetingID = meetingID; self.momentID = momentID
         self.mode = mode; self.scope = scope; self.text = text; self.reaction = reaction
-        self.minutes = minutes; self.at = at
+        self.minutes = minutes; self.at = at; self.participate = participate
         var hasher = SHA256()
         hasher.update(data: Data(kind.rawValue.utf8))
         hasher.update(data: Data((meetingID?.uuidString ?? "").utf8))
@@ -116,6 +116,9 @@ extension AssistantCanonicalAction {
         hasher.update(data: Data((reaction?.rawValue ?? "").utf8))
         hasher.update(data: Data(String(minutes).utf8))
         hasher.update(data: Data((at.map(ISO8601DateFormatter().string(from:)) ?? "").utf8))
+        if participate {
+            hasher.update(data: Data("participate".utf8))
+        }
         let digest = hasher.finalize()
         payloadHash = digest.map { String(format: "%02x", $0) }.joined()
         // The id is deterministic per payload: an approval and its execution construct
@@ -210,6 +213,18 @@ struct AssistantAgentEnvironment: Sendable {
     /// conversation without changing the run state machine.
     func appendSystemForUI(_ text: String) {
         appendSystem(text, isError: true)
+    }
+
+    @discardableResult
+    func appendDeterministicTurnForUI(userText: String, assistantText: String) -> UUID {
+        let userItem = AssistantConversationItem(kind: .user, text: userText)
+        let assistantItem = AssistantConversationItem(kind: .assistant, text: assistantText)
+        store.append(userItem)
+        store.append(assistantItem)
+        store.appendModel(.user(userText))
+        store.appendModel(.assistant(text: assistantText, toolCalls: []))
+        syncItems()
+        return assistantItem.id
     }
 
     func newConversation() {

@@ -1,4 +1,5 @@
 import AVFoundation
+import ConferenceCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -179,6 +180,8 @@ struct TranscriptionAndVoiceSettingsView: View {
 
     @State private var previewError: String?
     @State private var isGeneratingPreview = false
+    @State private var isGeneratingAuditionPreview = false
+    @State private var auditionPreviewError: String?
     @State private var showingEnrollmentSheet = false
     @State private var confirmingDeleteVoxModel = false
     @State private var confirmingDeleteVoxVoice = false
@@ -361,6 +364,8 @@ struct TranscriptionAndVoiceSettingsView: View {
                 Text(L("Used when sending Voice replies in both talk and listening rooms."))
             }
 
+            assistantAuditionSection
+
             voxCPM2Section
         }
         .navigationTitle(L("Transcription & voice"))
@@ -398,6 +403,87 @@ struct TranscriptionAndVoiceSettingsView: View {
             Button(L("Cancel"), role: .cancel) {}
         } message: {
             Text(L("Deletes your saved voice prompt features from this iPhone. The VoxCPM2 model stays installed."))
+        }
+    }
+
+    @ViewBuilder
+    private var assistantAuditionSection: some View {
+        Section {
+            Toggle(L("Hands-free “Rock” wake word"), isOn: $voiceStore.wakeWordEnabled)
+                .accessibilityIdentifier("voice.wakeWord")
+            Picker(L("Assistant reply voice"), selection: $voiceStore.assistantAuditionVoice) {
+                Section(L("Neural presets (VoxCPM2)")) {
+                    ForEach(AssistantVoxVoicePreset.allCases) { preset in
+                        Text(preset.localizedTitle).tag(AssistantAuditionVoiceSelection.voxPreset(preset))
+                    }
+                }
+                Section(L("Personal & Cloned")) {
+                    if voxStore.isDeviceSupported {
+                        Text(L("My cloned voice")).tag(AssistantAuditionVoiceSelection.clonedVoice)
+                    }
+                    Text(L("Personal Voice")).tag(AssistantAuditionVoiceSelection.personalVoice)
+                }
+                Section(L("iPhone system voices")) {
+                    Text(L("System voice (automatic)")).tag(AssistantAuditionVoiceSelection.systemVoice(identifier: ""))
+                    ForEach(IOSVoiceStore.availableSystemVoices().prefix(12), id: \.identifier) { voice in
+                        Text("\(voice.name) (\(voice.language))").tag(AssistantAuditionVoiceSelection.systemVoice(identifier: voice.identifier))
+                    }
+                }
+            }
+            if case .voxPreset(let preset) = voiceStore.assistantAuditionVoice {
+                Text(preset.localizedSubtitle + " " + L("Uses VoxCPM2 when downloaded, or falls back to the iPhone system voice."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if voiceStore.assistantAuditionVoice == .clonedVoice && voxStore.storedVoice == nil {
+                Text(L("Record a sample below to use your cloned voice, or answers will use the iPhone system voice."))
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+            Toggle(L("Speak voice-triggered replies aloud"), isOn: $voiceStore.autoAuditionVoiceReplies)
+            Toggle(L("Speak typed replies aloud"), isOn: $voiceStore.autoAuditionTypedReplies)
+            if previewPlayer.isPlaying {
+                Button(role: .destructive) {
+                    previewPlayer.stop()
+                } label: {
+                    Label(L("Stop preview"), systemImage: "stop.circle")
+                }
+            } else {
+                Button {
+                    runAuditionPreview()
+                } label: {
+                    if isGeneratingAuditionPreview {
+                        Label(L("Preparing…"), systemImage: "hourglass")
+                    } else {
+                        Label(L("Preview assistant voice"), systemImage: "play.circle")
+                    }
+                }
+                .disabled(isGeneratingAuditionPreview)
+            }
+            if let auditionPreviewError {
+                Text(auditionPreviewError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text(L("Assistant reply voice"))
+        } footer: {
+            Text(L("Say “Rock, …” or “Рок, …” to activate Assistant anywhere in the app or while muted in a call."))
+        }
+    }
+
+    private func runAuditionPreview() {
+        auditionPreviewError = nil
+        isGeneratingAuditionPreview = true
+        Task { @MainActor in
+            defer { isGeneratingAuditionPreview = false }
+            do {
+                let buffer = try await voiceStore.synthesizeAssistantResponse(L("Hello! This is how Assistant answers sound on your iPhone."))
+                try previewPlayer.play(buffer)
+            } catch is CancellationError {
+                return
+            } catch {
+                auditionPreviewError = error.localizedDescription
+            }
         }
     }
 

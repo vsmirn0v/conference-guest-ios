@@ -77,6 +77,9 @@ struct AttentionModeChip: View {
         .popover(isPresented: $open, arrowEdge: .bottom) {
             AttentionModePicker(attention: attention, model: model) { open = false }
         }
+        .onChange(of: attention.participationPromptMeetingID) { targetID in
+            if targetID == model.sessionID { open = true }
+        }
     }
 }
 
@@ -99,10 +102,19 @@ struct AttentionModePicker: View {
 
     var body: some View {
         if showingParticipation {
-            ParticipationSetupView(participation: participation, model: model, store: store,
+            ParticipationSetupView(participation: participation, model: model, store: store, attention: attention,
                 back: { showingParticipation = false }, close: close)
         } else {
             modes
+                .onAppear { consumeParticipationPromptIfNeeded() }
+                .onChange(of: attention.participationPromptMeetingID) { _ in consumeParticipationPromptIfNeeded() }
+        }
+    }
+
+    private func consumeParticipationPromptIfNeeded() {
+        if attention.participationPromptMeetingID == model.sessionID {
+            showingParticipation = true
+            attention.participationPromptMeetingID = nil
         }
     }
 
@@ -287,6 +299,9 @@ struct AttentionControlButton: View {
         .accessibilityLabel(L("Assistant")).accessibilityValue(participating ? participation.statusDetail : mode.title)
         .popover(isPresented: $open, arrowEdge: .top) {
             AttentionModePicker(attention: attention, model: model) { open = false }
+        }
+        .onChange(of: attention.participationPromptMeetingID) { targetID in
+            if targetID == model.sessionID { open = true }
         }
     }
 }

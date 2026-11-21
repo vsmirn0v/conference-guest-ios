@@ -2,6 +2,7 @@ import ConferenceCore
 import SwiftUI
 
 enum IOSWorkspaceHubTab: String, CaseIterable, Identifiable {
+    case ask
     case history
     case tasks
     case search
@@ -10,6 +11,7 @@ enum IOSWorkspaceHubTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .ask: return L("Ask")
         case .history: return L("Meetings")
         case .tasks: return L("Tasks")
         case .search: return L("Search")
@@ -21,6 +23,8 @@ struct IOSWorkspaceHubView: View {
     @ObservedObject var workspace: IOSWorkspaceCoordinator
     @ObservedObject var sync: RoomSyncCoordinator
     @ObservedObject var assistant: IOSAssistantCoordinator
+    var talk: IOSAssistantTalkController? = nil
+    var speech: IOSAssistantSpeechCoordinator? = nil
     let initialTab: IOSWorkspaceHubTab
 
     @Environment(\.dismiss) private var dismiss
@@ -39,11 +43,15 @@ struct IOSWorkspaceHubView: View {
         workspace: IOSWorkspaceCoordinator,
         sync: RoomSyncCoordinator,
         assistant: IOSAssistantCoordinator,
+        talk: IOSAssistantTalkController? = nil,
+        speech: IOSAssistantSpeechCoordinator? = nil,
         initialTab: IOSWorkspaceHubTab = .history
     ) {
         self.workspace = workspace
         self.sync = sync
         self.assistant = assistant
+        self.talk = talk
+        self.speech = speech
         self.initialTab = initialTab
         _selectedTab = State(initialValue: initialTab)
     }
@@ -110,6 +118,12 @@ struct IOSWorkspaceHubView: View {
             .accessibilityIdentifier("workspace.hub.mode")
 
             switch selectedTab {
+            case .ask:
+                if let talk, let speech {
+                    IOSAssistantTalkView(talk: talk, speech: speech)
+                } else {
+                    IOSStandaloneAskView(workspace: workspace, assistant: assistant)
+                }
             case .history:
                 historyList
             case .tasks:
@@ -332,5 +346,24 @@ struct IOSWorkspaceHubView: View {
     private func openMeeting(_ sessionID: UUID) {
         selectedSessionID = sessionID
         compactColumn = .detail
+    }
+}
+
+private struct IOSStandaloneAskView: View {
+    @ObservedObject var workspace: IOSWorkspaceCoordinator
+    @ObservedObject var assistant: IOSAssistantCoordinator
+    @StateObject private var speech: IOSAssistantSpeechCoordinator
+    @StateObject private var talk: IOSAssistantTalkController
+
+    init(workspace: IOSWorkspaceCoordinator, assistant: IOSAssistantCoordinator) {
+        self.workspace = workspace
+        self.assistant = assistant
+        let speech = IOSAssistantSpeechCoordinator()
+        _speech = StateObject(wrappedValue: speech)
+        _talk = StateObject(wrappedValue: IOSAssistantTalkController(workspace: workspace, assistant: assistant, speech: speech))
+    }
+
+    var body: some View {
+        IOSAssistantTalkView(talk: talk, speech: speech)
     }
 }

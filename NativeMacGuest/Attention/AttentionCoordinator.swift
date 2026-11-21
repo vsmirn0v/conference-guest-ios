@@ -213,6 +213,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var now: () -> Date = Date.init
     var language: String = Bundle.main.preferredLocalizations.first ?? "en"
     lazy var talk = AssistantTalkController(attention: self)
+    lazy var speech = AssistantSpeechInputCoordinator(attention: self)
     /// Readiness and residency of the local speech and voice models, for the
     /// toolbar indicator and Settings. Owns no model resources itself.
     lazy var localModels = LocalModelStatusStore(store: store)
@@ -221,8 +222,14 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     let ruleStore: AssistantRuleStore
     /// Shared action identity/dedupe for every outward action, from agent runs and rules.
     let actionCoordinator = AssistantActionCoordinator()
-    /// Future native calendar occurrences for the agent's read-only calendar tools.
+    /// Ongoing & upcoming native calendar occurrences for read-only calendar and join tools.
     var calendarOccurrences: () -> [CalendarMeeting] = { [] }
+    /// Ranked joinable targets (ongoing calendar, upcoming calendar, handoff, favorites, recent).
+    var joinableTargets: (Date) -> [JoinableMeetingCandidate] = { _ in [] }
+    /// Called when the Assistant switches a meeting into Participation mode (optionally with spoken objective).
+    var onRequestParticipationMode: ((NativeDesktopMeetingModel, String) -> Void)?
+    @Published var participationPromptMeetingID: UUID?
+    var participationDraftObjective: String?
     /// External tool source (the app's MCP loopback today; external MCP servers later).
     var externalToolProvider: (any AssistantExternalToolProviding)?
     var saveTaskSyncPreferencesToCloud: (TaskSyncPreferences) -> Void = { _ in }
@@ -402,6 +409,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             clearOverflow(forMeeting: id)
         }
         store.assistant.observeModeChange(mode, meetingTitle: model.title, invitation: model.invitation, series: model.calendarSeriesID, now: now())
+        speech.refreshState()
         probeLog("attention-mode", ["mode": mode.rawValue, "scope": String(describing: scope)])
     }
     /// Drops your choice for this meeting (and its series' mode, when `series`), back to the defaults.

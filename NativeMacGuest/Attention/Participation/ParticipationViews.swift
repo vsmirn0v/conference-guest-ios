@@ -4,9 +4,13 @@ struct ParticipationSetupView: View {
     @ObservedObject var participation: ParticipationCoordinator
     @ObservedObject var model: NativeDesktopMeetingModel
     @ObservedObject var store: AttentionStore
+    var attention: AttentionCoordinator? = nil
     @ObservedObject private var clone = VoiceCloneStore.shared
     @State private var reviewed: ParticipationSetup?
     @State private var objective = ""
+    @State private var dictating = false
+    @State private var liveSpeechPreview = ""
+    @State private var updatingFromDictation = false
     @State private var scopeChanged = false
     @State private var startFailure: ParticipationCoordinator.Reason?
     @State private var noteContext: ParticipationKnowledgeReviewContext?
@@ -51,6 +55,7 @@ struct ParticipationSetupView: View {
                 } else if let reviewed {
                     Button(participation.status == .review || participation.status == .unavailable
                         ? L("Restart participation") : L("Start participating")) {
+                        stopObjectiveDictation(commit: false)
                         if participation.start(reviewed, objective: objective, model: model, store: store,
                                                context: noteContext, notes: notes, output: output) { close() }
                         else {
@@ -69,9 +74,21 @@ struct ParticipationSetupView: View {
         .padding(14)
         .frame(width: 355)
         .onAppear {
-            objective = participation.objective
+            if let draft = attention?.participationDraftObjective, !draft.trimmed.isEmpty {
+                objective = draft
+                attention?.participationDraftObjective = nil
+            } else {
+                objective = participation.objective
+            }
             output = participation.status == .inactive ? store.lastParticipationOutput : participation.output
             captureScope()
+            if (participation.status == .inactive || participation.status == .review || participation.status == .unavailable),
+               objective.trimmed.isEmpty {
+                startObjectiveDictation()
+            }
+        }
+        .onDisappear {
+            stopObjectiveDictation(commit: false)
         }
         .onChange(of: output) { newOutput in
             startFailure = nil
@@ -234,8 +251,29 @@ struct ParticipationSetupView: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         if participation.status == .inactive || participation.status == .review || participation.status == .unavailable {
-            TextField(L("Meeting objective (optional)"), text: $objective)
-                .accessibilityIdentifier("participation.objective")
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    TextField(L("Meeting objective (optional)"), text: objectiveTextBinding)
+                        .accessibilityIdentifier("participation.objective")
+                    if attention != nil {
+                        Button {
+                            dictating ? stopObjectiveDictation(commit: true) : startObjectiveDictation()
+                        } label: {
+                            Image(systemName: dictating ? "stop.circle.fill" : "mic.fill")
+                                .foregroundStyle(dictating ? Color.red : .accentColor)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(dictating ? L("Stop dictation") : L("Dictate meeting context"))
+                        .accessibilityIdentifier("participation.objective.dictate")
+                    }
+                }
+                if dictating {
+                    Label(liveSpeechPreview.isEmpty ? L("Listening — speak your meeting context…") : liveSpeechPreview, systemImage: "waveform")
+                        .font(.caption)
+                        .foregroundStyle(.teal)
+                        .lineLimit(2)
+                }
+            }
         }
     }
 
@@ -310,5 +348,47 @@ struct ParticipationSetupView: View {
         default:
             nil
         }
+    }
+
+    private var objectiveTextBinding: Binding<String> {
+        Binding(
+            get: { objective },
+            set: { newValue in
+                if dictating && !updatingFromDictation {
+                    stopObjectiveDictation(commit: false)
+                }
+                objective = newValue
+            }
+        )
+    }
+
+    private func startObjectiveDictation() {
+        guard let speech = attention?.speech else { return }
+        dictating = true
+        liveSpeechPreview = ""
+        speech.startDictation(
+            onPartial: { partial in
+                liveSpeechPreview = partial
+                updatingFromDictation = true
+                objective = partial
+                updatingFromDictation = false
+            },
+            onFinal: { finalText in
+                updatingFromDictation = true
+                if !finalText.trimmed.isEmpty {
+                    objective = finalText.trimmed
+                }
+                updatingFromDictation = false
+                dictating = false
+                liveSpeechPreview = ""
+            }
+        )
+    }
+
+    private func stopObjectiveDictation(commit: Bool) {
+        guard dictating else { return }
+        dictating = false
+        liveSpeechPreview = ""
+        attention?.speech.stopDictation(commit: commit)
     }
 }

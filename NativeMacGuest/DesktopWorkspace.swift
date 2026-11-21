@@ -151,9 +151,10 @@ import UserNotifications
          attention: AttentionCoordinator? = nil) {
         let library = library ?? NativeDesktopLibrary()
         self.attention = attention ?? AttentionCoordinator()
-        // The agent's read-only calendar tools see future occurrences; they never join or edit.
+        // The agent's read-only calendar tools see ongoing and future occurrences; they never join or edit.
         self.attention.calendarOccurrences = { [weak library] in
-            (library?.calendar.meetings ?? []).filter { $0.start > Date() }
+            let cutoff = Date().addingTimeInterval(-900)
+            return (library?.calendar.meetings ?? []).filter { $0.end > cutoff }
         }
         self.library = library; self.detect = detect; self.makeHandoffActivity = makeHandoffActivity
         self.makeMeeting = makeMeeting ?? { NativeDesktopMeetingModel(destination: $0, name: $1, title: $2, quiet: $3) }
@@ -234,11 +235,70 @@ import UserNotifications
         self.attention.isOnScreen = { [weak self] in self?.isOnScreen($0) ?? false }
         self.attention.openMeeting = { [weak self] id in self?.openFromAttention(id) }
         self.attention.notify = { card in NativeDesktopWorkspace.postAttentionNotification(card) }
-        self.attention.talk.joinMeeting = { [weak self] ref in
-            guard let self, let invitation = ref.invitation else { return false }
-            join(invitation, title: ref.title); return true
+        self.attention.joinableTargets = { [weak self, weak library] now in
+            guard let library else { return [] }
+            var activeRooms: [String: UUID] = [:]
+            if let self {
+                for model in self.meetings where !model.isClosed {
+                    if let key = MeetingRoomIdentity(model.invitation, engine: model.kind)?.workspaceKey {
+                        activeRooms[key] = model.sessionID
+                    }
+                }
+            }
+            return CurrentMeetingTargetResolver.rankedCandidates(
+                now: now,
+                calendarMeetings: library.calendar.meetings,
+                handoffs: library.continuation.candidates,
+                rooms: library.recent + library.favorites,
+                activeRooms: activeRooms
+            )
+        }
+        self.attention.talk.joinMeeting = { [weak self, weak library] ref in
+            guard let self else { return false }
+            if let existing = self.meetings.first(where: { !$0.isClosed && $0.sessionID == ref.id }) {
+                self.showMeeting(existing)
+                return true
+            }
+            guard let invitation = ref.invitation else { return false }
+            let incomingIdentity = MeetingRoomIdentity(invitation)
+            if let incomingIdentity,
+               let existing = self.meetings.first(where: { !$0.isClosed && MeetingRoomIdentity($0.invitation, engine: $0.kind)?.workspaceKey == incomingIdentity.workspaceKey }) {
+                self.showMeeting(existing)
+                return true
+            }
+            let matchedCalendar = library?.calendar.meetings.first(where: {
+                CurrentMeetingTargetResolver.stableID(namespace: "calendar", key: $0.id) == ref.id ||
+                $0.invitation == invitation
+            })
+            let matchedRoom = library?.history.matching(invitation, engine: matchedCalendar?.engine)
+            self.join(
+                invitation,
+                engine: matchedCalendar?.engine ?? matchedRoom?.engine,
+                title: ref.title,
+                eventID: matchedCalendar?.id
+            )
+            return true
         }
         self.attention.talk.leaveMeeting = { [weak self] model in await self?.leave(model) ?? false }
+        self.attention.onRequestParticipationMode = { [weak self] model, objective in
+            guard let self else { return }
+            let cleanObjective = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.showMeeting(model)
+            if !cleanObjective.isEmpty,
+               let approved = model.participation.setup(for: model, store: self.attention.store),
+               model.participation.start(approved, objective: cleanObjective, model: model, store: self.attention.store,
+                                         output: self.attention.store.lastParticipationOutput) {
+                self.attention.participationPromptMeetingID = nil
+                self.attention.speech.refreshState()
+                return
+            }
+            if !cleanObjective.isEmpty {
+                self.attention.participationDraftObjective = String(cleanObjective.prefix(180))
+            }
+            self.attention.participationPromptMeetingID = nil
+            self.attention.participationPromptMeetingID = model.sessionID
+            self.attention.speech.refreshState()
+        }
         // Push-to-talk is app-wide, not tied to the Talk tab's visibility.
         // The publisher emits in willSet, so the controller must use the emitted value.
         self.attention.talk.installHotKey(enabled: self.attention.store.pushToTalk)

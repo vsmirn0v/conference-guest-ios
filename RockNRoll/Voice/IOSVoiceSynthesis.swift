@@ -339,9 +339,14 @@ final class IOSVoicePreviewPlayer: ObservableObject {
     @Published private(set) var isPlaying = false
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
+    private var generation = UUID()
+    private var completionHandler: (() -> Void)?
 
-    func play(_ buffer: AVAudioPCMBuffer) throws {
+    func play(_ buffer: AVAudioPCMBuffer, onComplete: (() -> Void)? = nil) throws {
         stop()
+        let token = UUID()
+        generation = token
+        completionHandler = onComplete
         let session = AVAudioSession.sharedInstance()
         let inCall = session.mode == .voiceChat || session.mode == .videoChat
         if !inCall {
@@ -356,9 +361,9 @@ final class IOSVoicePreviewPlayer: ObservableObject {
         self.engine = engine
         self.player = player
         isPlaying = true
-        player.scheduleBuffer(buffer) { [weak self, weak engine] in
-            Task { @MainActor [weak self, weak engine] in
-                guard let self, self.engine === engine else { return }
+        player.scheduleBuffer(buffer) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == token else { return }
                 self.stop()
             }
         }
@@ -366,11 +371,15 @@ final class IOSVoicePreviewPlayer: ObservableObject {
     }
 
     func stop() {
+        generation = UUID()
         player?.stop()
         engine?.stop()
         player = nil
         engine = nil
         isPlaying = false
+        let completion = completionHandler
+        completionHandler = nil
+        completion?()
     }
 }
 
@@ -407,6 +416,18 @@ final class IOSVoiceStore: ObservableObject {
     @Published var rapidMLXDescription: String {
         didSet { preferences.set(rapidMLXDescription, forKey: Keys.rapidMLXDescription) }
     }
+    @Published var wakeWordEnabled: Bool {
+        didSet { preferences.set(wakeWordEnabled, forKey: AssistantVoicePreferences.wakeWordEnabledKey) }
+    }
+    @Published var assistantAuditionVoice: AssistantAuditionVoiceSelection {
+        didSet { AssistantVoicePreferences.saveAuditionVoice(assistantAuditionVoice, to: preferences) }
+    }
+    @Published var autoAuditionVoiceReplies: Bool {
+        didSet { preferences.set(autoAuditionVoiceReplies, forKey: AssistantVoicePreferences.autoSpeakVoiceRepliesKey) }
+    }
+    @Published var autoAuditionTypedReplies: Bool {
+        didSet { preferences.set(autoAuditionTypedReplies, forKey: AssistantVoicePreferences.autoSpeakTypedRepliesKey) }
+    }
 
     @Published private var approvedRapidMLXEndpoint: String?
     private let preferences: UserDefaults
@@ -431,6 +452,45 @@ final class IOSVoiceStore: ObservableObject {
         self.rapidMLXBaseURL = preferences.string(forKey: Keys.rapidMLXBaseURL) ?? ""
         self.rapidMLXModel = preferences.string(forKey: Keys.rapidMLXModel) ?? "Qwen/Qwen3-TTS-12Hz-0.6B-Base-8bit"
         self.rapidMLXDescription = preferences.string(forKey: Keys.rapidMLXDescription) ?? ""
+        self.wakeWordEnabled = AssistantVoicePreferences.loadWakeWordEnabled(from: preferences)
+        self.assistantAuditionVoice = AssistantVoicePreferences.loadAuditionVoice(from: preferences)
+        self.autoAuditionVoiceReplies = AssistantVoicePreferences.loadAutoSpeakVoiceReplies(from: preferences)
+        self.autoAuditionTypedReplies = AssistantVoicePreferences.loadAutoSpeakTypedReplies(from: preferences)
+    }
+
+    func synthesizeAssistantResponse(_ text: String) async throws -> AVAudioPCMBuffer {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { throw IOSVoiceSynthesisError.empty }
+        let fallbackVoiceID = systemVoiceIdentifier.isEmpty ? nil : systemVoiceIdentifier
+        switch assistantAuditionVoice {
+        case .voxPreset(let preset):
+            do {
+                return try await IOSVoxCPM2Store.shared.speakPreset(clean, preset: preset)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return try await IOSVoiceSynthesis.system(clean, voiceIdentifier: fallbackVoiceID)
+            }
+        case .clonedVoice:
+            do {
+                return try await IOSVoxCPM2Store.shared.speakClonedForAssistant(clean)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return try await IOSVoiceSynthesis.system(clean, voiceIdentifier: fallbackVoiceID)
+            }
+        case .personalVoice:
+            do {
+                return try await IOSVoiceSynthesis.personal(clean)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return try await IOSVoiceSynthesis.system(clean, voiceIdentifier: fallbackVoiceID)
+            }
+        case .systemVoice(let identifier):
+            let resolvedID = identifier.isEmpty ? fallbackVoiceID : identifier
+            return try await IOSVoiceSynthesis.system(clean, voiceIdentifier: resolvedID)
+        }
     }
 
     func synthesize(_ text: String, session: URLSession = .shared) async throws -> AVAudioPCMBuffer {

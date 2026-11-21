@@ -4,3 +4,4 @@
 "NSMicrophoneUsageDescription" = "Share your microphone when you unmute in the native guest preview.";
 "NSRemindersUsageDescription" = "Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock'N'Roll for Mac.";
 "NSRemindersFullAccessUsageDescription" = "Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock'N'Roll for Mac.";
+"NSSpeechRecognitionUsageDescription" = "Recognize spoken commands to Rock on this Mac when local transcription models are not installed.";

@@ -195,8 +195,8 @@ private final class ClonedVoiceWorkerRuntime: @unchecked Sendable {
             return nil
         case .speak:
             progress(.init(stage: .synthesize))
-            guard let text = request.text, let voice = request.voice else { throw ClonedVoiceWorkerError.protocolFailure }
-            let pcm = try await loaded.generate(text, voice: voice, seed: UInt64.random(in: UInt64.min...UInt64.max))
+            guard let text = request.text else { throw ClonedVoiceWorkerError.protocolFailure }
+            let pcm = try await loaded.generate(text, voice: request.voice, seed: UInt64.random(in: UInt64.min...UInt64.max))
             try ClonedVoiceWire.validatePCM(pcm)
             return pcm
         }

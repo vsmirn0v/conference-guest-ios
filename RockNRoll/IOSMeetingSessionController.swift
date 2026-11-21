@@ -1306,13 +1306,14 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         host.present(sheet, animated: true)
     }
 
-    func presentAssistantSheet(assistant: IOSAssistantCoordinator) {
+    func presentAssistantSheet(assistant: IOSAssistantCoordinator, speech: IOSAssistantSpeechCoordinator? = nil) {
         guard let host = topPresentedCallController() else { return }
         let view = IOSAssistantModeSheet(
             controllerID: id,
             meetingTitle: title,
             canSendChat: canSendAssistantChat,
-            assistant: assistant
+            assistant: assistant,
+            speech: speech
         )
         let sheet = UIHostingController(rootView: view)
         sheet.modalPresentationStyle = .formSheet

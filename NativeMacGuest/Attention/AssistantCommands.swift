@@ -50,6 +50,7 @@ struct AssistantCommand: Equatable, Sendable {
     var count = 5
     var minutes = 10
     var at: Date?
+    var participate = false
 
     var needsConfirmation: Bool { [.sendChat, .say, .react, .leave, .join].contains(action) }
     /// The meeting-scoped bypass covers only outward meeting contributions, never leave.

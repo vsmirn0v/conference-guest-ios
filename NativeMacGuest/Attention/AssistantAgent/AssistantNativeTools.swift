@@ -179,7 +179,14 @@ private struct AssistantNativeActionTool: AssistantAgentActionTool {
         let meetingID = target.flatMap { $0.active ? $0.id : nil }
         switch kind {
         case .setAttention:
-            guard let mode = AttentionMode(rawValue: arguments["mode"]?.stringValue ?? "") else {
+            let rawMode = arguments["mode"]?.stringValue ?? ""
+            if rawMode == "participate" {
+                let objective = String((arguments["objective"]?.stringValue ?? arguments["text"]?.stringValue ?? "").trimmed.prefix(180))
+                return .init(kind: kind, meetingID: meetingID, mode: .watch,
+                             scope: AssistantCommandScope(rawValue: arguments["scope"]?.stringValue ?? "") ?? .untilLeave,
+                             text: objective, participate: true)
+            }
+            guard let mode = AttentionMode(rawValue: rawMode) else {
                 throw AssistantAgentError.missingArgument(descriptor.name, "mode")
             }
             return .init(kind: kind, meetingID: meetingID, mode: mode,
@@ -254,6 +261,7 @@ enum AssistantNativeToolProvider {
             "time_zone": snapshot.timeZoneIdentifier,
             "language": snapshot.language,
             "task_status": "Use rocknroll_list_tasks to verify current assignments before recommending action. Archived tasks and mentions in historical text do not establish active work.",
+            "meeting_actions": "Use rocknroll_list_calendar to find ongoing/upcoming calendar meetings and joinable target IDs for rocknroll_join. To enable Participation mode on a meeting, call rocknroll_setAttention with mode=participate and optional objective.",
         ]
         if let id = snapshot.contextMeetingID, let meeting = snapshot.meetings.first(where: { $0.id == id }) {
             context["selected_meeting"] = "\(meeting.title) (\(meeting.id.uuidString)); context only, not authorization"
@@ -443,6 +451,31 @@ enum AssistantNativeToolProvider {
                 }
                 return .success(call, "\(moments.count) Moment(s).", json: .object(["moments": .array(moments)]))
             },
+            closure(snapshot, name: "rocknroll_list_calendar", description: "List ongoing and upcoming calendar meetings plus joinable room targets with typed IDs for rocknroll_join.", arguments: []) { call, _ in
+                let formatter = ISO8601DateFormatter()
+                let events = snapshot.calendar.map { occurrence in
+                    let targetID = CurrentMeetingTargetResolver.stableID(namespace: "calendar", key: occurrence.id)
+                    let joinTarget = snapshot.actionTargets.first { $0.id == targetID }
+                    return AssistantJSON.object(
+                        ("id", .string(occurrence.id)),
+                        ("title", .string(occurrence.title)),
+                        ("start", .string(formatter.string(from: occurrence.start))),
+                        ("end", .string(formatter.string(from: occurrence.end))),
+                        ("is_ongoing", .bool(occurrence.start <= snapshot.now && occurrence.end > snapshot.now)),
+                        ("all_day", .bool(occurrence.allDay)),
+                        ("room_identity", .string(occurrence.roomIdentity)),
+                        ("target_meeting_id", AssistantJSON.optionalString(joinTarget?.id.uuidString)))
+                }
+                let joinTargets = snapshot.actionTargets.map { target in
+                    AssistantJSON.object(
+                        ("meeting_id", .string(target.id.uuidString)),
+                        ("title", .string(target.title)),
+                        ("active", .bool(target.active)),
+                        ("has_invitation", .bool(target.invitation != nil)))
+                }
+                return .success(call, "\(events.count) calendar occurrence(s); \(joinTargets.count) join target(s).",
+                                json: .object(["calendar": .array(events), "join_targets": .array(joinTargets)]))
+            },
             closure(snapshot, name: "rocknroll_search_memory", description: "Read bounded explicit long-term memory excerpts. Use only when personal memory is relevant; never use this tool to answer a historical-meeting question.", arguments: [
                 .init(name: "query", type: .string, required: true),
                 .init(name: "limit", type: .integer),
@@ -513,9 +546,10 @@ enum AssistantNativeToolProvider {
             .init(name: "rocknroll_" + name, description: description, arguments: arguments, requiresApproval: true)
         }
         return [
-            AssistantNativeActionTool(descriptor: descriptor("setAttention", "Set this meeting's attention mode after approval.",
-                arguments: [targetArgument, .init(name: "mode", type: .string, required: true, allowedValues: AttentionMode.allCases.map(\.rawValue)),
-                            .init(name: "scope", type: .string, allowedValues: ["untilLeave", "minutes30", "series"])]),
+            AssistantNativeActionTool(descriptor: descriptor("setAttention", "Set this meeting's attention mode or activate Participate mode.",
+                arguments: [targetArgument, .init(name: "mode", type: .string, required: true, allowedValues: AttentionMode.allCases.map(\.rawValue) + ["participate"]),
+                            .init(name: "scope", type: .string, allowedValues: ["untilLeave", "minutes30", "series"]),
+                            .init(name: "objective", type: .string, description: "Optional participation objective when mode is participate.")]),
                 snapshot: snapshot, executor: hooks.executeAction),
             AssistantNativeActionTool(descriptor: descriptor("join", "Join or open the exact target meeting after approval.",
                 arguments: [targetArgument]), snapshot: snapshot, executor: hooks.executeAction),

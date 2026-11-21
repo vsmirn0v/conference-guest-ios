@@ -38,6 +38,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Share your microphone when you unmute in the native guest preview.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Recognize spoken commands to Rock on this Mac when local transcription models are not installed.</string>
 	<key>NativeGuestProtocolVersion</key>
 	<integer>1</integer>
 </dict>

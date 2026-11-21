@@ -204,6 +204,7 @@ struct IOSAssistantModeSheet: View {
     let meetingTitle: String
     let canSendChat: Bool
     @ObservedObject var assistant: IOSAssistantCoordinator
+    var speech: IOSAssistantSpeechCoordinator? = nil
     var onFocusMeeting: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
@@ -211,18 +212,22 @@ struct IOSAssistantModeSheet: View {
     @State private var output: IOSParticipationOutput
     @State private var askBeforeSending: Bool
     @State private var goalDraft: String
+    @State private var dictatingGoal = false
+    @State private var updatingGoalFromSpeech = false
 
     init(
         controllerID: UUID,
         meetingTitle: String,
         canSendChat: Bool,
         assistant: IOSAssistantCoordinator,
+        speech: IOSAssistantSpeechCoordinator? = nil,
         onFocusMeeting: (() -> Void)? = nil
     ) {
         self.controllerID = controllerID
         self.meetingTitle = meetingTitle
         self.canSendChat = canSendChat
         self.assistant = assistant
+        self.speech = speech
         self.onFocusMeeting = onFocusMeeting
         _output = State(initialValue: assistant.effectiveParticipationOutput(for: controllerID))
         _askBeforeSending = State(initialValue: assistant.effectiveAskBeforeSending(for: controllerID))
@@ -248,6 +253,11 @@ struct IOSAssistantModeSheet: View {
                     ForEach(IOSMeetingAssistantMode.allCases) { mode in
                         Button {
                             assistant.setMode(mode, for: controllerID, rememberForRoom: rememberForRoom)
+                            if mode == .participating {
+                                maybeAutoStartGoalDictation()
+                            } else {
+                                stopGoalDictation(commit: false)
+                            }
                         } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 Image(systemName: mode.symbol)
@@ -307,9 +317,28 @@ struct IOSAssistantModeSheet: View {
                         Toggle(L("Ask before replying"), isOn: $askBeforeSending)
                             .onChange(of: askBeforeSending) { _, _ in syncParticipationOptions() }
 
-                        TextField(L("Goal for assistant (optional)"), text: $goalDraft, axis: .vertical)
-                            .lineLimit(2...4)
-                            .onChange(of: goalDraft) { _, _ in syncParticipationOptions() }
+                        HStack(alignment: .top, spacing: 8) {
+                            TextField(L("Goal for assistant (optional)"), text: goalTextBinding, axis: .vertical)
+                                .lineLimit(2...4)
+                                .accessibilityIdentifier("assistant.mode.goal")
+                            if speech != nil {
+                                Button {
+                                    dictatingGoal ? stopGoalDictation(commit: true) : startGoalDictation()
+                                } label: {
+                                    Image(systemName: dictatingGoal ? "stop.circle.fill" : "mic.fill")
+                                        .font(.title3)
+                                        .foregroundStyle(dictatingGoal ? Color.red : Color.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("assistant.mode.dictate")
+                                .accessibilityLabel(dictatingGoal ? L("Stop dictation") : L("Speak context"))
+                            }
+                        }
+                        if dictatingGoal {
+                            Label(L("Listening — speak your meeting context…"), systemImage: "waveform")
+                                .font(.caption)
+                                .foregroundStyle(.teal)
+                        }
 
                         if !canSendChat && (output == .chat || output == .voiceAndChat) {
                             Text(L("Meeting chat is currently unavailable; voice replies will be used or drafted."))
@@ -384,12 +413,64 @@ struct IOSAssistantModeSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(L("Done")) {
+                        stopGoalDictation(commit: false)
                         syncParticipationOptions()
                         dismiss()
                     }
                 }
             }
+            .onAppear { maybeAutoStartGoalDictation() }
+            .onDisappear { stopGoalDictation(commit: false) }
         }
+    }
+
+    private var goalTextBinding: Binding<String> {
+        Binding(
+            get: { goalDraft },
+            set: { newValue in
+                if dictatingGoal && !updatingGoalFromSpeech {
+                    stopGoalDictation(commit: false)
+                }
+                goalDraft = newValue
+                syncParticipationOptions()
+            }
+        )
+    }
+
+    private func maybeAutoStartGoalDictation() {
+        guard activeMode == .participating,
+              goalDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !dictatingGoal else { return }
+        startGoalDictation()
+    }
+
+    private func startGoalDictation() {
+        guard let speech else { return }
+        dictatingGoal = true
+        speech.startDictation(
+            onPartial: { partial in
+                updatingGoalFromSpeech = true
+                goalDraft = partial
+                updatingGoalFromSpeech = false
+                syncParticipationOptions()
+            },
+            onFinal: { finalText in
+                updatingGoalFromSpeech = true
+                let clean = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !clean.isEmpty {
+                    goalDraft = clean
+                    syncParticipationOptions()
+                }
+                updatingGoalFromSpeech = false
+                dictatingGoal = false
+            }
+        )
+    }
+
+    private func stopGoalDictation(commit: Bool) {
+        guard dictatingGoal else { return }
+        dictatingGoal = false
+        speech?.stopDictation(commit: commit)
     }
 
     private func syncParticipationOptions() {

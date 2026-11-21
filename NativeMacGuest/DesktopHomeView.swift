@@ -186,6 +186,13 @@ struct NativeDesktopHomeView: View {
                         .navigationSubtitle(meetingSubtitle(selected))
                 }
                 AttentionCardStack(attention: workspace.attention, openAssistant: { workspace.openAssistantMoments() })
+                if workspace.selection != .assistant {
+                    VStack {
+                        Spacer()
+                        AssistantVoiceHUDView(attention: workspace.attention, openAssistant: { workspace.show(section: .assistant) })
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
             .sheet(item: Binding(get: { workspace.attention.inspecting }, set: { workspace.attention.inspecting = $0 })) { card in
                 AttentionInspector(attention: workspace.attention, card: card)

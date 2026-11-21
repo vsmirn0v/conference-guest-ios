@@ -4,3 +4,4 @@
 "NSRemindersFullAccessUsageDescription" = "Синхронизировать задачи со встреч с выбранным списком Apple Напоминаний и импортировать задачи в Rock'N'Roll for Mac.";
 "NSCameraUsageDescription" = "Передавать изображение с камеры, когда вы включаете видео в гостевом клиенте.";
 "NSMicrophoneUsageDescription" = "Передавать звук с микрофона, когда вы включаете его в гостевом клиенте.";
+"NSSpeechRecognitionUsageDescription" = "Распознавать голосовые команды для Рок на этом Mac, когда локальные модели расшифровки не установлены.";

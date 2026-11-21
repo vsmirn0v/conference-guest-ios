@@ -907,4 +907,118 @@ final class AssistantAgentTests: XCTestCase {
         do { _ = try await expression(); XCTFail("Expected error. \(message)", file: file, line: line) }
         catch {}
     }
+
+    func testCalendarToolListsOngoingMeetingAndJoinTarget() async throws {
+        let now = Date()
+        let ongoingID = CurrentMeetingTargetResolver.stableID(namespace: "calendar", key: "ongoing-1")
+        let invite = URL(string: "https://meet.example.com/ongoing-room")!
+        let snapshot = AssistantNativeSnapshot(
+            now: now,
+            timeZoneIdentifier: "UTC",
+            language: "ru",
+            contextMeetingID: nil,
+            profileNames: ["You"],
+            meetings: [],
+            outcomes: [],
+            notes: [],
+            moments: [],
+            memories: [],
+            calendar: [
+                AssistantCalendarOccurrence(
+                    id: "ongoing-1", seriesID: "s1", calendarID: "c1", calendarTitle: "Work",
+                    title: "Текущая встреча", start: now.addingTimeInterval(-600),
+                    end: now.addingTimeInterval(1800), allDay: false, roomIdentity: "meet.example.com · ongoing-room"
+                )
+            ],
+            actionTargets: [
+                AssistantActionTarget(id: ongoingID, title: "Текущая встреча", invitation: invite, active: false, meetingID: nil)
+            ],
+            settings: [:]
+        )
+        let registry = registry(snapshot: snapshot)
+        let calCall = try registry.validate(call("rocknroll_list_calendar"))
+        let calResult = try await registry.tool(named: "rocknroll_list_calendar")!.execute(calCall, arguments: calCall.arguments)
+        let calEntries = calResult.json["calendar"]?.arrayValue ?? []
+        XCTAssertEqual(calEntries.first?["is_ongoing"]?.boolValue, true)
+        XCTAssertEqual(calEntries.first?["target_meeting_id"]?.stringValue, ongoingID.uuidString)
+
+        let joinCall = try registry.validate(call("rocknroll_join", .object(["meeting_id": .string(ongoingID.uuidString)])))
+        let joinTool = try XCTUnwrap(registry.tool(named: "rocknroll_join") as? any AssistantAgentActionTool)
+        let action = try joinTool.canonicalAction(for: joinCall, arguments: joinCall.arguments)
+        XCTAssertEqual(action.kind, .join)
+        XCTAssertEqual(action.meetingID, ongoingID)
+    }
+
+    func testVoiceApprovalPolicyAllowsJoinMuteParticipateAndGatesChatAndLeave() {
+        XCTAssertTrue(AssistantVoiceApprovalPolicy.shouldAutoApprove(actionKind: "join", inputSource: .voiceWake, sendsWithoutAsking: false))
+        XCTAssertTrue(AssistantVoiceApprovalPolicy.shouldAutoApprove(actionKind: "mute", inputSource: .voicePushToTalk, sendsWithoutAsking: false))
+        XCTAssertTrue(AssistantVoiceApprovalPolicy.shouldAutoApprove(actionKind: "setAttention", inputSource: .voiceWake, sendsWithoutAsking: false))
+        XCTAssertFalse(AssistantVoiceApprovalPolicy.shouldAutoApprove(actionKind: "sendChat", inputSource: .voiceWake, sendsWithoutAsking: false))
+        XCTAssertTrue(AssistantVoiceApprovalPolicy.shouldAutoApprove(actionKind: "sendChat", inputSource: .voiceWake, sendsWithoutAsking: true))
+        XCTAssertFalse(AssistantVoiceApprovalPolicy.shouldAutoApprove(actionKind: "leave", inputSource: .voiceWake, sendsWithoutAsking: true))
+        XCTAssertFalse(AssistantVoiceApprovalPolicy.shouldAutoApprove(actionKind: "join", inputSource: .externalMCP, sendsWithoutAsking: true))
+    }
+
+    func testWakePhraseDeterministicMonthlyCountAndVoiceJoin() throws {
+        let suite = "assistant-voice-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let keychain = AttentionKeychain(service: suite)
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            keychain.deleteAll()
+            try? FileManager.default.removeItem(at: tempRoot)
+        }
+
+        let exp = expectation(description: "wake-commands-complete")
+        Task { @MainActor in
+            let store = AttentionStore(root: tempRoot, defaults: defaults, keychain: keychain)
+            store.autoAuditionVoiceReplies = false
+            let now = Date()
+            let outcome = MeetingOutcome(
+                id: UUID(), meetingID: UUID(), meetingTitle: "Monthly Sync",
+                invitation: URL(string: "https://meet.example.com/sync"),
+                seriesID: nil, endedAt: now, summary: "Summary", decisions: [], tasks: [], openQuestions: []
+            )
+            store.assistant.addOutcome(outcome, alreadyPersisted: true)
+
+            let coordinator = AttentionCoordinator(store: store)
+            coordinator.now = { now }
+            let joinURL = URL(string: "https://meet.example.com/current-call")!
+            coordinator.joinableTargets = { currentNow in
+                [JoinableMeetingCandidate(
+                    id: CurrentMeetingTargetResolver.stableID(namespace: "calendar", key: "cur"),
+                    title: "Current Standup",
+                    invitation: joinURL,
+                    source: .ongoingCalendar,
+                    start: currentNow.addingTimeInterval(-300),
+                    end: currentNow.addingTimeInterval(1500)
+                )]
+            }
+            var joinedURL: URL?
+            coordinator.talk.joinMeeting = { ref in
+                joinedURL = ref.invitation
+                return true
+            }
+
+            var triggeredCommands: [String] = []
+            coordinator.speech.onWakeTriggered = { cmd in
+                triggeredCommands.append(cmd)
+                await coordinator.talk.run(cmd, source: .voiceWake)
+            }
+
+            let countOutcome = await coordinator.speech.processTranscriptForTesting("рок, сколько было встреч в этом месяце?", isFinal: true, now: now)
+            XCTAssertEqual(countOutcome, .triggered(command: "сколько было встреч в этом месяце?"))
+            let lastReply = coordinator.talk.agentRuntime.items.last(where: { $0.kind == .assistant })?.text ?? ""
+            XCTAssertTrue(lastReply.contains("1"), "Expected count answer for this month, got: \(lastReply)")
+
+            let joinOutcome = await coordinator.speech.processTranscriptForTesting("рок, подключи меня к текущей встрече", isFinal: true, now: now.addingTimeInterval(2))
+            XCTAssertEqual(joinOutcome, .triggered(command: "подключи меня к текущей встрече"))
+            XCTAssertEqual(joinedURL, joinURL)
+            XCTAssertEqual(triggeredCommands.count, 2)
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 5.0)
+    }
 }

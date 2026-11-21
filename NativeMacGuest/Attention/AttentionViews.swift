@@ -648,6 +648,8 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var previewing = false
     @State private var voiceMessage: String?
     @State private var voiceFailed = false
+    @State private var auditionPreviewing = false
+    @State private var auditionMessage: String?
     /// A result from an earlier preview must not overwrite a newer preparation.
     @State private var voicePreviewGeneration = UUID()
     @ObservedObject private var listen = ListenModelStore.shared
@@ -984,11 +986,57 @@ struct NativeDesktopIntelligenceSettings: View {
             }
             if area == .voice {
             Section(L("Talk to Assistant")) {
+                NativeSettingsSwitch(title: L("Hands-free “Rock” wake word"), isOn: $store.wakeWordEnabled,
+                                     id: "settings.wake-word", accessibilityID: "assistant.wakeWordEnabled")
+                Text(L("Always ready when you are in the app or muted in a call. Pauses automatically while your meeting microphone is unmuted or while Assistant speaks. Say “Rock, …” or “Рок, …” followed by a request."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 NativeSettingsSwitch(title: L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk,
                                      id: "settings.push-talk", accessibilityID: "assistant.pushToTalk")
                 Text(L("Hold it in this app or while another app is in front. While it is on, ⌥Space is not typed into any app, including as a non-breaking space. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held, and listening stops within 30 seconds if the key release is missed. You can also type every command."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 PushToTalkWarning(talk: attention.talk)
+            }
+            Section(L("Assistant reply voice")) {
+                Picker(L("Audition voice"), selection: $store.assistantAuditionVoice) {
+                    Section(L("Neural presets (VoxCPM2)")) {
+                        ForEach(AssistantVoxVoicePreset.allCases) { preset in
+                            Text(preset.localizedTitle).tag(AssistantAuditionVoiceSelection.voxPreset(preset))
+                        }
+                    }
+                    Section(L("Personal & Cloned")) {
+                        if clone.available {
+                            Text(L("My cloned voice")).tag(AssistantAuditionVoiceSelection.clonedVoice)
+                        }
+                        Text(L("Personal Voice")).tag(AssistantAuditionVoiceSelection.personalVoice)
+                    }
+                    Section(L("macOS system voices")) {
+                        Text(L("System voice (automatic)")).tag(AssistantAuditionVoiceSelection.systemVoice(identifier: ""))
+                        ForEach(Self.systemVoiceChoices(), id: \.identifier) { voice in
+                            Text("\(voice.name) (\(voice.language))").tag(AssistantAuditionVoiceSelection.systemVoice(identifier: voice.identifier))
+                        }
+                    }
+                }
+                .accessibilityIdentifier("assistant.auditionVoice")
+                if case .voxPreset(let preset) = store.assistantAuditionVoice {
+                    Text(preset.localizedSubtitle + " " + L("Uses on-device VoxCPM2 when downloaded, or falls back to the macOS voice."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else if store.assistantAuditionVoice == .clonedVoice && clone.stored == nil {
+                    Text(L("Record your cloned voice below first, or responses will fall back to the macOS voice."))
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    NativeSettingsButton(title: auditionPreviewing ? L("Preparing…") : L("Preview assistant voice"), id: "settings.audition-preview") {
+                        previewAuditionVoice()
+                    }
+                    .disabled(auditionPreviewing)
+                    if let auditionMessage {
+                        Text(auditionMessage).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                NativeSettingsSwitch(title: L("Speak voice-triggered replies aloud"), isOn: $store.autoAuditionVoiceReplies,
+                                     id: "settings.auto-audition-voice", accessibilityID: "assistant.autoAuditionVoice")
+                NativeSettingsSwitch(title: L("Speak typed replies aloud"), isOn: $store.autoAuditionTypedReplies,
+                                     id: "settings.auto-audition-typed", accessibilityID: "assistant.autoAuditionTyped")
             }
             Section(L("Hear answers privately")) {
                 let approval = HeadphoneApproval(store: store, output: headphones.output)
@@ -1205,5 +1253,141 @@ struct NativeDesktopIntelligenceSettings: View {
                 testFailed = true; testResult = error.localizedDescription
             }
         }
+    }
+
+    private func previewAuditionVoice() {
+        auditionPreviewing = true
+        auditionMessage = nil
+        let selection = store.assistantAuditionVoice
+        Task { @MainActor in
+            defer { auditionPreviewing = false }
+            do {
+                let sample = L("Hello! This is how Assistant answers sound on this Mac.")
+                let buffer = try await VoiceSynthesis.audition(sample, selection: selection)
+                try VoicePreviewPlayer.shared.play(buffer)
+                auditionMessage = selection.localizedSummary
+            } catch {
+                auditionMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private static func systemVoiceChoices() -> [AVSpeechSynthesisVoice] {
+        let preferredPrefixes = ["ru", "en"]
+        return AVSpeechSynthesisVoice.speechVoices()
+            .filter { voice in
+                if #available(macOS 14.0, *), voice.voiceTraits.contains(.isNoveltyVoice) {
+                    return false
+                }
+                return preferredPrefixes.contains(where: { voice.language.lowercased().hasPrefix($0) })
+            }
+            .sorted { lhs, rhs in
+                if lhs.quality != rhs.quality { return lhs.quality.rawValue > rhs.quality.rawValue }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }
+            .prefix(12)
+            .map { $0 }
+    }
+}
+
+/// Compact floating HUD shown outside the Assistant tab while listening for "Рок / Rock",
+/// recognizing push-to-talk, auditioning an answer, or waiting for voice action confirmation.
+struct AssistantVoiceHUDView: View {
+    @ObservedObject var attention: AttentionCoordinator
+    @ObservedObject private var speech: AssistantSpeechInputCoordinator
+    @ObservedObject private var talk: AssistantTalkController
+    var openAssistant: () -> Void
+
+    init(attention: AttentionCoordinator, openAssistant: @escaping () -> Void) {
+        self.attention = attention
+        self.openAssistant = openAssistant
+        _speech = ObservedObject(wrappedValue: attention.speech)
+        _talk = ObservedObject(wrappedValue: attention.talk)
+    }
+
+    private var isVisible: Bool {
+        speech.wakeArmed
+            || speech.mode == .pushToTalk
+            || talk.listening
+            || talk.working
+            || talk.auditioningItemID != nil
+            || talk.pending != nil
+            || talk.agentPending != nil
+    }
+
+    var body: some View {
+        if isVisible {
+            HStack(spacing: 12) {
+                Image(systemName: iconName)
+                    .font(.title3)
+                    .foregroundStyle(iconTint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(headline).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    if let detail, !detail.isEmpty {
+                        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 8)
+                if talk.pending != nil || talk.agentPending != nil {
+                    Button(L("Confirm")) {
+                        if talk.agentPending != nil { talk.confirmAgentPending() }
+                        else { talk.confirmPending() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Button(L("Cancel"), role: .cancel) {
+                        if talk.agentPending != nil { talk.cancelAgentPending() }
+                        else { talk.cancelPending() }
+                    }
+                    .controlSize(.small)
+                }
+                if talk.auditioningItemID != nil {
+                    Button(L("Stop")) { talk.stopAudition() }
+                        .controlSize(.small)
+                }
+                Button(L("Assistant"), action: openAssistant)
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: 460)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.quaternary))
+            .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+            .padding(.bottom, 16)
+            .padding(.horizontal, 16)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private var iconName: String {
+        if talk.auditioningItemID != nil { return "speaker.wave.2.fill" }
+        if talk.listening || speech.mode == .pushToTalk || speech.wakeArmed { return "waveform.circle.fill" }
+        return "sparkles"
+    }
+
+    private var iconTint: Color {
+        if talk.pending != nil || talk.agentPending != nil { return .orange }
+        if talk.auditioningItemID != nil { return .accentColor }
+        return .teal
+    }
+
+    private var headline: String {
+        if let pending = talk.agentPending { return pending.title }
+        if let pending = talk.pending { return pending.title }
+        if talk.auditioningItemID != nil { return L("Assistant speaking") }
+        if talk.working { return L("Thinking…") }
+        if talk.listening || speech.mode == .pushToTalk { return L("Listening…") }
+        if speech.wakeArmed { return L("Rock is listening…") }
+        return L("Assistant")
+    }
+
+    private var detail: String? {
+        if let pending = talk.agentPending, !pending.detail.isEmpty { return pending.detail }
+        if let pending = talk.pending, !pending.detail.isEmpty { return pending.detail }
+        if !speech.livePartialText.isEmpty { return speech.livePartialText }
+        if talk.auditioningItemID != nil { return talk.lastVoiceAnswer }
+        return nil
     }
 }

@@ -157,12 +157,134 @@ final class ConferenceModel: ObservableObject {
                             self.presentSession(id: card.controllerID)
                         }
                         self.sessions.first(where: { $0.id == card.controllerID })?
-                            .presentAssistantSheet(assistant: self.assistant)
+                            .presentAssistantSheet(assistant: self.assistant, speech: self.assistantSpeech)
                     }
                 )
             }
         }
         return coordinator
+    }()
+    lazy var assistantSpeech: IOSAssistantSpeechCoordinator = {
+        let coordinator = IOSAssistantSpeechCoordinator()
+        coordinator.isInCall = { [weak self] in
+            guard let self else { return false }
+            return !self.sessions.isEmpty
+        }
+        coordinator.isAnyMicUnmuted = { [weak self] in
+            guard let self else { return false }
+            return self.sessions.contains(where: { $0.isLocalMicrophoneUnmuted }) || !self.workspaceAudio.isMuted
+        }
+        coordinator.isAudioConflictActive = {
+            IOSVoxCPM2Store.shared.isWorking
+        }
+        coordinator.onWakeCommand = { [weak self] command in
+            guard let self else { return }
+            await self.assistantTalk.run(command, source: .voiceWake)
+        }
+        return coordinator
+    }()
+    lazy var assistantTalk: IOSAssistantTalkController = {
+        let controller = IOSAssistantTalkController(
+            workspace: workspace,
+            assistant: assistant,
+            speech: assistantSpeech
+        )
+        controller.joinableTargets = { [weak self] now in
+            guard let self else { return [] }
+            var activeRooms: [String: UUID] = [:]
+            for session in self.sessions {
+                if let key = MeetingRoomIdentity(session.invitationURL, engine: session.kind)?.workspaceKey {
+                    activeRooms[key] = session.id
+                }
+            }
+            return CurrentMeetingTargetResolver.rankedCandidates(
+                now: now,
+                calendarMeetings: self.calendar.meetings,
+                handoffs: self.continuation.candidates,
+                rooms: self.history.rooms,
+                activeRooms: activeRooms
+            )
+        }
+        controller.activeMeetingsProvider = { [weak self] in
+            guard let self else { return [] }
+            return self.sessions.map { session in
+                (
+                    id: session.id,
+                    title: session.title,
+                    isUnmuted: session.isLocalMicrophoneUnmuted,
+                    canSendChat: session.canSendAssistantChat,
+                    sessionID: session.workspaceSessionID
+                )
+            }
+        }
+        controller.onJoinCandidate = { [weak self] candidate in
+            guard let self else { return false }
+            if let activeID = candidate.activeSessionID,
+               self.sessions.contains(where: { $0.id == activeID }) {
+                self.presentSession(id: activeID)
+                return true
+            }
+            if let calMeeting = self.calendar.meetings.first(where: {
+                CurrentMeetingTargetResolver.stableID(namespace: "calendar", key: $0.id) == candidate.id ||
+                $0.invitation == candidate.invitation
+            }) {
+                self.joinCalendarMeeting(calMeeting)
+                return true
+            }
+            do {
+                let target = try self.destination(for: candidate.invitation.absoluteString, verifiedEngine: nil)
+                self.receive(target: target, autoJoin: true, title: candidate.title)
+                return true
+            } catch {
+                self.status = error.localizedDescription
+                self.statusIsError = true
+                return false
+            }
+        }
+        controller.onMuteMeeting = { [weak self] targetID in
+            guard let self else { return nil }
+            guard let session = targetID.flatMap({ id in self.sessions.first(where: { $0.id == id }) })
+                ?? self.foregroundSession ?? self.sessions.first else {
+                return nil
+            }
+            if !session.isLocalMicrophoneUnmuted {
+                return L("Your microphone is already muted in “%@”.", session.title)
+            }
+            session.setMicrophone(false)
+            self.assistantSpeech.refreshState()
+            return L("Muting “%@”.", session.title)
+        }
+        controller.onLeaveMeeting = { [weak self] targetID in
+            guard let self else { return false }
+            if let session = targetID.flatMap({ id in self.sessions.first(where: { $0.id == id }) })
+                ?? self.foregroundSession ?? self.sessions.first {
+                self.leaveSession(id: session.id)
+                return true
+            }
+            return false
+        }
+        controller.onSendChat = { [weak self] id, text in
+            guard let self else { return }
+            try await self.assistant.sendManualChat(controllerID: id, text: text)
+        }
+        controller.onRequestParticipation = { [weak self] id, objective in
+            guard let self else { return }
+            self.assistant.setMode(.participating, for: id)
+            let clean = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty {
+                self.assistant.setParticipationOptions(
+                    for: id,
+                    askBeforeSending: self.assistant.effectiveAskBeforeSending(for: id),
+                    output: self.assistant.effectiveParticipationOutput(for: id),
+                    goal: clean
+                )
+            } else {
+                self.sessions.first(where: { $0.id == id })?
+                    .presentAssistantSheet(assistant: self.assistant, speech: self.assistantSpeech)
+            }
+            self.assistantSpeech.refreshState()
+        }
+        return controller
     }()
     private var pendingContinuationWorkspaceSessionID: UUID?
 
@@ -299,6 +421,8 @@ final class ConferenceModel: ObservableObject {
             self?.workspace.scheduleSync(delayMilliseconds: 100)
         }
         workspace.start()
+        _ = assistantTalk
+        assistantSpeech.startObservingEnvironment()
     }
 
     deinit {
@@ -645,6 +769,7 @@ final class ConferenceModel: ObservableObject {
         recordDisconnect(for: id)
         target.leave()
         calendar.reminders.activeConnectionsChanged()
+        assistantSpeech.refreshState()
     }
 
     private func showForegroundSession(_ target: IOSMeetingSessionController, container: UIViewController) {
@@ -1218,10 +1343,11 @@ final class ConferenceModel: ObservableObject {
                 controller.onJoinAnotherMeeting = { [weak self] in self?.beginJoiningAnotherMeeting() }
                 controller.onOpenAssistant = { [weak self, weak controller] in
                     guard let self, let controller else { return }
-                    controller.presentAssistantSheet(assistant: self.assistant)
+                    controller.presentAssistantSheet(assistant: self.assistant, speech: self.assistantSpeech)
                 }
                 controller.onMicrophoneStateChanged = { [weak self] id, unmuted in
                     self?.assistant.handleMicrophoneChange(controllerID: id, unmuted: unmuted)
+                    self?.assistantSpeech.refreshState()
                 }
                 controller.onMeetingSoundChanged = { [weak self, weak controller] id in
                     guard let self else { return }
@@ -1840,6 +1966,13 @@ final class ConferenceModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.syncSwitcherItems()
+                self?.assistantSpeech.refreshState()
+            }
+            .store(in: &workspaceSubscriptions)
+        workspaceAudio.$isMuted
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.assistantSpeech.refreshState()
             }
             .store(in: &workspaceSubscriptions)
     }

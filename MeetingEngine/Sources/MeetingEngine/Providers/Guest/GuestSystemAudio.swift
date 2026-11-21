@@ -1001,6 +1001,35 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
         }
     }
 
+    /// Starts or confirms muted microphone recording while keeping playout, gates, and senders unchanged.
+    public func ensureAssistantMutedInput(timeout: TimeInterval = 8) async -> Bool {
+        await perform("assistant-muted-input", timeout: timeout) {
+            guard !self.closed, let module = self.currentModule,
+                  GuestSystemAudio.microphoneAuthorized, module.isMicrophoneMuted else { return false }
+            if module.isRecording {
+                self.readSnapshot(module)
+                return module.isMicrophoneMuted
+            }
+            guard self.inputPermitted else { return false }
+            let wasActivated = self.inputActivation
+            self.inputActivation.activate()
+            self.microphoneOptIn = self.inputActivation.inputAvailable
+            let success = GuestMutedInputPreparation.start(
+                mute: { self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0 },
+                makeAvailable: { self.applyAvailability(module) },
+                startRecording: { module.isRecording || self.nativeCall("start-recording", { module.initAndStartRecording(audioProcessingOptions: nil) }) == 0 },
+                isMuted: { module.isMicrophoneMuted })
+            if !success {
+                self.inputActivation = wasActivated
+                self.microphoneOptIn = self.inputActivation.inputAvailable
+                _ = self.applyAvailability(module)
+            }
+            self.update(["microphoneOptIn": self.microphoneOptIn])
+            self.readSnapshot(module)
+            return success && module.isRecording && module.isMicrophoneMuted
+        }
+    }
+
     /// Peers are detached before this privacy barrier. A room never inherits
     /// another room's activation or unmute choice.
     public func resetForRoom(playout: Bool, preparedInput: Bool) async -> Bool {

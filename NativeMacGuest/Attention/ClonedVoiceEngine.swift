@@ -140,6 +140,12 @@ actor ClonedVoiceEngine {
         return samples
     }
 
+    func speakZeroShot(_ text: String, folder: URL) async throws -> [Float] {
+        let result = try await execute(.init(operation: .speak, folder: folder.standardizedFileURL, text: text, voice: nil))
+        guard let samples = result.samples else { throw ClonedVoiceWorkerError.protocolFailure }
+        return samples
+    }
+
     func unload() async {
         if let stopping { await stopping.value; return }
         idle?.cancel()

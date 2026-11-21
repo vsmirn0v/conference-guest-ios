@@ -128,6 +128,7 @@ struct NativeGuestApplication {
     }
     private func makeWorkspace() -> NativeDesktopWorkspace {
         let value = NativeDesktopWorkspace()
+        value.attention.speech.startObservingEnvironment()
         value.mayAdmitMeeting = { [weak self] in
             guard let self, !terminating, companionAdmissionBlock == nil else { return false }
             #if NATIVE_DIRECT_UPDATES
