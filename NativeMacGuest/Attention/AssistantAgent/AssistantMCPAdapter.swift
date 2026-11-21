@@ -64,7 +64,7 @@ enum AssistantExternalToolPolicy {
             guard descriptor.name.hasPrefix(serverID + "__"), !descriptor.name.hasPrefix("rocknroll_"),
                   !descriptor.name.contains("..") else { return nil }
             guard !descriptor.requiresApproval else { return nil }
-            guard trust.readOnlyServers.contains(serverID) || descriptor.createsReview == false else { return nil }
+            guard trust.readOnlyServers.contains(serverID) else { return nil }
             return AssistantExternalTool(descriptor: descriptor, provider: provider)
         }
     }

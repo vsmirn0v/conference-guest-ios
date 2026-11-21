@@ -678,7 +678,10 @@ final class CompactCallHeader: UIView {
         assistant.configuration?.preferredSymbolConfigurationForImage = .init(pointSize: 16, weight: .medium)
         assistant.configuration?.titleTextAttributesTransformer = .init { attributes in
             var value = attributes
-            value.font = .systemFont(ofSize: 9, weight: .medium)
+            value.font = UIFontMetrics(forTextStyle: .caption2).scaledFont(
+                for: .systemFont(ofSize: 11, weight: .medium),
+                maximumPointSize: 15
+            )
             return value
         }
 
@@ -797,9 +800,11 @@ final class CompactCallHeader: UIView {
             layoutPortrait(available: available, showMinimize: showMinimize)
             return
         }
+        let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
         minimizeSurface.isHidden = !showMinimize
         if showMinimize {
-            minimizeSurface.frame = CGRect(x: 4, y: 0, width: 44, height: 44)
+            let minX: CGFloat = rtl ? bounds.width - 48 : 4
+            minimizeSurface.frame = CGRect(x: minX, y: 0, width: 44, height: 44)
             minimizeSurface.layoutIfNeeded()
             minimize.frame = minimizeSurface.contentView.bounds
         }
@@ -807,7 +812,7 @@ final class CompactCallHeader: UIView {
         let showsIdentity = bounds.width >= 104 || available.isEmpty
         let reserved: CGFloat = showsIdentity && !splitAcrossFold ?
             (showMinimize ? 164 : 128) : (showMinimize && !splitAcrossFold ? 56 : 8)
-        let actionWidth = division.map { bounds.maxX - $0.maxX - 8 } ?? (bounds.width - reserved)
+        let actionWidth = division.map { rtl ? $0.minX - 8 : bounds.maxX - $0.maxX - 8 } ?? (bounds.width - reserved)
         let capacity = max(1, Int(max(0, actionWidth) / 44))
         let needsOverflow = available.count > capacity || !showsIdentity || (minimizeAvailable && !disclosureOnly && !showMinimize)
         let priority: [UIButton] = [assistant, switcher, participants, conversation, focus, missed, layoutButton, pin, previous, automatic, nextStream]
@@ -829,25 +834,43 @@ final class CompactCallHeader: UIView {
             updateOverflow(hiddenItems)
             visible.append(overflow)
         }
-        let start = bounds.maxX - CGFloat(visible.count) * 44 - 4
+        let surfaceWidth = CGFloat(visible.count) * 44 + 6
+        let start = rtl ? CGFloat(4) : (bounds.maxX - CGFloat(visible.count) * 44 - 4)
         details.isHidden = !showsIdentity
         identitySurface.isHidden = !showsIdentity
-        let textEnd = splitAcrossFold ? bounds.maxX - 2 : (division?.minX ?? start) - 8
-        let identityWidth = max(0, textEnd - identityStart)
-        identitySurface.frame = CGRect(x: identityStart, y: 0,
-            width: min(division != nil ? identityWidth : 440, identityWidth), height: 44)
+        let identityWidth: CGFloat
+        let identityX: CGFloat
+        if rtl {
+            let rightEdge = bounds.width - identityStart
+            let leftEdge = splitAcrossFold ? CGFloat(2) : (division?.maxX ?? (start + surfaceWidth)) + 8
+            identityWidth = max(0, rightEdge - leftEdge)
+            let clamped = min(division != nil ? identityWidth : 440, identityWidth)
+            identityX = rightEdge - clamped
+            identitySurface.frame = CGRect(x: identityX, y: 0, width: clamped, height: 44)
+        } else {
+            let textEnd = splitAcrossFold ? bounds.maxX - 2 : (division?.minX ?? start) - 8
+            identityWidth = max(0, textEnd - identityStart)
+            identityX = identityStart
+            identitySurface.frame = CGRect(x: identityX, y: 0,
+                width: min(division != nil ? identityWidth : 440, identityWidth), height: 44)
+        }
         identitySurface.layoutIfNeeded(); details.frame = identitySurface.contentView.bounds
         actionsSurface.isHidden = visible.isEmpty
-        actionsSurface.frame = CGRect(x: start - 2, y: actionRowOffset, width: CGFloat(visible.count) * 44 + 6, height: 44)
+        actionsSurface.frame = CGRect(x: rtl ? 2 : start - 2, y: actionRowOffset, width: surfaceWidth, height: 44)
         actionsSurface.layoutIfNeeded()
-        layoutIdentity(textX: 40, rightInset: 14, iconX: 14)
-        for (index, button) in visible.enumerated() {
+        layoutIdentity(
+            textX: rtl ? 40 : 40,
+            rightInset: rtl ? 14 : 14,
+            iconX: rtl ? max(14, details.bounds.width - 32) : 14
+        )
+        let orderedVisible = rtl ? Array(visible.reversed()) : visible
+        for (index, button) in orderedVisible.enumerated() {
             button.frame = actionsSurface.contentView.convert(CGRect(x: start + CGFloat(index) * 44,
                 y: actionRowOffset, width: 44, height: 44), from: self)
         }
         for badge in [assistantBadge, switcherBadge, participantsBadge, chatBadge, missedBadge] {
             let width = min(22, max(14, ceil(badge.intrinsicContentSize.width) + 6))
-            badge.frame = CGRect(x: 39 - width, y: 6, width: width, height: 14)
+            badge.frame = CGRect(x: rtl ? 5 : 39 - width, y: 6, width: width, height: 14)
         }
     }
 

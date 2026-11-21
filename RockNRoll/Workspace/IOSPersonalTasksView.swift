@@ -512,6 +512,8 @@ struct IOSPersonalTasksView: View {
                     Image(systemName: selectedTaskIDs.contains(task.id) ? "checkmark.square.fill" : "square")
                         .font(.title3)
                         .foregroundStyle(selectedTaskIDs.contains(task.id) ? Color.accentColor : .secondary)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -521,6 +523,8 @@ struct IOSPersonalTasksView: View {
                 Image(systemName: task.done ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
                     .foregroundStyle(task.done ? .green : .secondary)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(isArchived || busy.contains(task.id))
@@ -628,11 +632,11 @@ struct IOSPersonalTasksView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { editingTask = task }
         }
         .padding(.vertical, 2)
-        .contentShape(Rectangle())
-        .onTapGesture { editingTask = task }
         .contextMenu {
             Button(L("Details & Reminder Rules…")) { editingTask = task }
             Button(L("Schedule Discussion…")) { schedulingDiscussionTask = task }

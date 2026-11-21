@@ -10,7 +10,8 @@ public struct TrueConfTarget: Equatable, Sendable {
         let target = try JoinTarget.parse(text)
         let parts = target.invitationURL.pathComponents.filter { $0 != "/" }
         guard parts.count == 2, parts[0] == "c", !parts[1].isEmpty,
-              parts[1].utf8.count <= 256, !parts[1].contains("/"),
+              parts[1] != ".", parts[1] != "..",
+              parts[1].utf8.count <= 256, !parts[1].contains("/"), !parts[1].contains("%"), !parts[1].contains("#"),
               !parts[1].unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw JoinDestinationError.invalidLink
         }

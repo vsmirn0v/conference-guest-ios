@@ -1,5 +1,8 @@
+import AVFoundation
 import ConferenceCore
+import Speech
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct IOSAssistantSettingsView: View {
@@ -51,28 +54,31 @@ struct IOSAssistantSettingsView: View {
             Section {
                 Toggle(L("Hands-free “Rock” wake word"), isOn: $voiceStore.wakeWordEnabled)
                     .accessibilityIdentifier("assistant.wakeWord")
-                Picker(L("Assistant reply voice"), selection: $voiceStore.assistantAuditionVoice) {
-                    Section(L("Neural presets (VoxCPM2)")) {
-                        ForEach(AssistantVoxVoicePreset.allCases) { preset in
-                            Text(preset.localizedTitle).tag(AssistantAuditionVoiceSelection.voxPreset(preset))
+                    .onChange(of: voiceStore.wakeWordEnabled) { _, enabled in
+                        guard enabled else { return }
+                        Task { @MainActor in
+                            _ = await AVAudioApplication.requestRecordPermission()
+                            SFSpeechRecognizer.requestAuthorization { _ in }
                         }
                     }
-                    Section(L("Personal & Cloned")) {
-                        if voxStore.isDeviceSupported {
-                            Text(L("My cloned voice")).tag(AssistantAuditionVoiceSelection.clonedVoice)
-                        }
-                        Text(L("Personal Voice")).tag(AssistantAuditionVoiceSelection.personalVoice)
-                    }
-                    Section(L("iPhone system voices")) {
-                        Text(L("System voice (automatic)")).tag(AssistantAuditionVoiceSelection.systemVoice(identifier: ""))
-                    }
+                NavigationLink {
+                    TranscriptionAndVoiceSettingsView()
+                } label: {
+                    LabeledContent(L("Assistant reply voice"), value: voiceStore.assistantAuditionVoice.localizedSummary)
                 }
                 Toggle(L("Speak voice-triggered replies aloud"), isOn: $voiceStore.autoAuditionVoiceReplies)
                 Toggle(L("Speak typed replies aloud"), isOn: $voiceStore.autoAuditionTypedReplies)
+                if AVAudioApplication.shared.recordPermission == .denied || SFSpeechRecognizer.authorizationStatus() == .denied {
+                    Button(L("Open Settings")) {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                }
             } header: {
                 Text(L("Voice Commands & Audition"))
             } footer: {
-                Text(L("Always ready while you are in the app or muted in a call, and paused when your meeting microphone is unmuted."))
+                Text(L("Always ready while you are in the app or muted in a call, and paused when your meeting microphone is unmuted. Open Assistant reply voice to preview voices or configure VoxCPM2."))
             }
 
             Section {
@@ -162,31 +168,11 @@ struct IOSAssistantSettingsView: View {
             }
 
             Section {
-                Toggle(
-                    L("Sync meetings, notes, tasks & settings"),
-                    isOn: Binding(get: { sync.syncWorkspace }, set: { sync.setSyncWorkspace($0) })
-                )
-                .disabled(!sync.enabled)
-
-                Toggle(
-                    L("Share calendar schedule"),
-                    isOn: Binding(get: { sync.shareCalendar }, set: { sync.setShareCalendar($0) })
-                )
-                .disabled(!sync.enabled)
-
-                Picker(
-                    L("Raw transcript iCloud retention"),
-                    selection: Binding(get: { sync.transcriptRetention }, set: { sync.setTranscriptRetention($0) })
-                ) {
-                    ForEach(TranscriptSyncRetention.allCases, id: \.self) { option in
-                        Text(option.title).tag(option)
-                    }
-                }
-                .disabled(!sync.enabled || !sync.syncWorkspace)
+                Text(L("iCloud Workspace Sync options and transcript retention are configured in Settings → Across your devices."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             } header: {
                 Text(L("iCloud Workspace Sync"))
-            } footer: {
-                Text(L("Older transcripts expire only from iCloud sync storage; full copies remain on this device and in your transcript backup folder."))
             }
 
             Section {

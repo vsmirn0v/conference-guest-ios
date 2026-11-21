@@ -251,56 +251,78 @@ enum VoiceSynthesis {
         return try buffer(fromAudio: data)
     }
 
+    struct AuditionSynthesisResult {
+        let buffer: AVAudioPCMBuffer
+        let usedSystemFallback: Bool
+        let failureReason: String?
+    }
+
     /// Synthesizes local audio for an Assistant response using the user's chosen audition voice
     /// (curated VoxCPM2 neural preset, cloned voice, Personal Voice, or macOS system voice),
     /// falling back to the local macOS system voice if a neural/cloned voice is not ready yet.
     static func audition(_ text: String, selection: AssistantAuditionVoiceSelection) async throws -> AVAudioPCMBuffer {
+        try await auditionWithStatus(text, selection: selection).buffer
+    }
+
+    static func auditionWithStatus(_ text: String, selection: AssistantAuditionVoiceSelection) async throws -> AuditionSynthesisResult {
         let clean = text.trimmed
         guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
         switch selection {
         case .voxPreset(let preset):
             do {
                 let samples = try await VoiceCloneStore.shared.speakPreset(clean, preset: preset)
-                return try VoiceSampleAudio.buffer(samples, rate: 48_000)
+                let buffer = try VoiceSampleAudio.buffer(samples, rate: 48_000)
+                return AuditionSynthesisResult(buffer: buffer, usedSystemFallback: false, failureReason: nil)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                return try await system(clean)
+                let buffer = try await system(clean)
+                return AuditionSynthesisResult(buffer: buffer, usedSystemFallback: true, failureReason: error.localizedDescription)
             }
         case .clonedVoice:
             do {
-                return try await cloned(clean)
+                let buffer = try await cloned(clean)
+                return AuditionSynthesisResult(buffer: buffer, usedSystemFallback: false, failureReason: nil)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                return try await system(clean)
+                let buffer = try await system(clean)
+                return AuditionSynthesisResult(buffer: buffer, usedSystemFallback: true, failureReason: error.localizedDescription)
             }
         case .personalVoice:
             do {
-                return try await personal(clean)
+                let buffer = try await personal(clean)
+                return AuditionSynthesisResult(buffer: buffer, usedSystemFallback: false, failureReason: nil)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                return try await system(clean)
+                let buffer = try await system(clean)
+                return AuditionSynthesisResult(buffer: buffer, usedSystemFallback: true, failureReason: error.localizedDescription)
             }
         case .systemVoice(let identifier):
             if !identifier.isEmpty,
                let specific = AVSpeechSynthesisVoice(identifier: identifier),
                let specificBuffer = await VoiceReplySample.make(text: clean, voice: specific) {
-                return specificBuffer
+                return AuditionSynthesisResult(buffer: specificBuffer, usedSystemFallback: false, failureReason: nil)
             }
-            return try await system(clean)
+            let buffer = try await system(clean)
+            return AuditionSynthesisResult(buffer: buffer, usedSystemFallback: false, failureReason: nil)
         }
     }
 
     /// Reads WAV (or any format AVAudioFile knows) through a private temporary file.
     static func buffer(fromAudio data: Data) throws -> AVAudioPCMBuffer {
+        let maxAudioBytes = 32 * 1024 * 1024
+        guard !data.isEmpty, data.count <= maxAudioBytes else { throw VoiceSynthesisError.audio }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("voice-reply-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: url) }
         do {
             try data.write(to: url, options: .atomic)
             let file = try AVAudioFile(forReading: url)
-            guard file.length > 0, let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else {
+            let maxFrames = Int64(max(1.0, file.processingFormat.sampleRate) * 120.0)
+            guard file.length > 0, file.length <= maxFrames,
+                  let frameCount = AVAudioFrameCount(exactly: file.length),
+                  let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else {
                 throw VoiceSynthesisError.audio
             }
             try file.read(into: buffer)

@@ -121,10 +121,16 @@ def pinned_sparkle(root):
 
 def configure_distribution(root, spec_dir, spec, distribution):
     # XcodeGen recursively includes the app directory; tooling is never a resource.
-    spec = spec.replace('Tests, __pycache__, NativeGuest.entitlements',
-                        'Tests, distribution, __pycache__, NativeGuest.entitlements')
+    extra = 'distribution, AuthorSupport' if distribution == 'app-store' else 'distribution'
+    spec, exclude_count = re.subn(
+        r'(\bexcludes:\s*\[[^\]]*\bTests,)',
+        lambda match: f'{match[1]} {extra},',
+        spec,
+        count=1,
+    )
+    if exclude_count != 1:
+        raise ValueError('Expected application excludes list containing Tests')
     if distribution == 'app-store':
-        spec = spec.replace('Tests, distribution,', 'Tests, distribution, AuthorSupport,')
         return spec, None, []
     bundle, evidence = pinned_sparkle(root)
     info = plistlib.loads((root / 'NativeMacGuest/Info.plist').read_bytes())

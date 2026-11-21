@@ -306,11 +306,14 @@ struct MeetingHistoryView: View {
         return VStack(spacing: 0) {
             if compact || navigation.source != nil {
                 HStack {
-                    Button(L("Back"), systemImage: "chevron.left") {
+                    Button {
                         if let source = navigation.source {
                             navigation.source = nil
                             workspace?.show(section: source)
                         } else { navigation.indexVisible = true }
+                    } label: {
+                        Label(L("Back"), systemImage: "chevron.left")
+                            .flipsForRightToLeftLayoutDirection(true)
                     }.buttonStyle(.borderless)
                     Spacer()
                 }.padding([.top, .horizontal], 12)

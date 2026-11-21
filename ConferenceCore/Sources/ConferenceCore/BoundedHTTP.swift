@@ -16,6 +16,7 @@ public enum BoundedHTTP {
     public static func load(_ request: URLRequest, session: URLSession,
                             maximumBytes: Int) async throws -> (Data, HTTPURLResponse) {
         guard let origin = request.url, origin.scheme?.lowercased() == "https",
+              let host = origin.host, !host.isEmpty,
               maximumBytes > 0 else { throw BoundedHTTPError.invalidOrigin }
         let redirects = SameOriginRedirects(origin: origin)
         let (bytes, response) = try await session.bytes(for: request, delegate: redirects)
@@ -46,8 +47,10 @@ final class SameOriginRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
     var rejected: Bool { lock.lock(); defer { lock.unlock() }; return wasRejected }
     init(origin: URL) { self.origin = origin }
     static func matches(_ candidate: URL, _ origin: URL) -> Bool {
-        candidate.scheme?.lowercased() == "https" &&
-            candidate.host?.lowercased() == origin.host?.lowercased() &&
+        guard let candHost = candidate.host?.lowercased(), !candHost.isEmpty,
+              let origHost = origin.host?.lowercased(), !origHost.isEmpty else { return false }
+        return candidate.scheme?.lowercased() == "https" &&
+            candHost == origHost &&
             (candidate.port ?? 443) == (origin.port ?? 443) &&
             candidate.user == nil && candidate.password == nil
     }

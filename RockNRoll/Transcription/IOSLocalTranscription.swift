@@ -114,6 +114,8 @@ private final class AudioIngressRouter: @unchecked Sendable {
     private var gigaam: CoreMLGigaAMRecognizer?
     private var localSpeaker = ""
     private var speakerNames: [String: String] = [:]
+    private var pendingWorkCount = 0
+    private static let maxPendingWorkCount = 24
 
     // Worker-queue-only state
     private var pipelines: [String: SpeakerPipeline] = [:]
@@ -151,11 +153,18 @@ private final class AudioIngressRouter: @unchecked Sendable {
     }
 
     func enqueueLocal(_ buffer: AVAudioPCMBuffer) {
-        let state: (running: Bool, backend: IOSListenModel, language: IOSTranscriptionLanguage, gigaam: CoreMLGigaAMRecognizer?, speaker: String) = lock.withLock {
-            (running, backend, language, gigaam, localSpeaker)
+        let state: (running: Bool, backend: IOSListenModel, language: IOSTranscriptionLanguage, gigaam: CoreMLGigaAMRecognizer?, speaker: String)? = lock.withLock {
+            guard running, pendingWorkCount < Self.maxPendingWorkCount else { return nil }
+            pendingWorkCount += 1
+            return (running, backend, language, gigaam, localSpeaker)
         }
-        guard state.running else { return }
+        guard let state else { return }
         workerQueue.async { [self] in
+            defer {
+                self.lock.withLock {
+                    if self.pendingWorkCount > 0 { self.pendingWorkCount -= 1 }
+                }
+            }
             self.processOnWorker(
                 streamID: "local",
                 speakerName: state.speaker,
@@ -168,11 +177,18 @@ private final class AudioIngressRouter: @unchecked Sendable {
     }
 
     func enqueueRemote(streamID: String, buffer: AVAudioPCMBuffer) {
-        let state: (running: Bool, backend: IOSListenModel, language: IOSTranscriptionLanguage, gigaam: CoreMLGigaAMRecognizer?, speaker: String?) = lock.withLock {
-            (running, backend, language, gigaam, speakerNames[streamID])
+        let state: (running: Bool, backend: IOSListenModel, language: IOSTranscriptionLanguage, gigaam: CoreMLGigaAMRecognizer?, speaker: String?)? = lock.withLock {
+            guard running, pendingWorkCount < Self.maxPendingWorkCount else { return nil }
+            pendingWorkCount += 1
+            return (running, backend, language, gigaam, speakerNames[streamID])
         }
-        guard state.running else { return }
+        guard let state else { return }
         workerQueue.async { [self] in
+            defer {
+                self.lock.withLock {
+                    if self.pendingWorkCount > 0 { self.pendingWorkCount -= 1 }
+                }
+            }
             self.processOnWorker(
                 streamID: streamID,
                 speakerName: state.speaker,

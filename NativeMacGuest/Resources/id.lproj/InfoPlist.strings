@@ -3,5 +3,6 @@
 "NSRemindersUsageDescription" = "Sinkronkan tugas rapat dengan daftar Pengingat Apple pilihan Anda dan impor tugas ke Rock'N'Roll for Mac.";
 "NSRemindersFullAccessUsageDescription" = "Sinkronkan tugas rapat dengan daftar Pengingat Apple pilihan Anda dan impor tugas ke Rock'N'Roll for Mac.";
 "NSCameraUsageDescription" = "Membagikan video kamera saat Anda menyalakan video di pratinjau tamu dalam aplikasi.";
-"NSMicrophoneUsageDescription" = "Membagikan audio mikrofon saat Anda membunyikannya di pratinjau tamu dalam aplikasi.";
+"NSMicrophoneUsageDescription" = "Membagikan audio mikrofon saat Anda menyuarakan mikrofon di rapat, menggunakan perintah suara bebas genggam untuk Rock, atau merekam sampel suara di Mac ini.";
 "NSSpeechRecognitionUsageDescription" = "Mengenali perintah suara untuk Rock di Mac ini saat model transkripsi lokal belum terpasang.";
+"NSPersonalVoiceUsageDescription" = "Rock'N'Roll for Mac dapat menggunakan Suara Personal Anda untuk membacakan balasan suara yang Anda kirim ke rapat atau jawaban asisten.";

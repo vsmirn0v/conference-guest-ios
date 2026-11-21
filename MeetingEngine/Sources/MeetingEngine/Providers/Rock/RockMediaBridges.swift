@@ -218,16 +218,22 @@ final class NativeRockScreenBridge: NSObject, LKRTCVideoRenderer, @unchecked Sen
               let buffer = fitted(input),
               let rotation = LiveKit.VideoRotation(rawValue: frame.rotation.rawValue) else { return }
         let dimensions = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
-        locked {
-            guard active else { return }
+        let waiterToResume: CheckedContinuation<CGSize, Error>? = locked { () -> CheckedContinuation<CGSize, Error>? in
+            guard active else { return nil }
             buffered = (buffer, frame.timeStampNs, rotation)
-            capturer?.capture(buffer, timeStampNs: frame.timeStampNs, rotation: rotation)
             if firstDimensions == nil {
                 firstDimensions = dimensions
-                dimensionWaiter?.resume(returning: dimensions)
+                let waiter = dimensionWaiter
                 dimensionWaiter = nil
+                return waiter
             }
+            return nil
         }
+        let activeNow = locked { active }
+        if activeNow {
+            capturer?.capture(buffer, timeStampNs: frame.timeStampNs, rotation: rotation)
+        }
+        waiterToResume?.resume(returning: dimensions)
     }
 
     private func fitted(_ buffer: CVPixelBuffer) -> CVPixelBuffer? {

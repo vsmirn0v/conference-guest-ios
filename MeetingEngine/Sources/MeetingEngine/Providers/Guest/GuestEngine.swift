@@ -1069,7 +1069,7 @@ public final class NativeGuestEngine {
     }
 
     func waitForStartupAudio() async throws {
-        guard let gain = startupPlaybackGain, !gain.isOpen, let owner = systemAudio else { return }
+        guard !outputSuppressed, let gain = startupPlaybackGain, !gain.isOpen, let owner = systemAudio else { return }
         if let task = startupAudioTask { try await task.value; return }
         let generation = startupAudioGeneration
         if startupAudioDeadline == nil { startupAudioDeadline = ProcessInfo.processInfo.systemUptime + 8 }
@@ -1208,7 +1208,11 @@ public final class NativeGuestEngine {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                repeat { try await waitForStartupAudio() } while !releaseStartupAudio()
+                repeat {
+                    if outputSuppressed || closing || failure != nil { return }
+                    try await waitForStartupAudio()
+                    if outputSuppressed || closing || failure != nil { return }
+                } while !releaseStartupAudio()
             } catch { if !closing, !(error is CancellationError) { recordFailure(error) } }
         }
     }
@@ -1337,15 +1341,39 @@ public final class NativeGuestEngine {
               let publisher, let systemAudio, serverMute[sid] == true,
               permitsParticipationVoice(permit, sid: sid, audio: systemAudio) else { return false }
         participationVoiceSender = permit
+        var signaledUnmute = false
+        var restored = false
+        defer {
+            if !restored, participationVoiceSender === permit {
+                participationVoiceSender = nil
+            }
+        }
         do {
             try await signalParticipationMute(false, sid: sid)
+            signaledUnmute = true
             guard permitsParticipationVoice(permit, sid: sid, audio: systemAudio),
                   await systemAudio.setParticipationSenderMuted(false, permit: permit),
-                  permitsParticipationVoice(permit, sid: sid, audio: systemAudio) else { return false }
+                  permitsParticipationVoice(permit, sid: sid, audio: systemAudio) else {
+                if signaledUnmute { try? await signalParticipationMute(true, sid: sid) }
+                return false
+            }
             try await publisher.setMuted(false, video: false)
-            return self.publisher === publisher && serverMute[sid] == false
+            let ok = self.publisher === publisher && serverMute[sid] == false
                 && permitsParticipationVoice(permit, sid: sid, audio: systemAudio)
-        } catch { return false }
+            if ok {
+                restored = true
+            } else {
+                publisher.suppress(video: false)
+                _ = await systemAudio.setParticipationSenderMuted(true, permit: permit)
+                if signaledUnmute { try? await signalParticipationMute(true, sid: sid) }
+            }
+            return ok
+        } catch {
+            publisher.suppress(video: false)
+            _ = await systemAudio.setParticipationSenderMuted(true, permit: permit)
+            if signaledUnmute { try? await signalParticipationMute(true, sid: sid) }
+            return false
+        }
     }
 
     /// Initializes a cold input graph under both local and server mute, then
@@ -1726,7 +1754,7 @@ public final class NativeGuestEngine {
         // Drain subscriber teardown while publisher's send stream still holds input
         // running, so StopPlayout does not trigger a throwaway playout-only engine rebuild.
         await subscriber?.closeAndDrain(timeout: 1)
-        publisher?.close()
+        await publisher?.closeAndDrain(timeout: 1)
         subscriber = nil; publisher = nil
         await transport?.close(graceTimeout: sendLeave ? 2 : 0.15); transport = nil
         reader?.cancel(); reader = nil

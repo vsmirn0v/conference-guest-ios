@@ -309,12 +309,13 @@ public struct SyncedMeetingSession: Codable, Equatable, Identifiable, Sendable {
         result.canonicalSessionID = Self.mergeOptional(canonicalSessionID, other.canonicalSessionID)
         result.calendarAssociation = Self.mergeOptional(calendarAssociation, other.calendarAssociation)
         result.historyGroupParent = Self.mergeOptional(historyGroupParent, other.historyGroupParent)
+        let mergedOverride = hasTitleOverride.merging(other.hasTitleOverride)
         if hasTitleOverride.value != other.hasTitleOverride.value {
-            result.title = hasTitleOverride.value ? title : other.title
+            result.title = hasTitleOverride.version < other.hasTitleOverride.version ? other.title : title
         } else {
             result.title = title.merging(other.title)
         }
-        result.hasTitleOverride = hasTitleOverride.merging(other.hasTitleOverride)
+        result.hasTitleOverride = mergedOverride
         result.invitation = invitation.merging(other.invitation)
         result.roomIdentity = Self.pickNonEmpty(roomIdentity, other.roomIdentity)
         result.calendarSeriesID = Self.pickOptional(calendarSeriesID, other.calendarSeriesID)
@@ -690,7 +691,8 @@ public struct SyncedMeetingTask: Codable, Equatable, Identifiable, Sendable {
         result.done = done.merging(other.done)
         result.completedAt = completedAt.merging(other.completedAt)
         if result.done.value {
-            result.reminderAt.value = nil
+            let clearVersion = result.done.version > result.reminderAt.version ? result.done.version : result.reminderAt.version
+            result.reminderAt = SyncValue(nil, version: clearVersion)
         }
         switch (extended, other.extended) {
         case (.some(let a), .some(let b)):
@@ -868,7 +870,14 @@ public struct SyncedTranscriptChunk: Codable, Equatable, Identifiable, Sendable 
             var byID: [String: SyncedTranscriptEvent] = [:]
             for event in events + other.events {
                 if let existing = byID[event.id] {
-                    let newer = event.revisions.count >= existing.revisions.count ? event : existing
+                    let newer: SyncedTranscriptEvent
+                    if event.revisions.count != existing.revisions.count {
+                        newer = event.revisions.count > existing.revisions.count ? event : existing
+                    } else if event.text != existing.text {
+                        newer = event.text > existing.text ? event : existing
+                    } else {
+                        newer = event.occurredAt >= existing.occurredAt ? event : existing
+                    }
                     var combined = newer
                     combined.isBookmarked = existing.isBookmarked || event.isBookmarked
                     byID[event.id] = combined
@@ -1234,7 +1243,9 @@ public enum MeetingLibrarySyncRecord: SyncZoneRecord {
         switch (self, other) {
         case (.session(let a), .session(let b)): return .session(a.merging(b))
         case (.note(let a), .note(let b)):
-            return a.version < b.version ? .note(b) : .note(a)
+            var winner = a.version < b.version ? b : a
+            winner.isDeleted = a.isDeleted.merging(b.isDeleted)
+            return .note(winner)
         case (.outcome(let a), .outcome(let b)): return .outcome(a.merging(b))
         case (.task(let a), .task(let b)): return .task(a.merging(b))
         case (.taskLink(let a), .taskLink(let b)):

@@ -167,7 +167,7 @@ targets:
   RockClonedVoiceGPUWorker:
     type: tool
     platform: macOS
-    deploymentTarget: '27.0'
+    deploymentTarget: '14.0'
     sources:
       - path: VoiceGPUWorker/Main.swift
       - path: Attention/VoxCPM2

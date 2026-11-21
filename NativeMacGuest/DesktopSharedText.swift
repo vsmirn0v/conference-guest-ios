@@ -149,7 +149,10 @@ struct NativeDesktopSharedTextView: View {
                     .frame(maxWidth: 340, alignment: .leading).help(model.status)
                 Spacer(minLength: 8)
                 HStack(spacing: 2) {
-                    Button { model.close() } label: { Label(L("Back to Live"), systemImage: "arrow.left") }
+                    Button { model.close() } label: {
+                        Label(L("Back to Live"), systemImage: "arrow.left")
+                            .flipsForRightToLeftLayoutDirection(true)
+                    }
                         .keyboardShortcut(.escape, modifiers: []).help(L("Back to Live"))
                     tool("arrow.clockwise", model.liveState == .changed ? L("Capture current share") : L("New frame")) { model.refresh() }.disabled(!model.canRefresh)
                     tool(viewport.zoom > 1.01 ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", viewport.zoom > 1.01 ? L("Fit to screen") : L("Zoom in")) { viewport.toggleFit() }.disabled(model.snapshot == nil)

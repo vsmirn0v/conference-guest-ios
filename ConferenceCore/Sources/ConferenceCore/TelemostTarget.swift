@@ -9,8 +9,12 @@ public struct TelemostTarget: Equatable, Sendable {
         guard let url = URL(string: text), url.scheme?.lowercased() == "https",
               let host = url.host?.lowercased(), hosts.contains(host),
               url.user == nil, url.password == nil, url.port == nil,
+              url.query == nil, url.fragment == nil,
               url.pathComponents.count == 3, url.pathComponents[1] == "j",
-              !url.pathComponents[2].isEmpty else { throw JoinDestinationError.invalidLink }
-        return .init(invitationURL: url, roomID: url.pathComponents[2])
+              case let room = url.pathComponents[2],
+              !room.isEmpty, room != ".", room != "..",
+              !room.contains("%"), !room.contains("#"),
+              !room.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { throw JoinDestinationError.invalidLink }
+        return .init(invitationURL: url, roomID: room)
     }
 }

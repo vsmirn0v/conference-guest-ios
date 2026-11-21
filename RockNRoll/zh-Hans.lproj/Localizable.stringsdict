@@ -30,6 +30,20 @@
 			<string>超出限制 %ld 个字符</string>
 		</dict>
 	</dict>
+	<key>%ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>other</key>
+			<string>%ld 场会议</string>
+		</dict>
+	</dict>
 	<key>%ld musicians</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -126,6 +140,48 @@
 			<string>ld</string>
 			<key>other</key>
 			<string>查看最近的全部 %ld 场合奏</string>
+		</dict>
+	</dict>
+	<key>This month you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>other</key>
+			<string>本月您有 %ld 场会议</string>
+		</dict>
+	</dict>
+	<key>This week you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>other</key>
+			<string>本周您有 %ld 场会议</string>
+		</dict>
+	</dict>
+	<key>Today you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>other</key>
+			<string>今天您有 %ld 场会议</string>
 		</dict>
 	</dict>
 </dict>

@@ -42,6 +42,26 @@
 			<string>Лишние %ld символа</string>
 		</dict>
 	</dict>
+	<key>%ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>%ld встречи</string>
+			<key>many</key>
+			<string>%ld встреч</string>
+			<key>one</key>
+			<string>%ld встреча</string>
+			<key>other</key>
+			<string>%ld встреч</string>
+		</dict>
+	</dict>
 	<key>%ld musicians</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -180,6 +200,66 @@
 			<string>Показать %ld недавний джем</string>
 			<key>other</key>
 			<string>Показать %ld недавних джема</string>
+		</dict>
+	</dict>
+	<key>This month you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>В этом месяце было %ld встречи</string>
+			<key>many</key>
+			<string>В этом месяце было %ld встреч</string>
+			<key>one</key>
+			<string>В этом месяце была %ld встреча</string>
+			<key>other</key>
+			<string>В этом месяце было %ld встреч</string>
+		</dict>
+	</dict>
+	<key>This week you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>На этой неделе было %ld встречи</string>
+			<key>many</key>
+			<string>На этой неделе было %ld встреч</string>
+			<key>one</key>
+			<string>На этой неделе была %ld встреча</string>
+			<key>other</key>
+			<string>На этой неделе было %ld встреч</string>
+		</dict>
+	</dict>
+	<key>Today you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>Сегодня было %ld встречи</string>
+			<key>many</key>
+			<string>Сегодня было %ld встреч</string>
+			<key>one</key>
+			<string>Сегодня была %ld встреча</string>
+			<key>other</key>
+			<string>Сегодня было %ld встреч</string>
 		</dict>
 	</dict>
 </dict>

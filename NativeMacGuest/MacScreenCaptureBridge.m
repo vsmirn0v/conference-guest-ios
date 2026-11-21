@@ -175,6 +175,7 @@ static const NSInteger FrameStatusStarted = 4;
     if (alreadyPending) return YES;
     [_routingLock lock];
     ++session.selectionGeneration; [_sessions addObject:session]; _pending = session;
+    NSUInteger sessionCount = _sessions.count;
     [_routingLock unlock];
     if (!_registered) {
         if ([_picker respondsToSelector:@selector(defaultConfiguration)] && [_picker respondsToSelector:@selector(setDefaultConfiguration:)]) {
@@ -186,7 +187,7 @@ static const NSInteger FrameStatusStarted = 4;
     }
     // A zero maximum disables new-stream picker UI. Set a positive, explicit
     // capacity while we own the picker, and restore its old configuration last.
-    if ([_picker respondsToSelector:@selector(setMaximumStreamCount:)]) [_picker setMaximumStreamCount:@(MAX(1, _sessions.count))];
+    if ([_picker respondsToSelector:@selector(setMaximumStreamCount:)]) [_picker setMaximumStreamCount:@(MAX(1, sessionCount))];
     NSObject *configuration = [NSClassFromString(@"SCContentSharingPickerConfiguration") new];
     if (configuration && [_picker respondsToSelector:@selector(setDefaultConfiguration:)] &&
         [configuration respondsToSelector:@selector(setAllowedPickerModes:)]) {

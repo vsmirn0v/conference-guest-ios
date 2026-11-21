@@ -670,16 +670,19 @@ import Foundation
     }
 
     func controlMeeting(_ args: MCPJSON, client: MCPClientIdentity) async throws -> MCPJSON {
-        let (id, replay) = try beginAction(args, client: client); if let replay { return replay }
+        let actionID = try MCPValue.string(args["action_id"], key: "action_id")
+        guard UUID(uuidString: actionID) != nil else {
+            throw MCPToolFailure("INVALID_ARGUMENT", "action_id must be a UUID.", details: ["field": "action_id", "reason": "format"])
+        }
         let meetingID = try MCPValue.string(args["meeting_id"], key: "meeting_id")
         let desired = args["desired_state"] as? MCPJSON ?? [:]
-        let title: String
-        do {
-            if meetingID.hasPrefix("session:") { title = try activeMeeting(meetingID).title }
-            else if meetingID.hasPrefix("room:") { title = try room(meetingID).displayTitle }
-            else if meetingID.hasPrefix("occurrence:") { title = try calendarMeeting(meetingID).title }
+        if actions.recordedActions[actionID] == nil {
+            if meetingID.hasPrefix("session:") { _ = try activeMeeting(meetingID).title }
+            else if meetingID.hasPrefix("room:") { _ = try room(meetingID).displayTitle }
+            else if meetingID.hasPrefix("occurrence:") { _ = try calendarMeeting(meetingID).title }
             else { throw MCPToolFailure("INVALID_ARGUMENT", "meeting_id must identify a session, room or occurrence.") }
         }
+        let (id, replay) = try beginAction(args, client: client); if let replay { return replay }
         guard await actions.approval("Meeting control", ["meeting_id": meetingID, "desired_state": desired]) else {
             return actions.finish(id, client: client, type: "meeting_control", target: meetingID, status: "rejected", failure: "APPROVAL_DENIED")
         }
@@ -687,6 +690,7 @@ import Foundation
             let model = try activeMeeting(meetingID)
             if desired["leave"] as? Bool == true {
                 _ = await app?.leave(model)
+                return actions.finish(id, client: client, type: "meeting_control", target: meetingID, status: "applied", result: ["action_id": id, "status": "applied", "observed_at": mcpNow(), "entity_id": meetingID, "revision": model.sessionID.uuidString, "warnings": []])
             }
             if let microphone = desired["microphone"] as? Bool, microphone != model.snapshot.microphoneOn { model.toggleMicrophone() }
             if let camera = desired["camera"] as? Bool, camera != model.snapshot.cameraOn { model.toggleCamera() }

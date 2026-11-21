@@ -1,6 +1,6 @@
 "NSBluetoothAlwaysUsageDescription" = "使用蓝牙耳机和其他音频设备播放即兴演奏会话的声音，即使会话在后台继续也能使用。";
 "NSCameraUsageDescription" = "在会话中由你选择开启摄像头时共享视频。";
-"NSMicrophoneUsageDescription" = "使用麦克风在会话中发言，并在取消静音前私下测试声音。";
+"NSMicrophoneUsageDescription" = "使用麦克风在会议中发言、使用 Rock 免提语音指令、录制本地声音样本，并在取消静音前私下测试声音。";
 "NSCalendarsUsageDescription" = "在选定的日历中查找会议。开启日程共享后，会议详情可通过您的私人 iCloud 空间同步。此应用不会修改您的日历。";
 "NSCalendarsFullAccessUsageDescription" = "在选定的日历中查找会议。开启日程共享后，会议详情可通过您的私人 iCloud 空间同步。此应用不会修改您的日历。";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll 使用设备端语音识别功能，在这台 iPhone 上本地转写会议内容。";

@@ -34,6 +34,22 @@
 			<string>%ld characters over the limit</string>
 		</dict>
 	</dict>
+	<key>%ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld meeting</string>
+			<key>other</key>
+			<string>%ld meetings</string>
+		</dict>
+	</dict>
 	<key>%ld musicians</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -144,6 +160,54 @@
 			<string>See %ld recent jam</string>
 			<key>other</key>
 			<string>See all %ld recent jams</string>
+		</dict>
+	</dict>
+	<key>This month you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>This month you had %ld meeting</string>
+			<key>other</key>
+			<string>This month you had %ld meetings</string>
+		</dict>
+	</dict>
+	<key>This week you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>This week you had %ld meeting</string>
+			<key>other</key>
+			<string>This week you had %ld meetings</string>
+		</dict>
+	</dict>
+	<key>Today you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>Today you had %ld meeting</string>
+			<key>other</key>
+			<string>Today you had %ld meetings</string>
 		</dict>
 	</dict>
 </dict>

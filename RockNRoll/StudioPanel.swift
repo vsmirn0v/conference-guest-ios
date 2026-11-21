@@ -182,7 +182,16 @@ struct StudioPanel: View {
                         VStack(spacing: 12) {
                             Image(systemName: "video.slash").font(.title)
                             Text(error).multilineTextAlignment(.center)
-                            Button(L("Try again")) { model.open(.camera) }
+                            let cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
+                            if cameraStatus == .denied || cameraStatus == .restricted {
+                                Button(L("Open Settings")) {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                                        UIApplication.shared.open(url)
+                                    }
+                                }
+                            } else {
+                                Button(L("Try again")) { model.open(.camera) }
+                            }
                         }.foregroundStyle(.white).padding().frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     Label(model.cameraOn ? L("Live · Visible to jam") : L("Preview · Only you"),
@@ -375,6 +384,7 @@ private final class StudioHostingController: UIHostingController<StudioPanel>, U
             }, layout: layout)
         modalPresentationStyle = .custom
         transitioningDelegate = self
+        overrideUserInterfaceStyle = .dark
         subscription = model.$canvasExpanded.sink { [weak self] _ in
             DispatchQueue.main.async { self?.presentationController?.containerView?.setNeedsLayout() }
         }

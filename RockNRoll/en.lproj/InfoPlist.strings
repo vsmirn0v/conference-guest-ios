@@ -1,6 +1,6 @@
 "NSBluetoothAlwaysUsageDescription" = "Use Bluetooth headphones and other audio devices for jam audio, including when the jam continues in the background.";
 "NSCameraUsageDescription" = "Share video when you choose to turn on your camera in a jam.";
-"NSMicrophoneUsageDescription" = "Use your microphone to speak in jams and test your sound privately before unmuting.";
+"NSMicrophoneUsageDescription" = "Use your microphone to speak in meetings, use hands-free Rock voice commands, record a local voice sample, and test your sound privately before unmuting.";
 "NSCalendarsUsageDescription" = "Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited.";
 "NSCalendarsFullAccessUsageDescription" = "Find meetings in calendars you choose. Calendar schedule sharing can sync meeting details through your private iCloud storage. Your calendar is never edited.";
 

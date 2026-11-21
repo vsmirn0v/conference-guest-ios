@@ -16,17 +16,29 @@ import UIKit
         case dictating
     }
 
+    enum PushToTalkStartError: Equatable {
+        case alreadyActive
+        case microphoneDenied
+        case audioBusy
+        case audioUnavailable
+    }
+
     @Published private(set) var mode: Mode = .idle
     @Published private(set) var wakeArmed = false
     @Published private(set) var livePartialText = ""
     @Published private(set) var lastHeardCommand: String?
     @Published private(set) var isSpeakingResponse = false
     @Published private(set) var permissionDenied = false
+    @Published private(set) var blockedMessage: String?
+    @Published private(set) var lastStartFailure: PushToTalkStartError?
 
     private let processor = IOSAssistantAudioProcessor()
     private var wakeDetector = AssistantWakeDetector(armWindowSeconds: 5.0)
     private var wakeArmExpiryTask: Task<Void, Never>?
+    private var wakeEvalTask: Task<Void, Never>?
+    private var stateGeneration = 0
     private var sharedObserverInstalled = false
+    private var activatedForegroundSession = false
     private var foregroundEngine: AVAudioEngine?
     private var observers: [NSObjectProtocol] = []
     private var cancellables: Set<AnyCancellable> = []
@@ -65,8 +77,19 @@ import UIKit
             NotificationCenter.default.removeObserver(observer)
         }
         wakeArmExpiryTask?.cancel()
+        wakeEvalTask?.cancel()
         foregroundEngine?.inputNode.removeTap(onBus: 0)
         foregroundEngine?.stop()
+        if sharedObserverInstalled {
+            sharedObserverInstalled = false
+            Task { @MainActor in
+                SharedAudioEngine.shared.setAssistantInputObserver(nil)
+            }
+        }
+        if activatedForegroundSession {
+            activatedForegroundSession = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     func startObservingEnvironment() {
@@ -77,6 +100,27 @@ import UIKit
                 Task { @MainActor [weak self] in self?.refreshState() }
             })
         }
+        observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
+            let typeRaw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            let type = typeRaw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if type == .began {
+                    self.stopForegroundTap()
+                }
+                self.refreshState()
+            }
+        })
+        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshState() }
+        })
+        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.stopForegroundTap()
+                self.refreshState()
+            }
+        })
         IOSVoiceStore.shared.$wakeWordEnabled
             .dropFirst()
             .sink { [weak self] _ in
@@ -131,7 +175,7 @@ import UIKit
         let foreground = isForegroundActive()
         let micAuthorized = AVAudioApplication.shared.recordPermission == .granted
         let wantsWake = IOSVoiceStore.shared.wakeWordEnabled
-            && (foreground || inCall)
+            && foreground
             && !micUnmuted
             && !isSpeakingResponse
             && !IOSVoicePreviewPlayer.shared.isPlaying
@@ -147,24 +191,28 @@ import UIKit
 
     private func beginWakeListening(inCall: Bool) {
         if mode != .wakeListening {
+            stateGeneration += 1
             mode = .wakeListening
             processor.resetVAD()
         }
-        SharedAudioEngine.shared.setAssistantWakeListening(true)
+        let gen = stateGeneration
         if inCall {
             stopForegroundTap()
+            SharedAudioEngine.shared.setAssistantWakeListening(true)
             installSharedObserverIfNeeded()
             Task { @MainActor [weak self] in
-                guard let self, self.mode == .wakeListening else { return }
+                guard let self, self.mode == .wakeListening, self.stateGeneration == gen else { return }
                 _ = await SharedAudioEngine.shared.ensureMutedAssistantCapture()
             }
         } else {
+            SharedAudioEngine.shared.setAssistantWakeListening(false)
             removeSharedObserver()
             startForegroundTapIfNeeded()
         }
     }
 
     private func stopWakeListening() {
+        stateGeneration += 1
         if mode == .wakeListening {
             mode = .idle
         }
@@ -174,9 +222,7 @@ import UIKit
         wakeArmExpiryTask = nil
         livePartialText = ""
         if mode == .idle {
-            if !IOSVoiceStore.shared.wakeWordEnabled {
-                SharedAudioEngine.shared.setAssistantWakeListening(false)
-            }
+            SharedAudioEngine.shared.setAssistantWakeListening(false)
             stopForegroundTap()
             removeSharedObserver()
         }
@@ -186,25 +232,41 @@ import UIKit
 
     func startDictation(onPartial: @escaping (String) -> Void, onFinal: @escaping (String) -> Void) {
         guard mode != .pushToTalk else { return }
+        stateGeneration += 1
+        let gen = stateGeneration
+        wakeArmed = false
+        wakeDetector.reset()
+        wakeArmExpiryTask?.cancel()
+        wakeArmExpiryTask = nil
         dictationOnPartial = onPartial
         dictationOnFinal = onFinal
         dictationSamples = processor.snapshotPreRoll(maxSamples: 8_000)
         livePartialText = ""
+        blockedMessage = nil
         mode = .dictating
         processor.resetVAD()
 
         guard !isTestingEnvironment else { return }
+        if isInCall() && isAnyMicUnmuted() {
+            blockedMessage = L("Mute your call microphone to dictate context.")
+            stopDictation(commit: false)
+            return
+        }
         Task { @MainActor [weak self] in
-            guard let self, self.mode == .dictating else { return }
+            guard let self, self.mode == .dictating, self.stateGeneration == gen else { return }
             let granted = await self.requestAudioPermissionsIfNeeded()
-            guard granted, self.mode == .dictating else {
+            guard granted, self.mode == .dictating, self.stateGeneration == gen else {
                 self.stopDictation(commit: false)
                 return
             }
-            if self.isInCall() && !self.isAnyMicUnmuted() {
+            if self.isInCall() && self.isAnyMicUnmuted() {
+                self.blockedMessage = L("Mute your call microphone to dictate context.")
+                self.stopDictation(commit: false)
+            } else if self.isInCall() && !self.isAnyMicUnmuted() {
                 self.installSharedObserverIfNeeded()
                 SharedAudioEngine.shared.setAssistantWakeListening(true)
                 let ok = await SharedAudioEngine.shared.ensureMutedAssistantCapture()
+                guard self.mode == .dictating, self.stateGeneration == gen else { return }
                 if !ok { self.startForegroundTapIfNeeded() }
             } else if !self.isInCall() {
                 self.startForegroundTapIfNeeded()
@@ -214,6 +276,7 @@ import UIKit
 
     func stopDictation(commit: Bool = true) {
         guard mode == .dictating else { return }
+        stateGeneration += 1
         let samples = dictationSamples
         let onFinal = dictationOnFinal
         dictationOnPartial = nil
@@ -221,7 +284,9 @@ import UIKit
         dictationSamples.removeAll()
         livePartialText = ""
         mode = .idle
+        SharedAudioEngine.shared.setAssistantWakeListening(false)
         stopForegroundTap()
+        removeSharedObserver()
         refreshState()
 
         guard commit, samples.count >= 3_200, let onFinal else { return }
@@ -237,14 +302,31 @@ import UIKit
     // MARK: - Push-to-Talk Capture
 
     func beginPushToTalkCapture() async -> Bool {
-        guard mode != .pushToTalk else { return false }
+        guard mode != .pushToTalk else {
+            lastStartFailure = .alreadyActive
+            return false
+        }
+        lastStartFailure = nil
         if !isTestingEnvironment {
             let ok = await requestAudioPermissionsIfNeeded()
-            guard ok else { return false }
+            guard ok else {
+                lastStartFailure = .microphoneDenied
+                return false
+            }
+            if isAudioConflictActive() {
+                lastStartFailure = .audioBusy
+                return false
+            }
         }
         if mode == .dictating {
             stopDictation(commit: false)
         }
+        stateGeneration += 1
+        let gen = stateGeneration
+        wakeArmed = false
+        wakeDetector.reset()
+        wakeArmExpiryTask?.cancel()
+        wakeArmExpiryTask = nil
         pttSamples = processor.snapshotPreRoll(maxSamples: 8_000)
         mode = .pushToTalk
         processor.resetVAD()
@@ -253,16 +335,28 @@ import UIKit
         if isInCall() && !isAnyMicUnmuted() {
             installSharedObserverIfNeeded()
             let sharedOK = await SharedAudioEngine.shared.ensureMutedAssistantCapture()
+            guard mode == .pushToTalk, stateGeneration == gen else {
+                lastStartFailure = .audioBusy
+                return false
+            }
             if sharedOK { return true }
         }
-        return startForegroundTapIfNeeded()
+        let started = startForegroundTapIfNeeded()
+        if !started {
+            mode = .idle
+            lastStartFailure = isAudioConflictActive() ? .audioBusy : .audioUnavailable
+            refreshState()
+        }
+        return started
     }
 
     func finishPushToTalkCapture() -> [Float] {
         guard mode == .pushToTalk else { return [] }
+        stateGeneration += 1
         let collected = pttSamples
         pttSamples.removeAll()
         stopForegroundTap()
+        removeSharedObserver()
         mode = .idle
         refreshState()
         return collected
@@ -307,18 +401,28 @@ import UIKit
         switch mode {
         case .dictating:
             guard !isSpeakingResponse else { return }
+            let partialGen = stateGeneration
             let onFinal = dictationOnFinal
+            let accumulated = dictationSamples.count >= 3_200 ? dictationSamples : samples
+            guard let text = await transcribeSamples(accumulated)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty, mode == .dictating, stateGeneration == partialGen else { return }
+            livePartialText = text
             stopDictation(commit: false)
-            if let text = await transcribeSamples(samples)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !text.isEmpty {
-                onFinal?(text)
-            }
+            onFinal?(text)
         case .wakeListening:
             guard !isSpeakingResponse else { return }
-            guard let text = await transcribeSamples(samples)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty else { return }
-            let outcome = wakeDetector.consume(transcript: text, isFinal: true, now: Date())
-            await applyWakeOutcome(outcome)
+            let previous = wakeEvalTask
+            let task = Task { @MainActor [weak self] in
+                _ = await previous?.value
+                guard let self, !Task.isCancelled, self.mode == .wakeListening, !self.isSpeakingResponse else { return }
+                guard let text = await self.transcribeSamples(samples)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !text.isEmpty else { return }
+                guard self.mode == .wakeListening, !self.isSpeakingResponse else { return }
+                let outcome = self.wakeDetector.consume(transcript: text, isFinal: true, now: Date())
+                await self.applyWakeOutcome(outcome)
+            }
+            wakeEvalTask = task
+            await task.value
         case .pushToTalk, .idle:
             break
         }
@@ -357,10 +461,11 @@ import UIKit
             return await transcribeOverride(samples)
         }
         if let gigaamDir = IOSListenModelStore.shared.installedGigaAMDirectoryIfReady(),
-           let recognizer = try? await CoreMLGigaAMRecognizer.shared(directory: gigaamDir),
-           let text = try? recognizer.transcribe(samples16k: samples) {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return trimmed }
+           let recognizer = try? await CoreMLGigaAMRecognizer.shared(directory: gigaamDir) {
+            let trimmed = try? await Task.detached(priority: .userInitiated) {
+                try recognizer.transcribe(samples16k: samples)
+            }.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmed, !trimmed.isEmpty { return trimmed }
         }
         return await Self.transcribeWithAppleSpeech(samples)
     }
@@ -382,15 +487,25 @@ import UIKit
 
     @discardableResult
     private func startForegroundTapIfNeeded() -> Bool {
-        guard foregroundEngine == nil, !isInCall() else { return foregroundEngine != nil }
+        guard foregroundEngine == nil, !isInCall(), !isAudioConflictActive() else {
+            return foregroundEngine != nil
+        }
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers])
+        try? session.setCategory(
+            .playAndRecord,
+            mode: .default,
+            options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .mixWithOthers]
+        )
         try? session.setActive(true)
+        activatedForegroundSession = true
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        guard format.channelCount > 0, format.sampleRate > 0 else { return false }
+        guard format.channelCount > 0, format.sampleRate > 0 else {
+            deactivateForegroundSessionIfNeeded()
+            return false
+        }
 
         let processor = self.processor
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
@@ -403,15 +518,26 @@ import UIKit
             return true
         } catch {
             input.removeTap(onBus: 0)
+            deactivateForegroundSessionIfNeeded()
             return false
         }
     }
 
     private func stopForegroundTap() {
-        guard let engine = foregroundEngine else { return }
+        guard let engine = foregroundEngine else {
+            deactivateForegroundSessionIfNeeded()
+            return
+        }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         foregroundEngine = nil
+        deactivateForegroundSessionIfNeeded()
+    }
+
+    private func deactivateForegroundSessionIfNeeded() {
+        guard activatedForegroundSession, !isInCall() else { return }
+        activatedForegroundSession = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private static func requestSpeechAuthorization() async -> Bool {
@@ -451,12 +577,19 @@ import UIKit
 
         return await withCheckedContinuation { continuation in
             var resumed = false
+            var timeoutTask: Task<Void, Never>?
             let lock = NSLock()
             func finish(_ value: String?) {
                 lock.lock()
-                defer { lock.unlock() }
-                guard !resumed else { return }
+                guard !resumed else {
+                    lock.unlock()
+                    return
+                }
                 resumed = true
+                let timer = timeoutTask
+                timeoutTask = nil
+                lock.unlock()
+                timer?.cancel()
                 continuation.resume(returning: value)
             }
             let task = recognizer.recognitionTask(with: request) { result, error in
@@ -466,11 +599,19 @@ import UIKit
                     finish(nil)
                 }
             }
-            Task { @MainActor in
+            let timer = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(8))
+                guard !Task.isCancelled else { return }
                 task.cancel()
                 finish(nil)
             }
+            lock.lock()
+            if resumed {
+                timer.cancel()
+            } else {
+                timeoutTask = timer
+            }
+            lock.unlock()
         }
     }
 }

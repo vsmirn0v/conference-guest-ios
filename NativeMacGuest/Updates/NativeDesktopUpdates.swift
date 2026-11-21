@@ -78,7 +78,11 @@ import SwiftUI
         let channels = beta ? ["stable", "beta"] : ["stable"]
         return channels.compactMap { name -> (build: Int, url: URL)? in
             guard let entry = object[name] as? [String: Any], let build = (entry["build"] as? String).flatMap(Int.init),
-                  let url = (entry["downloadURL"] as? String).flatMap(URL.init(string:)) else { return nil }
+                  let url = (entry["downloadURL"] as? String).flatMap(URL.init(string:)),
+                  url.scheme?.lowercased() == "https",
+                  url.host?.lowercased() == "rock.glowsoft.ru",
+                  url.path.hasPrefix("/mac/releases/RockNRoll-"),
+                  url.path.hasSuffix("-arm64.dmg") else { return nil }
             return (build, url)
         }.max { $0.build < $1.build }
     }
@@ -91,7 +95,7 @@ import SwiftUI
     }
     func setBeta(_ value: Bool) {
         guard !channelLocked else { return }
-        beta = value; UserDefaults.standard.set(value, forKey: "native.updates.beta")
+        beta = value; newerThanDownloaded = nil; UserDefaults.standard.set(value, forKey: "native.updates.beta")
         updater.resetUpdateCycle()
     }
     func showWhenIdle(_ action: @escaping () -> Void) {
@@ -184,7 +188,7 @@ import SwiftUI
     }
     private func invalidateCycle() {
         let epoch = cycleEpoch
-        cycleActive = false; cycleEpoch = UUID(); installWhenIdle = nil; deferred.removeAll(); driver.invalidate()
+        cycleActive = false; cycleEpoch = UUID(); installWhenIdle = nil; newerThanDownloaded = nil; deferred.removeAll(); driver.invalidate()
         if !safety.installationReserved {
             mediaPreparedForInstall = false
             // A native operation may outlive cancellation. Release its exclusion
@@ -239,7 +243,8 @@ import SwiftUI
     func showInstallingUpdate(withApplicationTerminated terminated: Bool, retryTerminatingApplication retry: @escaping () -> Void) {
         let token = generation
         present { self.standard.showInstallingUpdate(withApplicationTerminated: terminated) {
-            guard self.generation == token, !terminated else { return }; self.owner?.installChoice(.install) { _ in retry() }
+            guard self.generation == token, !terminated else { return }
+            self.owner?.installChoice(.install) { if $0 == .install { retry() } }
         } }
     }
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) { standard.showUpdateInstalledAndRelaunched(relaunched, acknowledgement: acknowledgement) }

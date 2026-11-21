@@ -31,6 +31,7 @@ import Speech
     private var wakeEvalTask: Task<Void, Never>?
     private var pttFallbackEngine: AVAudioEngine?
     private var sharedObserverInstalled = false
+    private var stateGeneration = 0
     private var observers: [NSObjectProtocol] = []
     private var cancellables: Set<AnyCancellable> = []
 
@@ -72,6 +73,12 @@ import Speech
         wakeEvalTask?.cancel()
         pttFallbackEngine?.inputNode.removeTap(onBus: 0)
         pttFallbackEngine?.stop()
+        if sharedObserverInstalled {
+            sharedObserverInstalled = false
+            Task { @MainActor in
+                SharedAudioEngine.shared.setAssistantInputObserver(nil)
+            }
+        }
     }
 
     func startObservingEnvironment() {
@@ -141,17 +148,20 @@ import Speech
 
     private func beginWakeListening(hasLiveMeeting: Bool) {
         if mode != .wakeListening {
+            stateGeneration += 1
             mode = .wakeListening
             processor.resetVAD()
         }
+        let gen = stateGeneration
         installSharedObserverIfNeeded()
         Task { @MainActor [weak self] in
-            guard let self, self.mode == .wakeListening else { return }
+            guard let self, self.mode == .wakeListening, self.stateGeneration == gen else { return }
             SharedAudioEngine.shared.setAssistantWakeListening(true)
             let ok = await SharedAudioEngine.shared.ensureMutedAssistantCapture()
-            if !ok && !hasLiveMeeting && self.mode == .wakeListening {
+            guard self.mode == .wakeListening, self.stateGeneration == gen else { return }
+            if !ok && !hasLiveMeeting {
                 try? await Task.sleep(for: .milliseconds(300))
-                if self.mode == .wakeListening, !self.processor.hasRecentSharedAudio {
+                if self.mode == .wakeListening, self.stateGeneration == gen, !self.processor.hasRecentSharedAudio {
                     self.startFallbackTapIfNeeded()
                 }
             } else if ok {
@@ -161,6 +171,7 @@ import Speech
     }
 
     private func stopWakeListening() {
+        stateGeneration += 1
         if mode == .wakeListening {
             mode = .idle
         }
@@ -170,9 +181,7 @@ import Speech
         wakeArmExpiryTask = nil
         livePartialText = ""
         if mode == .idle {
-            if attention?.store.wakeWordEnabled != true {
-                SharedAudioEngine.shared.setAssistantWakeListening(false)
-            }
+            SharedAudioEngine.shared.setAssistantWakeListening(false)
             stopFallbackTap()
             removeSharedObserver()
         }
@@ -182,6 +191,12 @@ import Speech
 
     func startDictation(onPartial: @escaping (String) -> Void, onFinal: @escaping (String) -> Void) {
         guard mode != .pushToTalk else { return }
+        stateGeneration += 1
+        let gen = stateGeneration
+        wakeArmed = false
+        wakeDetector.reset()
+        wakeArmExpiryTask?.cancel()
+        wakeArmExpiryTask = nil
         dictationOnPartial = onPartial
         dictationOnFinal = onFinal
         dictationBuffers = processor.snapshotPreRoll(maxSamples: 8_000)
@@ -192,15 +207,16 @@ import Speech
 
         guard !isTestingEnvironment else { return }
         Task { @MainActor [weak self] in
-            guard let self, self.mode == .dictating else { return }
+            guard let self, self.mode == .dictating, self.stateGeneration == gen else { return }
             let granted = await self.requestAudioPermissionsIfNeeded()
-            guard granted, self.mode == .dictating else {
+            guard granted, self.mode == .dictating, self.stateGeneration == gen else {
                 self.stopDictation(commit: false)
                 return
             }
             self.installSharedObserverIfNeeded()
             SharedAudioEngine.shared.setAssistantWakeListening(true)
             let sharedOK = await SharedAudioEngine.shared.ensureMutedAssistantCapture()
+            guard self.mode == .dictating, self.stateGeneration == gen else { return }
             if !sharedOK {
                 self.startFallbackTapIfNeeded()
             }
@@ -209,6 +225,7 @@ import Speech
 
     func stopDictation(commit: Bool = true) {
         guard mode == .dictating else { return }
+        stateGeneration += 1
         let samples = dictationBuffers
         let onFinal = dictationOnFinal
         dictationOnPartial = nil
@@ -217,6 +234,7 @@ import Speech
         dictationStartedAt = nil
         livePartialText = ""
         mode = .idle
+        SharedAudioEngine.shared.setAssistantWakeListening(false)
         stopFallbackTap()
         refreshState()
 
@@ -299,16 +317,27 @@ import Speech
         switch mode {
         case .dictating:
             guard !isSpeakingResponse else { return }
+            let partialGen = stateGeneration
             let onFinal = dictationOnFinal
+            let accumulated = dictationBuffers.count >= 3_200 ? dictationBuffers : samples
+            guard let text = await transcribeSamples(accumulated)?.trimmed,
+                  !text.isEmpty, mode == .dictating, stateGeneration == partialGen else { return }
+            livePartialText = text
             stopDictation(commit: false)
-            if let text = await transcribeSamples(samples)?.trimmed, !text.isEmpty {
-                onFinal?(text)
-            }
+            onFinal?(text)
         case .wakeListening:
             guard !isSpeakingResponse else { return }
-            guard let text = await transcribeSamples(samples)?.trimmed, !text.isEmpty else { return }
-            let outcome = wakeDetector.consume(transcript: text, isFinal: true, now: Date())
-            await applyWakeOutcome(outcome)
+            let previous = wakeEvalTask
+            let task = Task { @MainActor [weak self] in
+                _ = await previous?.value
+                guard let self, !Task.isCancelled, self.mode == .wakeListening, !self.isSpeakingResponse else { return }
+                guard let text = await self.transcribeSamples(samples)?.trimmed, !text.isEmpty else { return }
+                guard self.mode == .wakeListening, !self.isSpeakingResponse else { return }
+                let outcome = self.wakeDetector.consume(transcript: text, isFinal: true, now: Date())
+                await self.applyWakeOutcome(outcome)
+            }
+            wakeEvalTask = task
+            await task.value
         case .pushToTalk, .idle:
             break
         }
@@ -444,12 +473,19 @@ import Speech
 
         return await withCheckedContinuation { continuation in
             var resumed = false
+            var timeoutTask: Task<Void, Never>?
             let lock = NSLock()
             func finish(_ value: String?) {
                 lock.lock()
-                defer { lock.unlock() }
-                guard !resumed else { return }
+                guard !resumed else {
+                    lock.unlock()
+                    return
+                }
                 resumed = true
+                let timer = timeoutTask
+                timeoutTask = nil
+                lock.unlock()
+                timer?.cancel()
                 continuation.resume(returning: value)
             }
             let task = recognizer.recognitionTask(with: request) { result, error in
@@ -459,11 +495,19 @@ import Speech
                     finish(nil)
                 }
             }
-            Task { @MainActor in
+            let timer = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(8))
+                guard !Task.isCancelled else { return }
                 task.cancel()
                 finish(nil)
             }
+            lock.lock()
+            if resumed {
+                timer.cancel()
+            } else {
+                timeoutTask = timer
+            }
+            lock.unlock()
         }
     }
 }

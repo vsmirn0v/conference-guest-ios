@@ -50,7 +50,10 @@ import MeetingEngine
         // With one engine for all meetings, the shared engine itself prepares idle input.
 #if DEBUG || NATIVE_LEGACY_AUDIO
         if SharedAudioEngine.enabledAtLaunch {
-            SharedAudioEngine.shared.setAssistantWakeListening(wakeWordEnabled)
+            // Refresh voice-reply & speech-input state without overriding AssistantSpeechInputCoordinator's wake-listening ownership.
+            if !wakeWordEnabled {
+                SharedAudioEngine.shared.setAssistantWakeListening(false)
+            }
             SharedAudioEngine.shared.setForeground(foreground, microphone: microphone)
         } else {
             NativeDesktopMediaService.shared.setForeground(foreground, microphone: microphone, profile: .saved)
@@ -59,7 +62,10 @@ import MeetingEngine
             ? (SharedAudioEngine.shared.busy || UniversalMeetingEngine.shared.busy)
             : NativeDesktopMediaService.shared.busy
 #else
-        SharedAudioEngine.shared.setAssistantWakeListening(wakeWordEnabled)
+        // Refresh voice-reply & speech-input state without overriding AssistantSpeechInputCoordinator's wake-listening ownership.
+        if !wakeWordEnabled {
+            SharedAudioEngine.shared.setAssistantWakeListening(false)
+        }
         SharedAudioEngine.shared.setForeground(foreground, microphone: microphone)
         let mediaBusy = SharedAudioEngine.shared.busy || UniversalMeetingEngine.shared.busy
 #endif

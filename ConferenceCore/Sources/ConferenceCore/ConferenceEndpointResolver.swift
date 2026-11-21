@@ -34,7 +34,7 @@ public struct ConferenceEndpointResolver {
               let serverURL = service["serverUrl"] as? String,
               let endpoint = URLComponents(string: serverURL),
               endpoint.scheme?.lowercased() == "https",
-              endpoint.host != nil,
+              endpoint.host?.isEmpty == false,
               endpoint.user == nil, endpoint.password == nil,
               endpoint.query == nil, endpoint.fragment == nil,
               let url = endpoint.url else {

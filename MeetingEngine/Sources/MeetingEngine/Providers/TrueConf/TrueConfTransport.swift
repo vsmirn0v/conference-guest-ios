@@ -63,11 +63,21 @@ public final class TrueConfTransport {
     private func fail(_ error: Error) { let handler = onFailure; onFailure = nil; handler?(error) }
     public func close(room: String?) async {
         guard !closed else { return }
+        closed = true
         onFailure = nil; onMessage = nil; heartbeat?.cancel(); processor?.cancel(); continuation.finish()
-        if let room, !cid.isEmpty { try? await send(["method": "hangup", "result": 0, "conferenceId": room]) }
-        closed = true; socket.cancel(with: .normalClosure, reason: nil)
+        defer {
+            socket.cancel(with: .normalClosure, reason: nil)
+            reader?.cancel(); cid = ""; session.invalidateAndCancel()
+        }
+        if let room, !cid.isEmpty {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { [self] in try? await self.send(["method": "hangup", "result": 0, "conferenceId": room]) }
+                group.addTask { try? await Task.sleep(for: .seconds(1)) }
+                _ = await group.next()
+                group.cancelAll()
+            }
+        }
         for _ in 0..<50 { if socket.state == .completed { break }; try? await Task.sleep(for: .milliseconds(20)) }
-        reader?.cancel(); cid = ""; session.invalidateAndCancel()
     }
     #if DEBUG
     public func interruptForTesting() { socket.cancel(with: .goingAway, reason: nil) }

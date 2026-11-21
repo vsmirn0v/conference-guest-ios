@@ -14,3 +14,10 @@ RockServer/site-src/node_modules/
 /Dependencies/SherpaOnnxKit/Artifacts/
 /Dependencies/SherpaOnnxKit/.build/
 /review/
+.analysis/
+Diagnostics/
+.kimi-diagnostics/
+investigation/
+work/
+output/
+*.xcresult/

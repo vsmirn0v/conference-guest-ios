@@ -92,6 +92,7 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
     private var entries: [UUID: SessionEntry] = [:]
     private var sessionOrder: [UUID] = []
     private var preferredForegroundSessionID: UUID?
+    static weak var sharedForVoiceCheck: IOSWorkspaceAudioCoordinator?
     private var pausedAllAudioForHoldOrYield = false
     private var talkSwitchRevision: UInt64 = 0
     private var activeLeaseStartCount = 0
@@ -118,6 +119,7 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
             if let sharedAudio { _ = sharedAudio.engineChanged(.started) }
         }
         self.audioOutput = self.audio.output
+        Self.sharedForVoiceCheck = self
         installHandlers()
     }
 
@@ -432,6 +434,7 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
                 self.systemCall.audioSessionInterrupted(false)
                 if !self.systemCall.isAwaitingAudioRecovery {
                     self.restoreAllSessionsFromHoldOrYield()
+                    self.audio.restoreOutputAfterInterruption()
                 }
             }
         }
@@ -461,6 +464,7 @@ final class IOSWorkspaceAudioCoordinator: ObservableObject {
             if !self.isHeld {
                 self.resumeAllActivationWaiters(with: .success(()))
                 self.restoreAllSessionsFromHoldOrYield()
+                self.audio.restoreOutputAfterInterruption()
             }
             self.systemCall.resumeIfPossible()
             self.onCallStateChanged?()

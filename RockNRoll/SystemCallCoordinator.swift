@@ -166,6 +166,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             if wasActive { onDeactivated?() }
             if canProbeInitialFocus { retryApplicationAudioRecovery() }
         } else {
+            guard audioYield?.releasedBySystem != true else { return }
             audioYield?.releasedBySystem = true
             resumeIfPossible()
         }

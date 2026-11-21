@@ -385,7 +385,19 @@ struct NativeDesktopDeviceSettings: View {
                     }
                 }
             }
-            if let error = model.error { Text(error).foregroundStyle(.red) }
+            if let error = model.error {
+                HStack(spacing: 8) {
+                    Text(error).foregroundStyle(.red)
+                    let cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
+                    if cameraStatus == .denied || cameraStatus == .restricted {
+                        Button(L("Open System Settings")) {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                }
+            }
         }.nativeSettingsReveal().modifier(NativeDesktopDeviceFormStyle(settingsPage: settingsPage))
             .onDisappear { Task { await model.stop() } }
             .onChange(of: liveTrack != nil) { if $0 { Task { await model.stopCamera() } } }

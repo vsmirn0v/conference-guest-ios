@@ -14,6 +14,6 @@ xcrun --sdk macosx swiftc -swift-version 5 -D DEBUG -parse-as-library -O \
   "$experiment_dir/../../RockNRoll/NativeRTC/VP9HardwareDecoder.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/NativeVideoDecoderFactory.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/NativeVP9Hybrid.swift" \
-  "$experiment_dir/FixtureSupport.swift" "$experiment_dir/Check.swift" \
+  "$experiment_dir/../../RockNRollTests/Support/FixtureSupport.swift" "$experiment_dir/Check.swift" \
   -o "$output_dir/check"
 "$output_dir/check" "$experiment_dir/../../RockNRollTests/Fixtures/vp9-lossless.json"

@@ -1,6 +1,6 @@
 "NSBluetoothAlwaysUsageDescription" = "Bluetooth-Kopfhörer und andere Audiogeräte für den Ton von Sessions verwenden, auch wenn eine Session im Hintergrund weiterläuft.";
 "NSCameraUsageDescription" = "Video übertragen, wenn du die Kamera in einer Session einschaltest.";
-"NSMicrophoneUsageDescription" = "Das Mikrofon verwenden, damit du in Sessions sprechen und deinen Ton vor dem Aufheben der Stummschaltung privat testen kannst.";
+"NSMicrophoneUsageDescription" = "Verwende das Mikrofon, um in Meetings zu sprechen, freihändige Sprachbefehle für Rock zu nutzen, eine lokale Stimmprobe aufzunehmen und deinen Ton privat vor dem Aufheben der Stummschaltung zu testen.";
 "NSCalendarsUsageDescription" = "Suche Meetings in ausgewählten Kalendern. Wenn du den Zeitplan teilst, können Meetingdetails über deinen privaten iCloud-Speicher synchronisiert werden. Dein Kalender wird nicht bearbeitet.";
 "NSCalendarsFullAccessUsageDescription" = "Suche Meetings in ausgewählten Kalendern. Wenn du den Zeitplan teilst, können Meetingdetails über deinen privaten iCloud-Speicher synchronisiert werden. Dein Kalender wird nicht bearbeitet.";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll verwendet die Spracherkennung auf dem Gerät, um Meetings lokal auf diesem iPhone zu transkribieren.";

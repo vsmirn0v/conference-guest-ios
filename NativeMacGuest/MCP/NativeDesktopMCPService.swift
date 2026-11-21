@@ -12,7 +12,6 @@ struct NativeDesktopMCPStatus: Equatable {
 
 /// Owns the native MCP adapter lifecycle and exposes the one-time pairing flow.
 @MainActor final class NativeDesktopMCPService: ObservableObject {
-    private let workspace: NativeDesktopWorkspace
     private let tokens = MCPTokenStore()
     private let backend: NativeDesktopMCPBackend
     /// The tool authority behind the service, for the in-app assistant's loopback provider.
@@ -26,12 +25,17 @@ struct NativeDesktopMCPStatus: Equatable {
     var onError: (String) -> Void = { message in NSLog("Rock'N'Roll MCP: %@", message) }
 
     init(workspace: NativeDesktopWorkspace, endpointFile: URL? = nil, approval: ((String, MCPJSON) async -> Bool)? = nil) {
-        self.workspace = workspace
         let configured = endpointFile ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/rocknroll-mcp/endpoint.json", isDirectory: false)
         self.endpointFile = configured
-        backend = NativeDesktopMCPBackend(workspace: { [weak workspace] in workspace }, approval: approval ?? { _, _ in
-            await NativeDesktopMCPApproval.request(title: "Allow Rock'N'Roll action?", detail: "An AI agent requested a sensitive app action.")
+        backend = NativeDesktopMCPBackend(workspace: { [weak workspace] in workspace }, approval: approval ?? { action, payload in
+            let summary = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .prettyPrinted]))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "\(payload)"
+            let clipped = summary.count > 600 ? String(summary.prefix(600)) + "…" : summary
+            return await NativeDesktopMCPApproval.request(
+                title: "Allow Rock'N'Roll action: \(action)?",
+                detail: clipped
+            )
         })
         rpc = MCPJSONRPCServer(backend: backend)
         transport = MCPHTTPTransport(server: rpc, tokens: tokens, endpointFile: configured)
@@ -91,6 +95,7 @@ struct NativeDesktopMCPStatus: Equatable {
     /// Issues a fresh pairing token and endpoint description for the user to approve.
     func makePairingInstruction() -> String {
         tokens.resetPairingToken()
+        transport.refreshEndpointIfRunning()
         let endpoint = tokens.endpoint(host: "127.0.0.1", port: transport.port ?? 0, path: "/mcp")
         return "Endpoint file: \(endpointFile.path)\nPairing token: \(endpoint.pairingToken)"
     }

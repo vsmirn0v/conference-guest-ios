@@ -1,4 +1,0 @@
-Command exited with code 0.
-
-Command output:
-RockNRoll/ReactionHistoryStore.swift:60:final class ReactionHistoryStore: ObservableObject {

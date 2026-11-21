@@ -10,6 +10,9 @@ import LiveKitWebRTC
     private let adapter: any MeetingProviderAdapter
     private let onRelease: (MeetingSessionID) -> Void
     private var commandRevision = CommandRevision()
+    private var microphoneRevision = CommandRevision()
+    private var cameraRevision = CommandRevision()
+    private var screenRevision = CommandRevision()
     private var leaving = false
     private var leaveTask: Task<Bool, Never>?
 
@@ -136,9 +139,10 @@ import LiveKitWebRTC
 
     public func setMicrophone(_ enabled: Bool) async throws {
         if enabled { guard !leaving else { throw CancellationError() } }
-        let issued = commandRevision.advance()
+        _ = commandRevision.advance()
+        let issued = microphoneRevision.advance()
         try await adapter.setMicrophone(enabled)
-        if enabled, leaving || commandRevision != issued {
+        if enabled, leaving || microphoneRevision != issued {
             _ = try? await adapter.setMicrophone(false)
             throw CancellationError()
         }
@@ -146,9 +150,10 @@ import LiveKitWebRTC
 
     public func setCamera(_ enabled: Bool) async throws {
         if enabled { guard !leaving else { throw CancellationError() } }
-        let issued = commandRevision.advance()
+        _ = commandRevision.advance()
+        let issued = cameraRevision.advance()
         try await adapter.setCamera(enabled)
-        if enabled, leaving || commandRevision != issued {
+        if enabled, leaving || cameraRevision != issued {
             _ = try? await adapter.setCamera(false)
             throw CancellationError()
         }
@@ -204,12 +209,14 @@ import LiveKitWebRTC
     public func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {
         if track != nil { guard !leaving else { throw CancellationError() } }
         _ = commandRevision.advance()
+        _ = screenRevision.advance()
         try await adapter.setScreenTrack(track)
     }
 
     public func startScreenShare(_ request: MeetingScreenShareRequest) async throws {
         guard !leaving else { throw CancellationError() }
         _ = commandRevision.advance()
+        _ = screenRevision.advance()
         try await adapter.startScreenShare(request)
     }
 
@@ -220,6 +227,7 @@ import LiveKitWebRTC
 
     public func stopScreenShare() async throws {
         _ = commandRevision.advance()
+        _ = screenRevision.advance()
         try await adapter.stopScreenShare()
     }
 

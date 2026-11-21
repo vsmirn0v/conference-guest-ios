@@ -484,7 +484,8 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
         var clean = true
         do { try await setCamera(false) } catch { clean = false }
         onLocalCamera = nil; localCandidates = []; remoteCandidates = []
-        let connection = connection!; native.post("close") { connection.close() }
+        let connection = connection!
+        try? await native.run("close", timeout: 1) { connection.close() }
         return clean && !captureCleanupFailed
     }
     /// A received track by mid, read on a WebRTC or native thread, never on main.

@@ -252,8 +252,9 @@ public actor TaskCalendarEventConnector: TaskCalendarEventConnecting {
             "DESCRIPTION:\(escapeICS(combinedDescription))"
         ]
         if let url = draft.meetingURL?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
-            lines.append("URL:\(url)")
-            lines.append("LOCATION:\(escapeICS(url))")
+            let safeURL = url.replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\n", with: "")
+            lines.append("URL:\(safeURL)")
+            lines.append("LOCATION:\(escapeICS(safeURL))")
         }
         lines.append("END:VEVENT")
         lines.append("END:VCALENDAR")

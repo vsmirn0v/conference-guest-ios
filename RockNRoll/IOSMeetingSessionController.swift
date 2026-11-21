@@ -35,6 +35,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     var onOpenAssistant: (() -> Void)?
     var onMicrophoneStateChanged: ((UUID, Bool) -> Void)?
     var onMeetingSoundChanged: ((UUID) -> Void)?
+    var canStartBroadcast: (() -> Bool)?
+    var onBroadcastOwnershipChanged: ((Bool) -> Void)?
     var voiceReplyTargetsProvider: (() -> [VoiceReplyTargetRoom])?
     var onSpeakVoiceReplyInRoom: ((UUID, String) async throws -> Void)?
     var onCancelVoiceReplyInRoom: ((UUID) -> Void)?
@@ -117,6 +119,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     private var didAutoStartLocalTranscription = false
     private var assistantStartedLocalTranscription = false
     private var voiceReplyTask: Task<Void, Error>?
+    private var assistantHUDContext: (talk: IOSAssistantTalkController, speech: IOSAssistantSpeechCoordinator)?
     private var micActiveStart: Date?
     private var micActiveIntervals: [DateInterval] = []
 
@@ -227,6 +230,11 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         view.onLeaveMeeting = { [weak self] id in self?.onLeaveMeeting?(id) }
         view.onJoinAnotherMeeting = { [weak self] in self?.onJoinAnotherMeeting?() }
         view.onOpenAssistant = { [weak self] in self?.onOpenAssistant?() }
+        if let hud = assistantHUDContext {
+            view.attachAssistantVoiceHUD(talk: hud.talk, speech: hud.speech) { [weak self] in
+                self?.onOpenAssistant?()
+            }
+        }
         view.onLeave = { [weak self] in self?.leave() }
         view.workspace.setMeetingSound = { [weak self] enabled in self?.setMeetingSoundEnabled(enabled) }
         view.workspace.setMeetingVolume = { [weak self] level in self?.setMeetingVolume(level) }
@@ -406,8 +414,29 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         setForegroundVisible(true)
         guard container.view.window != nil else { return }
         if view.presentingViewController === container { return }
+        if let activeModal = container.presentedViewController, activeModal !== view {
+            activeModal.dismiss(animated: false) { [weak view, weak container] in
+                guard let view, let container, container.view.window != nil else { return }
+                if view.presentingViewController === container { return }
+                if view.presentingViewController != nil {
+                    view.dismiss(animated: false) {
+                        if view.presentingViewController == nil {
+                            container.present(view, animated: animated)
+                        }
+                    }
+                } else {
+                    container.present(view, animated: animated)
+                }
+            }
+            return
+        }
         if view.presentingViewController != nil {
-            view.dismiss(animated: false)
+            view.dismiss(animated: false) {
+                if view.presentingViewController == nil {
+                    container.present(view, animated: animated)
+                }
+            }
+            return
         }
         container.present(view, animated: animated)
     }
@@ -589,7 +618,9 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             return
         }
         guard phase == .connected, !isHeld, !quiet else {
-            if broadcast { BroadcastManager.shared.requestStop() }
+            if broadcast, canStartBroadcast?() ?? isForegroundVisible {
+                BroadcastManager.shared.requestStop()
+            }
             callView?.setSharing(false)
             return
         }
@@ -597,10 +628,13 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             guard let self, let screenShare = self.screenShare else { return }
             do {
                 if broadcast {
+                    guard self.canStartBroadcast?() ?? self.isForegroundVisible else { return }
+                    self.onBroadcastOwnershipChanged?(true)
                     try await screenShare.start(broadcast: true)
                 } else if IOSNativeScreenCaptureAvailability.isAvailable {
                     try await screenShare.start(broadcast: false)
-                } else if BroadcastManager.shared.isBroadcasting {
+                } else if BroadcastManager.shared.isBroadcasting, self.canStartBroadcast?() ?? self.isForegroundVisible {
+                    self.onBroadcastOwnershipChanged?(true)
                     try await screenShare.start(broadcast: true)
                 } else {
                     BroadcastManager.shared.requestActivation()
@@ -608,6 +642,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             } catch is CancellationError {
                 return
             } catch {
+                self.onBroadcastOwnershipChanged?(false)
                 self.callView?.setSharing(false)
                 self.reportMediaStatus(error.localizedDescription)
             }
@@ -615,8 +650,10 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
     }
 
     private func stopScreenSharing(retirePresenter: Bool) async {
+        let wasBroadcast = screenShare?.isBroadcastSharing == true
         if retirePresenter { studio.presenter.sharingEnded() }
         await screenShare?.stop()
+        if wasBroadcast { onBroadcastOwnershipChanged?(false) }
         callView?.setSharing(false)
         renderSnapshot()
         if retirePresenter { await studio.presenter.waitForScreenStop() }
@@ -800,7 +837,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             .sink { [weak self] active in
                 guard let self, !self.leaving else { return }
                 if active {
-                    guard self.joinStarted, self.phase == .connected, !self.isHeld, !self.quiet else { return }
+                    guard self.joinStarted, self.phase == .connected, !self.isHeld, !self.quiet,
+                          self.isForegroundVisible, self.canStartBroadcast?() ?? true else { return }
                     if self.screenShare?.isBroadcastSharing != true {
                         self.setScreenSharing(true, broadcast: true)
                     }
@@ -872,7 +910,8 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
                         try? await self?.session.setAudioProfile(guestProfile)
                     }
                 }
-                if BroadcastManager.shared.isBroadcasting, screenShare?.isSharing != true, !isHeld, !quiet {
+                if BroadcastManager.shared.isBroadcasting, screenShare?.isSharing != true,
+                   !isHeld, !quiet, isForegroundVisible, canStartBroadcast?() ?? true {
                     setScreenSharing(true, broadcast: true)
                 }
                 if IOSListenModelStore.shared.autoStartLocalTranscription && !didAutoStartLocalTranscription {
@@ -1298,10 +1337,18 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         handler(id, out, micActiveIntervals, partialEventIDs)
     }
 
+    func configureAssistantHUD(talk: IOSAssistantTalkController, speech: IOSAssistantSpeechCoordinator) {
+        assistantHUDContext = (talk, speech)
+        callView?.attachAssistantVoiceHUD(talk: talk, speech: speech) { [weak self] in
+            self?.onOpenAssistant?()
+        }
+    }
+
     func presentNotesSheet(workspace: IOSWorkspaceCoordinator) {
         guard let sid = workspaceSessionID, let host = topPresentedCallController() else { return }
         let view = IOSInCallNotesView(workspace: workspace, sessionID: sid, title: title, roomURL: invitationURL)
         let sheet = UIHostingController(rootView: view)
+        sheet.overrideUserInterfaceStyle = .dark
         sheet.modalPresentationStyle = .formSheet
         host.present(sheet, animated: true)
     }
@@ -1316,6 +1363,7 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
             speech: speech
         )
         let sheet = UIHostingController(rootView: view)
+        sheet.overrideUserInterfaceStyle = .dark
         sheet.modalPresentationStyle = .formSheet
         host.present(sheet, animated: true)
     }
@@ -1655,9 +1703,11 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         appLifecycleObservers.forEach(NotificationCenter.default.removeObserver)
         appLifecycleObservers = []
 
+        let wasBroadcast = screenShare?.isBroadcastSharing == true
         await localTranscriber.reset()
         await screenShare?.stop()
         screenShare = nil
+        if wasBroadcast { onBroadcastOwnershipChanged?(false) }
         compositeSources.removeAll()
         callView?.endFloatingVideo()
         studio.end()
@@ -1668,7 +1718,11 @@ final class IOSMeetingSessionController: ObservableObject, CallEngine, Identifia
         _ = await catchUp.finishMeeting().value
 
         if let view = callView, view.presentingViewController != nil {
-            view.dismiss(animated: false)
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                view.dismiss(animated: false) {
+                    continuation.resume()
+                }
+            }
         }
         callView = nil
         onEvent?(event)

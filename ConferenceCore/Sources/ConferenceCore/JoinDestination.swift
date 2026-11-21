@@ -16,21 +16,27 @@ public enum JoinDestination: Equatable, Sendable {
     }
 
     public static func parse(_ text: String, joinLinkHost: String? = nil) throws -> JoinDestination {
+        try parse(text, joinLinkHost: joinLinkHost, depth: 0)
+    }
+
+    private static func parse(_ text: String, joinLinkHost: String?, depth: Int) throws -> JoinDestination {
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty, candidate.utf8.count <= 4_096,
               let components = URLComponents(string: candidate) else {
             throw JoinDestinationError.invalidLink
         }
         if components.scheme?.lowercased() == "conferenceguest" {
-            guard components.host?.lowercased() == "join",
+            guard depth == 0,
+                  components.host?.lowercased() == "join",
                   components.user == nil, components.password == nil,
                   components.queryItems?.filter({ $0.name == "url" }).count == 1,
                   let nested = components.queryItems?.first(where: { $0.name == "url" })?.value else {
                 throw JoinDestinationError.invalidLink
             }
-            return try parse(nested, joinLinkHost: joinLinkHost)
+            return try parse(nested, joinLinkHost: joinLinkHost, depth: depth + 1)
         }
         if let joinLinkHost,
+           depth <= 1,
            components.scheme?.lowercased() == "https",
            components.host?.lowercased() == joinLinkHost.lowercased(),
            components.path == "/join" {
@@ -39,7 +45,7 @@ public enum JoinDestination: Equatable, Sendable {
                   let nested = components.queryItems?.first(where: { $0.name == "url" })?.value else {
                 throw JoinDestinationError.invalidLink
             }
-            return try parse(nested, joinLinkHost: nil)
+            return try parse(nested, joinLinkHost: nil, depth: depth + 1)
         }
         if let host = components.host?.lowercased(), TelemostTarget.hosts.contains(host) {
             return .telemost(try TelemostTarget.parse(candidate))

@@ -469,9 +469,11 @@ public struct TaskSyncSettingsSheet: View {
                 .autocorrectionDisabled()
                 #endif
             HStack {
-                Button(L("SDBCTO Open")) {
-                    let project = prefs.jira.cleanProjectKey.isEmpty ? "SDBCTO" : prefs.jira.cleanProjectKey
-                    prefs.jira.importJQL = "project = \(project) AND resolution = Unresolved ORDER BY updated DESC"
+                Button(L("Project Open Issues")) {
+                    let project = prefs.jira.cleanProjectKey
+                    prefs.jira.importJQL = project.isEmpty
+                        ? "resolution = Unresolved ORDER BY updated DESC"
+                        : "project = \(project) AND resolution = Unresolved ORDER BY updated DESC"
                 }
                 .font(.caption)
                 Button(L("My Open Issues")) {
@@ -696,26 +698,23 @@ public struct TaskSyncSettingsSheet: View {
     }
 
     private func loadSecretDraft(for settings: JiraConnectionSettings) {
-        let host = settings.normalizedBaseURL?.host?.lowercased() ?? "default"
         switch settings.authMode {
         case .personalAccessToken:
-            jiraSecretDraft = controller.keychain.read(hostKey: host, kind: .jiraPersonalAccessToken) ?? ""
+            jiraSecretDraft = controller.readJiraSecret(kind: .jiraPersonalAccessToken, settings: settings) ?? ""
         case .basicAuth:
-            jiraSecretDraft = controller.keychain.read(hostKey: host, kind: .jiraBasicSecret) ?? ""
+            jiraSecretDraft = controller.readJiraSecret(kind: .jiraBasicSecret, settings: settings) ?? ""
         case .webSession:
             jiraSecretDraft = ""
         }
     }
 
     private func commitSecretDraft() {
-        let host = prefs.jira.normalizedBaseURL?.host?.lowercased() ?? "default"
         let clean = jiraSecretDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
         switch prefs.jira.authMode {
         case .personalAccessToken:
-            _ = controller.keychain.write(clean, hostKey: host, kind: .jiraPersonalAccessToken)
+            controller.saveJiraSecret(clean, kind: .jiraPersonalAccessToken, settings: prefs.jira)
         case .basicAuth:
-            _ = controller.keychain.write(clean, hostKey: host, kind: .jiraBasicSecret)
+            controller.saveJiraSecret(clean, kind: .jiraBasicSecret, settings: prefs.jira)
         case .webSession:
             break
         }
@@ -1169,7 +1168,7 @@ public struct TaskDetailAndContextSheet: View {
                     }
                     if issueKind != .epic {
                         HStack {
-                            TextField(L("Parent Epic Key (e.g. SDBCTO-10)"), text: $parentEpicKey)
+                            TextField(L("Parent Epic Key (e.g. PROJ-123)"), text: $parentEpicKey)
                                 #if os(iOS)
                                 .textInputAutocapitalization(.characters)
                                 .autocorrectionDisabled()
@@ -1228,8 +1227,11 @@ public struct TaskDetailAndContextSheet: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                if let urlString = binding.externalURL, let url = URL(string: urlString) {
-                                    Button(L("Open")) { openURL(url) }
+                                if let urlString = binding.externalURL,
+                                   let url = URL(string: urlString),
+                                   let scheme = url.scheme?.lowercased(),
+                                   scheme == "https" || scheme == "http" {
+                                    Button(L("Open link")) { openURL(url) }
                                         .font(.caption)
                                 }
                             }
@@ -1486,8 +1488,11 @@ public struct TaskDetailAndContextSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if let urlString = meeting.meetingURL, let url = URL(string: urlString) {
-                        Button(L("Open")) { openURL(url) }
+                    if let urlString = meeting.meetingURL,
+                       let url = URL(string: urlString),
+                       let scheme = url.scheme?.lowercased(),
+                       scheme == "https" || scheme == "http" {
+                        Button(L("Open link")) { openURL(url) }
                             .font(.caption)
                     }
                     Button {

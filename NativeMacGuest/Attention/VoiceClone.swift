@@ -669,24 +669,50 @@ struct StoredClonedVoice: Codable, Equatable {
 
     func cancelGPURequest(_ request: UUID) async { await router.cancelGPURequest(request) }
 
-    func speakPreset(_ text: String, preset: AssistantVoxVoicePreset) async throws -> [Float] {
+    func speakPreset(_ text: String, preset: AssistantVoxVoicePreset, request: UUID = UUID()) async throws -> [Float] {
         try Task.checkCancellation()
+        defer { retireGPUIfANEReady() }
         let prompt = preset.formattedPrompt(for: text)
         guard !prompt.isEmpty else { throw VoiceSynthesisError.empty }
         restorePreparation()
         prepareGPUIfNeeded()
         let aneReady = !deleting && installed && preparation == .ready
         if aneReady, let folder = bundleFolder {
-            let samples = try await engine.speakZeroShot(prompt, folder: folder)
-            try ClonedVoiceWire.validatePCM(samples)
-            return samples
+            do {
+                let samples = try await withTaskCancellationHandler {
+                    try await engine.speakZeroShot(prompt, folder: folder)
+                } onCancel: {
+                    Task { await engine.unload() }
+                }
+                try ClonedVoiceWire.validatePCM(samples)
+                return samples
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if self.gpuReady, !Task.isCancelled, let gpuFolder = gpuModel.map(listen.folder) {
+                    let samples = try await withTaskCancellationHandler {
+                        try await gpuEngine.speakZeroShot(prompt, folder: gpuFolder)
+                    } onCancel: {
+                        Task { await gpuEngine.unload() }
+                    }
+                    try ClonedVoiceWire.validatePCM(samples)
+                    return samples
+                }
+                throw error
+            }
         }
-        if !gpuDeleting && gpuInstalled, let gpuFolder = gpuModel.map(listen.folder) {
-            let samples = try await gpuEngine.speakZeroShot(prompt, folder: gpuFolder)
+        if self.gpuReady, let gpuFolder = gpuModel.map(listen.folder) {
+            let samples = try await withTaskCancellationHandler {
+                try await gpuEngine.speakZeroShot(prompt, folder: gpuFolder)
+            } onCancel: {
+                Task { await gpuEngine.unload() }
+            }
             try ClonedVoiceWire.validatePCM(samples)
             return samples
         }
         if gpuPreparation == .preparing || preparation == .preparing { throw VoiceSynthesisError.clonePreparing }
+        if case .failed = gpuPreparation { throw VoiceSynthesisError.clonePreparationFailed }
+        if case .failed = preparation { throw VoiceSynthesisError.clonePreparationFailed }
         throw installed ? VoiceSynthesisError.clonePreparing : VoiceSynthesisError.cloneModelMissing
     }
 

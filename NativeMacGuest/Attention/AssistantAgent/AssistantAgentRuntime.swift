@@ -38,7 +38,16 @@ struct AssistantConversationStore: Equatable, Sendable {
     /// The bounded transcript for one model step. Whole user turns are dropped, never a
     /// tool_call/tool pair, so the projection stays valid for native tool calling.
     func modelTranscript(limit: Int = 40) -> [AssistantAgentModelMessage] {
-        Array(history.suffix(limit))
+        guard limit > 0 else { return [] }
+        guard history.count > limit else { return history }
+        let cutoff = history.count - limit
+        if let firstUser = history.indices.first(where: { history[$0].isUser && $0 >= cutoff }) {
+            return Array(history[firstUser...])
+        }
+        if let lastUser = history.indices.last(where: { history[$0].isUser && $0 < cutoff }) {
+            return Array(history[lastUser...])
+        }
+        return Array(history.suffix(limit))
     }
 
     private mutating func trimHistory() {
@@ -244,6 +253,7 @@ struct AssistantAgentEnvironment: Sendable {
             return .failure(AssistantAgentError.unsupported)
         }
         let generation = UUID(); runGeneration = generation
+        lastRuleProposal = nil
         store.append(.init(kind: .user, text: clean)); store.appendModel(.user(clean)); syncItems()
         state = .preparingContext
         do {
@@ -271,6 +281,7 @@ struct AssistantAgentEnvironment: Sendable {
         let generation = runGeneration
         clearPending()
         guard approved else {
+            environment.actionCoordinator?.markDenied(approval.action)
             let result = AssistantAgentToolResult(callID: call.id, toolName: call.name,
                 json: .object(["denied": .bool(true)]), summary: L("Denied. Nothing was sent."), isError: false)
             store.append(.init(kind: .approval, text: result.summary)); syncItems()
@@ -401,6 +412,9 @@ struct AssistantAgentEnvironment: Sendable {
         if let proposal = result.ruleProposal { lastRuleProposal = proposal }
         do {
             return .success(try await runLoop(generation: generation, environment: environment))
+        } catch is CancellationError {
+            state = .cancelled
+            return .failure(CancellationError())
         } catch {
             state = .failed
             appendSystem(error.localizedDescription, isError: true)

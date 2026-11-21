@@ -2,6 +2,41 @@ import ConferenceCore
 import QuickLook
 import SwiftUI
 
+extension Color {
+    static let rockBrandTint = Color(uiColor: .init { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) :
+            UIColor(red: 0.49, green: 0.21, blue: 0.06, alpha: 1)
+    })
+    static let rockProminentFill = Color(red: 1, green: 0.60, blue: 0.33)
+}
+
+private enum ActiveHomeSheet: Identifiable {
+    case savedHistory
+    case settings
+    case agenda
+    case workspace(IOSWorkspaceHubTab)
+    case assistantMode(UUID)
+    case devices
+    case renameRoom(RecentRoom)
+
+    var id: String {
+        switch self {
+        case .savedHistory: "savedHistory"
+        case .settings: "settings"
+        case .agenda: "agenda"
+        case .workspace(let tab): "workspace.\(tab.rawValue)"
+        case .assistantMode(let id): "assistantMode.\(id.uuidString)"
+        case .devices: "devices"
+        case .renameRoom(let room): "rename.\(room.id)"
+        }
+    }
+
+    var isAgenda: Bool {
+        if case .agenda = self { return true }
+        return false
+    }
+}
+
 struct JoinView: View {
     @ObservedObject var model: ConferenceModel
     @ObservedObject var catchUp: CatchUpStore
@@ -12,13 +47,10 @@ struct JoinView: View {
     @ObservedObject var setup: MeetingSetupCoordinator
     @Environment(\.openURL) private var openURL
     @State private var setupAfterSettings: Int?
-    @State private var showingSavedHistory = false
     @FocusState private var nameFocused: Bool
     @FocusState private var linkFocused: Bool
     @Environment(\.dynamicTypeSize) private var textSize
     @State private var showingAllFavorites = false
-    @State private var showingAgenda = false
-    @State private var showingDevices = false
     @State private var agendaSettings = false
     @State private var homeSnapshot = HomeMeetingSnapshot()
     @State private var homeVisible = false
@@ -26,7 +58,6 @@ struct JoinView: View {
     @State private var homeNow = Date()
     @State private var homeLayoutNow = Date()
     @State private var foreground = true
-    @State private var showingSettings = false
     @State private var noticesToPreview: URL?
     @AppStorage(SystemCallCoordinator.controlsPreferenceKey) private var systemCallControls = false
     @AppStorage(MeetingActivityCoordinator.enabledKey) private var meetingActivityEnabled = true
@@ -34,20 +65,14 @@ struct JoinView: View {
     @State private var showingAllRooms = false
     @StateObject private var mediaCheck = Self.makeMediaCheck()
     @StateObject private var favoriteDrag = FavoriteDragState()
-    @State private var editingRoom: RecentRoom?
     @State private var roomAlias = ""
     @State private var showingUndo = false
     @State private var undoToken = UUID()
     @State private var staleContinuation: ActiveJam?
     @State private var confirmingStaleContinuation = false
-    @State private var showingWorkspace = false
-    @State private var workspaceTab: IOSWorkspaceHubTab = .history
-    @State private var assistantSheetSessionID: UUID?
-    private let accent = Color(red: 1, green: 0.60, blue: 0.33)
-    private let linkAccent = Color(uiColor: .init { traits in
-        traits.userInterfaceStyle == .dark ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) :
-            UIColor(red: 0.49, green: 0.21, blue: 0.06, alpha: 1)
-    })
+    @State private var activeSheet: ActiveHomeSheet?
+    private let accent = Color.rockProminentFill
+    private let linkAccent = Color.rockBrandTint
 
     private var favorites: [RecentRoom] { history.rooms.filter(\.isStarred) }
     private var recent: [RecentRoom] { history.rooms.filter { !$0.isStarred } }
@@ -63,7 +88,14 @@ struct JoinView: View {
 
     var body: some View {
         NavigationStack {
-          GeometryReader { window in
+            homeWithCalendarObservers
+        }
+        .tint(linkAccent)
+    }
+
+    @ViewBuilder
+    private var homeContent: some View {
+        GeometryReader { window in
             let fold = homeFold(in: window)
             let vertical = fold?.sideBySide == false
             let wide = fold != nil || (window.size.width >= 620 && !textSize.isAccessibilitySize)
@@ -95,9 +127,9 @@ struct JoinView: View {
                     }
                     if !wide { library(wide: false) }
                     CalendarAgendaView(calendar: calendar, history: history, continuation: continuation,
-                        busy: busy, onJoin: model.joinCalendarMeeting, onSettings: { showingSettings = true },
+                        busy: busy, onJoin: model.joinCalendarMeeting, onSettings: { activeSheet = .settings },
                         home: true, excluded: Set(homeSnapshot.items.compactMap { $0.calendar?.id }),
-                        onShowAll: { showingAgenda = true }, homeMeetings: homeSnapshot.calendarItems, homeNow: homeLayoutNow,
+                        onShowAll: { activeSheet = .agenda }, homeMeetings: homeSnapshot.calendarItems, homeNow: homeLayoutNow,
                         homeState: homeSnapshot.calendarState)
                     secondarySections
                 }
@@ -108,43 +140,40 @@ struct JoinView: View {
                 .frame(height: vertical ? fold?.second.height : nil)
                 .onPreferenceChange(HomeRowFrames.self) { homeInteraction.layoutChanged($0) }
             }
-          }
-            .background(HomeInteractionProbe(state: homeInteraction))
-            .navigationTitle("Rock’n’Roll")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarLeading) {
-                    Button {
-                        workspaceTab = .history
-                        showingWorkspace = true
-                    } label: {
-                        Image(systemName: "note.text")
-                    }
-                    .accessibilityIdentifier("home.assistant")
-                    .accessibilityLabel(L("Assistant"))
+        }
+        .background(HomeInteractionProbe(state: homeInteraction))
+        .navigationTitle("Rock’n’Roll")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarLeading) {
+                Button {
+                    activeSheet = .workspace(.history)
+                } label: {
+                    Image(systemName: "note.text")
+                }
+                .accessibilityIdentifier("home.assistant")
+                .accessibilityLabel(L("Assistant"))
 
-                    Button {
-                        workspaceTab = .ask
-                        showingWorkspace = true
-                    } label: {
-                        Image(systemName: "waveform.circle")
-                    }
-                    .accessibilityIdentifier("home.ask")
-                    .accessibilityLabel(L("Ask Rock"))
+                Button {
+                    activeSheet = .workspace(.ask)
+                } label: {
+                    Image(systemName: "waveform.circle")
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingSettings = true } label: { Image(systemName: "gearshape") }
-                        .accessibilityLabel(L("Settings"))
-                }
+                .accessibilityIdentifier("home.ask")
+                .accessibilityLabel(L("Ask Rock"))
             }
-            .safeAreaInset(edge: .bottom) {
-              VStack(spacing: 4) {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { activeSheet = .settings } label: { Image(systemName: "gearshape") }
+                    .accessibilityLabel(L("Settings"))
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 4) {
                 IOSAssistantVoiceHUDBanner(
                     talk: model.assistantTalk,
                     speech: model.assistantSpeech,
                     openAsk: {
-                        workspaceTab = .ask
-                        showingWorkspace = true
+                        activeSheet = .workspace(.ask)
                     }
                 )
                 automaticJoinBanner
@@ -156,57 +185,101 @@ struct JoinView: View {
                     .padding(12)
                     .background(ControlChromeBackground(cornerRadius: 24))
                 }
-              }
             }
-            .sheet(isPresented: $showingSavedHistory) {
-                SavedCatchUpView(store: catchUp)
+        }
+    }
+
+    @ViewBuilder
+    private var homeWithSheets: some View {
+        homeContent
+            .sheet(item: $activeSheet) { sheet in
+                sheetContent(for: sheet)
             }
-            .sheet(isPresented: $showingSettings, onDismiss: {
-                if let generation = setupAfterSettings {
-                    setupAfterSettings = nil
-                    if generation == setup.intentGeneration, !busy, !model.isNameRequiredForJoin,
-                       model.siteSelection == nil, model.engineSelection == nil, !calendar.reminders.hasOpenIntent { setup.begin() }
-                }
-            }) { settingsSheet }
             .sheet(isPresented: Binding(get: { setup.isPresented }, set: { if !$0 { setup.finishLater() } }), onDismiss: {
                 setup.presentationDidDismiss()
             }) {
                 MeetingSetupView(setup: setup, calendar: calendar, reminders: calendar.reminders, sync: sync, continuation: continuation)
                     .onAppear { setup.presentationDidMount() }
             }
-            .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { !showingAgenda }))
-            .sheet(isPresented: $showingAgenda) { agendaSheet }
-            .sheet(isPresented: $showingWorkspace) {
-                IOSWorkspaceHubView(
-                    workspace: model.workspace,
-                    sync: sync,
-                    assistant: model.assistant,
-                    talk: model.assistantTalk,
-                    speech: model.assistantSpeech,
-                    initialTab: workspaceTab
+            .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { activeSheet?.isAgenda != true }))
+            .sheet(isPresented: Binding(get: { mediaCheck.presented }, set: { if !$0 { mediaCheck.close() } })) {
+                StudioPanel(model: mediaCheck)
+            }
+            .sheet(isPresented: $calendar.showingMacSettings) {
+                NavigationStack {
+                    CalendarSettingsView(calendar: calendar)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) {
+                            Button(L("Done")) { calendar.showingMacSettings = false }
+                        } }
+                }
+            }
+            .alert(L("Join here without moving the other device?"),
+                   isPresented: $confirmingStaleContinuation,
+                   presenting: staleContinuation) { jam in
+                Button(L("Join with mic and camera off")) { model.joinFromContinuation(jam, quiet: false) }
+                Button(L("Cancel"), role: .cancel) {}
+            } message: { _ in
+                Text(L("The other device may still play meeting audio. Disconnect it or use headphones to avoid echo."))
+            }
+            .sheet(item: $model.siteSelection) { selection in
+                MeetingWebsiteSelectionView(
+                    rememberedOrigins: selection.rememberedOrigins,
+                    onChoose: { model.chooseWebsite($0) ? nil : model.status },
+                    onCancel: { model.siteSelection = nil }
                 )
             }
-            .sheet(item: Binding<IOSMeetingSessionController?>(
-                get: { model.sessions.first { $0.id == assistantSheetSessionID } },
-                set: { assistantSheetSessionID = $0?.id }
-            )) { session in
-                IOSAssistantModeSheet(
-                    controllerID: session.id,
-                    meetingTitle: session.title,
-                    canSendChat: session.canSendAssistantChat,
-                    assistant: model.assistant,
-                    speech: model.assistantSpeech,
-                    onFocusMeeting: { model.presentSession(id: session.id) }
-                )
+            .sheet(item: Binding(get: { activeSheet?.isAgenda == true ? nil : calendar.choosingMeeting },
+                                 set: { calendar.choosingMeeting = $0 })) { meeting in
+                CalendarRoomBindingView(meeting: meeting, calendar: calendar, history: history)
+            }
+            .confirmationDialog(L("Choose meeting engine"),
+                                isPresented: Binding(get: { model.engineSelection != nil },
+                                                     set: { if !$0 { model.dismissEngineSelection() } }),
+                                titleVisibility: .visible) {
+                Button(L("Guest meeting")) { model.chooseEngine(community: false) }
+                Button(L("Community jam")) { model.chooseEngine(community: true) }
+                Button(L("Cancel"), role: .cancel) { model.dismissEngineSelection() }
+            } message: {
+                Text(L("This website supports two meeting engines. Choose how to join."))
+            }
+            .confirmationDialog(
+                model.canJoinAlongsidePending
+                    ? L("Already in %ld active meeting(s). Join this meeting too?", model.sessions.count)
+                    : L("Maximum of 4 meetings reached. Leave the current meeting and switch?"),
+                isPresented: $model.showSwitchConfirmation,
+                titleVisibility: .visible
+            ) {
+                if model.canJoinAlongsidePending {
+                    Button(L("Join Alongside")) { model.joinAlongsidePending() }
+                    Button(L("Leave & Switch"), role: .destructive) { model.replaceWithPending() }
+                } else {
+                    Button(L("Leave Current & Switch"), role: .destructive) { model.replaceWithPending() }
+                }
+                Button(L("Cancel"), role: .cancel) { model.dismissPending() }
+            }
+    }
+
+    @ViewBuilder
+    private var homeWithInputObservers: some View {
+        homeWithSheets
+            .onChange(of: activeSheet?.id) { oldID, newID in
+                if newID != nil {
+                    if case .settings = activeSheet { calendar.cancelAutomaticJoin(suppress: true) }
+                    else if case .agenda = activeSheet { calendar.cancelAutomaticJoin(suppress: true) }
+                    else if case .devices = activeSheet { calendar.cancelAutomaticJoin(suppress: true) }
+                }
+                if oldID == "settings" && newID != "settings" {
+                    if let generation = setupAfterSettings {
+                        setupAfterSettings = nil
+                        if generation == setup.intentGeneration, !busy, !model.isNameRequiredForJoin,
+                           model.siteSelection == nil, model.engineSelection == nil, !calendar.reminders.hasOpenIntent { setup.begin() }
+                    }
+                } else if oldID == "devices" && newID != "devices" {
+                    if staleContinuation != nil { confirmingStaleContinuation = true }
+                }
             }
             .onChange(of: model.focusJoinLinkTrigger) { _, _ in
                 linkFocused = true
-            }
-            .sheet(isPresented: $showingDevices, onDismiss: {
-                if staleContinuation != nil { confirmingStaleContinuation = true }
-            }) { devicesSheet }
-            .sheet(isPresented: Binding(get: { mediaCheck.presented }, set: { if !$0 { mediaCheck.close() } })) {
-                StudioPanel(model: mediaCheck)
             }
             .onChange(of: model.isJoining) {
                 if $0 { setup.suspendForMeeting(); nameFocused = false; linkFocused = false; sync.endNameEditing(); mediaCheck.close() }
@@ -223,10 +296,17 @@ struct JoinView: View {
             .onChange(of: linkFocused) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
             .onChange(of: homeInteracting) { if !$0 { refreshHome(); offerSetup() } }
             .onChange(of: setup.launchReady) { _ in offerSetup() }
-            .onChange(of: showingAgenda) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
-            .onChange(of: showingDevices) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
             .onChange(of: blocksScheduledJoining) { calendar.setScheduledUIBlocked($0) }
             .onChange(of: confirmingStaleContinuation) { if !$0 { staleContinuation = nil } }
+            .onChange(of: mediaCheck.presented) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
+            .onChange(of: model.isNameRequiredForJoin) { required in
+                if required { nameFocused = true }
+            }
+    }
+
+    @ViewBuilder
+    private var homeWithCalendarObservers: some View {
+        homeWithInputObservers
             .onReceive(calendar.$meetings) { refreshHome(meetings: $0) }
             .onReceive(calendar.$now) { _ in refreshHome() }
             .onChange(of: calendar.access) { _ in refreshHome() }
@@ -251,25 +331,12 @@ struct JoinView: View {
                 }
             }
             .onChange(of: model.invite) { _ in calendar.cancelAutomaticJoin(suppress: true) }
-            .onChange(of: showingSettings) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
-            .sheet(isPresented: $calendar.showingMacSettings) {
-                NavigationStack {
-                    CalendarSettingsView(calendar: calendar)
-                        .toolbar { ToolbarItem(placement: .confirmationAction) {
-                            Button(L("Done")) { calendar.showingMacSettings = false }
-                        } }
-                }
-            }
-            .onChange(of: mediaCheck.presented) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
-            .onChange(of: model.isNameRequiredForJoin) { required in
-                if required { nameFocused = true }
-            }
             .onAppear {
                 calendar.setScheduledUIBlocked(blocksScheduledJoining)
                 homeInteraction.resume(); homeVisible = false; refreshHome(); homeVisible = true
                 offerSetup()
                 calendar.reminders.isEventVisible = { id in
-                    guard homeVisible, foreground, !setup.isPresented, !showingSettings, !showingAgenda, !showingDevices,
+                    guard homeVisible, foreground, !setup.isPresented, activeSheet == nil,
                           !mediaCheck.presented, !model.isInConference else { return false }
                     if homeInteraction.isAnchorVisible("calendar." + id) { return true }
                     guard let item = homeSnapshot.items.first(where: { $0.calendar?.id == id }) else { return false }
@@ -281,91 +348,18 @@ struct JoinView: View {
                 homeVisible = false; calendar.reminders.isEventVisible = { _ in false }
                 homeInteraction.cancel(); favoriteDrag.cancel(); sync.endNameEditing()
             }
-            .alert(L("Join here without moving the other device?"),
-                                isPresented: $confirmingStaleContinuation,
-                                presenting: staleContinuation) { jam in
-                Button(L("Join with mic and camera off")) { model.joinFromContinuation(jam, quiet: false) }
-                Button(L("Cancel"), role: .cancel) {}
-            } message: { _ in
-                Text(L("The other device may still play meeting audio. Disconnect it or use headphones to avoid echo."))
-            }
-            .sheet(item: $model.siteSelection) { selection in
-                MeetingWebsiteSelectionView(
-                    rememberedOrigins: selection.rememberedOrigins,
-                    onChoose: { model.chooseWebsite($0) ? nil : model.status },
-                    onCancel: { model.siteSelection = nil }
-                )
-            }
-            .sheet(item: Binding(get: { showingAgenda ? nil : calendar.choosingMeeting },
-                                set: { calendar.choosingMeeting = $0 })) { meeting in
-                CalendarRoomBindingView(meeting: meeting, calendar: calendar, history: history)
-            }
-            .confirmationDialog(L("Choose meeting engine"),
-                isPresented: Binding(get: { model.engineSelection != nil },
-                                     set: { if !$0 { model.dismissEngineSelection() } }),
-                titleVisibility: .visible) {
-                Button(L("Guest meeting")) { model.chooseEngine(community: false) }
-                Button(L("Community jam")) { model.chooseEngine(community: true) }
-                Button(L("Cancel"), role: .cancel) { model.dismissEngineSelection() }
-            } message: {
-                Text(L("This website supports two meeting engines. Choose how to join."))
-            }
-            .sheet(item: $editingRoom) { room in
-                NavigationStack {
-                    Form {
-                        Section {
-                            TextField(L("New jam name"), text: $roomAlias)
-                                .textInputAutocapitalization(.words)
-                        } footer: {
-                            Text(L("Current: %@. Only you see this name.", room.displayTitle))
-                        }
-                    }
-                    .navigationTitle(L("Name this jam"))
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button(L("Cancel")) { editingRoom = nil }
-                        }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button(L("Save")) {
-                                model.setAlias(roomAlias, for: room)
-                                editingRoom = nil
-                            }
-                            .disabled(roomAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-                }
-                .presentationDetents([.medium])
-            }
-            .confirmationDialog(
-                model.canJoinAlongsidePending
-                    ? L("Already in %ld active meeting(s). Join this meeting too?", model.sessions.count)
-                    : L("Maximum of 4 meetings reached. Leave the current meeting and switch?"),
-                isPresented: $model.showSwitchConfirmation,
-                titleVisibility: .visible
-            ) {
-                if model.canJoinAlongsidePending {
-                    Button(L("Join Alongside")) { model.joinAlongsidePending() }
-                    Button(L("Leave & Switch"), role: .destructive) { model.replaceWithPending() }
-                } else {
-                    Button(L("Leave Current & Switch"), role: .destructive) { model.replaceWithPending() }
-                }
-                Button(L("Cancel"), role: .cancel) { model.dismissPending() }
-            }
-        }
-        .tint(linkAccent)
     }
 
     private var blocksScheduledJoining: Bool {
-        nameFocused || linkFocused || showingSettings || showingAgenda || showingDevices || mediaCheck.presented ||
-            editingRoom != nil || calendar.choosingMeeting != nil || confirmingStaleContinuation || showingSavedHistory
+        nameFocused || linkFocused || activeSheet != nil || mediaCheck.presented ||
+            calendar.choosingMeeting != nil || confirmingStaleContinuation
     }
     private var busy: Bool {
         model.isJoining || (!model.isCallMinimized && model.isInConference) || model.isLeaving || continuation.moving
     }
     private var homeInteracting: Bool {
-        setup.isPresented || homeInteraction.active || nameFocused || linkFocused || favoriteDrag.session != nil || showingSettings || showingAgenda ||
-            showingDevices || editingRoom != nil || mediaCheck.presented || confirmingStaleContinuation ||
+        setup.isPresented || homeInteraction.active || nameFocused || linkFocused || favoriteDrag.session != nil ||
+            activeSheet != nil || mediaCheck.presented || confirmingStaleContinuation ||
             calendar.choosingMeeting != nil || model.siteSelection != nil || model.engineSelection != nil ||
             model.showSwitchConfirmation || busy
     }
@@ -427,27 +421,33 @@ struct JoinView: View {
                                 }
                             }
                             IOSActiveMeetingAssistantPill(controllerID: session.id, assistant: model.assistant) {
-                                assistantSheetSessionID = session.id
+                                activeSheet = .assistantMode(session.id)
                             }
                         }
                         Spacer()
-                        if !session.isTalkRoom {
-                            Button(L("Talk")) { model.switchTalk(to: session.id) }
-                                .buttonStyle(.bordered)
-                                .accessibilityIdentifier("active.talk.\(session.id.uuidString)")
+                        HStack(spacing: 12) {
+                            if !session.isTalkRoom {
+                                Button(L("Talk")) { model.switchTalk(to: session.id) }
+                                    .buttonStyle(.bordered)
+                                    .frame(minHeight: 44)
+                                    .accessibilityIdentifier("active.talk.\(session.id.uuidString)")
+                            }
+                            Button(L("Return")) { model.presentSession(id: session.id) }
+                                .buttonStyle(.borderedProminent)
+                                .tint(accent)
+                                .foregroundStyle(.black)
+                                .frame(minHeight: 44)
+                                .accessibilityIdentifier("active.return.\(session.id.uuidString)")
+                            Button { model.leaveSession(id: session.id) } label: {
+                                Image(systemName: "phone.down.fill")
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                            .accessibilityLabel(L("Leave %@", session.title))
+                            .accessibilityIdentifier("active.leave.\(session.id.uuidString)")
                         }
-                        Button(L("Return")) { model.presentSession(id: session.id) }
-                            .buttonStyle(.borderedProminent)
-                            .tint(accent)
-                            .foregroundStyle(.black)
-                            .accessibilityIdentifier("active.return.\(session.id.uuidString)")
-                        Button { model.leaveSession(id: session.id) } label: {
-                            Image(systemName: "phone.down.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.red)
-                        .accessibilityLabel(L("Leave %@", session.title))
-                        .accessibilityIdentifier("active.leave.\(session.id.uuidString)")
                     }
                     .padding(.vertical, 2)
                 }
@@ -580,7 +580,7 @@ struct JoinView: View {
         if !continuation.candidates.isEmpty || continuation.status != nil {
             Section {
                 if let status = continuation.status { Text(status).font(.footnote).foregroundStyle(.secondary) }
-                Button(L("Other devices")) { showingDevices = true }.accessibilityIdentifier("home.devices")
+                Button(L("Other devices")) { activeSheet = .devices }.accessibilityIdentifier("home.devices")
                 if continuation.moving { Button(continuation.moveActionTitle) { continuation.cancel() } }
             }
         }
@@ -595,24 +595,22 @@ struct JoinView: View {
         if sync.offerSync && !busy && !setup.isPresented {
             Section(L("Keep your jams across devices")) {
                 Text(L("Sync your name, favorites and recent jams through your private iCloud account.")).font(.subheadline)
-                Button(L("Enable iCloud Sync")) { sync.dismissOffer(); sync.setEnabled(true); showingSettings = true }
+                Button(L("Enable iCloud Sync")) { sync.dismissOffer(); sync.setEnabled(true); activeSheet = .settings }
                 Button(L("Not now")) { sync.dismissOffer() }.foregroundStyle(.secondary)
             }
         }
         if !catchUp.timeline.intervals.isEmpty && !model.isInConference {
-            Section(L("Catch up")) { Button(L("Review missed section")) { showingSavedHistory = true } }
+            Section(L("Catch up")) { Button(L("Review missed section")) { activeSheet = .savedHistory } }
         }
         Section(L("Meetings & Tasks")) {
             Button {
-                workspaceTab = .history
-                showingWorkspace = true
+                activeSheet = .workspace(.history)
             } label: {
                 Label(L("Meetings & Summaries"), systemImage: "note.text")
             }
             .accessibilityIdentifier("home.workspace.meetings")
             Button {
-                workspaceTab = .tasks
-                showingWorkspace = true
+                activeSheet = .workspace(.tasks)
             } label: {
                 HStack {
                     Label(L("Tasks"), systemImage: "checklist")
@@ -637,25 +635,25 @@ struct JoinView: View {
         NavigationStack {
             Form {
                 CalendarAgendaView(calendar: calendar, history: history, continuation: continuation,
-                    busy: busy, onJoin: { showingAgenda = false; model.joinCalendarMeeting($0) },
+                    busy: busy, onJoin: { activeSheet = nil; model.joinCalendarMeeting($0) },
                     onSettings: { agendaSettings = true })
             }
             .navigationTitle(L("Upcoming meetings")).navigationBarTitleDisplayMode(.inline)
             .navigationDestination(isPresented: $agendaSettings) { CalendarSettingsView(calendar: calendar) }
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("Done")) { showingAgenda = false } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("Done")) { activeSheet = nil } } }
             .sheet(item: $calendar.choosingMeeting) { CalendarRoomBindingView(meeting: $0, calendar: calendar, history: history) }
-            .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { showingAgenda }))
+            .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { activeSheet?.isAgenda == true }))
         }
     }
     private var devicesSheet: some View {
         NavigationStack {
             Form {
                 MeetingContinuationView(continuation: continuation, busy: busy, onJoinHere: {
-                    staleContinuation = $0; showingDevices = false
+                    staleContinuation = $0; activeSheet = nil
                 })
             }
             .navigationTitle(L("Other devices")).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("Done")) { showingDevices = false } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("Done")) { activeSheet = nil } } }
         }
     }
     private var validDisplayName: Bool {
@@ -763,9 +761,69 @@ struct JoinView: View {
         }
     }
 
+    @ViewBuilder
+    private func sheetContent(for sheet: ActiveHomeSheet) -> some View {
+        switch sheet {
+        case .savedHistory:
+            SavedCatchUpView(store: catchUp)
+        case .settings:
+            settingsSheet
+        case .agenda:
+            agendaSheet
+        case .workspace(let tab):
+            IOSWorkspaceHubView(
+                workspace: model.workspace,
+                sync: sync,
+                assistant: model.assistant,
+                talk: model.assistantTalk,
+                speech: model.assistantSpeech,
+                initialTab: tab
+            )
+        case .assistantMode(let sessionID):
+            if let session = model.sessions.first(where: { $0.id == sessionID }) {
+                IOSAssistantModeSheet(
+                    controllerID: session.id,
+                    meetingTitle: session.title,
+                    canSendChat: session.canSendAssistantChat,
+                    assistant: model.assistant,
+                    speech: model.assistantSpeech,
+                    onFocusMeeting: { model.presentSession(id: session.id) }
+                )
+            }
+        case .devices:
+            devicesSheet
+        case .renameRoom(let room):
+            NavigationStack {
+                Form {
+                    Section {
+                        TextField(L("New jam name"), text: $roomAlias)
+                            .textInputAutocapitalization(.words)
+                    } footer: {
+                        Text(L("Current: %@. Only you see this name.", room.displayTitle))
+                    }
+                }
+                .navigationTitle(L("Name this jam"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(L("Cancel")) { activeSheet = nil }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(L("Save")) {
+                            model.setAlias(roomAlias, for: room)
+                            activeSheet = nil
+                        }
+                        .disabled(roomAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+    }
+
     private func startRename(_ room: RecentRoom) {
         roomAlias = room.alias ?? ""
-        editingRoom = room
+        activeSheet = .renameRoom(room)
     }
 
     private var settingsSheet: some View {
@@ -773,7 +831,7 @@ struct JoinView: View {
             Form {
                 Section {
                     Button {
-                        setupAfterSettings = setup.intentGeneration; showingSettings = false
+                        setupAfterSettings = setup.intentGeneration; activeSheet = nil
                     } label: { Label(setup.completed ? L("Meeting setup") : L("Continue meeting setup"), systemImage: "checklist") }
                         .accessibilityIdentifier("settings.setup")
                 }
@@ -784,7 +842,7 @@ struct JoinView: View {
                     NavigationLink {
                         IOSAssistantSettingsView(workspace: model.workspace, sync: sync, assistant: model.assistant)
                     } label: {
-                        Label(L("Assistant & summaries"), systemImage: "sparkles")
+                        Label(L("Assistant & Sync"), systemImage: "sparkles")
                     }.accessibilityIdentifier("settings.assistant")
                     NavigationLink {
                         TranscriptionAndVoiceSettingsView()
@@ -816,7 +874,7 @@ struct JoinView: View {
                 }
             }
             .navigationTitle(L("Settings"))
-            .toolbar { Button(L("Done")) { showingSettings = false } }
+            .toolbar { Button(L("Done")) { activeSheet = nil } }
         }
     }
     private func offerSetup() {

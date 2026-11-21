@@ -1,4 +1,0 @@
-Test Case '-[NativeDesktopTests.UpdateAdmissionTests testPrivateCameraDenied]' started.
-CAMERA_PERMISSION_RESULT=2
-CAMERA_PRIVATE_PREVIEW_DENIED_NO_FRAME=PASS
-Test Case '-[NativeDesktopTests.UpdateAdmissionTests testPrivateCameraDenied]' passed (4.534 seconds).

@@ -63,6 +63,7 @@ import FoundationModels
     let voiceStore: IOSVoiceStore
 
     var now: () -> Date = Date.init
+    var isInActiveCall: () -> Bool = { false }
     var sessionsProvider: (() -> [IOSMeetingSessionItem])?
     var tasksProvider: (() -> [IOSMeetingTaskItem])?
     var joinableTargets: (Date) -> [JoinableMeetingCandidate] = { _ in [] }
@@ -159,7 +160,7 @@ import FoundationModels
             switch pending.kind {
             case .join:
                 if let candidate = pending.candidate, onJoinCandidate?(candidate) == true {
-                    reply = isRussianLocale ? "Подключаю к «\(candidate.title)»." : L("Joining “%@”.", candidate.title)
+                    reply = L("Joining “%@”.", candidate.title)
                 } else {
                     reply = L("Unable to join the meeting right now.")
                 }
@@ -212,7 +213,16 @@ import FoundationModels
             guard let self else { return }
             let started = await speech.beginPushToTalkCapture()
             guard started else {
-                self.audioError = L("Microphone permission is needed to listen.")
+                switch speech.lastStartFailure {
+                case .audioBusy:
+                    self.audioError = L("Microphone input is busy during another call or audio session.")
+                case .audioUnavailable:
+                    self.audioError = L("Microphone input could not be started.")
+                case .alreadyActive:
+                    break
+                case .microphoneDenied, .none:
+                    self.audioError = L("Microphone permission is needed to listen.")
+                }
                 return
             }
             self.listening = true
@@ -299,9 +309,16 @@ import FoundationModels
         }
         let shouldAutoSpeak = (source.isVoice && voiceStore.autoAuditionVoiceReplies)
             || (!source.isVoice && source != .externalMCP && voiceStore.autoAuditionTypedReplies)
-        if shouldAutoSpeak {
+        let usesLoudspeakerInCall = isInActiveCall() && Self.isSpeakerOutputActive
+        if shouldAutoSpeak && !usesLoudspeakerInCall {
             startAudition(messageID: message.id, text: text)
         }
+    }
+
+    private static var isSpeakerOutputActive: Bool {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        guard !outputs.isEmpty else { return false }
+        return outputs.allSatisfy { $0.portType == .builtInSpeaker }
     }
 
     private func append(_ role: Message.Role, _ text: String) {
@@ -309,10 +326,6 @@ import FoundationModels
     }
 
     // MARK: - Command & Query Resolution
-
-    private var isRussianLocale: Bool {
-        Bundle.main.preferredLocalizations.first?.hasPrefix("ru") == true
-    }
 
     private func resolvedTargetMeetingID() -> UUID? {
         let active = activeMeetingsProvider()
@@ -324,7 +337,6 @@ import FoundationModels
 
     private func handleDeterministicCommandIfMatched(_ input: String, source: AssistantInputSource) async -> String? {
         let lower = input.lowercased().replacingOccurrences(of: "ё", with: "е")
-        let isRussian = lower.range(of: #"\p{Cyrillic}"#, options: .regularExpression) != nil || isRussianLocale
         let currentNow = now()
 
         // 1. Meeting count query (e.g. "сколько было встреч в этом месяце?")
@@ -356,23 +368,21 @@ import FoundationModels
             }
 
             let count = titles.count
-            if isRussian {
-                if count == 0 {
-                    return scopeToday ? "Сегодня встреч пока не было." : (scopeWeek ? "На этой неделе встреч пока не было." : "В этом месяце записанных встреч пока не было.")
-                }
-                let list = titles.prefix(4).map { "«\($0)»" }.joined(separator: ", ")
-                let more = count > 4 ? " и ещё \(count - 4)" : ""
-                let period = scopeToday ? "Сегодня" : (scopeWeek ? "На этой неделе" : "В этом месяце")
-                return "\(period) было \(count) встреч: \(list)\(more)."
-            } else {
-                if count == 0 {
-                    return scopeToday ? "No meetings today." : (scopeWeek ? "No meetings this week." : "No recorded meetings this month.")
-                }
-                let list = titles.prefix(4).joined(separator: ", ")
-                let more = count > 4 ? " and \(count - 4) more" : ""
-                let period = scopeToday ? "Today" : (scopeWeek ? "This week" : "This month")
-                return "\(period) you had \(count) meeting(s): \(list)\(more)."
+            if count == 0 {
+                return scopeToday
+                    ? L("You have had no meetings today.")
+                    : (scopeWeek
+                        ? L("You have had no meetings this week.")
+                        : L("You have had no recorded meetings this month."))
             }
+            let headTitles = titles.prefix(4).joined(separator: ", ")
+            let summaryList = count > 4 ? L("%@ and %ld more", headTitles, count - 4) : headTitles
+            let countClause = scopeToday
+                ? L("Today you had %ld meetings", count)
+                : (scopeWeek
+                    ? L("This week you had %ld meetings", count)
+                    : L("This month you had %ld meetings", count))
+            return L("%@: %@.", countClause, summaryList)
         }
 
         // 2. Join current meeting
@@ -383,11 +393,11 @@ import FoundationModels
         if asksJoin && mentionsTarget {
             let candidates = joinableTargets(currentNow)
             guard let best = CurrentMeetingTargetResolver.bestCurrentMeeting(from: candidates, now: currentNow) else {
-                return isRussian ? "Не найдена текущая или ближайшая встреча для подключения." : L("No ongoing or upcoming meeting with a join link was found.")
+                return L("No ongoing or upcoming meeting with a join link was found.")
             }
             if AssistantVoiceApprovalPolicy.shouldAutoApprove(actionKind: "join", inputSource: source, sendsWithoutAsking: false) {
                 if onJoinCandidate?(best) == true {
-                    return isRussian ? "Подключаю к «\(best.title)»." : L("Joining “%@”.", best.title)
+                    return L("Joining “%@”.", best.title)
                 }
                 return L("Unable to join “%@”.", best.title)
             } else {
@@ -400,7 +410,7 @@ import FoundationModels
                     text: "",
                     candidate: best
                 )
-                return isRussian ? "Подтвердите подключение к «\(best.title)»." : L("Confirm joining “%@”.", best.title)
+                return L("Confirm joining “%@”.", best.title)
             }
         }
 
@@ -408,25 +418,21 @@ import FoundationModels
         let asksMute = lower.contains("замут") || lower.contains("выключи микрофон") || lower.contains("отключи микрофон")
             || (lower.contains("mute") && (lower.contains("mic") || lower.contains("микрофон") || lower == "mute"))
         if asksMute {
-            return onMuteMeeting?(resolvedTargetMeetingID()) ?? (isRussian ? "Нет активного звонка." : L("No active call to mute."))
+            return onMuteMeeting?(resolvedTargetMeetingID()) ?? L("No active call to mute.")
         }
 
         // 4. Participate mode switch
         let asksParticipate = lower.contains("режим участия") || lower.contains("включи участие") || lower.contains("participat")
         if asksParticipate {
             guard let targetID = resolvedTargetMeetingID() else {
-                return isRussian ? "Сначала подключитесь к встрече." : L("Join an active meeting first.")
+                return L("Join an active meeting first.")
             }
             let objective = Self.extractObjective(from: input)
             onRequestParticipation?(targetID, objective)
             if objective.isEmpty {
-                return isRussian
-                    ? "Включаю режим участия — надиктуйте контекст или цель встречи."
-                    : L("Opening Participation mode — speak your meeting context.")
+                return L("Opening Participation mode — speak your meeting context.")
             } else {
-                return isRussian
-                    ? "Режим участия включён с задачей: \(objective)"
-                    : L("Participation enabled: %@", objective)
+                return L("Participation enabled: %@", objective)
             }
         }
 
@@ -436,7 +442,7 @@ import FoundationModels
         if asksLeave {
             guard let targetID = resolvedTargetMeetingID(),
                   let active = activeMeetingsProvider().first(where: { $0.id == targetID }) else {
-                return isRussian ? "Нет активной встречи." : L("No active meeting.")
+                return L("No active meeting.")
             }
             pendingApproval = PendingApproval(
                 id: UUID(),
@@ -454,7 +460,7 @@ import FoundationModels
         if let chatText = Self.extractChatText(from: input, lower: lower) {
             guard let targetID = resolvedTargetMeetingID(),
                   let active = activeMeetingsProvider().first(where: { $0.id == targetID }) else {
-                return isRussian ? "Нет активной встречи." : L("No active meeting.")
+                return L("No active meeting.")
             }
             guard active.canSendChat else {
                 return L("Chat is unavailable in “%@”.", active.title)
@@ -499,10 +505,10 @@ import FoundationModels
                 !task.done && (workspace?.taskArchivedAt(task) == nil)
             }
             if open.isEmpty {
-                return isRussian ? "Открытых задач сейчас нет." : L("You have no open tasks.")
+                return L("You have no open tasks.")
             }
             let bullets = open.prefix(8).map { "• \($0.text)" }.joined(separator: "\n")
-            return (isRussian ? "Открытые задачи (\(open.count)):\n" : L("Open tasks (%ld):", open.count) + "\n") + bullets
+            return L("Open tasks (%ld):", open.count) + "\n" + bullets
         }
 
         return nil
@@ -577,9 +583,6 @@ import FoundationModels
 
         if !snippets.isEmpty {
             return snippets.joined(separator: "\n\n")
-        }
-        if isRussianLocale || query.range(of: #"\p{Cyrillic}"#, options: .regularExpression) != nil {
-            return "Не нашла точных совпадений. Попробуйте спросить про количество встреч за месяц, открытые задачи или попросите подключить к текущей встрече."
         }
         return L("No exact matches found. Ask about monthly meetings, open tasks, or say “Rock, join current meeting”.")
     }

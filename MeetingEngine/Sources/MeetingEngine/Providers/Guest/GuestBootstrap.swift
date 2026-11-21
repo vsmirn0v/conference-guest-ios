@@ -104,11 +104,14 @@ public typealias GuestPrepared = GuestPreparedRoom
 /// getRoomPreconnect, createConnectionService and createRoom (web-readable.js).
 public struct GuestBootstrap {
     private let session: URLSession
+    private let customSessionInjected: Bool
 
     public init(session: URLSession? = nil) {
         if let session {
             self.session = session
+            self.customSessionInjected = true
         } else {
+            self.customSessionInjected = false
             let configuration = URLSessionConfiguration.ephemeral
             configuration.httpShouldSetCookies = false
             configuration.httpCookieStorage = nil
@@ -214,7 +217,12 @@ public struct GuestBootstrap {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        if customSessionInjected {
+            (data, response) = try await session.data(for: request)
+        } else {
+            (data, response) = try await BoundedHTTP.load(request, session: session, maximumBytes: 1_048_576)
+        }
         guard let http = response as? HTTPURLResponse else { throw GuestBootstrapError.invalidPreconnect }
         guard (200..<300).contains(http.statusCode) else { throw GuestBootstrapError.httpStatus(http.statusCode) }
         guard data.count <= 1_048_576,

@@ -333,6 +333,7 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
     }
     private let audioQueue = DispatchQueue(label: "NativeGuest.system-audio", qos: .userInitiated)
     private let lock = NSLock()
+    private let inputCallbackLock = NSLock()
     private let operationTrace = GuestAudioOperationTrace()
     private var microphoneOptIn: Bool
     private var inputActivation: GuestInputActivationPolicy
@@ -548,8 +549,15 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
     }
     /// Cached only: reading diagnostics never calls the native worker or accesses a device.
     public var snapshot: [String: Any] {
-        locked { cached }.merging(operationTrace.snapshot()) { _, value in value }
+        let inputCount = inputCallbackSnapshot().count
+        return locked { cached }
+            .merging(["inputCallbacks": inputCount], uniquingKeysWith: { _, value in value })
+            .merging(operationTrace.snapshot()) { _, value in value }
             .merging(["sharedPlayoutGate": sharedPlayoutGate.evidence]) { _, value in value }
+    }
+    private func inputCallbackSnapshot() -> GuestStartupAudioCallback {
+        inputCallbackLock.lock(); defer { inputCallbackLock.unlock() }
+        return inputCallback
     }
     public var playoutEpoch: UUID? { sharedPlayoutGate.currentEpoch }
     @MainActor public func openSharedPlayout(expected: UUID?) -> Bool { sharedPlayoutGate.open(expected: expected) }
@@ -573,7 +581,7 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
 #if DEBUG
     public var sharedPlayoutGateForTesting: GuestSharedPlayoutGate { sharedPlayoutGate }
     public var startupCallbackEvidence: [String: Any] {
-        ["input": locked { inputCallback }.evidence, "output": playoutMeter.callbackEvidence]
+        ["input": inputCallbackSnapshot().evidence, "output": playoutMeter.callbackEvidence]
     }
     /// Passive stubs at this revision: the CoreAudio/private-input experiments these
     /// counters describe are not in the tree. The harness reports "no data" for empty.
@@ -582,7 +590,7 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
 #endif
     public var startupAudioObservation: GuestStartupAudioObservation {
         let value = snapshot
-        let input = locked { inputCallback }, output = playoutMeter.callbackSnapshot
+        let input = inputCallbackSnapshot(), output = playoutMeter.callbackSnapshot
         return .init(snapshot: value, inputCallbacks: input.count, outputCallbacks: output.count,
             inputCallback: input, outputCallback: output)
     }
@@ -606,21 +614,22 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
     }
     /// Closing is acknowledged only when this owner has the active input graph.
     public func setMicrophoneGate(open: Bool) -> Bool {
-        let state = locked { () -> (graph: GuestVoiceReplyGraph?, forwarded: ForwardedVoiceReplyController?) in
+        let state = locked { () -> (graph: GuestVoiceReplyGraph?, forwarded: ForwardedVoiceReplyController?, previousGateOpen: Bool) in
+            let prev = microphoneGateOpen
             if !forwardObserverInstallationPending, let voiceReply, let engine = voiceReply.engine,
                !forwardedAudioEngines.contains(ObjectIdentifier(engine)) {
                 // Latch before touching the graph, so a concurrent rebuild also closes
                 // its gate and a forwarding observer cannot adopt this owner's input.
                 if !open { microphoneGateOpen = false }
-                return (voiceReply, nil)
+                return (voiceReply, nil, prev)
             }
             if !forwardObserverInstallationPending, let forwardedVoiceController,
                !forwardedInputRoutes.isEmpty, createdAudioEngines.isSubset(of: forwardedAudioEngines) {
                 if !open { microphoneGateOpen = false }
-                return (nil, forwardedVoiceController)
+                return (nil, forwardedVoiceController, prev)
             }
             if open { microphoneGateOpen = true }
-            return (nil, nil)
+            return (nil, nil, prev)
         }
         if let graph = state.graph {
             guard (open || graph.isConnected), graph.setGate(open: open), locked({
@@ -628,7 +637,10 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
                       !forwardedAudioEngines.contains(ObjectIdentifier(engine)) else { return false }
                 microphoneGateOpen = open
                 return true
-            }) else { return false }
+            }) else {
+                locked { microphoneGateOpen = state.previousGateOpen }
+                return false
+            }
             update(["microphoneGateOpen": open])
 #if DEBUG
             update(["voiceReplyTopology": graph.evidence])
@@ -640,7 +652,10 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
                 guard !forwardedInputRoutes.isEmpty, createdAudioEngines.isSubset(of: forwardedAudioEngines) else { return false }
                 microphoneGateOpen = open
                 return true
-            }) else { return false }
+            }) else {
+                locked { microphoneGateOpen = state.previousGateOpen }
+                return false
+            }
             update(["microphoneGateOpen": open, "voiceReplyGraph": true])
             return true
         }
@@ -1582,11 +1597,10 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
                 guard let self else { return }
                 let receivedUptime = ProcessInfo.processInfo.systemUptime, deliveredFormat = buffer.format
                 let signature = withExtendedLifetime(deliveredFormat) { GuestStartupAudioCallback.Format(deliveredFormat.streamDescription.pointee) }
-                self.locked {
-                    self.inputCallback = .init(count: self.inputCallback.count + 1, frames: Int(buffer.frameLength),
-                        format: signature, uptime: receivedUptime)
-                    self.cached["inputCallbacks"] = self.inputCallback.count
-                }
+                self.inputCallbackLock.lock()
+                self.inputCallback = .init(count: self.inputCallback.count + 1, frames: Int(buffer.frameLength),
+                    format: signature, uptime: receivedUptime)
+                self.inputCallbackLock.unlock()
                 let (metering, participationMetering, sink) = self.locked {
                     (self.inputMeterEnabled, self.participationInputMeterEnabled, self.inputTranscriptionSink)
                 }

@@ -1,6 +1,8 @@
 import AVFoundation
 import ConferenceCore
+import Speech
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct VoiceReplyTargetRoom: Identifiable, Equatable {
@@ -178,13 +180,20 @@ struct TranscriptionAndVoiceSettingsView: View {
     @ObservedObject private var previewPlayer = IOSVoicePreviewPlayer.shared
     var onDone: (() -> Void)?
 
+    private enum ActivePreviewKind {
+        case voiceReply
+        case assistantAudition
+    }
+
     @State private var previewError: String?
-    @State private var isGeneratingPreview = false
-    @State private var isGeneratingAuditionPreview = false
+    @State private var generatingPreview: ActivePreviewKind?
+    @State private var playingPreview: ActivePreviewKind?
     @State private var auditionPreviewError: String?
     @State private var showingEnrollmentSheet = false
     @State private var confirmingDeleteVoxModel = false
     @State private var confirmingDeleteVoxVoice = false
+    @State private var recordPermission = AVAudioApplication.shared.recordPermission
+    @State private var speechPermission = SFSpeechRecognizer.authorizationStatus()
 
     init(
         modelStore: IOSListenModelStore = .shared,
@@ -333,7 +342,7 @@ struct TranscriptionAndVoiceSettingsView: View {
                     }
                 }
 
-                if previewPlayer.isPlaying {
+                if previewPlayer.isPlaying && playingPreview == .voiceReply {
                     Button(role: .destructive) {
                         previewPlayer.stop()
                     } label: {
@@ -343,13 +352,13 @@ struct TranscriptionAndVoiceSettingsView: View {
                     Button {
                         runPreview()
                     } label: {
-                        if isGeneratingPreview {
+                        if generatingPreview == .voiceReply {
                             Label(L("Generating preview…"), systemImage: "hourglass")
                         } else {
                             Label(L("Preview voice"), systemImage: "play.circle")
                         }
                     }
-                    .disabled(isGeneratingPreview || (voiceStore.engine == .rapidMLX && !voiceStore.hasRapidMLXConsent))
+                    .disabled(generatingPreview != nil || (voiceStore.engine == .rapidMLX && !voiceStore.hasRapidMLXConsent))
                     .accessibilityIdentifier("voice.preview")
                 }
 
@@ -411,6 +420,34 @@ struct TranscriptionAndVoiceSettingsView: View {
         Section {
             Toggle(L("Hands-free “Rock” wake word"), isOn: $voiceStore.wakeWordEnabled)
                 .accessibilityIdentifier("voice.wakeWord")
+                .onChange(of: voiceStore.wakeWordEnabled) { _, enabled in
+                    guard enabled else { return }
+                    Task { @MainActor in
+                        _ = await AVAudioApplication.requestRecordPermission()
+                        recordPermission = AVAudioApplication.shared.recordPermission
+                        await withCheckedContinuation { continuation in
+                            SFSpeechRecognizer.requestAuthorization { status in
+                                Task { @MainActor in
+                                    speechPermission = status
+                                    continuation.resume()
+                                }
+                            }
+                        }
+                    }
+                }
+            if recordPermission == .denied || speechPermission == .denied || speechPermission == .restricted {
+                HStack(spacing: 8) {
+                    Text(L("Allow Microphone and Speech Recognition in Settings to use hands-free voice commands."))
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    Button(L("Open Settings")) {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
+            }
             Picker(L("Assistant reply voice"), selection: $voiceStore.assistantAuditionVoice) {
                 Section(L("Neural presets (VoxCPM2)")) {
                     ForEach(AssistantVoxVoicePreset.allCases) { preset in
@@ -425,7 +462,7 @@ struct TranscriptionAndVoiceSettingsView: View {
                 }
                 Section(L("iPhone system voices")) {
                     Text(L("System voice (automatic)")).tag(AssistantAuditionVoiceSelection.systemVoice(identifier: ""))
-                    ForEach(IOSVoiceStore.availableSystemVoices().prefix(12), id: \.identifier) { voice in
+                    ForEach(IOSVoiceStore.availableSystemVoices(), id: \.identifier) { voice in
                         Text("\(voice.name) (\(voice.language))").tag(AssistantAuditionVoiceSelection.systemVoice(identifier: voice.identifier))
                     }
                 }
@@ -438,10 +475,23 @@ struct TranscriptionAndVoiceSettingsView: View {
                 Text(L("Record a sample below to use your cloned voice, or answers will use the iPhone system voice."))
                     .font(.footnote)
                     .foregroundStyle(.orange)
+            } else if voiceStore.assistantAuditionVoice == .personalVoice,
+                      AVSpeechSynthesizer.personalVoiceAuthorizationStatus == .denied {
+                HStack(spacing: 8) {
+                    Text(L("Personal Voice permission is denied for this app."))
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    Button(L("Open Settings")) {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
             }
             Toggle(L("Speak voice-triggered replies aloud"), isOn: $voiceStore.autoAuditionVoiceReplies)
             Toggle(L("Speak typed replies aloud"), isOn: $voiceStore.autoAuditionTypedReplies)
-            if previewPlayer.isPlaying {
+            if previewPlayer.isPlaying && playingPreview == .assistantAudition {
                 Button(role: .destructive) {
                     previewPlayer.stop()
                 } label: {
@@ -451,13 +501,13 @@ struct TranscriptionAndVoiceSettingsView: View {
                 Button {
                     runAuditionPreview()
                 } label: {
-                    if isGeneratingAuditionPreview {
+                    if generatingPreview == .assistantAudition {
                         Label(L("Preparing…"), systemImage: "hourglass")
                     } else {
                         Label(L("Preview assistant voice"), systemImage: "play.circle")
                     }
                 }
-                .disabled(isGeneratingAuditionPreview)
+                .disabled(generatingPreview != nil)
             }
             if let auditionPreviewError {
                 Text(auditionPreviewError)
@@ -467,21 +517,30 @@ struct TranscriptionAndVoiceSettingsView: View {
         } header: {
             Text(L("Assistant reply voice"))
         } footer: {
-            Text(L("Say “Rock, …” or “Рок, …” to activate Assistant anywhere in the app or while muted in a call."))
+            Text(L("Say “Rock, …” or “Рок, …” to activate Assistant anywhere in the app or while muted in a call. Auto-spoken replies stay muted on speakerphone while inside an active call."))
+        }
+        .onChange(of: previewPlayer.isPlaying) { _, playing in
+            if !playing { playingPreview = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            recordPermission = AVAudioApplication.shared.recordPermission
+            speechPermission = SFSpeechRecognizer.authorizationStatus()
         }
     }
 
     private func runAuditionPreview() {
         auditionPreviewError = nil
-        isGeneratingAuditionPreview = true
+        generatingPreview = .assistantAudition
         Task { @MainActor in
-            defer { isGeneratingAuditionPreview = false }
+            defer { generatingPreview = nil }
             do {
                 let buffer = try await voiceStore.synthesizeAssistantResponse(L("Hello! This is how Assistant answers sound on your iPhone."))
+                playingPreview = .assistantAudition
                 try previewPlayer.play(buffer)
             } catch is CancellationError {
                 return
             } catch {
+                playingPreview = nil
                 auditionPreviewError = error.localizedDescription
             }
         }
@@ -579,14 +638,16 @@ struct TranscriptionAndVoiceSettingsView: View {
 
     private func runPreview() {
         previewError = nil
-        isGeneratingPreview = true
+        generatingPreview = .voiceReply
         let sample = L("Hello everyone, this is a voice reply check from Rock'N'Roll.")
         Task { @MainActor in
-            defer { isGeneratingPreview = false }
+            defer { generatingPreview = nil }
             do {
                 let buffer = try await voiceStore.synthesize(sample)
+                playingPreview = .voiceReply
                 try previewPlayer.play(buffer)
             } catch {
+                playingPreview = nil
                 previewError = error.localizedDescription
             }
         }

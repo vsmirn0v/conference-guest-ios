@@ -213,15 +213,26 @@ final class MeetingAccessControls: UIView {
         }
         if textButton?.configuration?.title != nil { textButton?.configuration?.title = nil }
         if scaleButton.configuration?.title != nil { scaleButton.configuration?.title = nil }
-        textButton?.frame = CGRect(x: 0, y: 0, width: textWidth, height: bounds.height)
-        scaleButton.frame = CGRect(x: textWidth, y: 0, width: scaleWidth, height: bounds.height)
+        let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
         let leading = textWidth + scaleWidth
-        viewButton.frame = CGRect(x: leading, y: 0, width: max(44, bounds.width - 44 - leading), height: bounds.height)
-        moreButton.frame = CGRect(x: viewButton.frame.maxX, y: 0, width: 44, height: bounds.height)
+        let viewW = max(44, bounds.width - 44 - leading)
+        if rtl {
+            moreButton.frame = CGRect(x: 0, y: 0, width: 44, height: bounds.height)
+            viewButton.frame = CGRect(x: 44, y: 0, width: viewW, height: bounds.height)
+            scaleButton.frame = CGRect(x: viewButton.frame.maxX, y: 0, width: scaleWidth, height: bounds.height)
+            textButton?.frame = CGRect(x: scaleButton.frame.maxX, y: 0, width: textWidth, height: bounds.height)
+            divider.frame = CGRect(x: 44, y: 10, width: 1, height: max(0, bounds.height - 20))
+            reminderIndicator.frame = CGRect(x: 7, y: 10, width: 6, height: 6)
+        } else {
+            textButton?.frame = CGRect(x: 0, y: 0, width: textWidth, height: bounds.height)
+            scaleButton.frame = CGRect(x: textWidth, y: 0, width: scaleWidth, height: bounds.height)
+            viewButton.frame = CGRect(x: leading, y: 0, width: viewW, height: bounds.height)
+            moreButton.frame = CGRect(x: viewButton.frame.maxX, y: 0, width: 44, height: bounds.height)
+            divider.frame = CGRect(x: viewButton.frame.maxX, y: 10, width: 1, height: max(0, bounds.height - 20))
+            reminderIndicator.frame = CGRect(x: 31, y: 10, width: 6, height: 6)
+        }
         let title = viewButton.bounds.width >= viewWidth ? L("View") + " ▾" : nil
         if viewButton.configuration?.title != title { viewButton.configuration?.title = title }
-        divider.frame = CGRect(x: viewButton.frame.maxX, y: 10, width: 1, height: max(0, bounds.height - 20))
-        reminderIndicator.frame = CGRect(x: 31, y: 10, width: 6, height: 6)
     }
 
     private func layoutShareTools() {

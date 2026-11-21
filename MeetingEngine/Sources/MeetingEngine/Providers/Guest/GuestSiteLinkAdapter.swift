@@ -43,7 +43,9 @@ public enum GuestSiteLinkAdapter {
         let parts = rawCode.split(separator: "@", omittingEmptySubsequences: false)
         guard (1...2).contains(parts.count),
               let first = parts.first, !first.isEmpty,
-              !first.contains("/"), !first.contains("?") else {
+              first != ".", first != "..",
+              !first.contains("/"), !first.contains("?"), !first.contains("#"), !first.contains("%"),
+              !first.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw GuestSiteLinkError.invalidLink
         }
         let code = String(first)

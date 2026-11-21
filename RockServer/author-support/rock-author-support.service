@@ -4,6 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
+User=rock-support
+Group=rock-support
 ExecStart=/usr/bin/python3 /opt/rock-author-support/service.py serve
 Restart=on-failure
 RestartSec=2

@@ -3,5 +3,6 @@
 "NSRemindersUsageDescription" = "Aufgaben aus Meetings mit deiner gewählten Apple-Erinnerungen-Liste synchronisieren und Aufgaben in Rock'N'Roll for Mac importieren.";
 "NSRemindersFullAccessUsageDescription" = "Aufgaben aus Meetings mit deiner gewählten Apple-Erinnerungen-Liste synchronisieren und Aufgaben in Rock'N'Roll for Mac importieren.";
 "NSCameraUsageDescription" = "Dein Kamerabild übertragen, wenn du das Video in der Gästevorschau der App einschaltest.";
-"NSMicrophoneUsageDescription" = "Deinen Mikrofonton übertragen, wenn du die Stummschaltung in der Gästevorschau der App aufhebst.";
+"NSMicrophoneUsageDescription" = "Deinen Mikrofonton in Meetings übertragen, freihändige Sprachbefehle für Rock verwenden oder eine Stimmprobe auf diesem Mac aufnehmen.";
 "NSSpeechRecognitionUsageDescription" = "Gesprochene Befehle für Rock auf diesem Mac erkennen, wenn keine lokalen Transkriptionsmodelle installiert sind.";
+"NSPersonalVoiceUsageDescription" = "Rock'N'Roll for Mac kann deine eigene Stimme verwenden, um Sprachantworten in Meetings oder Assistenten-Antworten vorzulesen.";

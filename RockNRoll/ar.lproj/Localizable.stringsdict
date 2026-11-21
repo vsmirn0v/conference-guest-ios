@@ -12,18 +12,18 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>لا توجد ملاحظات معتمدة</string>
-			<key>one</key>
-			<string>ملاحظة معتمدة واحدة</string>
-			<key>two</key>
-			<string>ملاحظتان معتمدتان</string>
 			<key>few</key>
 			<string>%ld ملاحظات معتمدة</string>
 			<key>many</key>
 			<string>%ld ملاحظة معتمدة</string>
+			<key>one</key>
+			<string>ملاحظة معتمدة واحدة</string>
 			<key>other</key>
 			<string>%ld ملاحظة معتمدة</string>
+			<key>two</key>
+			<string>ملاحظتان معتمدتان</string>
+			<key>zero</key>
+			<string>لا توجد ملاحظات معتمدة</string>
 		</dict>
 	</dict>
 	<key>%ld characters over the limit</key>
@@ -36,18 +36,42 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>لم يتم تجاوز الحد</string>
-			<key>one</key>
-			<string>حرف واحد فوق الحد</string>
-			<key>two</key>
-			<string>حرفان فوق الحد</string>
 			<key>few</key>
 			<string>%ld أحرف فوق الحد</string>
 			<key>many</key>
 			<string>%ld حرفًا فوق الحد</string>
+			<key>one</key>
+			<string>حرف واحد فوق الحد</string>
 			<key>other</key>
 			<string>%ld حرف فوق الحد</string>
+			<key>two</key>
+			<string>حرفان فوق الحد</string>
+			<key>zero</key>
+			<string>لم يتم تجاوز الحد</string>
+		</dict>
+	</dict>
+	<key>%ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>%ld اجتماعات</string>
+			<key>many</key>
+			<string>%ld اجتماعاً</string>
+			<key>one</key>
+			<string>اجتماع واحد</string>
+			<key>other</key>
+			<string>%ld اجتماع</string>
+			<key>two</key>
+			<string>اجتماعان</string>
+			<key>zero</key>
+			<string>لا اجتماعات</string>
 		</dict>
 	</dict>
 	<key>%ld musicians</key>
@@ -60,18 +84,18 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>لا يوجد موسيقيون</string>
-			<key>one</key>
-			<string>موسيقي واحد</string>
-			<key>two</key>
-			<string>موسيقيان</string>
 			<key>few</key>
 			<string>%ld موسيقيين</string>
 			<key>many</key>
 			<string>%ld موسيقيًا</string>
+			<key>one</key>
+			<string>موسيقي واحد</string>
 			<key>other</key>
 			<string>%ld موسيقي</string>
+			<key>two</key>
+			<string>موسيقيان</string>
+			<key>zero</key>
+			<string>لا يوجد موسيقيون</string>
 		</dict>
 	</dict>
 	<key>%ld new reactions, available in Chat</key>
@@ -84,18 +108,18 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>لا توجد تفاعلات جديدة في الدردشة</string>
-			<key>one</key>
-			<string>تفاعل جديد متاح في الدردشة</string>
-			<key>two</key>
-			<string>تفاعلان جديدان متاحان في الدردشة</string>
 			<key>few</key>
 			<string>%ld تفاعلات جديدة متاحة في الدردشة</string>
 			<key>many</key>
 			<string>%ld تفاعلًا جديدًا متاحًا في الدردشة</string>
+			<key>one</key>
+			<string>تفاعل جديد متاح في الدردشة</string>
 			<key>other</key>
 			<string>%ld تفاعل جديد متاح في الدردشة</string>
+			<key>two</key>
+			<string>تفاعلان جديدان متاحان في الدردشة</string>
+			<key>zero</key>
+			<string>لا توجد تفاعلات جديدة في الدردشة</string>
 		</dict>
 	</dict>
 	<key>%ld participants</key>
@@ -108,18 +132,18 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>لا يوجد مشاركون</string>
-			<key>one</key>
-			<string>مشارك واحد</string>
-			<key>two</key>
-			<string>مشاركان</string>
 			<key>few</key>
 			<string>%ld مشاركين</string>
 			<key>many</key>
 			<string>%ld مشاركًا</string>
+			<key>one</key>
+			<string>مشارك واحد</string>
 			<key>other</key>
 			<string>%ld مشارك</string>
+			<key>two</key>
+			<string>مشاركان</string>
+			<key>zero</key>
+			<string>لا يوجد مشاركون</string>
 		</dict>
 	</dict>
 	<key>%ld reactions</key>
@@ -132,18 +156,18 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>لا توجد تفاعلات</string>
-			<key>one</key>
-			<string>تفاعل واحد</string>
-			<key>two</key>
-			<string>تفاعلان</string>
 			<key>few</key>
 			<string>%ld تفاعلات</string>
 			<key>many</key>
 			<string>%ld تفاعلًا</string>
+			<key>one</key>
+			<string>تفاعل واحد</string>
 			<key>other</key>
 			<string>%ld تفاعل</string>
+			<key>two</key>
+			<string>تفاعلان</string>
+			<key>zero</key>
+			<string>لا توجد تفاعلات</string>
 		</dict>
 	</dict>
 	<key>Catch up, %ld missed sections</key>
@@ -156,18 +180,18 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>لم تفُتك أي مقاطع</string>
-			<key>one</key>
-			<string>استدرك مقطعًا واحدًا فاتك</string>
-			<key>two</key>
-			<string>استدرك مقطعين فاتاَك</string>
 			<key>few</key>
 			<string>استدرك %ld مقاطع فاتتك</string>
 			<key>many</key>
 			<string>استدرك %ld مقطعًا فاتك</string>
+			<key>one</key>
+			<string>استدرك مقطعًا واحدًا فاتك</string>
 			<key>other</key>
 			<string>استدرك %ld مقطع فاتك</string>
+			<key>two</key>
+			<string>استدرك مقطعين فاتاَك</string>
+			<key>zero</key>
+			<string>لم تفُتك أي مقاطع</string>
 		</dict>
 	</dict>
 	<key>Chat, %ld unread</key>
@@ -180,18 +204,18 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>الدردشة، لا رسائل غير مقروءة</string>
-			<key>one</key>
-			<string>الدردشة، رسالة واحدة غير مقروءة</string>
-			<key>two</key>
-			<string>الدردشة، رسالتان غير مقروءتين</string>
 			<key>few</key>
 			<string>الدردشة، %ld رسائل غير مقروءة</string>
 			<key>many</key>
 			<string>الدردشة، %ld رسالة غير مقروءة</string>
+			<key>one</key>
+			<string>الدردشة، رسالة واحدة غير مقروءة</string>
 			<key>other</key>
 			<string>الدردشة، %ld رسالة غير مقروءة</string>
+			<key>two</key>
+			<string>الدردشة، رسالتان غير مقروءتين</string>
+			<key>zero</key>
+			<string>الدردشة، لا رسائل غير مقروءة</string>
 		</dict>
 	</dict>
 	<key>See all %ld recent jams</key>
@@ -204,18 +228,90 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>ld</string>
-			<key>zero</key>
-			<string>لا توجد جلسات حديثة</string>
-			<key>one</key>
-			<string>عرض الجلسة الأخيرة</string>
-			<key>two</key>
-			<string>عرض الجلستين الأخيرتين</string>
 			<key>few</key>
 			<string>عرض الجلسات الـ %ld الأخيرة</string>
 			<key>many</key>
 			<string>عرض الجلسات الـ %ld الأخيرة</string>
+			<key>one</key>
+			<string>عرض الجلسة الأخيرة</string>
 			<key>other</key>
 			<string>عرض الجلسات الـ %ld الأخيرة</string>
+			<key>two</key>
+			<string>عرض الجلستين الأخيرتين</string>
+			<key>zero</key>
+			<string>لا توجد جلسات حديثة</string>
+		</dict>
+	</dict>
+	<key>This month you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>كان لديك %ld اجتماعات هذا الشهر</string>
+			<key>many</key>
+			<string>كان لديك %ld اجتماعاً هذا الشهر</string>
+			<key>one</key>
+			<string>عقدت اجتماعاً واحداً هذا الشهر</string>
+			<key>other</key>
+			<string>كان لديك %ld اجتماع هذا الشهر</string>
+			<key>two</key>
+			<string>عقدت اجتماعين هذا الشهر</string>
+			<key>zero</key>
+			<string>لم تعقد اجتماعات هذا الشهر</string>
+		</dict>
+	</dict>
+	<key>This week you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>كان لديك %ld اجتماعات هذا الأسبوع</string>
+			<key>many</key>
+			<string>كان لديك %ld اجتماعاً هذا الأسبوع</string>
+			<key>one</key>
+			<string>عقدت اجتماعاً واحداً هذا الأسبوع</string>
+			<key>other</key>
+			<string>كان لديك %ld اجتماع هذا الأسبوع</string>
+			<key>two</key>
+			<string>عقدت اجتماعين هذا الأسبوع</string>
+			<key>zero</key>
+			<string>لم تعقد اجتماعات هذا الأسبوع</string>
+		</dict>
+	</dict>
+	<key>Today you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>كان لديك %ld اجتماعات اليوم</string>
+			<key>many</key>
+			<string>كان لديك %ld اجتماعاً اليوم</string>
+			<key>one</key>
+			<string>عقدت اجتماعاً واحداً اليوم</string>
+			<key>other</key>
+			<string>كان لديك %ld اجتماع اليوم</string>
+			<key>two</key>
+			<string>عقدت اجتماعين اليوم</string>
+			<key>zero</key>
+			<string>لم تعقد اجتماعات اليوم</string>
 		</dict>
 	</dict>
 </dict>

@@ -98,11 +98,17 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
             defer { lock.lock(); pending -= seconds; lock.unlock() }
             let token = measurementTokenIfLoadNeeded(model)
             guard load(model, measurementToken: token) else { completion(nil, 0, .modelUnavailable); return }
+            lock.lock()
             runtimeState.activeDecodes += 1
-            publishRuntime()
+            let activeSnapshot = runtimeState
+            lock.unlock()
+            runtime.send(activeSnapshot)
             defer {
+                lock.lock()
                 runtimeState.activeDecodes = max(0, runtimeState.activeDecodes - 1)
-                publishRuntime()
+                let finishedSnapshot = runtimeState
+                lock.unlock()
+                runtime.send(finishedSnapshot)
             }
             let started = ProcessInfo.processInfo.systemUptime
             let text: String?
@@ -163,38 +169,55 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
         }
     }
     var isLoaded: Bool { queue.sync { loaded != nil } }
-    var runtimeSnapshot: LocalSpeechRecognizerRuntimeSnapshot { queue.sync { runtimeState } }
+    var runtimeSnapshot: LocalSpeechRecognizerRuntimeSnapshot { lock.lock(); defer { lock.unlock() }; return runtimeState }
 
     private func measurementTokenIfLoadNeeded(_ model: ListenRecognizerModel) -> UUID? {
-        if runtimeState.phase == .loaded, runtimeState.model == model, recognizer != nil { return nil }
+        lock.lock()
+        let alreadyLoaded = runtimeState.phase == .loaded && runtimeState.model == model && recognizer != nil
+        lock.unlock()
+        if alreadyLoaded { return nil }
         return LocalModelMemoryTracker.shared.begin(.speech)
+    }
+
+    private func updateRuntime(_ mutate: (inout LocalSpeechRecognizerRuntimeSnapshot) -> Void) {
+        lock.lock()
+        mutate(&runtimeState)
+        let snapshot = runtimeState
+        lock.unlock()
+        runtime.send(snapshot)
     }
 
     private func unloadIfIdle() {
         let hadModel = loaded != nil
         if hadModel { probeLog("local-transcription-unloaded", [:]) }
         lock.lock(); unloadCounter += 1; lock.unlock()
-        runtimeState.phase = .unloading
-        publishRuntime()
+        updateRuntime { $0.phase = .unloading }
         recognizer = nil; loaded = nil
         LocalModelMemoryTracker.shared.clear(.speech)
-        runtimeState.model = nil
-        runtimeState.phase = .unloaded
-        runtimeState.lastLoadSeconds = 0
-        runtimeState.error = nil
-        publishRuntime()
+        updateRuntime {
+            $0.model = nil
+            $0.phase = .unloaded
+            $0.lastLoadSeconds = 0
+            $0.error = nil
+        }
     }
 
-    private func publishRuntime() { runtime.send(runtimeState) }
+    private func publishRuntime() {
+        lock.lock()
+        let snapshot = runtimeState
+        lock.unlock()
+        runtime.send(snapshot)
+    }
 
     /// On the queue. True when `model` is the loaded one.
     private func load(_ model: ListenRecognizerModel, measurementToken: UUID?) -> Bool {
         if loaded == model, recognizer != nil {
-            runtimeState.model = model
-            runtimeState.phase = .loaded
-            runtimeState.lastLoadSeconds = 0
-            runtimeState.error = nil
-            publishRuntime()
+            updateRuntime {
+                $0.model = model
+                $0.phase = .loaded
+                $0.lastLoadSeconds = 0
+                $0.error = nil
+            }
             return true
         }
         recognizer = nil; loaded = nil
@@ -210,12 +233,13 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
             }
             loaded = model
             let seconds = ProcessInfo.processInfo.systemUptime - started
-            runtimeState.model = model
-            runtimeState.phase = .loaded
-            runtimeState.preparedModel = model
-            runtimeState.lastLoadSeconds = seconds
-            runtimeState.error = nil
-            publishRuntime()
+            updateRuntime {
+                $0.model = model
+                $0.phase = .loaded
+                $0.preparedModel = model
+                $0.lastLoadSeconds = seconds
+                $0.error = nil
+            }
             if let measurementToken {
                 LocalModelMemoryTracker.shared.complete(.speech, token: measurementToken, success: true)
             }
@@ -223,11 +247,12 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
             return true
         } catch {
             let message = String(describing: error)
-            runtimeState.model = model
-            runtimeState.phase = .failed
-            runtimeState.lastLoadSeconds = 0
-            runtimeState.error = message
-            publishRuntime()
+            updateRuntime {
+                $0.model = model
+                $0.phase = .failed
+                $0.lastLoadSeconds = 0
+                $0.error = message
+            }
             if let measurementToken {
                 LocalModelMemoryTracker.shared.complete(.speech, token: measurementToken, success: false)
             }

@@ -26,6 +26,8 @@ struct MeetingContinuationView: View {
                                 continuation.begin(jam)
                             }
                             .buttonStyle(.borderedProminent)
+                            .tint(Color.rockProminentFill)
+                            .foregroundStyle(.black)
                             .disabled(busy || continuation.moving)
                             Text(L("Connect here first, then leave the other device. Microphone and camera start off."))
                                 .font(.footnote).foregroundStyle(.secondary)
@@ -52,7 +54,7 @@ struct MeetingContinuationView: View {
                 if continuation.moving { Button(continuation.moveActionTitle) { continuation.cancel() } }
                 Button(L("Refresh active jams")) { Task { await continuation.refresh() } }.disabled(continuation.moving)
             }
-            .tint(Color(red: 1, green: 0.60, blue: 0.33))
+            .tint(Color.rockBrandTint)
         }
     }
 }

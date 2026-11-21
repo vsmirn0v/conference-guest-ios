@@ -108,7 +108,7 @@ AUDIO_ROUTE_RECOVERY_PATCHES = (
 
 
 def audio_route_recovery_lock_paths(repository=REPOSITORY):
-    return [repository / "Experiments/WebRTCM157" / f"{name}.lock.json"
+    return [repository / "Dependencies/native-macos/webrtc-patches" / f"{name}.lock.json"
             for name in AUDIO_ROUTE_RECOVERY_PATCHES]
 
 
@@ -149,6 +149,13 @@ def verify_audio_route_recovery_framework(root, repository=REPOSITORY):
     evidence = json.loads((root / "build-evidence.json").read_text())
     contract = audio_route_recovery_contract(repository)
     actual = evidence.get("audioRouteRecovery")
+    if isinstance(actual, dict) and isinstance(actual.get("patches"), dict):
+        normalized_patches = {
+            (k.replace("Experiments/WebRTCM157/", "Dependencies/native-macos/webrtc-patches/", 1)
+             if k.startswith("Experiments/WebRTCM157/") else k): v
+            for k, v in actual["patches"].items()
+        }
+        actual = {**actual, "patches": normalized_patches}
     if actual != contract:
         if not isinstance(actual, dict):
             raise ValueError(

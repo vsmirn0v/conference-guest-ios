@@ -1,9 +1,0 @@
-Command exited with code 0.
-
-Command output:
-RockNRoll/ConversationPanelViewController.swift:8:    case chat, liveText, catchUp
-RockNRoll/ConversationPanelViewController.swift:641:        transcript.isHidden = selected != .liveText
-RockNRoll/ConversationPanelViewController.swift:646:        if selected != .liveText { followButton.isHidden = true }
-RockNRoll/ConversationPanelViewController.swift:726:            case .liveText:
-RockNRoll/ConversationPanelViewController.swift:883:        guard isViewLoaded, mode.selectedSegmentIndex == ConversationMode.liveText.rawValue else { return }
-RockNRoll/ConversationPanelViewController.swift:971:              mode.selectedSegmentIndex == ConversationMode.liveText.rawValue else { return }

@@ -126,6 +126,7 @@ enum AssistantRuleEvaluator {
     @Published private(set) var audit: [AssistantRuleAuditEntry] = []
 
     private var handledEventKeys: Set<String> = []
+    private var handledEventOrder: [String] = []
     private var lastHandledAt: [UUID: Date] = [:]
     private let root: URL
     private var loading = false
@@ -150,13 +151,15 @@ enum AssistantRuleEvaluator {
         guard let data = try? Data(contentsOf: documentURL) else { return }
         guard let document = try? JSONDecoder.attention.decode(Document.self, from: data) else { return }
         rules = document.rules; pendingActions = document.pendingActions; audit = document.audit
-        handledEventKeys = Set(document.handledEventKeys); lastHandledAt = document.lastHandledAt
+        handledEventOrder = Array(document.handledEventKeys.suffix(2000))
+        handledEventKeys = Set(handledEventOrder)
+        lastHandledAt = document.lastHandledAt
     }
 
     private func save() {
         guard !loading else { return }
         let document = Document(rules: rules, pendingActions: pendingActions, audit: Array(audit.suffix(500)),
-                                handledEventKeys: Array(handledEventKeys.prefix(2000)), lastHandledAt: lastHandledAt)
+                                handledEventKeys: Array(handledEventOrder.suffix(2000)), lastHandledAt: lastHandledAt)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try JSONEncoder.attention.encode(document).write(to: documentURL, options: .atomic)
@@ -264,7 +267,16 @@ enum AssistantRuleEvaluator {
     }
 
     private func recordHandled(_ event: AssistantRuleMentionEvent, rule: UUID?, at: Date) {
-        handledEventKeys.insert(event.id)
+        if handledEventKeys.insert(event.id).inserted {
+            handledEventOrder.append(event.id)
+            if handledEventOrder.count > 2000 {
+                let overflow = handledEventOrder.count - 2000
+                for dropped in handledEventOrder.prefix(overflow) {
+                    handledEventKeys.remove(dropped)
+                }
+                handledEventOrder.removeFirst(overflow)
+            }
+        }
         if rule != nil { lastHandledAt[event.meetingID] = at }
     }
 

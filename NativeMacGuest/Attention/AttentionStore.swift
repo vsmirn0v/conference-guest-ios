@@ -80,7 +80,12 @@ struct AttentionProvider: Codable, Equatable, Sendable {
         return ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
     }
     var endpoint: URL? {
-        guard var base = URL(string: baseURL.trimmed), let scheme = base.scheme?.lowercased(), ["https", "http"].contains(scheme), base.host != nil else { return nil }
+        guard var base = URL(string: baseURL.trimmed),
+              let scheme = base.scheme?.lowercased(),
+              let host = base.host?.lowercased(),
+              !host.isEmpty else { return nil }
+        let isLoopback = ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
+        guard scheme == "https" || (scheme == "http" && (!needsKey || isLoopback)) else { return nil }
         if base.absoluteString.hasSuffix("/") { base = URL(string: String(base.absoluteString.dropLast())) ?? base }
         return base.appendingPathComponent("chat/completions")
     }
@@ -515,6 +520,15 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         guard let commit = try await mutation() else { return nil }
         publishOutcomeCommit(commit)
         return commit
+    }
+
+    @discardableResult
+    func publishOutcomeCommits(_ mutation: () async throws -> [MeetingOutcomeCommit]) async rethrows -> [MeetingOutcomeCommit] {
+        let commits = try await mutation()
+        for commit in commits {
+            publishOutcomeCommit(commit)
+        }
+        return commits
     }
 
     func retryOutcomeEdits(_ id: UUID) {

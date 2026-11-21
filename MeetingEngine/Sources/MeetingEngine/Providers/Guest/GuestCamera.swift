@@ -452,8 +452,8 @@ public final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
             } else { throw GuestCameraError.unsupportedConnection }
 #else
             if #available(iOS 17.0, *) {
-                guard connection.isVideoRotationAngleSupported(0) else { throw GuestCameraError.unsupportedConnection }
-                connection.videoRotationAngle = 0
+                guard connection.isVideoRotationAngleSupported(90) else { throw GuestCameraError.unsupportedConnection }
+                connection.videoRotationAngle = 90
             } else if connection.isVideoOrientationSupported {
                 connection.videoOrientation = .portrait
             } else { throw GuestCameraError.unsupportedConnection }

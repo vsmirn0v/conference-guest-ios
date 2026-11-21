@@ -1,6 +1,6 @@
 "NSBluetoothAlwaysUsageDescription" = "Utiliser vos écouteurs Bluetooth et d’autres appareils audio pendant les sessions, y compris lorsqu’elles se poursuivent en arrière-plan.";
 "NSCameraUsageDescription" = "Partager la vidéo lorsque vous choisissez d’allumer la caméra pendant une session.";
-"NSMicrophoneUsageDescription" = "Utiliser votre micro pour parler pendant les sessions et tester votre son en privé avant d’activer le micro pour les autres.";
+"NSMicrophoneUsageDescription" = "Utilisez votre micro pour parler en réunion, utiliser les commandes vocales mains libres pour Rock, enregistrer un échantillon vocal local et tester votre son en privé avant de réactiver le micro.";
 "NSCalendarsUsageDescription" = "Recherchez des réunions dans les calendriers de votre choix. Le partage du planning peut synchroniser les détails des réunions via votre espace iCloud privé. L’app ne modifie pas votre calendrier.";
 "NSCalendarsFullAccessUsageDescription" = "Recherchez des réunions dans les calendriers de votre choix. Le partage du planning peut synchroniser les détails des réunions via votre espace iCloud privé. L’app ne modifie pas votre calendrier.";
 "NSSpeechRecognitionUsageDescription" = "Rock’n’Roll utilise la reconnaissance vocale de l’appareil pour transcrire les réunions localement sur cet iPhone.";

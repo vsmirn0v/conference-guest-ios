@@ -67,14 +67,13 @@ public struct AssistantWakePhraseMatcher: Sendable {
 
         if matchedWakeEnd == nil {
             let candidate = tokens[index].normalized
-            if singleWakeWords.contains(candidate) {
-                matchedWakeEnd = index + 1
-            } else if candidate == "рок" || candidate == "rock",
-                      index + 1 < tokens.count,
-                      ["н", "n"].contains(tokens[index + 1].normalized),
-                      index + 2 < tokens.count,
-                      ["ролл", "рол", "roll"].contains(tokens[index + 2].normalized) {
+            if (candidate == "рок" || candidate == "rock"),
+               index + 2 < tokens.count,
+               ["н", "n"].contains(tokens[index + 1].normalized),
+               ["ролл", "рол", "roll"].contains(tokens[index + 2].normalized) {
                 matchedWakeEnd = index + 3
+            } else if singleWakeWords.contains(candidate) {
+                matchedWakeEnd = index + 1
             }
         }
 

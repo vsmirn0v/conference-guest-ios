@@ -18,7 +18,6 @@ public final class AdditionalRootTrust: NSObject, URLSessionDelegate {
             root = nil
         }
         super.init()
-        assert(root != nil, L("Bundled root certificate is missing"))
     }
 
     public func urlSession(_ session: URLSession,

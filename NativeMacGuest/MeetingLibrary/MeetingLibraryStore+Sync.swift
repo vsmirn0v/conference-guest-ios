@@ -256,7 +256,10 @@ extension MeetingLibraryStore {
                     finalMarkdown = remote.markdown
                     noteChanged = finalMarkdown != existingNote.markdown
                 } else {
-                    let localVersion = SyncVersion(counter: Int64(max(1, existingNote.revision)), device: localDeviceID)
+                    let localCounter: Int64 = existingNote.updatedAt > remote.updatedAt
+                        ? max(remote.version.counter + 1, Int64(max(1, existingNote.revision)))
+                        : max(1, min(remote.version.counter - 1, Int64(existingNote.revision)))
+                    let localVersion = SyncVersion(counter: localCounter, device: localDeviceID)
                     let merge = NoteThreeWayMerger.merge(
                         base: baseRow,
                         local: existingNote.markdown,

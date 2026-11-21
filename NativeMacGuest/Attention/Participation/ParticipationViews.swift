@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ParticipationSetupView: View {
@@ -22,7 +23,10 @@ struct ParticipationSetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button(action: back) { Label(L("Assistant modes"), systemImage: "chevron.left") }
+            Button(action: back) {
+                Label(L("Assistant modes"), systemImage: "chevron.left")
+                    .flipsForRightToLeftLayoutDirection(true)
+            }
                 .buttonStyle(.borderless)
             Text(participation.status == .inactive ? L("Participate in this meeting") : participation.status.title)
                 .font(.headline)
@@ -82,13 +86,22 @@ struct ParticipationSetupView: View {
             }
             output = participation.status == .inactive ? store.lastParticipationOutput : participation.output
             captureScope()
-            if (participation.status == .inactive || participation.status == .review || participation.status == .unavailable),
+            let shouldAutoDictate = attention?.participationAutoDictate == true
+            attention?.participationAutoDictate = false
+            if shouldAutoDictate,
+               (participation.status == .inactive || participation.status == .review || participation.status == .unavailable),
                objective.trimmed.isEmpty {
                 startObjectiveDictation()
             }
         }
         .onDisappear {
             stopObjectiveDictation(commit: false)
+        }
+        .onChange(of: attention?.speech.mode) { mode in
+            if dictating && mode != .dictating {
+                dictating = false
+                liveSpeechPreview = ""
+            }
         }
         .onChange(of: output) { newOutput in
             startFailure = nil
@@ -204,7 +217,7 @@ struct ParticipationSetupView: View {
                     Text(ParticipationCoordinator.Reason.noteVoiceProcessor.message).foregroundStyle(.orange)
                 }
                 if !model.participationVoiceAvailable {
-                    Text(L("Turn on Voice replies in Settings → General and rejoin."))
+                    Text(L("Voice replies are unavailable for this meeting."))
                         .foregroundStyle(.orange)
                 } else if !model.participationVoiceMicrophoneAuthorized {
                     if model.participationVoiceCanRequestMicrophoneAccess {
@@ -267,11 +280,12 @@ struct ParticipationSetupView: View {
                         .accessibilityIdentifier("participation.objective.dictate")
                     }
                 }
-                if dictating {
-                    Label(liveSpeechPreview.isEmpty ? L("Listening — speak your meeting context…") : liveSpeechPreview, systemImage: "waveform")
-                        .font(.caption)
-                        .foregroundStyle(.teal)
-                        .lineLimit(2)
+                if let speech = attention?.speech {
+                    ParticipationObjectiveSpeechStatus(
+                        speech: speech,
+                        dictating: $dictating,
+                        liveSpeechPreview: $liveSpeechPreview
+                    )
                 }
             }
         }
@@ -390,5 +404,47 @@ struct ParticipationSetupView: View {
         dictating = false
         liveSpeechPreview = ""
         attention?.speech.stopDictation(commit: commit)
+    }
+}
+
+private struct ParticipationObjectiveSpeechStatus: View {
+    @ObservedObject var speech: AssistantSpeechInputCoordinator
+    @Binding var dictating: Bool
+    @Binding var liveSpeechPreview: String
+
+    var body: some View {
+        Group {
+            if dictating {
+                Label(liveSpeechPreview.isEmpty ? L("Listening — speak your meeting context…") : liveSpeechPreview, systemImage: "waveform")
+                    .font(.caption)
+                    .foregroundStyle(.teal)
+                    .lineLimit(2)
+            } else if speech.permissionDenied {
+                HStack(spacing: 6) {
+                    Text(L("Allow Microphone and Speech Recognition in System Settings to dictate."))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Button(L("Open System Settings")) {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+            }
+        }
+        .onChange(of: speech.mode) { mode in
+            if dictating && mode != .dictating {
+                dictating = false
+                liveSpeechPreview = ""
+            }
+        }
+        .onChange(of: speech.permissionDenied) { denied in
+            if denied && dictating {
+                dictating = false
+                liveSpeechPreview = ""
+            }
+        }
     }
 }

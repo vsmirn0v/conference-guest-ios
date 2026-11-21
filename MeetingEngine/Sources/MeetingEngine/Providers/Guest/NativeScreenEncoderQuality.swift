@@ -44,9 +44,12 @@ final class NativeScreenH264Encoder: NSObject, LKRTCVideoEncoder {
         screenQualityConfigured = false
         let result = base.startEncode(with: settings, numberOfCores: numberOfCores)
         if result == 0, settings.mode == .screensharing, Self.detailPresetEnabled, let configure = Self.configure {
-            // Match iOS-on-Mac: QP 24 under normal budget, quality over speed.
-            // The native extension retains congestion-aware rate/QP handling.
-            screenQualityConfigured = configure(Unmanaged.passUnretained(base as AnyObject).toOpaque(), 24, 0) == 1
+            // Unwrap nested color-signalling wrapper so WebRTC receives its underlying LKRTCVideoEncoderH264.
+            var target: any LKRTCVideoEncoder = base
+            while let colorWrapper = target as? NativeH264ColorEncoder {
+                target = colorWrapper.base
+            }
+            screenQualityConfigured = configure(Unmanaged.passUnretained(target as AnyObject).toOpaque(), 24, 0) == 1
         }
         #if DEBUG
         if result == 0 {

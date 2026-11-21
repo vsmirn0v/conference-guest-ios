@@ -1197,15 +1197,27 @@ final class ParticipationCoordinator: ObservableObject {
             return
         }
         let synthesisRequest = UUID()
-        let synthesisExpiry: Task<Void, Never>? = grant.setup.voice.engine == .cloned
-            ? GuestVoiceSynthesisDeadline.schedule(expiry) { [weak self, weak permit] in
-                guard let self, let permit, self.voicePlayback === permit, !permit.started else { return }
+        let synthesisTask = Task {
+            try await grant.setup.voice.synthesize(draft, language: language, session: ParticipationNoRedirect.session,
+                                                 cloneRequest: synthesisRequest, cloneDeadline: expiry)
+        }
+        let synthesisExpiry = GuestVoiceSynthesisDeadline.schedule(expiry) { [weak self, weak permit] in
+            guard let self, let permit, self.voicePlayback === permit, !permit.started else { return }
+            synthesisTask.cancel()
+            if grant.setup.voice.engine == .cloned {
                 Task { await VoiceCloneStore.shared.cancelGPURequest(synthesisRequest) }
-            } : nil
+            }
+        }
         do {
-            defer { synthesisExpiry?.cancel() }
-            buffer = try await grant.setup.voice.synthesize(draft, language: language, session: ParticipationNoRedirect.session,
-                                                             cloneRequest: synthesisRequest, cloneDeadline: expiry)
+            defer { synthesisExpiry.cancel() }
+            buffer = try await withTaskCancellationHandler {
+                try await synthesisTask.value
+            } onCancel: {
+                synthesisTask.cancel()
+                if grant.setup.voice.engine == .cloned {
+                    Task { await VoiceCloneStore.shared.cancelGPURequest(synthesisRequest) }
+                }
+            }
             try Task.checkCancellation()
         } catch {
             if Task.isCancelled || !permit.canStart {

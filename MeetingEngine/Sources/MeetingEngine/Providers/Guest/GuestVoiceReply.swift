@@ -159,17 +159,18 @@ public final class GuestVoiceReplyGraph: @unchecked Sendable {
               let pcm = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
                                       channels: format.channelCount, interleaved: false),
               monitorMixer !== mixer || monitorFormat != pcm else { playbackLock.unlock(); return }
-        let interrupted = stopLocked()
+        let (interrupted, stopped) = stopLocked()
         engine.connect(monitor, to: mixer, format: pcm)
         monitorMixer = mixer
         monitorFormat = pcm
         playbackLock.unlock()
+        stopped?(false)
         interrupted?()
     }
 
     func detach() {
         playbackLock.lock()
-        let interrupted = stopLocked()
+        let (interrupted, stopped) = stopLocked()
         if let engine {
             if player.engine === engine { engine.detach(player) }
             if monitor.engine === engine { engine.detach(monitor) }
@@ -178,6 +179,7 @@ public final class GuestVoiceReplyGraph: @unchecked Sendable {
         }
         monitorMixer = nil; monitorFormat = nil
         playbackLock.unlock()
+        stopped?(false)
         interrupted?()
     }
 
@@ -210,7 +212,8 @@ public final class GuestVoiceReplyGraph: @unchecked Sendable {
                     guard gain > 0, !gateOpen, let monitorFormat, monitorMixer?.engine === engine else { return nil }
                     return Self.convert(buffer, to: monitorFormat)
                 }
-                guard localGain == nil || mirror != nil else {
+                let requiresMirror = (localGain ?? 0) > 0 && !gateOpen
+                guard !requiresMirror || mirror != nil else {
                     playbackLock.unlock()
                     continuation.resume(returning: false)
                     return
@@ -293,7 +296,7 @@ public final class GuestVoiceReplyGraph: @unchecked Sendable {
                     guard gain > 0, let monitorFormat, monitorMixer?.engine === engine else { return nil }
                     return Self.convert(buffer, to: monitorFormat)
                 }
-                guard gain == nil || mirror != nil, permit.openCapture(), captureReady() else {
+                guard (gain ?? 0) <= 0 || mirror != nil, permit.openCapture(), captureReady() else {
                     playbackLock.unlock()
                     permit.cancel()
                     continuation.resume(returning: .notStarted)
@@ -337,25 +340,28 @@ public final class GuestVoiceReplyGraph: @unchecked Sendable {
     }
 
     func stop() {
-        playbackLock.lock(); let interrupted = stopLocked(); playbackLock.unlock()
+        playbackLock.lock(); let (interrupted, stopped) = stopLocked(); playbackLock.unlock()
+        stopped?(false)
         interrupted?()
     }
 
-    private func stopLocked() -> (@Sendable () -> Void)? {
+    private func stopLocked() -> ((@Sendable () -> Void)?, ((Bool) -> Void)?) {
         let interrupted = autonomous?.interrupted
         let stopped = approved?.complete
         autonomous = nil
         approved = nil
         player.stop()
         monitor.stop()
-        stopped?(false)
-        return interrupted
+        return (interrupted, stopped)
     }
 
     private func stopAutonomous(_ id: UUID) {
-        playbackLock.lock(); defer { playbackLock.unlock() }
-        guard autonomous?.id == id else { return }
-        _ = stopLocked()
+        playbackLock.lock()
+        guard autonomous?.id == id else { playbackLock.unlock(); return }
+        let (interrupted, stopped) = stopLocked()
+        playbackLock.unlock()
+        stopped?(false)
+        interrupted?()
     }
 
     private func isAutonomous(_ id: UUID) -> Bool {
@@ -372,7 +378,8 @@ public final class GuestVoiceReplyGraph: @unchecked Sendable {
 
     static func convert(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
         if buffer.format == format { return buffer }
-        guard let converter = AVAudioConverter(from: buffer.format, to: format) else { return nil }
+        guard buffer.format.sampleRate > 0, format.sampleRate > 0,
+              let converter = AVAudioConverter(from: buffer.format, to: format) else { return nil }
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate) + 64
         guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
         var supplied = false

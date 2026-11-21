@@ -152,11 +152,23 @@ public final class WorkspaceTaskSyncController: ObservableObject {
 
     public func saveJiraSecret(_ secret: String, kind: TaskIntegrationSecretKind, settings: JiraConnectionSettings? = nil) {
         let host = jiraHostKey(for: settings)
-        if let writeSecret = hooks.writeSecret {
-            _ = writeSecret(secret, host, kind)
-        } else {
-            _ = keychain.write(secret, hostKey: host, kind: kind)
+        let clean = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.isEmpty {
+            _ = keychain.delete(hostKey: host, kind: kind)
+            if let writeSecret = hooks.writeSecret {
+                _ = writeSecret("", host, kind)
+            }
+            return
         }
+        if let writeSecret = hooks.writeSecret {
+            _ = writeSecret(clean, host, kind)
+        } else {
+            _ = keychain.write(clean, hostKey: host, kind: kind)
+        }
+    }
+
+    public func readJiraSecret(kind: TaskIntegrationSecretKind, settings: JiraConnectionSettings? = nil) -> String? {
+        readJiraSecret(host: jiraHostKey(for: settings), kind: kind)
     }
 
     private func readJiraSecret(host: String, kind: TaskIntegrationSecretKind) -> String? {

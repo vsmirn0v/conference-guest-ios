@@ -350,6 +350,38 @@ struct MeetingWorkspaceSession: Codable, Equatable, Identifiable {
         return true
     }
 
+    func removeSessionData(sessionID: UUID) {
+        let deleted = write { db in
+            try db.transaction {
+                try db.run("DELETE FROM workspace_events WHERE session_id=?") {
+                    try MeetingSQLiteConnection.bindText($0, sessionID.uuidString, at: 1)
+                }
+                try db.run("DELETE FROM workspace_sessions WHERE id=?") {
+                    try MeetingSQLiteConnection.bindText($0, sessionID.uuidString, at: 1)
+                }
+            }
+            try? db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+        guard deleted else { return }
+        eventsBySession.removeValue(forKey: sessionID)
+        failedObservations.removeValue(forKey: sessionID)
+        sessions.removeAll { $0.id == sessionID }
+    }
+
+    func deleteAll() {
+        let cleared = write { db in
+            try db.transaction {
+                try db.execute("DELETE FROM workspace_events")
+                try db.execute("DELETE FROM workspace_sessions")
+            }
+            try? db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+        guard cleared else { return }
+        eventsBySession.removeAll()
+        failedObservations.removeAll()
+        sessions.removeAll()
+    }
+
     private func write(_ operation: (MeetingSQLiteConnection) throws -> Void) -> Bool {
         do {
             try operation(database())

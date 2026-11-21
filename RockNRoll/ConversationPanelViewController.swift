@@ -387,12 +387,15 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         let desiredHeaderHeight = max(44, ceil(titleHeight + 8))
         if headerHeight.constant != desiredHeaderHeight { headerHeight.constant = desiredHeaderHeight }
         let sidePanel = !docked && view.bounds.width >= 700
+        let rtl = view.effectiveUserInterfaceLayoutDirection == .rightToLeft
         if sidePanel != isSidePanel {
             isSidePanel = sidePanel
             panelLeading.isActive = !sidePanel
             panelSideWidth.isActive = sidePanel
             panel.layer.cornerRadius = sidePanel ? 16 : 0
-            panel.layer.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+            panel.layer.maskedCorners = rtl
+                ? [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+                : [.layerMinXMinYCorner, .layerMinXMaxYCorner]
         }
         if docked {
             panel.layer.cornerRadius = 0
@@ -401,7 +404,8 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         } else if sidePanel {
             // Keep the reading width after the landscape cutout/home-indicator inset.
             let safeWidth = view.bounds.width - view.safeAreaInsets.left - view.safeAreaInsets.right
-            panelSideWidth.constant = min(420, max(320, safeWidth * 0.34)) + view.safeAreaInsets.right
+            let trailingInset = rtl ? view.safeAreaInsets.left : view.safeAreaInsets.right
+            panelSideWidth.constant = min(420, max(320, safeWidth * 0.34)) + trailingInset
         }
         let keyboardVisible = keyboardPresented || panel.keyboardLayoutGuide.layoutFrame.minY <
             panel.bounds.height - panel.safeAreaInsets.bottom - 20
@@ -771,7 +775,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         activityFilterButton.isHidden = selected != .chat || !chat.reactionHistoryAvailable
         reactionHistoryInfo.isHidden = selected != .chat || activityFilter == .messages || !chat.reactionHistoryAvailable
         activityTools.isHidden = selected != .chat || !chat.reactionHistoryAvailable
-        transcriptTools.isHidden = selected != .liveText || (transcriptToggleButton.isHidden && transcriptHistoryButton.isHidden)
+        updateTranscriptTools()
         messageList.isHidden = selected != .chat
         transcript.isHidden = selected != .liveText
         catchUpHost.view.isHidden = selected != .catchUp
@@ -1090,7 +1094,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         case .content:
             return L("Text received by this phone may be incomplete.\n\n")
         case .waiting:
-            return L("Text received by this phone may be incomplete.\n\n") + L("Waiting for spoken words…\n\n")
+            return L("Text received by this phone may be incomplete.\n\n") + L("Waiting for spoken words…") + "\n\n"
         case .unavailable(let message):
             return message + "\n\n"
         }

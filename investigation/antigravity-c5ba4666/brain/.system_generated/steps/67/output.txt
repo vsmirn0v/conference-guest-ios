@@ -1,9 +1,0 @@
-Command exited with code 0.
-
-Command output:
-RockNRoll/RockRoomEngine.swift:170:        catchUp.observe(messages: [], canView: false, enabled: false)
-RockNRoll/Telemost/TelemostCallEngine.swift:160:        catchUp.observe(messages: [], canView: false, enabled: false)
-RockNRoll/TrueConf/TrueConfCallEngine.swift:163:        catchUp.observe(messages: [], canView: false, enabled: false)
-RockNRoll/VendorIntegration/GuestCallLayoutFixture.swift:62:        if scenario == "notices" { catchUp.observe(messages: [], canView: true, enabled: true) }
-RockNRoll/VendorIntegration/NativeConferenceEngine.swift:1890:                self.catchUp.observe(messages: [], canView: canView, enabled: menu.asrState.isOn)
-RockNRoll/VendorIntegration/NativeConferenceEngine.swift:1915:                self.catchUp.observe(messages: segments, canView: state.canViewAsr,

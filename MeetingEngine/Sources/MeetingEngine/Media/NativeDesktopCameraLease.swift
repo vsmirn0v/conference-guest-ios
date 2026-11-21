@@ -92,6 +92,7 @@ import LiveKitWebRTC
     @Published public private(set) var liveTrack: LKRTCVideoTrack?
     private var owner: Owner?
     private var retiring: Task<Void, Error>?
+    private var retiringID: UUID?
     private var cleanupFailed = false
     // A failed stop has no affirmative release witness. Keep its owner alive
     // for the process lifetime, including failures reported by a retired token.
@@ -134,15 +135,23 @@ import LiveKitWebRTC
         // between the old capturer's stop and the live engine's startup.
         owner = Owner(token: token, id: id, kind: kind, revoke: revoke); liveTrack = nil
         let task = Task { try await previous?.value; try await old?.revoke() }
+        let currentRetireID = UUID()
         retiring = task
+        retiringID = currentRetireID
+        defer {
+            if retiringID == currentRetireID {
+                retiring = nil
+                retiringID = nil
+            }
+        }
         do {
             try await task.value; try Task.checkCancellation()
             guard isCurrent(token) else { throw CancellationError() }
-            retiring = nil
             return token
         } catch {
+            let wasCurrent = owner?.token == token
+            if wasCurrent { owner = nil; liveTrack = nil }
             if !(error is CancellationError) { cleanupFailed = true }
-            if isCurrent(token) { owner = nil; liveTrack = nil }
             throw error
         }
     }

@@ -37,7 +37,9 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Share your microphone when you unmute in the native guest preview.</string>
+	<string>Share your microphone when you unmute in meetings, use hands-free Rock voice commands, or record a voice sample on this Mac.</string>
+	<key>NSPersonalVoiceUsageDescription</key>
+	<string>Rock'N'Roll for Mac can use your Personal Voice to speak voice replies you send into meetings or preview Assistant responses.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Recognize spoken commands to Rock on this Mac when local transcription models are not installed.</string>
 	<key>NativeGuestProtocolVersion</key>

@@ -177,7 +177,7 @@ struct NativeDesktopHomeView: View {
                     NativeDesktopMeetingView(model: model, onMini: { workspace.showMini(model) }, continuation: library.continuation,
                                              workspace: workspace, onWindowToggle: { workspace.toggleWindow(model) }, embedded: true,
                                              presentsErrors: shown && workspace.error == nil && workspace.notice == nil)
-                        .opacity(shown ? 1 : 0).allowsHitTesting(shown).accessibilityHidden(!shown)
+                        .opacity(shown ? 1 : 0).allowsHitTesting(shown).disabled(!shown).accessibilityHidden(!shown)
                 }
                 if let selected = workspace.selectedMeeting {
                     if workspace.isDetached(selected) { detachedMeeting(selected) }
@@ -186,10 +186,11 @@ struct NativeDesktopHomeView: View {
                         .navigationSubtitle(meetingSubtitle(selected))
                 }
                 AttentionCardStack(attention: workspace.attention, openAssistant: { workspace.openAssistantMoments() })
-                if workspace.selection != .assistant {
+                if !(workspace.selectedMeeting == nil && workspace.selection == .assistant) {
                     VStack {
                         Spacer()
                         AssistantVoiceHUDView(attention: workspace.attention, openAssistant: { workspace.show(section: .assistant) })
+                            .padding(.bottom, workspace.selectedMeeting != nil && !workspace.isDetached(workspace.selectedMeeting!) ? 72 : 0)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -295,9 +296,16 @@ struct NativeDesktopHomeView: View {
                     .help(L("Participants"))
                 Button { meeting.panel = meeting.panel == .conversation ? nil : .conversation } label: { Label(L("Conversation"), systemImage: "bubble.left") }
                     .help(L("Conversation"))
-                Button { meeting.panel = meeting.panel == .notes ? nil : .notes } label: { Label(L("Notes"), systemImage: "note.text") }
-                    .help(L("Notes"))
+                if let notes = meeting.notes {
+                    MeetingNotesEntryButton(notes: notes, sessionID: meeting.activeNoteSessionID) {
+                        meeting.panel = meeting.panel == .notes ? nil : .notes
+                    }
                     .accessibilityIdentifier("meeting.notes")
+                } else {
+                    Button { meeting.panel = meeting.panel == .notes ? nil : .notes } label: { Label(L("Notes"), systemImage: "note.text") }
+                        .help(L("Notes"))
+                        .accessibilityIdentifier("meeting.notes")
+                }
                 Button { workspace.showMini(meeting) } label: { Label(L("Mini meeting"), systemImage: "pip.enter") }
                     .help(L("Mini meeting"))
                 Button { workspace.toggleWindow(meeting) } label: { Label(L("Open in New Window"), systemImage: "macwindow.on.rectangle") }

@@ -26,6 +26,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 /// with sound on, closely when silenced)
 /// and raises a card when one needs you. One judge call runs at a time across meetings, at most six a minute.
 @MainActor final class AttentionCoordinator: ObservableObject {
+    private static let localDeviceName = Host.current().localizedName ?? "Mac"
+
     struct Card: Identifiable, Equatable {
         /// The decision this card shows.
         let id: UUID
@@ -230,6 +232,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var onRequestParticipationMode: ((NativeDesktopMeetingModel, String) -> Void)?
     @Published var participationPromptMeetingID: UUID?
     var participationDraftObjective: String?
+    var participationAutoDictate = false
     /// External tool source (the app's MCP loopback today; external MCP servers later).
     var externalToolProvider: (any AssistantExternalToolProviding)?
     var saveTaskSyncPreferencesToCloud: (TaskSyncPreferences) -> Void = { _ in }
@@ -722,12 +725,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 }
                 if ready != nil {
                     if let reconciliation, !reconciliation.canonicalUpdates.isEmpty || !reconciliation.links.isEmpty {
-                        _ = try? await store.publishOutcomeMutation {
-                            let commits = try await library.store.applyCrossMeetingReconciliation(
+                        _ = try? await store.publishOutcomeCommits {
+                            try await library.store.applyCrossMeetingReconciliation(
                                 reconciliation,
                                 sourceOutcomeID: outcome.id
                             )
-                            return commits.first
                         }
                     }
                     probeLog("assistant-outcome", ["lines": input.request.window.lines.count,
@@ -842,7 +844,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     private func makeTaskSyncController() -> WorkspaceTaskSyncController {
         WorkspaceTaskSyncController(hooks: .init(
             isMacPlatform: true,
-            deviceName: Host.current().localizedName ?? "Mac",
+            deviceName: Self.localDeviceName,
             loadTasks: { [weak self] in
                 await self?.loadWorkspaceTaskRecords() ?? []
             },
@@ -855,9 +857,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             applyMutations: { [weak self] mutations in
                 guard let self else { return }
                 await self.store.waitForOutcomeWrites()
-                let _ = try await self.store.publishOutcomeMutation {
-                    let commits = try await self.store.meetingLibrary.store.applyExternalSyncMutations(mutations)
-                    return commits.first
+                _ = try await self.store.publishOutcomeCommits {
+                    try await self.store.meetingLibrary.store.applyExternalSyncMutations(mutations)
                 }
                 await self.store.meetingLibrary.refresh()
                 await self.advanceRecurringTaskRemindersIfNeeded()

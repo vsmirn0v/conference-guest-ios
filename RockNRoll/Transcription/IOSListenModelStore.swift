@@ -283,7 +283,7 @@ final class IOSListenModelStore: ObservableObject {
                 }
             }
             try Task.checkCancellation()
-            try Self.verifyFile(at: dest, expectedBytes: spec.byteCount, expectedSHA256: spec.sha256Hex)
+            try await Self.verifyFileAsync(at: dest, expectedBytes: spec.byteCount, expectedSHA256: spec.sha256Hex)
             completedBytes += spec.byteCount
             gigaamState = .downloading(progress: min(0.99, Double(completedBytes) / max(1, totalBytes)))
         }
@@ -305,7 +305,13 @@ final class IOSListenModelStore: ObservableObject {
         }
     }
 
-    static func verifyFile(at url: URL, expectedBytes: Int64, expectedSHA256: String) throws {
+    nonisolated static func verifyFileAsync(at url: URL, expectedBytes: Int64, expectedSHA256: String) async throws {
+        try await Task.detached(priority: .utility) {
+            try verifyFile(at: url, expectedBytes: expectedBytes, expectedSHA256: expectedSHA256)
+        }.value
+    }
+
+    nonisolated static func verifyFile(at url: URL, expectedBytes: Int64, expectedSHA256: String) throws {
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attrs[.size] as? NSNumber)?.int64Value ?? -1
         guard size == expectedBytes else {
@@ -325,7 +331,7 @@ final class IOSListenModelStore: ObservableObject {
         }
     }
 
-    static func sha256Hex(of url: URL) throws -> String {
+    nonisolated static func sha256Hex(of url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hasher = SHA256()

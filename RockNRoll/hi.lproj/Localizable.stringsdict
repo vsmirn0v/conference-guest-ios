@@ -34,6 +34,22 @@
 			<string>सीमा से %ld अक्षर ज़्यादा</string>
 		</dict>
 	</dict>
+	<key>%ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld बैठक</string>
+			<key>other</key>
+			<string>%ld बैठकें</string>
+		</dict>
+	</dict>
 	<key>%ld musicians</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -144,6 +160,54 @@
 			<string>हाल का %ld सत्र देखें</string>
 			<key>other</key>
 			<string>हाल के सभी %ld सत्र देखें</string>
+		</dict>
+	</dict>
+	<key>This month you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>इस महीने आपकी %ld बैठक थी</string>
+			<key>other</key>
+			<string>इस महीने आपकी %ld बैठकें थीं</string>
+		</dict>
+	</dict>
+	<key>This week you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>इस सप्ताह आपकी %ld बैठक थी</string>
+			<key>other</key>
+			<string>इस सप्ताह आपकी %ld बैठकें थीं</string>
+		</dict>
+	</dict>
+	<key>Today you had %ld meetings</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>आज आपकी %ld बैठक थी</string>
+			<key>other</key>
+			<string>आज आपकी %ld बैठकें थीं</string>
 		</dict>
 	</dict>
 </dict>

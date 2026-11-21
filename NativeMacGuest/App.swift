@@ -164,8 +164,40 @@ struct NativeGuestApplication {
             "macOS": ProcessInfo.processInfo.operatingSystemVersionString])
         let menu = NSMenu(), appMenu = NSMenu(title: appName)
         let item = NSMenuItem(title: appName, action: nil, keyEquivalent: "")
+        let about = NSMenuItem(title: L("About %@", appName), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(about)
+        appMenu.addItem(.separator())
+        let settings = NSMenuItem(title: L("Settings…"), action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        appMenu.addItem(settings)
+        #if NATIVE_DIRECT_UPDATES
+        let check = NSMenuItem(title: L("Check for Updates…"), action: #selector(checkForUpdates), keyEquivalent: "")
+        check.target = self
+        appMenu.addItem(check)
+        #endif
+        let pairMCP = NSMenuItem(title: L("Pair MCP Client…"), action: #selector(pairMCPClient), keyEquivalent: "")
+        pairMCP.target = self
+        appMenu.addItem(pairMCP)
+        appMenu.addItem(.separator())
+        let hideApp = NSMenuItem(title: L("Hide %@", appName), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(hideApp)
+        let hideOthers = NSMenuItem(title: L("Hide Others"), action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthers)
+        appMenu.addItem(withTitle: L("Show All"), action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: L("Quit Rock'N'Roll for Mac"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.submenu = appMenu; menu.addItem(item)
+
+        let fileMenu = NSMenu(title: L("File")), fileItem = NSMenuItem()
+        let show = NSMenuItem(title: L("Open Rock'N'Roll for Mac"), action: #selector(openHome), keyEquivalent: "n")
+        show.target = self; fileMenu.addItem(show)
+        let joinRoom = NSMenuItem(title: L("Join Meeting…"), action: #selector(focusHomeForJoin), keyEquivalent: "j")
+        joinRoom.target = self; fileMenu.addItem(joinRoom)
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(withTitle: L("Close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileItem.submenu = fileMenu; menu.addItem(fileItem)
+
         let editMenu = NSMenu(title: L("Edit")), editItem = NSMenuItem()
         editMenu.addItem(withTitle: L("Undo"), action: Selector(("undo:")), keyEquivalent: "z")
         let redo = editMenu.addItem(withTitle: L("Redo"), action: Selector(("redo:")), keyEquivalent: "z")
@@ -176,29 +208,40 @@ struct NativeGuestApplication {
         editMenu.addItem(withTitle: L("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: L("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu; menu.addItem(editItem)
+
+        let viewMenu = NSMenu(title: L("View")), viewItem = NSMenuItem()
+        let sidebarItem = viewMenu.addItem(withTitle: L("Show Sidebar"), action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
+        sidebarItem.keyEquivalentModifierMask = [.command, .control]
+        let fullScreenItem = viewMenu.addItem(withTitle: L("Enter Full Screen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        fullScreenItem.keyEquivalentModifierMask = [.command, .control]
+        viewItem.submenu = viewMenu; menu.addItem(viewItem)
+
+        let meetingMenu = NSMenu(title: L("Meeting")), meetingItem = NSMenuItem()
+        let muteItem = NSMenuItem(title: L("Mute / Unmute Microphone"), action: #selector(toggleActiveMicrophone), keyEquivalent: "m")
+        muteItem.keyEquivalentModifierMask = [.command, .shift]
+        muteItem.target = self; meetingMenu.addItem(muteItem)
+        let shareItem = NSMenuItem(title: L("Share Screen"), action: #selector(toggleActiveShare), keyEquivalent: "s")
+        shareItem.keyEquivalentModifierMask = [.command, .shift]
+        shareItem.target = self; meetingMenu.addItem(shareItem)
+        let assistantItem = NSMenuItem(title: L("Ask Assistant"), action: #selector(focusAssistantView), keyEquivalent: "a")
+        assistantItem.keyEquivalentModifierMask = [.control, .option]
+        assistantItem.target = self; meetingMenu.addItem(assistantItem)
+        meetingMenu.addItem(.separator())
+        let pause = NSMenuItem(title: L("Pause All Assistant Participation"), action: #selector(pauseAllParticipation), keyEquivalent: "")
+        pause.target = self; meetingMenu.addItem(pause)
+        let leaveCurrent = NSMenuItem(title: L("Leave Meeting"), action: #selector(leaveActiveMeeting), keyEquivalent: "")
+        leaveCurrent.target = self; meetingMenu.addItem(leaveCurrent)
+        meetingItem.submenu = meetingMenu; menu.addItem(meetingItem)
+
         let windowMenu = NSMenu(title: L("Window")), windowItem = NSMenuItem()
         windowMenu.delegate = self; NativeDesktopWorkspace.addStandardWindowItems(windowMenu)
-        windowItem.submenu = windowMenu; menu.addItem(windowItem)
+        windowItem.submenu = windowMenu; menu.addItem(windowItem); NSApp.windowsMenu = windowMenu
         let helpMenu = NSMenu(title: L("Help")), helpItem = NSMenuItem()
         let diagnostics = NSMenuItem(title: L("Copy Diagnostics"), action: #selector(copyDiagnostics), keyEquivalent: "")
         diagnostics.target = self; helpMenu.addItem(diagnostics)
         let export = NSMenuItem(title: L("Export Diagnostics…"), action: #selector(exportDiagnostics), keyEquivalent: "")
         export.target = self; helpMenu.addItem(export)
         helpItem.submenu = helpMenu; menu.addItem(helpItem); NSApp.helpMenu = helpMenu; NSApp.mainMenu = menu
-        let settings = NSMenuItem(title: L("Settings…"), action: #selector(openSettings), keyEquivalent: ",")
-        settings.target = self; appMenu.insertItem(settings, at: 0)
-        let pairMCP = NSMenuItem(title: L("Pair MCP Client…"), action: #selector(pairMCPClient), keyEquivalent: "")
-        pairMCP.target = self; appMenu.insertItem(pairMCP, at: 1)
-        #if NATIVE_DIRECT_UPDATES
-        let check = NSMenuItem(title: L("Check for Updates…"), action: #selector(checkForUpdates), keyEquivalent: "")
-        check.target = self; appMenu.insertItem(check, at: 1)
-        #endif
-        let show = NSMenuItem(title: L("Open Rock'N'Roll for Mac"), action: #selector(openHome), keyEquivalent: "n")
-        show.target = self; appMenu.insertItem(show, at: 0)
-        let pause = NSMenuItem(title: L("Pause All Assistant Participation"),
-            action: #selector(pauseAllParticipation), keyEquivalent: "")
-        pause.target = self
-        appMenu.insertItem(pause, at: max(0, appMenu.numberOfItems - 1))
         #if DEBUG
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
         #endif
@@ -244,19 +287,21 @@ struct NativeGuestApplication {
             _ = application(NSApp, continue: activity, restorationHandler: { _ in })
         }
     }
+    private func ensureWorkspace() {
+        guard workspace == nil else { return }
+        workspace = makeWorkspace()
+        if let workspace {
+            let service = NativeDesktopMCPService(workspace: workspace)
+            mcpService = service
+            workspace.mcpService = service
+            // The assistant and public MCP endpoint share this backend in-process.
+            workspace.attention.externalToolProvider = AssistantMCPLoopbackProvider(backend: service.toolBackend)
+            Task { await service.start() }
+        }
+    }
     private func showJoin(completion: NativeGuestMeetingCompletion? = nil) {
         guard launched, !terminating else { return }
-        if workspace == nil {
-            workspace = makeWorkspace()
-            if let workspace {
-                let service = NativeDesktopMCPService(workspace: workspace)
-                mcpService = service
-                workspace.mcpService = service
-                // The assistant and public MCP endpoint share this backend in-process.
-                workspace.attention.externalToolProvider = AssistantMCPLoopbackProvider(backend: service.toolBackend)
-                Task { await service.start() }
-            }
-        }
+        ensureWorkspace()
         workspace?.show()
         if let completion, completion != .left { workspace?.error = completion.message }
     }
@@ -350,6 +395,11 @@ struct NativeGuestApplication {
             }
             _ = await workspace?.leave()
             if let controller, !controller.finished { await controller.finish() }
+            workspace?.attention.store.assistant.flushOutcomeEditsSynchronously()
+            workspace?.obsidian.stopStatusLoop()
+            try? await workspace?.workspaceSync.persistReplicaCheckpoint()
+            await workspace?.attention.store.closeLibrarySyncForTeardown()
+            await ClonedVoiceEngine.shared.unload()
             let clean = await NativeDesktopForegroundMedia.shared.shutdown()
             if !clean { NSLog("Media cleanup was unproven during explicit Quit; process exit releases its devices.") }
             sender.reply(toApplicationShouldTerminate: true)
@@ -396,13 +446,37 @@ struct NativeGuestApplication {
     }
     @objc private func openSettings() {
         guard launched else { return }
-        if workspace == nil { workspace = makeWorkspace() }
+        ensureWorkspace()
         workspace?.show(section: .settings)
     }
     #if NATIVE_DIRECT_UPDATES
     @objc private func checkForUpdates() { updates?.check() }
     #endif
     @objc private func openHome() { showJoin() }
+    @objc private func focusHomeForJoin() {
+        showJoin()
+        workspace?.show(section: .home)
+    }
+    @objc private func toggleActiveMicrophone() {
+        (workspace?.selectedMeeting ?? workspace?.meeting)?.toggleMicrophone()
+    }
+    @objc private func toggleActiveShare() {
+        guard let active = workspace?.selectedMeeting ?? workspace?.meeting else { return }
+        if active.isSharingLive {
+            Task { await active.endShare() }
+        } else {
+            active.quickShare()
+        }
+    }
+    @objc private func focusAssistantView() {
+        guard launched else { return }
+        ensureWorkspace()
+        workspace?.show(section: .assistant)
+    }
+    @objc private func leaveActiveMeeting() {
+        guard let active = workspace?.selectedMeeting ?? workspace?.meeting else { return }
+        Task { _ = await workspace?.leave(active) }
+    }
     @objc private func copyDiagnostics() {
         Task { @MainActor in
             // Audio devices are read off the main thread and bounded: a stalled system

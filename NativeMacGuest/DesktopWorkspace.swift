@@ -129,7 +129,8 @@ import UserNotifications
     /// Changes when every meeting is left; joins started before then stop.
     private var joinGeneration = UUID()
     private var subscriptions = Set<AnyCancellable>()
-    private var keyMonitor: Any?
+    nonisolated(unsafe) private var keyMonitor: Any?
+    private static let localDeviceName = Host.current().localizedName ?? "Mac"
     private var activity: NSUserActivity?
     private var handoffLookup: Task<Void, Never>?
     private var sessionID = UUID()
@@ -294,6 +295,9 @@ import UserNotifications
             }
             if !cleanObjective.isEmpty {
                 self.attention.participationDraftObjective = String(cleanObjective.prefix(180))
+                self.attention.participationAutoDictate = false
+            } else {
+                self.attention.participationAutoDictate = true
             }
             self.attention.participationPromptMeetingID = nil
             self.attention.participationPromptMeetingID = model.sessionID
@@ -773,6 +777,9 @@ import UserNotifications
     /// Leaves one meeting; a sole survivor of a departed talk meeting takes the talk role (muted).
     deinit {
         scheduleTransitionTask?.cancel()
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
     }
 
     private func connection(for model: NativeDesktopMeetingModel) -> ActiveRoomConnection? {
@@ -1211,6 +1218,7 @@ import UserNotifications
                 self.library.calendar.reminders.activeConnectionsChanged()
                 self.synchronizeScheduledTransitions()
                 self.attention.forgetLeave(id)
+                self.attention.speech.refreshState()
             } else {
                 self.shutdownBlocked = true; self.error = NativeDesktopError.cleanupFailed.localizedDescription
             }
@@ -1370,7 +1378,7 @@ import UserNotifications
         guard let meeting, meeting.snapshot.phase == .connected,
               let session = continuationSessions[meeting.sessionID] else { return nil }
         return ActiveJam(deviceID: library.sync.deviceID, sessionID: session, invitation: meeting.invitation,
-            title: meeting.title, name: meeting.displayName, deviceLabel: Host.current().localizedName ?? "Mac",
+            title: meeting.title, name: meeting.displayName, deviceLabel: Self.localDeviceName,
             isSharingScreen: meeting.snapshot.sharing, supportsCompanion: true,
             audioPaused: !meeting.snapshot.playoutOn, engine: meeting.kind,
             workspaceSessionID: meeting.workspaceSessionID)
@@ -1384,6 +1392,7 @@ import UserNotifications
             String(describing: meeting.localCamera.map(ObjectIdentifier.init))].joined(separator: "|")
         guard state != renderedMeetingStates[meeting.sessionID] else { return }
         renderedMeetingStates[meeting.sessionID] = state; objectWillChange.send(); refreshMenu(); updateContinuation()
+        attention.speech.refreshState()
         if meeting.snapshot.phase == .connected {
             workspaceSync.noteLocalSessionJoined(
                 sessionID: meeting.workspaceSessionID,
@@ -1438,7 +1447,8 @@ import UserNotifications
             // Shortcuts act on the meeting whose window is key; unmuting there moves the mic.
             let keyMeeting = meetings.first { self.meetingWindows[$0.sessionID]?.isKeyWindow == true }
                 ?? (self.window?.isKeyWindow == true ? self.selectedMeeting.flatMap { self.isDetached($0) ? nil : $0 } : nil)
-            let typing = NSApp.keyWindow?.firstResponder is NSTextView || NSApp.keyWindow?.firstResponder is NSTextField
+            let responder = NSApp.keyWindow?.firstResponder
+            let typing = responder is NSText || responder is NSControl
             if event.keyCode == 53 && modifiers.isEmpty, let keyMeeting, keyMeeting.immersive { keyMeeting.immersive = false; return nil }
             if key == "m" && modifiers == [.command, .shift] { (keyMeeting ?? fallback).toggleMicrophone(); return nil }
             if key == "s" && modifiers == [.command, .shift], let keyMeeting { keyMeeting.togglePlayout(); return nil }

@@ -12,6 +12,8 @@ final class ConferenceModel: ObservableObject {
     private enum SessionPhase { case idle, joining, active, leaving }
 
     private struct JoinRequest {
+        let requestedSessionID: UUID
+        let requestedWorkspaceSessionID: UUID?
         let target: JoinDestination
         let name: String
         let quiet: Bool
@@ -32,6 +34,7 @@ final class ConferenceModel: ObservableObject {
         let destination: JoinDestination
         let generation: UInt64
         let isBackgroundJoin: Bool
+        var requestedWorkspaceSessionID: UUID?
         var visitTitle: String?
         var serverTitle: String?
         var connectedURL: URL?
@@ -110,7 +113,7 @@ final class ConferenceModel: ObservableObject {
     private var liveSessionID: UUID?
     private var liveName = ""
     private(set) var companionAudioPaused = false
-    private var departureWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    private var departureWaiters: [UUID: (targetSessionID: UUID?, continuation: CheckedContinuation<Bool, Never>)] = [:]
     let continuationBanner = ContinuationBanner()
     var currentContinuationActivity: NSUserActivity?
     lazy var continuation: MeetingContinuationCoordinator = makeContinuationCoordinator()
@@ -189,6 +192,9 @@ final class ConferenceModel: ObservableObject {
             assistant: assistant,
             speech: assistantSpeech
         )
+        controller.isInActiveCall = { [weak self] in
+            self?.sessions.isEmpty == false
+        }
         controller.joinableTargets = { [weak self] now in
             guard let self else { return [] }
             var activeRooms: [String: UUID] = [:]
@@ -286,7 +292,6 @@ final class ConferenceModel: ObservableObject {
         }
         return controller
     }()
-    private var pendingContinuationWorkspaceSessionID: UUID?
 
     private func applySyncedName(_ name: String) {
         applyingSyncedName = true
@@ -350,6 +355,9 @@ final class ConferenceModel: ObservableObject {
     private var scheduledJoinPending = false
     private var terminalEventHandled = false
     private var sessionGeneration: UInt64 = 0
+    private var activeJoinGeneration: UInt64?
+    private var activeJoinTarget: JoinDestination?
+    private var broadcastOwnerSessionID: UUID?
     private var endpointCache: [URL: URL] = [:]
     private var guestInvitations: [URL] {
         JoinDestination.guestInvitations(in: history.rooms)
@@ -427,6 +435,10 @@ final class ConferenceModel: ObservableObject {
 
     deinit {
         scheduleTransitionTask?.cancel()
+        joinTask?.cancel()
+        let waiters = departureWaiters.values
+        departureWaiters.removeAll()
+        waiters.forEach { $0.continuation.resume(returning: false) }
     }
 
     var foregroundSession: IOSMeetingSessionController? {
@@ -449,10 +461,10 @@ final class ConferenceModel: ObservableObject {
         if MeetingActivitySupport.supported, meetingActivity == nil {
             meetingActivity = MeetingActivitySession(changes: objectWillChange.eraseToAnyPublisher(), preferences: preferences) { [weak self] in
                 guard let self else { return nil }
-                if let active = self.activityTargetSession(), let activityID = self.workspaceActivityID {
+                if let active = self.activityTargetSession() {
                     let connectedCount = self.sessions.filter { $0.phase == .connected || $0.phase == .reconnecting }.count
                     return .init(
-                        sessionID: activityID,
+                        sessionID: active.id,
                         title: active.title,
                         engine: active,
                         reconnecting: active.phase == .reconnecting,
@@ -877,8 +889,8 @@ final class ConferenceModel: ObservableObject {
             if let requestedID = MeetingActivitySnapshot.sessionID(from: url),
                let matching = sessions.first(where: { $0.id == requestedID }) {
                 presentSession(id: matching.id)
-            } else if let foreground = foregroundSession {
-                presentSession(id: foreground.id)
+            } else if let target = activityTargetSession() ?? foregroundSession {
+                presentSession(id: target.id)
             }
             return
         }
@@ -1078,14 +1090,16 @@ final class ConferenceModel: ObservableObject {
                            engineWasChosen: Bool = false,
                            backgroundJoin: Bool = false,
                            allowAlongside: Bool = false,
+                           allowWhileLeaving: Bool = false,
+                           requestedWorkspaceID: UUID? = nil,
                            scheduledAdmission: (() -> Bool)? = nil) {
         if !allowAlongside {
-            guard !isJoining && !isInConference && !isLeaving else {
+            guard !isJoining && !isInConference && (!isLeaving || allowWhileLeaving) else {
                 if scheduledAdmission != nil && !scheduledJoinPending { calendar.finishScheduledTransportPreparation() }
                 return
             }
         } else {
-            guard sessions.count < Self.maxConcurrentMeetings else {
+            guard !isJoining || allowWhileLeaving, nonLeavingSessions.count < Self.maxConcurrentMeetings else {
                 if scheduledAdmission != nil && !scheduledJoinPending { calendar.finishScheduledTransportPreparation() }
                 return
             }
@@ -1151,7 +1165,10 @@ final class ConferenceModel: ObservableObject {
 
         let knownEngine = rejoinEvidence.flatMap { $0.invitation == target.invitationURL ? $0.engine : nil } ??
             history.matching(target.invitationURL)?.engine
+        let preallocatedSessionID = UUID()
         let request = JoinRequest(
+            requestedSessionID: preallocatedSessionID,
+            requestedWorkspaceSessionID: requestedWorkspaceID,
             target: target,
             name: name,
             quiet: quiet,
@@ -1165,6 +1182,8 @@ final class ConferenceModel: ObservableObject {
         rejoinEvidence = nil
         sessionGeneration &+= 1
         let generation = sessionGeneration
+        activeJoinGeneration = generation
+        activeJoinTarget = target
 
         #if DEBUG
         let usingLegacyTransportHook = joinTransportForTesting != nil
@@ -1177,7 +1196,7 @@ final class ConferenceModel: ObservableObject {
             meetingReconnecting = false
             activeRoute = target
             companionAudioPaused = request.quiet
-            liveSessionID = UUID()
+            liveSessionID = preallocatedSessionID
             liveName = name
             connectedURL = nil
             connectedSince = nil
@@ -1192,7 +1211,7 @@ final class ConferenceModel: ObservableObject {
             }
         } else {
             companionAudioPaused = request.quiet
-            liveSessionID = UUID()
+            liveSessionID = preallocatedSessionID
             liveName = name
         }
 
@@ -1209,7 +1228,13 @@ final class ConferenceModel: ObservableObject {
                 self.calendar.finishScheduledTransportPreparation()
                 self.scheduledJoinPending = false
             }
-            defer { finishPreparation() }
+            defer {
+                finishPreparation()
+                if self.activeJoinGeneration == generation {
+                    self.activeJoinGeneration = nil
+                    self.activeJoinTarget = nil
+                }
+            }
             @MainActor func checkAdmission() throws {
                 try Task.checkCancellation()
                 if request.admission?() == false { throw CancellationError() }
@@ -1302,7 +1327,8 @@ final class ConferenceModel: ObservableObject {
                     chat: sessionChat,
                     adapter: testAdapter,
                     rockService: jamService,
-                    exclusiveTalk: false
+                    exclusiveTalk: false,
+                    sessionID: request.requestedSessionID
                 )
 
                 let controller = IOSMeetingSessionController(
@@ -1323,6 +1349,7 @@ final class ConferenceModel: ObservableObject {
                     destination: destination,
                     generation: generation,
                     isBackgroundJoin: request.backgroundJoin,
+                    requestedWorkspaceSessionID: request.requestedWorkspaceSessionID,
                     visitTitle: request.title,
                     connectedURL: nil,
                     connectedSince: nil,
@@ -1345,6 +1372,7 @@ final class ConferenceModel: ObservableObject {
                     guard let self, let controller else { return }
                     controller.presentAssistantSheet(assistant: self.assistant, speech: self.assistantSpeech)
                 }
+                controller.configureAssistantHUD(talk: self.assistantTalk, speech: self.assistantSpeech)
                 controller.onMicrophoneStateChanged = { [weak self] id, unmuted in
                     self?.assistant.handleMicrophoneChange(controllerID: id, unmuted: unmuted)
                     self?.assistantSpeech.refreshState()
@@ -1354,6 +1382,21 @@ final class ConferenceModel: ObservableObject {
                     assistant.refreshMode(for: id)
                     if companionAudioPaused, liveSessionID == id, controller?.isMeetingSoundEnabled == true {
                         didEnableCompanionAudio()
+                    }
+                }
+                controller.canStartBroadcast = { [weak self, controllerID] in
+                    guard let self else { return false }
+                    if let owner = self.broadcastOwnerSessionID {
+                        return owner == controllerID
+                    }
+                    return self.foregroundSession?.id == controllerID
+                }
+                controller.onBroadcastOwnershipChanged = { [weak self, controllerID] owned in
+                    guard let self else { return }
+                    if owned {
+                        self.broadcastOwnerSessionID = controllerID
+                    } else if self.broadcastOwnerSessionID == controllerID {
+                        self.broadcastOwnerSessionID = nil
                     }
                 }
                 controller.workspaceDeviceID = sync.deviceID
@@ -1523,14 +1566,17 @@ final class ConferenceModel: ObservableObject {
                     let matchedCalendar = explicitEvent ?? (matches.count == 1 ? matches.first : nil)
                     controller.workspaceSessionID = workspace.beginSession(
                         controllerID: id,
-                        requestedWorkspaceID: pendingContinuationWorkspaceSessionID,
+                        requestedWorkspaceID: rec.requestedWorkspaceSessionID,
                         title: effectiveTitle,
                         invitation: controller.invitationURL,
                         roomIdentity: controller.invitationURL.absoluteString,
                         calendarMeeting: matchedCalendar,
                         engine: controller.kind
                     )
-                    pendingContinuationWorkspaceSessionID = nil
+                    if var updated = sessionRecords[id] {
+                        updated.requestedWorkspaceSessionID = nil
+                        sessionRecords[id] = updated
+                    }
                 }
             }
             continuation.targetDidConnect(invitation: controller.invitationURL, sessionID: id)
@@ -1551,9 +1597,13 @@ final class ConferenceModel: ObservableObject {
             workspace.finishSession(controllerID: id, endedAt: Date())
             assistant.sessionEnded(controllerID: id)
             recordDisconnect(for: id)
+            if broadcastOwnerSessionID == id {
+                broadcastOwnerSessionID = nil
+            }
             sessionRecords.removeValue(forKey: id)
             leavingSessionIDs.remove(id)
             sessions.removeAll { $0.id == id }
+            resumeDepartureWaiters(forSessionID: id)
 
             let replacingSession = replacementAfterLeave != nil && (event == .left || event == .canceled)
             if foregroundSessionID == id {
@@ -1578,9 +1628,7 @@ final class ConferenceModel: ObservableObject {
                 liveSessionID = nil
                 companionAudioPaused = false
                 meetingReconnecting = false
-                let waiters = departureWaiters.values
-                departureWaiters.removeAll()
-                waiters.forEach { $0.resume(returning: true) }
+                resumeDepartureWaiters(forSessionID: nil)
 
                 switch event {
                 case .left:
@@ -1689,9 +1737,7 @@ final class ConferenceModel: ObservableObject {
         sessionGeneration &+= 1
         terminalEventHandled = true
         activeRoute = nil
-        let waiters = departureWaiters.values
-        departureWaiters.removeAll()
-        waiters.forEach { $0.resume(returning: true) }
+        resumeDepartureWaiters(forSessionID: nil)
         completeReplacement()
     }
 
@@ -1813,7 +1859,7 @@ final class ConferenceModel: ObservableObject {
         replacementAfterLeave = nil
         set(target: invitation.target)
         if invitation.autoJoin {
-            startJoin(invitation.target, title: invitation.title, allowAlongside: true)
+            startJoin(invitation.target, title: invitation.title, allowAlongside: true, allowWhileLeaving: true)
         }
     }
 
@@ -1842,9 +1888,7 @@ final class ConferenceModel: ObservableObject {
             if phase == .idle {
                 liveSessionID = nil
                 companionAudioPaused = false
-                let waiters = departureWaiters.values
-                departureWaiters.removeAll()
-                waiters.forEach { $0.resume(returning: true) }
+                resumeDepartureWaiters(forSessionID: nil)
             }
             continuation.updateCurrent(continuationSnapshot())
             updateContinuationActivity()
@@ -2065,6 +2109,18 @@ final class ConferenceModel: ObservableObject {
         try await target.setTransferHeld(held, restoreSending: restoreSending)
     }
 
+    private func resumeDepartureWaiters(forSessionID sessionID: UUID?) {
+        let matchingKeys = departureWaiters.compactMap { key, entry -> UUID? in
+            if let sessionID {
+                return (entry.targetSessionID == sessionID || (entry.targetSessionID == nil && sessions.isEmpty)) ? key : nil
+            }
+            return sessions.isEmpty ? key : nil
+        }
+        for key in matchingKeys {
+            departureWaiters.removeValue(forKey: key)?.continuation.resume(returning: true)
+        }
+    }
+
     func leaveForContinuation(_ id: UUID? = nil) async -> Bool {
         if let id {
             if let matching = sessions.first(where: { $0.id == id }) {
@@ -2072,17 +2128,18 @@ final class ConferenceModel: ObservableObject {
             } else {
                 return false
             }
+            guard sessions.contains(where: { $0.id == id }) else { return true }
         } else {
             guard isJoining || isInConference || isLeaving else { return true }
             leave()
+            guard !sessions.isEmpty || phase != .idle else { return true }
         }
-        guard !sessions.isEmpty || phase != .idle else { return true }
         return await withCheckedContinuation { result in
             let token = UUID()
-            departureWaiters[token] = result
+            departureWaiters[token] = (targetSessionID: id, continuation: result)
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(12))
-                self?.departureWaiters.removeValue(forKey: token)?.resume(returning: false)
+                self?.departureWaiters.removeValue(forKey: token)?.continuation.resume(returning: false)
             }
         }
     }
@@ -2096,19 +2153,19 @@ final class ConferenceModel: ObservableObject {
         do {
             let target = try destination(for: jam.invitation.absoluteString, verifiedEngine: jam.engine)
             set(target: target)
-            pendingContinuationWorkspaceSessionID = jam.workspaceSessionID
             startJoin(
                 target,
                 nameOverride: jam.name,
                 quiet: quiet,
                 title: jam.title,
-                allowAlongside: !nonLeavingSessions.isEmpty
+                allowAlongside: !nonLeavingSessions.isEmpty,
+                requestedWorkspaceID: jam.workspaceSessionID
             )
         } catch {
-            pendingContinuationWorkspaceSessionID = nil
             status = error.localizedDescription
             statusIsError = true
             continuation.targetDidFail()
+            return nil
         }
         return isJoining ? liveSessionID : nil
     }
@@ -2188,11 +2245,14 @@ extension ConferenceModel: BackgroundAudioJoinSession {
             return .waiting
         }
         #endif
-        guard let matching = sessions.first(where: { sessionRecords[$0.id]?.generation == token }),
-              matching.kind == .guest else {
-            return .ended
+        if let matching = sessions.first(where: { sessionRecords[$0.id]?.generation == token }) {
+            guard matching.kind == .guest else { return .ended }
+            return matching.phase == .connected ? .ready : .waiting
         }
-        return matching.phase == .connected ? .ready : .waiting
+        if joinTask != nil, activeJoinGeneration == token, activeJoinTarget?.engineKind == .guest {
+            return .waiting
+        }
+        return .ended
     }
 
     func cancelBackgroundJoin(token: UInt64) {
@@ -2203,8 +2263,25 @@ extension ConferenceModel: BackgroundAudioJoinSession {
             return
         }
         #endif
-        guard let matching = sessions.first(where: { sessionRecords[$0.id]?.generation == token }) else { return }
-        leaveSession(id: matching.id)
+        if let matching = sessions.first(where: { sessionRecords[$0.id]?.generation == token }) {
+            leaveSession(id: matching.id)
+            return
+        }
+        guard joinTask != nil, activeJoinGeneration == token else { return }
+        joinTask?.cancel()
+        joinTask = nil
+        activeJoinGeneration = nil
+        activeJoinTarget = nil
+        if scheduledJoinPending {
+            calendar.finishScheduledTransportPreparation()
+            scheduledJoinPending = false
+        }
+        if sessions.isEmpty {
+            phase = .idle
+            activeRoute = nil
+            liveSessionID = nil
+            companionAudioPaused = false
+        }
     }
 }
 

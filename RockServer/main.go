@@ -12,7 +12,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -33,9 +36,10 @@ type configuration struct {
 }
 
 type server struct {
-	config configuration
-	mu     sync.Mutex
-	joins  []time.Time
+	config  configuration
+	mu      sync.Mutex
+	joins   []time.Time
+	ipJoins map[string][]time.Time
 }
 
 type jamDetails struct {
@@ -108,9 +112,19 @@ func (s *server) routes() http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://rock.glowsoft.ru wss://rock.glowsoft.ru; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", s.contentSecurityPolicy())
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func (s *server) contentSecurityPolicy() string {
+	connect := "'self'"
+	if parsed, err := url.Parse(s.config.serverURL); err == nil && parsed.Host != "" {
+		httpsOrigin := "https://" + parsed.Host
+		wssOrigin := "wss://" + parsed.Host
+		connect = "'self' " + httpsOrigin + " " + wssOrigin
+	}
+	return "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src " + connect + "; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'"
 }
 
 func serveAsset(path, contentType string) http.HandlerFunc {
@@ -141,11 +155,8 @@ func serveScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) join(w http.ResponseWriter, r *http.Request) {
-	if !s.takeJoinSlot(time.Now()) {
-		http.Error(w, "The jam is busy. Try again shortly.", http.StatusTooManyRequests)
-		return
-	}
-	if r.Header.Get("Content-Type") != "application/json" {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
 		http.Error(w, "Send JSON", http.StatusUnsupportedMediaType)
 		return
 	}
@@ -168,6 +179,10 @@ func (s *server) join(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Enter a name of up to 60 characters", http.StatusBadRequest)
 		return
 	}
+	if !s.takeJoinSlot(clientAddress(r), time.Now()) {
+		http.Error(w, "The jam is busy. Try again shortly.", http.StatusTooManyRequests)
+		return
+	}
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		http.Error(w, "Unavailable", http.StatusServiceUnavailable)
@@ -186,9 +201,19 @@ func (s *server) join(w http.ResponseWriter, r *http.Request) {
 	}{s.config.serverURL, token, testJam})
 }
 
-// A small global rate limit protects the unauthenticated demo token endpoint.
+func clientAddress(r *http.Request) string {
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		return realIP
+	}
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil && host != "" {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// Per-IP and global rate limits protect the unauthenticated demo token endpoint.
 // The room itself has a separate maximum participant limit.
-func (s *server) takeJoinSlot(now time.Time) bool {
+func (s *server) takeJoinSlot(clientIP string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	kept := s.joins[:0]
@@ -200,6 +225,29 @@ func (s *server) takeJoinSlot(now time.Time) bool {
 	s.joins = kept
 	if len(s.joins) >= 30 {
 		return false
+	}
+	if s.ipJoins == nil {
+		s.ipJoins = make(map[string][]time.Time)
+	}
+	if clientIP != "" {
+		ipList := s.ipJoins[clientIP][:0]
+		for _, joined := range s.ipJoins[clientIP] {
+			if now.Sub(joined) < time.Minute {
+				ipList = append(ipList, joined)
+			}
+		}
+		if len(ipList) >= 6 {
+			s.ipJoins[clientIP] = ipList
+			return false
+		}
+		s.ipJoins[clientIP] = append(ipList, now)
+		if len(s.ipJoins) > 256 {
+			for k, entries := range s.ipJoins {
+				if len(entries) == 0 || now.Sub(entries[len(entries)-1]) >= time.Minute {
+					delete(s.ipJoins, k)
+				}
+			}
+		}
 	}
 	s.joins = append(s.joins, now)
 	return true

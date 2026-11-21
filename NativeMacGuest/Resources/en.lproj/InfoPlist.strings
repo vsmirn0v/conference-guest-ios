@@ -1,7 +1,8 @@
 "NSCalendarsUsageDescription" = "Find meeting invitations in calendars you choose and remind you when meetings start.";
 "NSCalendarsFullAccessUsageDescription" = "Find meeting invitations in calendars you choose and show upcoming meetings.";
 "NSCameraUsageDescription" = "Share your camera when you turn video on in the native guest preview.";
-"NSMicrophoneUsageDescription" = "Share your microphone when you unmute in the native guest preview.";
+"NSMicrophoneUsageDescription" = "Share your microphone when you unmute in meetings, use hands-free Rock voice commands, or record a voice sample on this Mac.";
 "NSRemindersUsageDescription" = "Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock'N'Roll for Mac.";
 "NSRemindersFullAccessUsageDescription" = "Sync meeting action items with your chosen Apple Reminders list and import tasks into Rock'N'Roll for Mac.";
 "NSSpeechRecognitionUsageDescription" = "Recognize spoken commands to Rock on this Mac when local transcription models are not installed.";
+"NSPersonalVoiceUsageDescription" = "Rock'N'Roll for Mac can use your Personal Voice to speak voice replies you send into meetings or preview Assistant responses.";

@@ -91,7 +91,9 @@ enum AppleOnDevice {
         try checkModel()
         let (translated, _) = try await englishRequest(request)
         let messages = AttentionPrompt.messages(translated)
-        let content = try await respond(instructions: messages[0]["content"]! + extraRules, prompt: messages[1]["content"]!,
+        let instructions = (messages.first?["content"] ?? "") + extraRules
+        let prompt = messages.dropFirst().first?["content"] ?? ""
+        let content = try await respond(instructions: instructions, prompt: prompt,
                                         schema: verdictSchema(refs: request.window.lines.map(\.ref)))
         var verdict: AttentionVerdict
         do { verdict = try AttentionPrompt.verdict(from: json(content, ["attention", "reason", "action"], number: "probability",
@@ -120,7 +122,8 @@ enum AppleOnDevice {
         }
         let channels = request.judge.replyChannels
         let messages = ReplyPrompt.messages(ReplyRequest(judge: englishJudge, verdict: verdict, redraftHint: request.redraftHint))
-        let content = try await respond(instructions: messages[0]["content"]!, prompt: messages[1]["content"]!,
+        let content = try await respond(instructions: messages.first?["content"] ?? "",
+                                        prompt: messages.dropFirst().first?["content"] ?? "",
                                         schema: replySchema(channels))
         // Parse the two bounded arrays while they are still structured English output;
         // never ask Translation to preserve a delimiter or JSON syntax.
@@ -134,15 +137,16 @@ enum AppleOnDevice {
         ]
         var draft = try ReplyPrompt.draft(from: String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self),
                                           channels: channels)
-        if let source, let generated = draft.variants, !generated.isEmpty {
-            let values = generated.flatMap { [$0.stance, $0.text] }
+        if let source, var variants = draft.variants, !variants.isEmpty {
+            let values = variants.flatMap { [$0.stance, $0.text] }
             let translated = try await OnDeviceTranslator.shared.translate(values, from: english, to: source, cache: false)
-            for index in draft.variants!.indices {
-                let old = draft.variants![index]
-                draft.variants![index].stance = translated[old.stance] ?? old.stance
-                draft.variants![index].text = translated[old.text] ?? old.text
+            for index in variants.indices {
+                let old = variants[index]
+                variants[index].stance = translated[old.stance] ?? old.stance
+                variants[index].text = translated[old.text] ?? old.text
             }
-            draft.chat = draft.variants?.first?.text ?? ""
+            draft.variants = variants
+            draft.chat = variants.first?.text ?? ""
         } else if let source, !draft.chat.isEmpty {
             draft.chat = try await OnDeviceTranslator.shared.translate([draft.chat], from: english, to: source, cache: false)[draft.chat]
                 ?? draft.chat
@@ -256,7 +260,9 @@ enum AppleOnDevice {
         let schema = try GenerationSchema(root: DynamicGenerationSchema(name: "MomentSummary", properties: [
             .init(name: "summary", description: "At most three short factual sentences.", schema: DynamicGenerationSchema(type: String.self))
         ]), dependencies: [])
-        let content = try await respond(instructions: messages[0]["content"]!, prompt: messages[1]["content"]!, schema: schema)
+        let content = try await respond(instructions: messages.first?["content"] ?? "",
+                                        prompt: messages.dropFirst().first?["content"] ?? "",
+                                        schema: schema)
         var summary = try MomentSummaryPrompt.parse(try json(content, ["summary"]))
         if let source {
             summary = try await OnDeviceTranslator.shared.translate([summary], from: Self.english, to: source, cache: false)[summary] ?? summary
@@ -279,8 +285,9 @@ enum AppleOnDevice {
                   schema: DynamicGenerationSchema(arrayOf: taskText)),
             .init(name: "open_questions", schema: DynamicGenerationSchema(arrayOf: DynamicGenerationSchema(type: String.self))),
         ]), dependencies: [])
-        let content = try await respond(instructions: messages[0]["content"]!,
-            prompt: messages[1]["content"]! + "\nFor tasks return strings formatted as task | owner | due_at.", schema: schema)
+        let content = try await respond(instructions: messages.first?["content"] ?? "",
+                                        prompt: (messages.dropFirst().first?["content"] ?? "") + "\nFor tasks return strings formatted as task | owner | due_at.",
+                                        schema: schema)
         var summary = try content.value(String.self, forProperty: "summary")
         var decisions = try content.value([String].self, forProperty: "decisions")
         var open = try content.value([String].self, forProperty: "open_questions")
@@ -331,8 +338,9 @@ enum AppleOnDevice {
             .init(name: "at", schema: free),
         ])
         let messages = AssistantCommandPrompt.messages(request)
-        let content = try await respond(instructions: messages[0]["content"]!, prompt: messages[1]["content"]!,
-            schema: try GenerationSchema(root: root, dependencies: []))
+        let content = try await respond(instructions: messages.first?["content"] ?? "",
+                                        prompt: messages.dropFirst().first?["content"] ?? "",
+                                        schema: try GenerationSchema(root: root, dependencies: []))
         var object: [String: Any] = [:]
         for key in ["action", "meeting", "moment", "mode", "scope", "text", "fact", "reaction", "at"] {
             object[key] = try content.value(String.self, forProperty: key)

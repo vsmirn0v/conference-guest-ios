@@ -105,7 +105,7 @@ public enum JiraConnectorError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidBaseURL:
-            return L("Enter a valid Jira server URL (for example https://tasks.sberdevices.ru).")
+            return L("Enter a valid Jira server URL (for example https://jira.example.com).")
         case .missingCredentials:
             return L("Sign in to Jira or add a Personal Access Token in Task Sync settings.")
         case .unauthorized:
@@ -183,10 +183,17 @@ public final class JiraTaskConnector: JiraTaskConnecting, @unchecked Sendable {
         return user
     }
 
+    private static func validatedJiraKey(_ raw: String) throws -> String {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard key.range(of: #"^[A-Za-z][A-Za-z0-9_]+(?:-[0-9]+)?$"#, options: .regularExpression) != nil else {
+            throw JiraConnectorError.badRequest(L("Invalid Jira key."))
+        }
+        return key
+    }
+
     public func fetchProjectMetadata(projectKey: String) async throws -> JiraProjectMetadata {
-        let cleanKey = projectKey.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let encoded = cleanKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? cleanKey
-        let data = try await send(path: "/rest/api/2/project/\(encoded)", method: "GET")
+        let cleanKey = try Self.validatedJiraKey(projectKey).uppercased()
+        let data = try await send(path: "/rest/api/2/project/\(cleanKey)", method: "GET")
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw JiraConnectorError.invalidResponse
         }
@@ -313,7 +320,7 @@ public final class JiraTaskConnector: JiraTaskConnecting, @unchecked Sendable {
         targetStatus: TaskWorkflowStatus?,
         comment: String?
     ) async throws -> JiraRemoteIssue {
-        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
+        let encodedKey = try Self.validatedJiraKey(key)
         var fields: [String: Any] = [
             "summary": String(payload.summary.prefix(255))
         ]
@@ -342,13 +349,14 @@ public final class JiraTaskConnector: JiraTaskConnecting, @unchecked Sendable {
                     changed = true
                 }
             }
-            if changed && !trimmed.isEmpty {
-                _ = try? await send(path: "/rest/api/2/issue/\(encodedKey)", method: "PUT", jsonBody: ["fields": trimmed])
+            guard changed, !trimmed.isEmpty else {
+                throw JiraConnectorError.badRequest(detail)
             }
+            _ = try await send(path: "/rest/api/2/issue/\(encodedKey)", method: "PUT", jsonBody: ["fields": trimmed])
         }
 
         if let comment = comment?.trimmingCharacters(in: .whitespacesAndNewlines), !comment.isEmpty {
-            _ = try? await send(
+            _ = try await send(
                 path: "/rest/api/2/issue/\(encodedKey)/comment",
                 method: "POST",
                 jsonBody: ["body": String(comment.prefix(8_000))]
@@ -359,11 +367,11 @@ public final class JiraTaskConnector: JiraTaskConnecting, @unchecked Sendable {
             try await transitionIssueIfNeeded(encodedKey: encodedKey, targetStatus: targetStatus)
         }
 
-        return try await fetchIssue(key: key)
+        return try await fetchIssue(key: encodedKey)
     }
 
     public func fetchIssue(key: String) async throws -> JiraRemoteIssue {
-        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
+        let encodedKey = try Self.validatedJiraKey(key)
         let data = try await send(path: "/rest/api/2/issue/\(encodedKey)", method: "GET")
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let issue = parseIssue(object) else {

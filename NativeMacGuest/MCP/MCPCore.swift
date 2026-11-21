@@ -393,6 +393,8 @@ final class MCPHTTPTransport: @unchecked Sendable {
                 case .failed(let error):
                     if !resumed { resumed = true; continuation.resume(throwing: error) }
                     self?.onError("MCP listener failed: \(error)")
+                case .cancelled:
+                    if !resumed { resumed = true; continuation.resume(throwing: CancellationError()) }
                 default: break
                 }
             }
@@ -409,22 +411,52 @@ final class MCPHTTPTransport: @unchecked Sendable {
         try? FileManager.default.removeItem(at: endpointFile)
     }
 
+    @MainActor func refreshEndpointIfRunning() {
+        guard let port = listener?.port?.rawValue, port > 0 else { return }
+        try? writeEndpoint(port: port)
+    }
+
     @MainActor private func writeEndpoint(port: UInt16) throws {
         let endpoint = tokens.endpoint(host: "127.0.0.1", port: port, path: path)
         let object: MCPJSON = ["host": endpoint.host, "port": Int(endpoint.port), "path": endpoint.path, "pairing_token": endpoint.pairingToken]
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .prettyPrinted])
-        try FileManager.default.createDirectory(at: endpointFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: endpointFile, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: endpointFile.path)
+        let directory = endpointFile.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let tempURL = directory.appendingPathComponent(".endpoint.\(UUID().uuidString).tmp", isDirectory: false)
+        let fd = open(tempURL.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        do {
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            try handle.write(contentsOf: data)
+            try handle.close()
+            if rename(tempURL.path, endpointFile.path) != 0 {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+        } catch {
+            unlink(tempURL.path)
+            throw error
+        }
     }
 
     private func receive(connection: NWConnection, accumulated: Data) {
+        let maxRequestBytes = 262_144
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
             guard let self else { connection.cancel(); return }
             var body = accumulated; if let data { body.append(data) }
-            if let request = HTTPRequest.parse(body), request.isComplete {
-                Task { @MainActor in await self.respond(connection: connection, request: request) }
-                return
+            if body.count > maxRequestBytes {
+                self.send(connection: connection, status: 413, object: ["error": "Request entity too large"]); return
+            }
+            if let parsed = HTTPRequest.parse(body, maxBodyLength: maxRequestBytes) {
+                switch parsed {
+                case .invalid(let status, let message):
+                    self.send(connection: connection, status: status, object: ["error": message]); return
+                case .ready(let request):
+                    if request.isComplete {
+                        Task { @MainActor in await self.respond(connection: connection, request: request) }
+                        return
+                    }
+                }
             }
             if isComplete || error != nil {
                 self.send(connection: connection, status: 400, object: ["error": "Invalid HTTP request"]); return
@@ -435,6 +467,15 @@ final class MCPHTTPTransport: @unchecked Sendable {
 
     @MainActor private func respond(connection: NWConnection, request: HTTPRequest) async {
         do {
+            guard request.method == "POST" else {
+                throw MCPToolFailure("INVALID_ARGUMENT", "Only HTTP POST is supported.")
+            }
+            if let hostHeader = request.headers["host"]?.lowercased() {
+                let hostOnly = hostHeader.split(separator: ":").first.map(String.init) ?? hostHeader
+                guard hostOnly == "127.0.0.1" || hostOnly == "localhost" else {
+                    throw MCPToolFailure("ACCESS_DENIED", "Non-loopback Host header rejected.")
+                }
+            }
             if request.path == "/pair" {
                 let object = request.jsonObject ?? [:]
                 guard let pairing = object["pairing_token"] as? String else { throw MCPToolFailure("INVALID_ARGUMENT", "pairing_token is required.") }
@@ -471,13 +512,18 @@ final class MCPHTTPTransport: @unchecked Sendable {
 
     private func send(connection: NWConnection, status: Int, object: MCPJSON) {
         let body = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
-        let reason = status == 200 ? "OK" : status == 202 ? "Accepted" : status == 401 ? "Unauthorized" : status == 404 ? "Not Found" : status == 400 ? "Bad Request" : "Internal Server Error"
+        let reason = status == 200 ? "OK" : status == 202 ? "Accepted" : status == 401 ? "Unauthorized" : status == 404 ? "Not Found" : status == 413 ? "Payload Too Large" : status == 400 ? "Bad Request" : "Internal Server Error"
         let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
     }
 }
 
 struct HTTPRequest {
+    enum ParseOutcome {
+        case ready(HTTPRequest)
+        case invalid(status: Int, message: String)
+    }
+
     let method: String
     let path: String
     let headers: [String: String]
@@ -491,20 +537,31 @@ struct HTTPRequest {
         return object
     }
 
-    static func parse(_ data: Data) -> HTTPRequest? {
+    static func parse(_ data: Data, maxBodyLength: Int = 262_144) -> ParseOutcome? {
         guard let separator = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
         let headerData = data[..<separator.lowerBound]
-        guard let headerText = String(data: headerData, encoding: .utf8) else { return nil }
+        guard let headerText = String(data: headerData, encoding: .utf8) else { return .invalid(status: 400, message: "Invalid HTTP headers") }
         let lines = headerText.components(separatedBy: "\r\n")
         let requestLine = lines.first?.split(separator: " ").map(String.init) ?? []
-        guard requestLine.count >= 2 else { return nil }
+        guard requestLine.count >= 2 else { return .invalid(status: 400, message: "Malformed HTTP request line") }
         var headers: [String: String] = [:]
         for line in lines.dropFirst() {
             let pieces = line.split(separator: ":", maxSplits: 1).map(String.init)
             if pieces.count == 2 { headers[pieces[0].trimmingCharacters(in: .whitespaces).lowercased()] = pieces[1].trimmingCharacters(in: .whitespaces) }
         }
-        let length = Int(headers["content-length"] ?? "") ?? 0
+        let length: Int
+        if let rawLength = headers["content-length"] {
+            guard let parsed = Int(rawLength), parsed >= 0 else {
+                return .invalid(status: 400, message: "Invalid Content-Length header")
+            }
+            guard parsed <= maxBodyLength else {
+                return .invalid(status: 413, message: "Request entity too large")
+            }
+            length = parsed
+        } else {
+            length = 0
+        }
         let body = data[separator.upperBound...]
-        return HTTPRequest(method: requestLine[0], path: requestLine[1], headers: headers, body: Data(body), expectedBodyLength: length)
+        return .ready(HTTPRequest(method: requestLine[0], path: requestLine[1], headers: headers, body: Data(body), expectedBodyLength: length))
     }
 }

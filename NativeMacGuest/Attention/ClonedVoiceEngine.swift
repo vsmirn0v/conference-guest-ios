@@ -288,7 +288,15 @@ final class ClonedVoiceWorkerProcess: ClonedVoiceWorkerConnection, @unchecked Se
         probeLog("voice-worker-started", ["pid": process.processIdentifier])
     }
 
-    deinit { interrupt(.stopped) }
+    deinit {
+        interrupt(.stopped)
+        let proc = process
+        if proc.isRunning {
+            DispatchQueue.global(qos: .utility).async {
+                proc.waitUntilExit()
+            }
+        }
+    }
 
     var pid: Int32 { process.processIdentifier }
 

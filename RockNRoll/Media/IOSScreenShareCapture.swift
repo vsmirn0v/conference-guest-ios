@@ -486,7 +486,7 @@ final class IOSScreenShareCapture {
         sender = nil
         let wasSharing = isSharing
         isSharing = false
-        let shouldStopBroadcast = currentSender?.isBroadcast == true || BroadcastManager.shared.isBroadcasting
+        let shouldStopBroadcast = currentSender?.isBroadcast == true
 
         if let session {
             if session.supportsScreenSharePublication {

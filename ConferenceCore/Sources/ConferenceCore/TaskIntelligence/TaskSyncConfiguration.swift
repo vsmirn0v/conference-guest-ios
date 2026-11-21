@@ -125,10 +125,10 @@ public struct JiraConnectionSettings: Codable, Equatable, Sendable {
 
     public init(
         enabled: Bool = false,
-        baseURL: String = "https://tasks.sberdevices.ru",
-        projectKey: String = "SDBCTO",
+        baseURL: String = "",
+        projectKey: String = "",
         defaultIssueType: String = "Task",
-        importJQL: String = "project = SDBCTO AND resolution = Unresolved ORDER BY updated DESC",
+        importJQL: String = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
         authMode: JiraAuthMode = .personalAccessToken,
         usernameOrEmail: String = "",
         postMeetingUpdatesAsComments: Bool = true,
@@ -150,10 +150,10 @@ public struct JiraConnectionSettings: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? "https://tasks.sberdevices.ru"
-        projectKey = try c.decodeIfPresent(String.self, forKey: .projectKey) ?? "SDBCTO"
+        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        projectKey = try c.decodeIfPresent(String.self, forKey: .projectKey) ?? ""
         defaultIssueType = try c.decodeIfPresent(String.self, forKey: .defaultIssueType) ?? "Task"
-        importJQL = try c.decodeIfPresent(String.self, forKey: .importJQL) ?? "project = SDBCTO AND resolution = Unresolved ORDER BY updated DESC"
+        importJQL = try c.decodeIfPresent(String.self, forKey: .importJQL) ?? "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
         authMode = try c.decodeIfPresent(JiraAuthMode.self, forKey: .authMode) ?? .personalAccessToken
         usernameOrEmail = try c.decodeIfPresent(String.self, forKey: .usernameOrEmail) ?? ""
         postMeetingUpdatesAsComments = try c.decodeIfPresent(Bool.self, forKey: .postMeetingUpdatesAsComments) ?? true
@@ -168,8 +168,10 @@ public struct JiraConnectionSettings: Codable, Equatable, Sendable {
         if !raw.contains("://") { raw = "https://" + raw }
         guard let url = URL(string: raw),
               let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http",
-              url.host?.isEmpty == false else { return nil }
+              let host = url.host?.lowercased(),
+              !host.isEmpty else { return nil }
+        let isLoopback = ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
+        guard scheme == "https" || (scheme == "http" && isLoopback) else { return nil }
         return url
     }
 

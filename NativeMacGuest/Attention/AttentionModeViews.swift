@@ -157,6 +157,7 @@ struct AttentionModePicker: View {
                         }
                         Spacer(minLength: 8)
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                            .flipsForRightToLeftLayoutDirection(true)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 6).contentShape(Rectangle())
                 }

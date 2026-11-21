@@ -15,6 +15,7 @@ import Foundation
     private let library: MeetingLibraryController
     private let worker: ObsidianExportWorker
     private var settingsWrite: Task<Void, Never>?
+    private var settingsWriteGeneration = 0
     private var statusLoop: Task<Void, Never>?
 
     var isEnabled: Bool { destination?.enabled == true }
@@ -93,7 +94,14 @@ import Foundation
         record.configRevision += 1
         destination = record
         let previous = settingsWrite
+        settingsWriteGeneration += 1
+        let generation = settingsWriteGeneration
         settingsWrite = Task { [weak self] in
+            defer {
+                if let self, self.settingsWriteGeneration == generation {
+                    self.settingsWrite = nil
+                }
+            }
             await previous?.value
             guard let self else { return }
             do {

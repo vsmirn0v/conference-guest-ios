@@ -1,5 +1,6 @@
 import ConferenceCore
 import SwiftUI
+import UIKit
 
 struct IOSAssistantModePill: View {
     let mode: IOSMeetingAssistantMode
@@ -163,7 +164,7 @@ struct IOSAssistantAlertCardView: View {
                 }
 
                 if let onFocusMeeting {
-                    Button(L("Open"), action: onFocusMeeting)
+                    Button(L("Open meeting"), action: onFocusMeeting)
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
@@ -301,7 +302,7 @@ struct IOSAssistantModeSheet: View {
                         Text(status)
                     }
                     if activeMode != .off && !assistant.hasModelConfigured() {
-                        Text(L("Local mention detection is active. Configure Apple Intelligence or an AI API key in Settings -> Meeting Assistant for deeper context follow-up."))
+                        Text(L("Local mention detection is active. Configure Apple Intelligence or an AI API key in Settings → Assistant & Sync for deeper context follow-up."))
                     }
                 }
 
@@ -328,16 +329,16 @@ struct IOSAssistantModeSheet: View {
                                     Image(systemName: dictatingGoal ? "stop.circle.fill" : "mic.fill")
                                         .font(.title3)
                                         .foregroundStyle(dictatingGoal ? Color.red : Color.accentColor)
+                                        .frame(minWidth: 44, minHeight: 44)
+                                        .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("assistant.mode.dictate")
                                 .accessibilityLabel(dictatingGoal ? L("Stop dictation") : L("Speak context"))
                             }
                         }
-                        if dictatingGoal {
-                            Label(L("Listening — speak your meeting context…"), systemImage: "waveform")
-                                .font(.caption)
-                                .foregroundStyle(.teal)
+                        if let speech {
+                            IOSAssistantDictationFeedbackRow(speech: speech, dictatingGoal: $dictatingGoal)
                         }
 
                         if !canSendChat && (output == .chat || output == .voiceAndChat) {
@@ -413,7 +414,7 @@ struct IOSAssistantModeSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(L("Done")) {
-                        stopGoalDictation(commit: false)
+                        stopGoalDictation(commit: true)
                         syncParticipationOptions()
                         dismiss()
                     }
@@ -465,6 +466,9 @@ struct IOSAssistantModeSheet: View {
                 dictatingGoal = false
             }
         )
+        if speech.mode != .dictating {
+            dictatingGoal = false
+        }
     }
 
     private func stopGoalDictation(commit: Bool) {
@@ -480,6 +484,50 @@ struct IOSAssistantModeSheet: View {
             output: output,
             goal: goalDraft
         )
+    }
+}
+
+private struct IOSAssistantDictationFeedbackRow: View {
+    @ObservedObject var speech: IOSAssistantSpeechCoordinator
+    @Binding var dictatingGoal: Bool
+
+    var body: some View {
+        Group {
+            if dictatingGoal {
+                Label(
+                    speech.livePartialText.isEmpty ? L("Listening — speak your meeting context…") : speech.livePartialText,
+                    systemImage: "waveform"
+                )
+                .font(.caption)
+                .foregroundStyle(.teal)
+            } else if speech.permissionDenied {
+                HStack(spacing: 8) {
+                    Text(L("Allow Microphone and Speech Recognition in Settings to dictate."))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Button(L("Open Settings")) {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .font(.caption)
+                }
+            } else if let blocked = speech.blockedMessage {
+                Text(blocked)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .onChange(of: speech.mode) { _, mode in
+            if dictatingGoal && mode != .dictating {
+                dictatingGoal = false
+            }
+        }
+        .onChange(of: speech.permissionDenied) { _, denied in
+            if denied && dictatingGoal {
+                dictatingGoal = false
+            }
+        }
     }
 }
 

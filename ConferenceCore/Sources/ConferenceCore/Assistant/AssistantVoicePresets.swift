@@ -142,6 +142,6 @@ public enum AssistantVoicePreferences {
     }
 
     public static func loadWakeWordEnabled(from defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: wakeWordEnabledKey) as? Bool ?? true
+        defaults.object(forKey: wakeWordEnabledKey) as? Bool ?? false
     }
 }

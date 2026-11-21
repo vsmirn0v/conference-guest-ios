@@ -44,20 +44,23 @@ extension AssistantTalkController {
 
     /// Approval decision for an agent-produced outward action.
     func confirmAgentPending() {
-        guard agentPending != nil else { return }
-        let result = agentPending
+        guard !working, agentPending != nil else { return }
+        setWorking(true)
         agentPending = nil
         Task { @MainActor [weak self] in
-            guard let self, let result else { return }
+            guard let self else { return }
+            defer { self.setWorking(false) }
             self.handleAgentOutcome(await self.agentRuntime.resumePendingApproval(approved: true))
         }
     }
 
     func cancelAgentPending() {
-        guard agentPending != nil else { return }
+        guard !working, agentPending != nil else { return }
+        setWorking(true)
         agentPending = nil
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { self.setWorking(false) }
             self.handleAgentOutcome(await self.agentRuntime.resumePendingApproval(approved: false))
         }
     }
@@ -283,7 +286,6 @@ extension AssistantTalkController {
     func runDeterministicCommandIfApplicable(_ input: String, source: AssistantInputSource) async -> String? {
         guard let attention else { return nil }
         let lower = input.lowercased().replacingOccurrences(of: "ё", with: "е")
-        let isRussian = lower.range(of: #"\p{Cyrillic}"#, options: .regularExpression) != nil || attention.language.hasPrefix("ru")
         let now = attention.now()
 
         // 1. Meeting count query (e.g. "сколько было встреч в этом месяце?" / "how many meetings this month?")
@@ -322,23 +324,21 @@ extension AssistantTalkController {
             }
 
             let count = matched.count
-            if isRussian {
-                if count == 0 {
-                    return scopeToday ? "Сегодня встреч пока не было." : (scopeWeek ? "На этой неделе встреч пока не было." : "В этом месяце записанных встреч пока не было.")
-                }
-                let titles = matched.prefix(4).map { "«\($0.title)»" }.joined(separator: ", ")
-                let suffix = count > 4 ? " и ещё \(count - 4)" : ""
-                let period = scopeToday ? "Сегодня" : (scopeWeek ? "На этой неделе" : "В этом месяце")
-                return "\(period) было \(count) встреч: \(titles)\(suffix)."
-            } else {
-                if count == 0 {
-                    return scopeToday ? "You have had no meetings today." : (scopeWeek ? "You have had no meetings this week." : "You have had no recorded meetings this month.")
-                }
-                let titles = matched.prefix(4).map { $0.title }.joined(separator: ", ")
-                let suffix = count > 4 ? " and \(count - 4) more" : ""
-                let period = scopeToday ? "Today" : (scopeWeek ? "This week" : "This month")
-                return "\(period) you had \(count) meeting(s): \(titles)\(suffix)."
+            if count == 0 {
+                return scopeToday
+                    ? L("You have had no meetings today.")
+                    : (scopeWeek
+                        ? L("You have had no meetings this week.")
+                        : L("You have had no recorded meetings this month."))
             }
+            let headTitles = matched.prefix(4).map(\.title).joined(separator: ", ")
+            let summaryList = count > 4 ? L("%@ and %ld more", headTitles, count - 4) : headTitles
+            let countClause = scopeToday
+                ? L("Today you had %ld meetings", count)
+                : (scopeWeek
+                    ? L("This week you had %ld meetings", count)
+                    : L("This month you had %ld meetings", count))
+            return L("%@: %@.", countClause, summaryList)
         }
 
         // 2. Join current meeting (auto-executes immediately for voice input)
@@ -358,7 +358,7 @@ extension AssistantTalkController {
                     return error.localizedDescription
                 }
             }
-            return isRussian ? "Не найдена текущая или ближайшая встреча со ссылкой для подключения." : "No ongoing or upcoming meeting with a join link was found."
+            return L("No ongoing or upcoming meeting with a join link was found.")
         }
 
         // 3. Mute microphone
@@ -375,18 +375,14 @@ extension AssistantTalkController {
         if asksParticipate {
             guard let id = reconcileMeetingTarget(),
                   let model = attention.meetings().first(where: { $0.sessionID == id && !$0.isClosed }) else {
-                return isRussian ? "Сначала откройте или подключитесь к встрече." : "Join or open a meeting first."
+                return L("Join or open a meeting first.")
             }
             let objective = Self.extractParticipationObjective(from: input)
             attention.onRequestParticipationMode?(model, objective)
             if objective.isEmpty {
-                return isRussian
-                    ? "Включаю режим участия для «\(model.title)» — надиктуйте контекст или цель."
-                    : "Opening Participation mode for “\(model.title)” — speak your context or goal."
+                return L("Opening Participation mode for “%@” — speak your context or goal.", model.title)
             } else {
-                return isRussian
-                    ? "Режим участия включён для «\(model.title)» с задачей: \(objective)"
-                    : "Participation enabled for “\(model.title)”: \(objective)"
+                return L("Participation enabled for “%@”: %@", model.title, objective)
             }
         }
 
@@ -394,13 +390,14 @@ extension AssistantTalkController {
     }
 
     private nonisolated static func extractParticipationObjective(from input: String) -> String {
-        let lower = input.lowercased().replacingOccurrences(of: "ё", with: "е")
-        for marker in ["с контекстом ", "контекст:", "контекст ", "с целью ", "цель:", "цель ", "with context ", "context:", "goal:"] {
-            if let range = lower.range(of: marker) {
-                let tailStart = input.index(input.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.upperBound))
-                let extracted = String(input[tailStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !extracted.isEmpty {
-                    return String(extracted.prefix(180))
+        let markers = ["с контекстом ", "контекст:", "контекст ", "с целью ", "цель:", "цель ", "with context ", "context:", "goal:"]
+        for marker in markers {
+            for candidate in [marker, marker.replacingOccurrences(of: "е", with: "ё")] {
+                if let range = input.range(of: candidate, options: .caseInsensitive) {
+                    let extracted = String(input[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !extracted.isEmpty {
+                        return String(extracted.prefix(180))
+                    }
                 }
             }
         }
@@ -443,9 +440,13 @@ struct AssistantAgentTurnView: View {
                         Text(L("%ld steps", steps.count)).font(.caption)
                         Spacer()
                         Button { showsDetails.toggle() } label: {
-                            Label(L("Details"), systemImage: "chevron.right")
-                                .labelStyle(.titleOnly)
-                                .rotationEffect(.degrees(showsDetails ? 90 : 0))
+                            HStack(spacing: 4) {
+                                Text(L("Details"))
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .flipsForRightToLeftLayoutDirection(true)
+                                    .rotationEffect(.degrees(showsDetails ? 90 : 0))
+                            }
                         }
                         .buttonStyle(.plain)
                         .font(.caption)

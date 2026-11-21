@@ -188,7 +188,7 @@ if a.distribution == 'direct':
     sources += sorted(path for path in (ROOT/'NativeMacGuest/AuthorSupport').rglob('*')
                       if path.is_file() and path.suffix != '.swift' and not path.name.startswith('.'))
     sources += audio_route_recovery_lock_paths(ROOT)
-    sources += [ROOT/'Experiments/WebRTCM157'/(name+'.patch') for name in AUDIO_ROUTE_RECOVERY_PATCHES]
+    sources += [ROOT/'Dependencies/native-macos/webrtc-patches'/(name+'.patch') for name in AUDIO_ROUTE_RECOVERY_PATCHES]
 sources += [ROOT/'NativeMacGuest/prepare-sherpa.py', ROOT/'Dependencies/native-macos/sherpa-onnx.lock.json']
 sources += sorted(x for x in (ROOT/'Dependencies/SherpaOnnxKit').rglob('*') if x.is_file() and x.suffix in {'.swift'} and '.build' not in x.parts)
 sources += sorted(x for x in (ROOT/'Dependencies/MLXAudioVoice').rglob('*') if x.is_file() and '.build' not in x.parts)

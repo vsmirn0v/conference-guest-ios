@@ -175,9 +175,10 @@ final class MeetingLayoutControls: UIView {
         super.layoutSubviews()
         surface.frame = bounds
         position.font = positionFont
+        let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
         if navigationOnly {
-            previous.frame = CGRect(x: 0, y: 0, width: 44, height: bounds.height)
-            nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: bounds.height)
+            previous.frame = CGRect(x: rtl ? bounds.width - 44 : 0, y: 0, width: 44, height: bounds.height)
+            nextPage.frame = CGRect(x: rtl ? 0 : bounds.width - 44, y: 0, width: 44, height: bounds.height)
             position.frame = CGRect(x: 44, y: 0, width: max(0, bounds.width - 88), height: bounds.height)
             let choices = [rangeText, pageText, String((renderedState?.page ?? 0) + 1)]
             position.text = choices.first { text in
@@ -187,10 +188,17 @@ final class MeetingLayoutControls: UIView {
         }
         position.text = rangeText
         let width = previous.isHidden ? bounds.width : min(132, max(88, bounds.width - 144))
-        picker.frame = CGRect(x: 0, y: 0, width: width, height: 44)
-        nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)
-        previous.frame = CGRect(x: width + 4, y: 0, width: 44, height: 44)
-        position.frame = CGRect(x: previous.frame.maxX, y: 0, width: max(0, nextPage.frame.minX - previous.frame.maxX), height: 44)
+        if rtl {
+            picker.frame = CGRect(x: bounds.width - width, y: 0, width: width, height: 44)
+            nextPage.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+            previous.frame = CGRect(x: max(44, picker.frame.minX - 48), y: 0, width: 44, height: 44)
+            position.frame = CGRect(x: nextPage.frame.maxX, y: 0, width: max(0, previous.frame.minX - nextPage.frame.maxX), height: 44)
+        } else {
+            picker.frame = CGRect(x: 0, y: 0, width: width, height: 44)
+            nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)
+            previous.frame = CGRect(x: width + 4, y: 0, width: 44, height: 44)
+            position.frame = CGRect(x: previous.frame.maxX, y: 0, width: max(0, nextPage.frame.minX - previous.frame.maxX), height: 44)
+        }
     }
 }
 

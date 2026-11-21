@@ -27,7 +27,16 @@ final class VoxSafeTensors {
         let shape: [Int]
         let offset: Int
         let bytes: Int
-        var count: Int { shape.reduce(1, *) }
+        var count: Int {
+            var total = 1
+            for dim in shape {
+                guard dim >= 0 else { return 0 }
+                let (next, overflow) = total.multipliedReportingOverflow(by: dim)
+                guard !overflow else { return 0 }
+                total = next
+            }
+            return total
+        }
     }
 
     let url: URL
@@ -51,8 +60,10 @@ final class VoxSafeTensors {
         var parsed: [String: Entry] = [:]
         var tensorBase = 0
         do {
-            let headerSize = Int(UInt64(littleEndian: pointer.loadUnaligned(as: UInt64.self)))
-            guard headerSize > 0, headerSize <= length - 8 else { throw VoxError.format("bad header in \(url.lastPathComponent)") }
+            let rawHeaderSize = UInt64(littleEndian: pointer.loadUnaligned(as: UInt64.self))
+            guard let headerSize = Int(exactly: rawHeaderSize), headerSize > 0, headerSize <= length - 8 else {
+                throw VoxError.format("bad header in \(url.lastPathComponent)")
+            }
             let header = Data(bytes: pointer + 8, count: headerSize)
             guard let object = try JSONSerialization.jsonObject(with: header) as? [String: Any] else {
                 throw VoxError.format("bad header in \(url.lastPathComponent)")

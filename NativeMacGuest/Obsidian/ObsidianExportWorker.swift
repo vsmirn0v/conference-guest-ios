@@ -36,6 +36,10 @@ actor ObsidianExportWorker {
         self.onLog = onLog
     }
 
+    deinit {
+        vaultCache?.url.stopAccessingSecurityScopedResource()
+    }
+
     /// Runs one pass over every due outbox row; used by the timer and by tests.
     func runOnce(now: Date = Date()) async {
         guard !processing else { return }

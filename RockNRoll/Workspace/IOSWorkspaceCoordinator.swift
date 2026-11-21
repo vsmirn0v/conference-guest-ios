@@ -118,6 +118,8 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     private var lastLocalSchedule: (meetings: [CalendarMeeting], bindings: [String: URL], suppressed: [String: Date])?
     private var archivedFingerprints: [UUID: Int] = [:]
     private let replicaIOQueue = DispatchQueue(label: "dev.vsmirn0v.ios.workspace.replica-io", qos: .utility)
+    private var replicaSaveTask: Task<Void, Never>?
+    private var replicaLoaded = false
     private var cloudBackoffUntil: Date = .distantPast
     private var consecutiveCloudBackoffs = 0
     internal var cloudBackoffUntilForTesting: Date { cloudBackoffUntil }
@@ -187,15 +189,10 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         }
 
         self.replicaURL = store.root.appendingPathComponent("ios-workspace-sync-replica.json")
-        if let data = try? Data(contentsOf: replicaURL),
-           let decoded = try? JSONDecoder().decode(ReplicaState.self, from: data) {
-            self.replica = decoded
-        } else {
-            self.replica = ReplicaState(
-                workspaceDoc: MeetingWorkspaceSyncDocument(device: syncPreferences.deviceID),
-                scheduleDoc: CalendarScheduleSyncDocument(device: syncPreferences.deviceID)
-            )
-        }
+        self.replica = ReplicaState(
+            workspaceDoc: MeetingWorkspaceSyncDocument(device: syncPreferences.deviceID),
+            scheduleDoc: CalendarScheduleSyncDocument(device: syncPreferences.deviceID)
+        )
 
         self.customNetworkOnline = isNetworkOnline
     }
@@ -251,6 +248,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            await self.loadReplicaFromDiskIfNeeded()
             await self.reloadFromStore()
             await self.migrateLegacyTaskProfileName()
             await self.seedTaskProfileWithMeetingName(self.preferences.string(forKey: "savedDisplayName") ?? "")
@@ -2016,6 +2014,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     private func reconcileTaskNotifications() async {
         let now = Date()
         var advancedAny = false
+        var candidates: [IOSMeetingTaskItem] = []
         for idx in tasks.indices {
             var task = tasks[idx]
             let canRemind = taskProfile.owns(task) || task.extended.reminderRule?.isEnabled == true
@@ -2042,6 +2041,17 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             let eligible = !task.done && taskArchivedAt(task) == nil && canRemind &&
                 (task.reminderAt.map { $0 > now } ?? false)
             if eligible {
+                candidates.append(task)
+            } else {
+                cancelTaskNotification(task.id)
+            }
+        }
+        let sortedSoonest = candidates.sorted {
+            ($0.reminderAt ?? .distantFuture) < ($1.reminderAt ?? .distantFuture)
+        }
+        let scheduledSet = Set(sortedSoonest.prefix(48).map(\.id))
+        for task in sortedSoonest {
+            if scheduledSet.contains(task.id) {
                 await scheduleTaskNotification(task)
             } else {
                 cancelTaskNotification(task.id)
@@ -2121,7 +2131,54 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         preferences.set(data, forKey: Self.outcomeConfigDefaultsKey)
     }
 
+    private func loadReplicaFromDiskIfNeeded() async {
+        guard !replicaLoaded else { return }
+        replicaLoaded = true
+        let url = replicaURL
+        let loaded = await Task.detached(priority: .userInitiated) {
+            guard let data = try? Data(contentsOf: url) else { return Optional<ReplicaState>.none }
+            return try? JSONDecoder().decode(ReplicaState.self, from: data)
+        }.value
+        guard let loaded else { return }
+        if replica.workspaceDoc.sessions.isEmpty &&
+            replica.workspaceDoc.notes.isEmpty &&
+            replica.workspaceDoc.outcomes.isEmpty &&
+            replica.workspaceDoc.tasks.isEmpty &&
+            replica.workspaceDoc.taskLinks.isEmpty &&
+            replica.workspaceDoc.taskProfiles.isEmpty &&
+            replica.workspaceDoc.contextSettings.isEmpty &&
+            replica.workspaceDoc.transcriptChunks.isEmpty {
+            replica.workspaceDoc = loaded.workspaceDoc
+        } else {
+            _ = replica.workspaceDoc.mergeLibraryRecords(loaded.workspaceDoc.allLibraryRecords)
+            _ = replica.workspaceDoc.mergeTranscriptRecords(loaded.workspaceDoc.transcriptChunks.values.map { .chunk($0) })
+        }
+        if replica.scheduleDoc.occurrences.isEmpty {
+            replica.scheduleDoc = loaded.scheduleDoc
+        } else {
+            _ = replica.scheduleDoc.merge(loaded.scheduleDoc.records)
+        }
+        if replica.libraryToken == nil { replica.libraryToken = loaded.libraryToken }
+        if replica.transcriptToken == nil { replica.transcriptToken = loaded.transcriptToken }
+        if replica.scheduleToken == nil { replica.scheduleToken = loaded.scheduleToken }
+        for (k, v) in loaded.zoneGenerations where replica.zoneGenerations[k] == nil {
+            replica.zoneGenerations[k] = v
+        }
+        for (k, v) in loaded.acknowledgedLibrary where replica.acknowledgedLibrary[k] == nil {
+            replica.acknowledgedLibrary[k] = v
+        }
+        for (k, v) in loaded.acknowledgedTranscripts where replica.acknowledgedTranscripts[k] == nil {
+            replica.acknowledgedTranscripts[k] = v
+        }
+        for (k, v) in loaded.acknowledgedSchedule where replica.acknowledgedSchedule[k] == nil {
+            replica.acknowledgedSchedule[k] = v
+        }
+    }
+
     func persistReplicaCheckpoint() async throws {
+        replicaSaveTask?.cancel()
+        replicaSaveTask = nil
+        await loadReplicaFromDiskIfNeeded()
         let snapshot = replica
         let url = replicaURL
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -2137,12 +2194,18 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     }
 
     private func persistReplica() {
-        let snapshot = replica
-        let url = replicaURL
-        replicaIOQueue.async {
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: url, options: .atomic)
+        replicaSaveTask?.cancel()
+        replicaSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, let self else { return }
+            await self.loadReplicaFromDiskIfNeeded()
+            let snapshot = self.replica
+            let url = self.replicaURL
+            self.replicaIOQueue.async {
+                guard let data = try? JSONEncoder().encode(snapshot) else { return }
+                try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? data.write(to: url, options: .atomic)
+            }
         }
     }
 

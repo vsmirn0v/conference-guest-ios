@@ -2,13 +2,14 @@ import Foundation
 import os
 
 private let outputLock = NSLock()
+private let stdoutQueue = DispatchQueue(label: "RockNRoll.ProbeLog.stdout", qos: .utility)
 private let systemLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "RockNRoll", category: "guest")
 /// Recent events for Copy Diagnostics: memory only, bounded, guarded by outputLock.
 nonisolated(unsafe) private var history: [String] = []
 private let historyCapacity = 400
 /// Keep-alives would push every useful event out of the bounded history.
 private let historySkipped: Set<String> = ["rtc-pong"]
-/// Receives each kept line in order, under the output lock (the app's saved log).
+/// Receives each kept line in order; copied under outputLock and invoked outside the lock.
 nonisolated(unsafe) private var sink: ((String) -> Void)?
 nonisolated(unsafe) private var sinkEvents: Set<String>?
 
@@ -28,14 +29,22 @@ public func probeLog(_ event: String, _ fields: [String: Any] = [:]) {
           let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
           let line = String(data: data, encoding: .utf8) else { return }
     systemLog.log("\(line, privacy: .public)")
-    outputLock.lock(); defer { outputLock.unlock() }
+    let activeSink: ((String) -> Void)?
+    outputLock.lock()
     if !historySkipped.contains(event) {
         history.append(line)
         if history.count > historyCapacity { history.removeFirst(history.count - historyCapacity) }
-        if sinkEvents?.contains(event) != false { sink?(line) }
+        activeSink = sinkEvents?.contains(event) != false ? sink : nil
+    } else {
+        activeSink = nil
     }
-    FileHandle.standardOutput.write(data)
-    FileHandle.standardOutput.write(Data([10]))
+    outputLock.unlock()
+    activeSink?(line)
+    stdoutQueue.async {
+        var lineData = data
+        lineData.append(10)
+        try? FileHandle.standardOutput.write(contentsOf: lineData)
+    }
 }
 
 /// `value` with anything JSON cannot hold replaced: non-finite numbers become -1 and

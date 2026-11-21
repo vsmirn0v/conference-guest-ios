@@ -19,7 +19,12 @@ public enum ProviderModelCatalog {
         }
         var request = URLRequest(url: url, timeoutInterval: 20)
         if let key, !key.isEmpty { request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        if session === URLSession.shared {
+            (data, response) = try await BoundedHTTP.load(request, session: session, maximumBytes: 8_388_608)
+        } else {
+            (data, response) = try await session.data(for: request)
+        }
         guard let http = response as? HTTPURLResponse else { throw PortableOutcomeError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             throw PortableOutcomeService.httpError(status: http.statusCode, data: data)

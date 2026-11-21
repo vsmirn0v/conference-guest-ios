@@ -58,11 +58,21 @@ struct IOSWorkspaceHubView: View {
 
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $compactColumn) {
-            hubContent
-                .navigationTitle(L("Assistant"))
-                .toolbar { hubToolbar }
+            VStack(spacing: 0) {
+                tabSelector
+                if sizeClass == .regular {
+                    historyList
+                } else {
+                    tabDetailContent
+                }
+            }
+            .navigationTitle(L("Assistant"))
+            .toolbar { hubToolbar }
         } detail: {
-            if let selectedID = selectedSessionID ?? workspace.historySessions.first?.id {
+            if sizeClass == .regular && selectedTab != .history {
+                tabDetailContent
+                    .navigationTitle(selectedTab.title)
+            } else if let selectedID = selectedSessionID ?? workspace.historySessions.first?.id {
                 IOSMeetingDetailView(workspace: workspace, sync: sync, sessionID: selectedID)
             } else {
                 ContentUnavailableView(
@@ -101,38 +111,60 @@ struct IOSWorkspaceHubView: View {
         }
     }
 
-    private var hubContent: some View {
-        VStack(spacing: 0) {
-            Picker(L("Workspace Section"), selection: $selectedTab) {
+    private var tabSelector: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
                 ForEach(IOSWorkspaceHubTab.allCases) { tab in
-                    if tab == .tasks && workspace.openTasksCount > 0 {
-                        Text("\(tab.title) (\(workspace.openTasksCount))").tag(tab)
-                    } else {
-                        Text(tab.title).tag(tab)
+                    let isSelected = selectedTab == tab
+                    let labelText = (tab == .tasks && workspace.openTasksCount > 0)
+                        ? "\(tab.title) (\(workspace.openTasksCount))"
+                        : tab.title
+                    Button {
+                        selectedTab = tab
+                        if sizeClass == .regular {
+                            compactColumn = tab == .history ? .sidebar : .detail
+                        }
+                    } label: {
+                        Text(labelText)
+                            .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .frame(minHeight: 36)
+                            .background(
+                                isSelected ? Color.accentColor.opacity(0.18) : Color(uiColor: .secondarySystemFill),
+                                in: Capsule()
+                            )
+                            .foregroundStyle(isSelected ? Color.rockBrandTint : .primary)
                     }
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 44)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
-            .pickerStyle(.segmented)
             .padding(.horizontal)
-            .padding(.vertical, 8)
-            .accessibilityIdentifier("workspace.hub.mode")
+            .padding(.vertical, 4)
+        }
+        .accessibilityIdentifier("workspace.hub.mode")
+    }
 
-            switch selectedTab {
-            case .ask:
-                if let talk, let speech {
-                    IOSAssistantTalkView(talk: talk, speech: speech)
-                } else {
-                    IOSStandaloneAskView(workspace: workspace, assistant: assistant)
-                }
-            case .history:
-                historyList
-            case .tasks:
-                IOSPersonalTasksView(workspace: workspace) { sessionID in
-                    openMeeting(sessionID)
-                }
-            case .search:
-                searchView
+    @ViewBuilder
+    private var tabDetailContent: some View {
+        switch selectedTab {
+        case .ask:
+            if let talk, let speech {
+                IOSAssistantTalkView(talk: talk, speech: speech)
+            } else {
+                IOSStandaloneAskView(workspace: workspace, assistant: assistant)
             }
+        case .history:
+            historyList
+        case .tasks:
+            IOSPersonalTasksView(workspace: workspace) { sessionID in
+                openMeeting(sessionID)
+            }
+        case .search:
+            searchView
         }
     }
 
@@ -345,6 +377,7 @@ struct IOSWorkspaceHubView: View {
 
     private func openMeeting(_ sessionID: UUID) {
         selectedSessionID = sessionID
+        selectedTab = .history
         compactColumn = .detail
     }
 }

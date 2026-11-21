@@ -76,7 +76,7 @@ public enum CurrentMeetingTargetResolver {
         for meeting in ongoing {
             guard let url = meeting.invitation else { continue }
             let rKey = roomKey(for: url, engine: meeting.engine)
-            guard seenKeys.insert("cal|\(meeting.id)|\(rKey)").inserted else { continue }
+            guard seenKeys.insert(rKey).inserted else { continue }
             result.append(JoinableMeetingCandidate(
                 id: stableID(namespace: "calendar", key: meeting.id),
                 title: meeting.title,
@@ -97,7 +97,7 @@ public enum CurrentMeetingTargetResolver {
         for meeting in upcomingSoon {
             guard let url = meeting.invitation else { continue }
             let rKey = roomKey(for: url, engine: meeting.engine)
-            guard seenKeys.insert("cal|\(meeting.id)|\(rKey)").inserted else { continue }
+            guard seenKeys.insert(rKey).inserted else { continue }
             result.append(JoinableMeetingCandidate(
                 id: stableID(namespace: "calendar", key: meeting.id),
                 title: meeting.title,
@@ -112,7 +112,7 @@ public enum CurrentMeetingTargetResolver {
         // 3. Handoff / ActiveJams from other devices
         for jam in handoffs where jam.isVisible(at: now) {
             let rKey = roomKey(for: jam.invitation, engine: jam.engine)
-            guard seenKeys.insert("handoff|\(rKey)").inserted else { continue }
+            guard seenKeys.insert(rKey).inserted else { continue }
             result.append(JoinableMeetingCandidate(
                 id: jam.sessionID,
                 title: jam.title,
@@ -135,7 +135,7 @@ public enum CurrentMeetingTargetResolver {
         for meeting in laterToday {
             guard let url = meeting.invitation else { continue }
             let rKey = roomKey(for: url, engine: meeting.engine)
-            guard seenKeys.insert("cal|\(meeting.id)|\(rKey)").inserted else { continue }
+            guard seenKeys.insert(rKey).inserted else { continue }
             result.append(JoinableMeetingCandidate(
                 id: stableID(namespace: "calendar", key: meeting.id),
                 title: meeting.title,
@@ -154,7 +154,7 @@ public enum CurrentMeetingTargetResolver {
         }
         for room in sortedRooms.prefix(12) {
             let rKey = roomKey(for: room.joinURL, engine: room.engine)
-            guard seenKeys.insert("room|\(rKey)").inserted else { continue }
+            guard seenKeys.insert(rKey).inserted else { continue }
             result.append(JoinableMeetingCandidate(
                 id: stableID(namespace: "room", key: rKey),
                 title: room.displayTitle,
@@ -176,13 +176,15 @@ public enum CurrentMeetingTargetResolver {
         if let ongoing = candidates.first(where: { $0.source == .ongoingCalendar }) {
             return ongoing
         }
-        if let handoff = candidates.first(where: { $0.source == .handoff }) {
-            return handoff
-        }
-        if let imminent = candidates.first(where: {
-            $0.source == .upcomingCalendar && ($0.start?.timeIntervalSince(now) ?? .greatestFiniteMagnitude) <= 45 * 60
+        if let imminent = candidates.first(where: { candidate in
+            guard candidate.source == .upcomingCalendar, let start = candidate.start else { return false }
+            let delta = start.timeIntervalSince(now)
+            return delta >= 0 && delta <= 45 * 60
         }) {
             return imminent
+        }
+        if let handoff = candidates.first(where: { $0.source == .handoff }) {
+            return handoff
         }
         return candidates.first
     }

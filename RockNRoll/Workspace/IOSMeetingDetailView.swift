@@ -83,14 +83,33 @@ struct IOSMeetingDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker(L("Meeting Section"), selection: $tab) {
-                ForEach(IOSMeetingDetailTab.allCases) { item in
-                    Text(item.title).tag(item)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(IOSMeetingDetailTab.allCases) { item in
+                        let isSelected = tab == item
+                        Button {
+                            tab = item
+                        } label: {
+                            Text(item.title)
+                                .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                                .lineLimit(1)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .frame(minHeight: 36)
+                                .background(
+                                    isSelected ? Color.accentColor.opacity(0.18) : Color(uiColor: .secondarySystemFill),
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(isSelected ? Color.rockBrandTint : .primary)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(minHeight: 44)
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    }
                 }
+                .padding(.horizontal)
+                .padding(.vertical, 4)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.vertical, 8)
             .accessibilityIdentifier("workspace.detail.tab")
 
             let sources = workspace.linkedHistorySources(for: sessionID)
@@ -394,6 +413,8 @@ struct IOSMeetingDetailView: View {
                             } label: {
                                 Image(systemName: task.done ? "checkmark.circle.fill" : "circle")
                                     .foregroundStyle(task.done ? .green : .secondary)
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             VStack(alignment: .leading, spacing: 2) {

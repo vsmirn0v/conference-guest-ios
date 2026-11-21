@@ -71,8 +71,9 @@ import LiveKitWebRTC
                      chat: ChatStore? = nil,
                      adapter overrideAdapter: (any MeetingProviderAdapter)? = nil,
                      rockService: JamService? = nil,
-                     exclusiveTalk: Bool = false) -> MeetingSession {
-        let id = UUID()
+                     exclusiveTalk: Bool = false,
+                     sessionID: UUID = UUID()) -> MeetingSession {
+        let id = sessionID
         let adapter: any MeetingProviderAdapter
         if let overrideAdapter {
             adapter = overrideAdapter

@@ -91,7 +91,7 @@ struct AttentionMomentsView: View {
                 if moments.isEmpty && store.momentsLoaded {
                     Text(L("No Moments in this view.")).font(.callout).foregroundStyle(.secondary).padding()
                 }
-            }.frame(width: 330).background(Color(nsColor: .controlBackgroundColor))
+            }.frame(minWidth: 250, idealWidth: 290, maxWidth: 330).background(Color(nsColor: .controlBackgroundColor))
             Divider()
             detail.frame(maxWidth: .infinity, maxHeight: .infinity)
         }

@@ -51,10 +51,10 @@ final class NativeDiagnosticsLog: @unchecked Sendable {
     private func close() { try? handle?.close(); handle = nil; current = nil; written = 0 }
     private func open(now: Date) {
         close()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         sequence += 1
         let url = directory.appendingPathComponent("events-\(nameStamp.string(from: now))-\(getpid())-\(String(format: "%04d", sequence)).log")
-        guard FileManager.default.createFile(atPath: url.path, contents: nil),
+        guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]),
               let value = try? FileHandle(forWritingTo: url) else { return }
         handle = value; current = url
     }
@@ -74,28 +74,43 @@ final class NativeDiagnosticReports: NSObject, MXMetricManagerSubscriber, @unche
     static let shared = NativeDiagnosticReports(directory: NativeDiagnosticsLog.rootDirectory.appendingPathComponent("Reports", isDirectory: true))
     let directory: URL
     let maxFiles = 10, maxAge: TimeInterval = 30 * 86_400
+    private let lock = NSLock()
     /// Called with the number of reports saved, to record it in the event log.
-    var onSaved: ((Int) -> Void)?
+    private var _onSaved: ((Int) -> Void)?
+    var onSaved: ((Int) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onSaved }
+        set { lock.lock(); defer { lock.unlock() }; _onSaved = newValue }
+    }
     init(directory: URL) { self.directory = directory }
     func start() { MXMetricManager.shared.add(self) }
     /// Oldest first.
     var files: [URL] {
+        lock.lock(); defer { lock.unlock() }
+        return unlockedFiles()
+    }
+    private func unlockedFiles() -> [URL] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         return names.filter { $0.hasSuffix(".json") }.sorted().map { directory.appendingPathComponent($0) }
     }
     func didReceive(_ payloads: [MXDiagnosticPayload]) { save(payloads.map { $0.jsonRepresentation() }) }
     func save(_ reports: [Data], now: Date = Date()) {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let handler: ((Int) -> Void)?
+        lock.lock()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let stamp = Int(now.timeIntervalSince1970)
         for (index, data) in reports.enumerated() {
-            try? data.write(to: directory.appendingPathComponent("report-\(stamp)-\(index).json"), options: .atomic)
+            let fileURL = directory.appendingPathComponent("report-\(stamp)-\(index).json")
+            try? data.write(to: fileURL, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         }
-        let saved = files
+        let saved = unlockedFiles()
         for (index, url) in saved.enumerated() {
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
             if index < saved.count - maxFiles || now.timeIntervalSince(modified) > maxAge { try? FileManager.default.removeItem(at: url) }
         }
-        onSaved?(reports.count)
+        handler = _onSaved
+        lock.unlock()
+        handler?(reports.count)
     }
 }
 

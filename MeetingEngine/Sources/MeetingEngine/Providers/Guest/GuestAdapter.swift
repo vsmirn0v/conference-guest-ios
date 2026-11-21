@@ -229,114 +229,130 @@ public enum NativeDesktopGuestError: LocalizedError {
         #endif
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         guestSnapshot = .init(); onFeatures?(guestSnapshot); emit()
+        let session: GuestSession
         #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
-        let profile = GuestAudioProfile.saved
         var reservedRoom: NativeDesktopSharedMedia<GuestSystemAudio>.Room?
         #endif
-        if let sharedAudio {
-            let meeting = try await SharedGuestMeetingAudio.attach(to: sharedAudio)
-            sharedMeeting = meeting
-            guard revision == token, !leaving, !Task.isCancelled else {
-                _ = await meeting.shutdown(); sharedMeeting = nil; throw CancellationError()
-            }
-        } else {
+        do {
             #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
-            let reserved = try await media.reserveRoom(profile: profile)
-            self.room = reserved; reservedRoom = reserved
-            guard revision == token, !leaving, !Task.isCancelled else {
-                _ = await media.releaseRoom(reserved, clean: true); self.room = nil; throw CancellationError()
-            }
-            #else
-            throw NativeDesktopGuestError.cleanupFailed
+            let profile = GuestAudioProfile.saved
             #endif
-        }
-        #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
-        let room = reservedRoom
-        #endif
-        let session = GuestSession(makeEngine: { [weak self] in
-            guard let self, revision == token, !leaving, !Task.isCancelled else { throw CancellationError() }
-            let owner: any GuestMeetingAudio
-            let release: (Bool) async -> Bool
-            if let meeting = sharedMeeting {
-                guard await meeting.beginAttempt(sound: outputIntent) else { throw NativeDesktopGuestError.cleanupFailed }
-                if exclusiveTalk {
-                    guard await meeting.attachment.assumeTalkExclusively() else {
-                        _ = await meeting.endAttempt(clean: false)
-                        throw NativeDesktopGuestError.cleanupFailed
-                    }
-                }
+            if let sharedAudio {
+                let meeting = try await SharedGuestMeetingAudio.attach(to: sharedAudio)
+                sharedMeeting = meeting
                 guard revision == token, !leaving, !Task.isCancelled else {
-                    _ = await meeting.endAttempt(clean: true); throw CancellationError()
+                    _ = await meeting.shutdown(); sharedMeeting = nil; throw CancellationError()
                 }
-                owner = meeting
-                release = { [meeting] clean in await meeting.endAttempt(clean: clean) }
             } else {
                 #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
-                guard let room else { throw NativeDesktopGuestError.cleanupFailed }
-                let attempt = UUID()
-                let attached = try await media.attach(room, attempt: attempt, playout: outputIntent,
-                                                      preparedInput: microphonePreparationEligible)
+                let reserved = try await media.reserveRoom(profile: profile)
+                self.room = reserved; reservedRoom = reserved
                 guard revision == token, !leaving, !Task.isCancelled else {
-                    _ = await media.detach(room, attempt: attempt, clean: true); throw CancellationError()
+                    _ = await media.releaseRoom(reserved, clean: true); self.room = nil; throw CancellationError()
                 }
-                owner = attached
-                release = { [media] clean in await media.detach(room, attempt: attempt, clean: clean) }
                 #else
                 throw NativeDesktopGuestError.cleanupFailed
                 #endif
             }
-            systemAudio = owner
-            _ = owner.setMeetingVolume(meetingVolume)
-            owner.setInputTranscriptionSink(localAudioSink)
-            if transcriptionOutputDemand { _ = await owner.setTranscriptionOutput(true) }
-            let talk = sharedMeeting != nil && !exclusiveTalk && inputPermitted && sharedAudio?.talkMeetingID == nil
-            if talk, !(await owner.setInputPermitted(true)) {
-                _ = await release(false); throw NativeDesktopGuestError.cleanupFailed
-            }
-            if !inputPermitted, !(await owner.setInputPermitted(false)) {
-                _ = await release(false); throw NativeDesktopGuestError.cleanupFailed
-            }
-            let effectivePolicy: GuestICEPolicy = selectedPolicy == .automatic && useSubscriberUDPRelay ? .subscriberRelay : selectedPolicy
-            let engine = NativeGuestEngine(label: name, systemAudio: owner, icePolicy: effectivePolicy, verifyReceivedPixels: false)
-            if forceTCPRelay && selectedPolicy == .tcpRelay {
-                engine.tcpRelayTargets = [.subscriber, .publisher]
-            }
-            if selectedPolicy == .automatic {
-                engine.tcpRelayTargets = relayRecovery.beginAttempt()
-                engine.scheduleTCPRelay = { [weak self, weak engine] target in
-                    guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine,
-                          relayRecovery.schedule(target) else { return false }
-                    probeLog("ice-tcp-relay-fallback", ["target": target.rawValue])
-                    return true
+            #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
+            let room = reservedRoom
+            #endif
+            session = GuestSession(makeEngine: { [weak self] in
+                guard let self, revision == token, !leaving, !Task.isCancelled else { throw CancellationError() }
+                let owner: any GuestMeetingAudio
+                let release: (Bool) async -> Bool
+                if let meeting = sharedMeeting {
+                    guard await meeting.beginAttempt(sound: outputIntent) else { throw NativeDesktopGuestError.cleanupFailed }
+                    if exclusiveTalk {
+                        guard await meeting.attachment.assumeTalkExclusively() else {
+                            _ = await meeting.endAttempt(clean: false)
+                            throw NativeDesktopGuestError.cleanupFailed
+                        }
+                    }
+                    guard revision == token, !leaving, !Task.isCancelled else {
+                        _ = await meeting.endAttempt(clean: true); throw CancellationError()
+                    }
+                    owner = meeting
+                    release = { [meeting] clean in await meeting.endAttempt(clean: clean) }
+                } else {
+                    #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
+                    guard let room else { throw NativeDesktopGuestError.cleanupFailed }
+                    let attempt = UUID()
+                    let attached = try await media.attach(room, attempt: attempt, playout: outputIntent,
+                                                          preparedInput: microphonePreparationEligible)
+                    guard revision == token, !leaving, !Task.isCancelled else {
+                        _ = await media.detach(room, attempt: attempt, clean: true); throw CancellationError()
+                    }
+                    owner = attached
+                    release = { [media] clean in await media.detach(room, attempt: attempt, clean: clean) }
+                    #else
+                    throw NativeDesktopGuestError.cleanupFailed
+                    #endif
                 }
-                engine.onSubscriberUDPRelayOnly = { [weak self, weak engine] in
-                    guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine,
-                          !useSubscriberUDPRelay else { return }
-                    useSubscriberUDPRelay = true
-                    probeLog("subscriber-relay-fallback", ["reason": "tcp-relay-unavailable"])
+                systemAudio = owner
+                _ = owner.setMeetingVolume(meetingVolume)
+                owner.setInputTranscriptionSink(localAudioSink)
+                if transcriptionOutputDemand { _ = await owner.setTranscriptionOutput(true) }
+                let talk = sharedMeeting != nil && !exclusiveTalk && inputPermitted && sharedAudio?.talkMeetingID == nil
+                if talk, !(await owner.setInputPermitted(true)) {
+                    _ = await release(false); throw NativeDesktopGuestError.cleanupFailed
                 }
-                engine.discardTCPRelay = { [weak self, weak engine] target in
-                    guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine else { return false }
-                    return relayRecovery.discard(target)
+                if !inputPermitted, !(await owner.setInputPermitted(false)) {
+                    _ = await release(false); throw NativeDesktopGuestError.cleanupFailed
                 }
-                engine.confirmTCPRelay = { [weak self, weak engine] target in
-                    guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine else { return }
-                    _ = relayRecovery.verify(target)
+                let effectivePolicy: GuestICEPolicy = selectedPolicy == .automatic && useSubscriberUDPRelay ? .subscriberRelay : selectedPolicy
+                let engine = NativeGuestEngine(label: name, systemAudio: owner, icePolicy: effectivePolicy, verifyReceivedPixels: false)
+                if forceTCPRelay && selectedPolicy == .tcpRelay {
+                    engine.tcpRelayTargets = [.subscriber, .publisher]
                 }
+                if selectedPolicy == .automatic {
+                    engine.tcpRelayTargets = relayRecovery.beginAttempt()
+                    engine.scheduleTCPRelay = { [weak self, weak engine] target in
+                        guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine,
+                              relayRecovery.schedule(target) else { return false }
+                        probeLog("ice-tcp-relay-fallback", ["target": target.rawValue])
+                        return true
+                    }
+                    engine.onSubscriberUDPRelayOnly = { [weak self, weak engine] in
+                        guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine,
+                              !useSubscriberUDPRelay else { return }
+                        useSubscriberUDPRelay = true
+                        probeLog("subscriber-relay-fallback", ["reason": "tcp-relay-unavailable"])
+                    }
+                    engine.discardTCPRelay = { [weak self, weak engine] target in
+                        guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine else { return false }
+                        return relayRecovery.discard(target)
+                    }
+                    engine.confirmTCPRelay = { [weak self, weak engine] target in
+                        guard let self, let engine, revision == token, !leaving, currentNativeEngine === engine else { return }
+                        _ = relayRecovery.verify(target)
+                    }
+                }
+                engine.releaseSystemAudio = release
+                sharedMeeting?.onLevelChange = { [weak engine] in engine?.reconcilePlaybackLevels() }
+                engine.configureStartupPlayback(sound: outputIntent)
+                engine.setParticipantVolumes(participantVolumes)
+                self.session?.setMicrophonePreparationRequested(microphonePreparationEligible)
+                engine.cameraCaptureFactory = { source in
+                    if let custom = GuestCamera.defaultFactory?(source) { return custom }
+                    let id = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")
+                    return GuestCamera(source: source, deviceID: id?.isEmpty == false ? id : nil)
+                }
+                return engine
+            }, hasPendingRelayTrial: { [weak self] in self?.relayRecovery.hasPendingAttempt ?? false },
+               restoreUnstartedRelayTrial: { [weak self] in self?.relayRecovery.restoreUnstartedAttempt() })
+        } catch {
+            if revision == token, self.session == nil, !leaving {
+                var clean = true
+                #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
+                if let room = reservedRoom { clean = await media.releaseRoom(room, clean: true) && clean; self.room = nil }
+                #endif
+                if let sharedMeeting { clean = await sharedMeeting.shutdown() && clean; self.sharedMeeting = nil }
+                cleanupSucceeded = clean
+                snapshot.phase = .failed; snapshot.lastError = error.localizedDescription; emit()
             }
-            engine.releaseSystemAudio = release
-            sharedMeeting?.onLevelChange = { [weak engine] in engine?.reconcilePlaybackLevels() }
-            engine.configureStartupPlayback(sound: outputIntent)
-            engine.setParticipantVolumes(participantVolumes)
-            self.session?.setMicrophonePreparationRequested(microphonePreparationEligible)
-            engine.cameraCaptureFactory = { source in
-                if let custom = GuestCamera.defaultFactory?(source) { return custom }
-                let id = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")
-                return GuestCamera(source: source, deviceID: id?.isEmpty == false ? id : nil)
-            }
-            return engine
-        }, hasPendingRelayTrial: { [weak self] in self?.relayRecovery.hasPendingAttempt ?? false },
-           restoreUnstartedRelayTrial: { [weak self] in self?.relayRecovery.restoreUnstartedAttempt() })
+            throw error
+        }
         self.session = session
         session.onEngineChange = { [weak self, weak session] engine in
             guard let self, self.revision == token, self.session === session else { return }
@@ -642,40 +658,47 @@ public enum NativeDesktopGuestError: LocalizedError {
                                                    localGain: localGain, onStarted: onStarted) ?? .notStarted
     }
 
+    private var leaveTask: Task<Bool, Never>?
+
     func leave() async -> Bool {
-        guard !leaving else { return await session?.leave() ?? cleanupSucceeded }
-        leaving = true; microphoneRevision &+= 1; cameraRevision &+= 1
-        currentNativeEngine?.suppressOutgoingMedia()
-        cancelHistory()
-        snapshot.phase = .leaving; snapshot.microphoneOn = false; snapshot.cameraOn = false; snapshot.sharing = false
-        snapshot.microphoneLevel = nil; emit()
-        let old = session
-        let engineStopped = await old?.leave() ?? cleanupSucceeded
-        if transcriptionOutputDemand, let systemAudio {
-            transcriptionOutputDemand = false; _ = await systemAudio.setTranscriptionOutput(false)
+        if let existing = leaveTask { return await existing.value }
+        let task = Task { @MainActor [self] in
+            defer { leaveTask = nil }
+            leaving = true; microphoneRevision &+= 1; cameraRevision &+= 1
+            currentNativeEngine?.suppressOutgoingMedia()
+            cancelHistory()
+            snapshot.phase = .leaving; snapshot.microphoneOn = false; snapshot.cameraOn = false; snapshot.sharing = false
+            snapshot.microphoneLevel = nil; emit()
+            let old = session
+            let engineStopped = await old?.leave() ?? cleanupSucceeded
+            if transcriptionOutputDemand, let systemAudio {
+                transcriptionOutputDemand = false; _ = await systemAudio.setTranscriptionOutput(false)
+            }
+            #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
+            if sharedMeeting == nil, !inputPermitted, let systemAudio { _ = await systemAudio.setInputPermitted(true) }
+            #endif
+            let stopped: Bool
+            #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
+            if let room { stopped = await media.releaseRoom(room, clean: engineStopped) }
+            else if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
+            else { stopped = engineStopped }
+            #else
+            if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
+            else { stopped = engineStopped }
+            #endif
+            revision = UUID(); cleanupSucceeded = stopped
+            old?.onEngineChange = nil; old?.onStateChange = nil
+            #if os(macOS)
+            room = nil
+            #endif
+            session = nil; sharedMeeting = nil; systemAudio = nil; detachEngine()
+            guestSnapshot = .init(); onFeatures?(guestSnapshot)
+            snapshot = .init(phase: .left, playoutOn: outputIntent)
+            leaving = false; emit()
+            return stopped
         }
-        #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
-        if sharedMeeting == nil, !inputPermitted, let systemAudio { _ = await systemAudio.setInputPermitted(true) }
-        #endif
-        let stopped: Bool
-        #if (DEBUG || NATIVE_LEGACY_AUDIO) && os(macOS)
-        if let room { stopped = await media.releaseRoom(room, clean: engineStopped) }
-        else if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
-        else { stopped = engineStopped }
-        #else
-        if let sharedMeeting { stopped = await sharedMeeting.shutdown() && engineStopped }
-        else { stopped = engineStopped }
-        #endif
-        revision = UUID(); cleanupSucceeded = stopped
-        old?.onEngineChange = nil; old?.onStateChange = nil
-        #if os(macOS)
-        room = nil
-        #endif
-        session = nil; sharedMeeting = nil; systemAudio = nil; detachEngine()
-        guestSnapshot = .init(); onFeatures?(guestSnapshot)
-        snapshot = .init(phase: .left, playoutOn: outputIntent)
-        leaving = false; emit()
-        return stopped
+        leaveTask = task
+        return await task.value
     }
 
     func retryInitialTranscriptHistory() {

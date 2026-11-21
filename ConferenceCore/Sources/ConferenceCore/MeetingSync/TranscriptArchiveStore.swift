@@ -97,6 +97,7 @@ public actor TranscriptArchiveStore {
     public func archive(session: SyncedMeetingSession, events: [SyncedTranscriptEvent]) async throws {
         guard !events.isEmpty else { return }
         try await withResolvedRoot { root in
+            self.loadIndexIfNeeded(in: root)
             try Self.writeSession(
                 sessionID: session.id,
                 title: session.title.value,
@@ -197,9 +198,11 @@ public actor TranscriptArchiveStore {
 
     private func readSession(sessionID: UUID, in root: URL) throws -> [SyncedTranscriptEvent]? {
         loadIndexIfNeeded(in: root)
+        let rootPath = root.standardizedFileURL.path
         if let relative = indexCache[sessionID] {
-            let fileURL = root.appendingPathComponent(relative)
-            if let doc = try? Self.decodeDocument(at: fileURL) {
+            let fileURL = root.appendingPathComponent(relative).standardizedFileURL
+            if fileURL.path.hasPrefix(rootPath + "/"),
+               let doc = try? Self.decodeDocument(at: fileURL) {
                 return doc.events
             }
         }
@@ -307,7 +310,11 @@ public actor TranscriptArchiveStore {
         let coordinator = NSFileCoordinator(filePresenter: nil)
         coordinator.coordinate(writingItemAt: url, options: .forReplacing, error: &coordError) { targetURL in
             do {
+                #if os(iOS)
+                try data.write(to: targetURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                #else
                 try data.write(to: targetURL, options: .atomic)
+                #endif
             } catch {
                 writeError = error
             }

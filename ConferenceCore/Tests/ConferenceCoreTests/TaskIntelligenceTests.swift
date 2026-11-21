@@ -289,7 +289,8 @@ final class TaskIntelligenceTests: XCTestCase {
                     ]
                 ])
             }
-            if path == "/rest/api/2/issue/SDBCTO-777/transitions", method == "POST" || path == "/rest/api/2/issue/SDBCTO-777/comment" {
+            if (path == "/rest/api/2/issue/SDBCTO-777/transitions" && method == "POST")
+                || (path == "/rest/api/2/issue/SDBCTO-777/comment" && method == "POST") {
                 return jsonResponse(204, [:])
             }
             if path == "/rest/api/2/issue/SDBCTO-777", method == "PUT" {

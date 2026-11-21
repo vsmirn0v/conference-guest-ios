@@ -1,4 +1,0 @@
-Command exited with code 0.
-
-Command output:
-zsh:1: no matches found: --include=*.swift

@@ -354,6 +354,7 @@ struct NativeDesktopMeetingView: View {
             .onContinuousHover { phase in if case .active = phase { revealChrome() } }
             if let docked {
                 inspector(docked).frame(width: Self.panelWidth)
+                    .foregroundStyle(.primary)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
@@ -506,7 +507,7 @@ struct NativeDesktopMeetingView: View {
                     Menu { viewMenuItems(includePaging: !inlinePager) } label: {
                         controlLabel(viewMenuSymbol, L("View"), width: buttonWidth, showsTitle: labeled)
                     }
-                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    .menuStyle(.button).buttonStyle(.bordered).controlSize(.regular).fixedSize()
                     .accessibilityLabel(L("View")).accessibilityIdentifier("meeting.footer.view").help(viewMenuTitle)
                     if inlinePager { galleryPager }
                 }
@@ -515,7 +516,7 @@ struct NativeDesktopMeetingView: View {
                     Menu { moreMenuItems } label: {
                         controlLabel("ellipsis", L("More"), width: buttonWidth, showsTitle: labeled)
                     }
-                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    .menuStyle(.button).buttonStyle(.bordered).controlSize(.regular).fixedSize()
                     .accessibilityLabel(L("More")).help(L("More"))
                     Divider().frame(height: 20)
                 }
@@ -542,12 +543,14 @@ struct NativeDesktopMeetingView: View {
     private var galleryPager: some View {
         HStack(spacing: 0) {
             iconButton("chevron.left", L("Previous page")) { changeGalleryPage(by: -1) }
+                .flipsForRightToLeftLayoutDirection(true)
                 .disabled(model.galleryPage == 0)
             Text("\(model.galleryPage + 1) / \(model.galleryPages)").font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .lineLimit(1).minimumScaleFactor(0.8)
-                .frame(width: 48)
+                .frame(minWidth: 48)
             iconButton("chevron.right", L("Next page")) { changeGalleryPage(by: 1) }
+                .flipsForRightToLeftLayoutDirection(true)
                 .disabled(model.galleryPage == model.galleryPages - 1)
         }.accessibilityElement(children: .contain).accessibilityIdentifier("meeting.footer.galleryPager")
     }
@@ -568,7 +571,9 @@ struct NativeDesktopMeetingView: View {
                 Text(title).font(.caption).lineLimit(1).minimumScaleFactor(0.8)
             }
         }
-        .frame(width: width, height: 36).contentShape(Rectangle())
+        .frame(minWidth: width, minHeight: 36)
+        .padding(.horizontal, showsTitle ? 6 : 0)
+        .contentShape(Rectangle())
     }
     @ViewBuilder private func viewMenuItems(includePaging: Bool) -> some View {
         if includePaging && hasGalleryPages {
@@ -1217,11 +1222,13 @@ struct NativeDesktopMiniMeeting: View {
             }
             .contentShape(Rectangle())
             .onTapGesture { controlsVisible ? scheduleHide() : reveal() }
-            controls
-                .padding(10).background(.ultraThinMaterial)
-                .opacity(controlsVisible || pinned ? 1 : 0)
-                .allowsHitTesting(controlsVisible || pinned)
+            if controlsVisible || pinned {
+                controls
+                    .padding(10).background(.ultraThinMaterial)
+                    .transition(.opacity)
+            }
         }
+        .preferredColorScheme(.dark)
         .contentShape(Rectangle())
         .onContinuousHover { phase in
             switch phase {
@@ -1567,7 +1574,10 @@ private struct NativeDesktopTranscriptionDetails: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     let close: () -> Void
     var body: some View {
-        if model.transcriptionIndicator == .local { localDetails } else { serviceDetails }
+        Group {
+            if model.transcriptionIndicator == .local { localDetails } else { serviceDetails }
+        }
+        .foregroundStyle(.primary)
     }
     /// Local transcription: what happens on this Mac, and a pause for this meeting.
     private var localDetails: some View {

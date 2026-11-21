@@ -3,5 +3,6 @@
 "NSRemindersUsageDescription" = "मीटिंग के कार्य अपनी चुनी हुई Apple Reminders सूची से सिंक करें और Rock'N'Roll for Mac में कार्य आयात करें।";
 "NSRemindersFullAccessUsageDescription" = "मीटिंग के कार्य अपनी चुनी हुई Apple Reminders सूची से सिंक करें और Rock'N'Roll for Mac में कार्य आयात करें।";
 "NSCameraUsageDescription" = "ऐप में अतिथि पूर्वावलोकन के दौरान वीडियो चालू करने पर कैमरे की तस्वीर साझा करें।";
-"NSMicrophoneUsageDescription" = "ऐप में अतिथि पूर्वावलोकन के दौरान म्यूट हटाने पर माइक्रोफ़ोन की आवाज़ साझा करें।";
+"NSMicrophoneUsageDescription" = "मीटिंग में माइक अनम्यूट करने पर ऑडियो साझा करें, Rock के हैंड्स-फ़्री वॉइस कमांड का उपयोग करें या इस Mac पर आवाज़ का नमूना रिकॉर्ड करें।";
 "NSSpeechRecognitionUsageDescription" = "जब स्थानीय ट्रांसक्रिप्शन मॉडल इंस्टॉल न हों, तो इस Mac पर Rock के लिए बोलकर दिए गए कमांड पहचानें।";
+"NSPersonalVoiceUsageDescription" = "Rock'N'Roll for Mac, मीटिंग में आपके भेजे गए वॉइस जवाब या असिस्टेंट के उत्तर पढ़कर सुनाने के लिए आपकी पर्सनल वॉइस का उपयोग कर सकता है।";

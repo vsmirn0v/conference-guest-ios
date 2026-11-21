@@ -146,7 +146,7 @@ class AudioRouteRecoveryFrameworkTests(unittest.TestCase):
             dependencies.verify_audio_route_recovery_framework(self.root)
 
     def test_changed_patch_identity_is_rejected(self):
-        name = "Experiments/WebRTCM157/default-route-recovery.patch"
+        name = "Dependencies/native-macos/webrtc-patches/default-route-recovery.patch"
         self.evidence["audioRouteRecovery"]["patches"][name] = "0" * 64
         self.write_evidence()
         with self.assertRaisesRegex(ValueError, r"audioRouteRecovery\.patches"):

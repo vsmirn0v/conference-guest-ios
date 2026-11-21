@@ -7,8 +7,8 @@ import http.client
 import json
 import os
 import pathlib
-import stat
 import sys
+import tempfile
 from typing import Iterable
 
 PROTOCOL_VERSION = "2025-03-26"
@@ -40,13 +40,25 @@ def read_json(path: pathlib.Path) -> dict:
 
 def write_private_json(path: pathlib.Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
-    temporary.replace(path)
+    os.chmod(path.parent, 0o700)
+    payload = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 class NativeHTTPClient:
+    MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
     def __init__(self, endpoint_file: pathlib.Path, config_file: pathlib.Path):
         self.endpoint_file = endpoint_file
         self.config_file = config_file
@@ -56,8 +68,13 @@ class NativeHTTPClient:
         host = endpoint.get("host")
         port = endpoint.get("port")
         path = endpoint.get("path", "/mcp")
-        if host not in {"127.0.0.1", "localhost", "::1"} or not isinstance(port, int) or not isinstance(path, str):
-            raise BridgeError("The endpoint file must describe a loopback HTTP endpoint.")
+        if (host not in {"127.0.0.1", "localhost", "::1"}
+                or isinstance(port, bool)
+                or not isinstance(port, int)
+                or not 1 <= port <= 65535
+                or not isinstance(path, str)
+                or not path.startswith("/")):
+            raise BridgeError("The endpoint file must describe a valid loopback HTTP endpoint.")
         return str(host), int(port), path
 
     def _token(self) -> str:
@@ -88,21 +105,25 @@ class NativeHTTPClient:
         try:
             connection.request(method, override_path or path, body=payload, headers=headers)
             response = connection.getresponse()
-            raw = response.read()
+            raw = response.read(self.MAX_RESPONSE_BYTES + 1)
         except OSError as exc:
             raise BridgeError(f"The Rock'N'Roll native MCP endpoint is unavailable: {exc}") from exc
         finally:
             connection.close()
-        try:
-            decoded = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise BridgeError(f"Invalid native MCP response with HTTP {response.status}.") from exc
+        if len(raw) > self.MAX_RESPONSE_BYTES:
+            raise BridgeError("Native MCP response exceeded maximum allowed size.")
         if response.status == 401:
             raise BridgeError("The native MCP client token was rejected.")
         if response.status == 403:
             raise BridgeError("The MCP client lacks permission for this operation.")
         if response.status == 503:
             raise BridgeError("The native Rock'N'Roll application is unavailable.")
+        try:
+            decoded = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            if response.status >= 400:
+                raise BridgeError(f"Native MCP HTTP {response.status}") from exc
+            raise BridgeError(f"Invalid native MCP response with HTTP {response.status}.") from exc
         if response.status >= 400:
             if isinstance(decoded, dict):
                 message = decoded.get("message") or decoded.get("error") or f"Native MCP HTTP {response.status}"

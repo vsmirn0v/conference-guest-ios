@@ -27,6 +27,7 @@ import SwiftUI
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var pending: Pending?
     @Published private(set) var working = false
+    func setWorking(_ value: Bool) { working = value }
     @Published private(set) var listening = false
     @Published var targetMeetingID: UUID?
     @Published private(set) var audioError: String?
@@ -38,6 +39,7 @@ import SwiftUI
     private var externalMCPRequest = false
     var activeInputSource: AssistantInputSource = .typed
     private var auditionTask: Task<Void, Never>?
+    private var preparedExecuteTask: Task<Void, Never>?
     // MARK: Agent runtime (typed tools, bounded loop; off unless the store flag is on)
     let agentRuntime = AssistantRuntime()
     @Published var agentPending: AssistantAgentApproval?
@@ -151,10 +153,15 @@ import SwiftUI
     /// inherit a meeting's "send without asking" privilege. A command that would need a
     /// native confirmation is reported and cancelled instead of being executed.
     func runExternal(_ input: String) async -> (answer: String?, needsNativeConfirmation: Bool) {
+        guard !working, pending == nil, agentPending == nil, ruleProposalReview == nil else {
+            return (nil, false)
+        }
         let previousCount = entries.count
+        let previousAgentCount = agentRuntime.items.count
+        preparedExecuteTask = nil
         externalMCPRequest = true
+        defer { externalMCPRequest = false }
         await run(input)
-        externalMCPRequest = false
         if pending != nil {
             cancelPending()
             return (nil, true)
@@ -169,13 +176,16 @@ import SwiftUI
             discardReviewedRule()
             return (nil, true)
         }
-        // Execution is scheduled concurrently; wait for its assistant answer entry.
-        for _ in 0..<200 where !(entries.count > previousCount && entries.last?.role == .assistant) {
-            try? await Task.sleep(nanoseconds: 5_000_000)
+        if let pendingTask = preparedExecuteTask {
+            await pendingTask.value
+            preparedExecuteTask = nil
         }
         if entries.count > previousCount, let last = entries.last, last.role == .assistant { return (last.text, false) }
         // Agent-runtime answers live in its own conversation, not in `entries`.
-        if let last = agentRuntime.items.last, last.kind == .assistant { return (last.text, false) }
+        if agentRuntime.items.count > previousAgentCount,
+           let last = agentRuntime.items.last, last.kind == .assistant {
+            return (last.text, false)
+        }
         return (nil, false)
     }
 
@@ -214,7 +224,7 @@ import SwiftUI
                 return
             }
         }
-        Task { @MainActor [weak self] in
+        preparedExecuteTask = Task { @MainActor [weak self] in
             await self?.execute(command, context: context, id: UUID(), originalInput: originalInput, source: source)
         }
     }
@@ -223,7 +233,7 @@ import SwiftUI
         guard let pending else { return }
         let source = activeInputSource
         self.pending = nil
-        Task { @MainActor [weak self] in
+        preparedExecuteTask = Task { @MainActor [weak self] in
             await self?.execute(pending.command, context: pending.context, id: pending.id, originalInput: pending.originalInput, source: source)
         }
     }
@@ -414,13 +424,21 @@ import SwiftUI
         audioError = nil
         // Check immediately before playback. Never fall back to speakers or meeting audio.
         guard headphoneRoute() else { audioError = L("Talk-back needs headphones selected as the Mac's output."); return }
+        attention.speech.setSpeakingResponse(true)
         do {
             let buffer = try await attention.synthesize(text)
-            guard headphoneRoute() else { audioError = L("Talk-back stopped because headphones are no longer the output."); return }
+            guard headphoneRoute() else {
+                attention.speech.setSpeakingResponse(false)
+                audioError = L("Talk-back stopped because headphones are no longer the output.")
+                return
+            }
             try VoicePreviewPlayer.shared.play(buffer) { [weak self] in
                 self?.attention?.speech.setSpeakingResponse(false)
             }
-        } catch { audioError = error.localizedDescription }
+        } catch {
+            attention.speech.setSpeakingResponse(false)
+            audioError = error.localizedDescription
+        }
     }
 
     // MARK: - Response Auditioning
@@ -471,13 +489,16 @@ import SwiftUI
                     }
                 }
             } catch is CancellationError {
-                self.attention?.speech.setSpeakingResponse(false)
+                if self.auditioningItemID == id {
+                    self.auditioningItemID = nil
+                    self.attention?.speech.setSpeakingResponse(false)
+                }
             } catch {
                 if self.auditioningItemID == id {
                     self.auditioningItemID = nil
                     self.audioError = error.localizedDescription
+                    self.attention?.speech.setSpeakingResponse(false)
                 }
-                self.attention?.speech.setSpeakingResponse(false)
             }
         }
     }
@@ -874,6 +895,7 @@ struct AssistantTalkView: View {
     @ObservedObject private var talk: AssistantTalkController
     // Observe the store so a push-to-talk toggle re-enables Listen immediately.
     @ObservedObject private var store: AttentionStore
+    @ObservedObject private var speech: AssistantSpeechInputCoordinator
     @ObservedObject private var agentRuntime: AssistantRuntime
     @ObservedObject private var ruleStore: AssistantRuleStore
 
@@ -881,6 +903,7 @@ struct AssistantTalkView: View {
         self.attention = attention
         _talk = ObservedObject(wrappedValue: attention.talk)
         _store = ObservedObject(wrappedValue: attention.store)
+        _speech = ObservedObject(wrappedValue: attention.speech)
         _agentRuntime = ObservedObject(wrappedValue: attention.talk.agentRuntime)
         _ruleStore = ObservedObject(wrappedValue: attention.ruleStore)
     }
@@ -951,7 +974,43 @@ struct AssistantTalkView: View {
                         .accessibilityIdentifier("assistant.agent.new")
                 }.padding(.horizontal, 12)
             }
-            if talk.listening { Label(L("Listening on this Mac… release ⌥Space to interpret"), systemImage: "mic.fill").foregroundStyle(.teal).padding(6) }
+            if talk.listening || speech.mode == .pushToTalk {
+                Label(speech.livePartialText.isEmpty ? L("Listening on this Mac… release ⌥Space to interpret") : speech.livePartialText, systemImage: "mic.fill")
+                    .foregroundStyle(.teal)
+                    .padding(6)
+            } else if speech.permissionDenied {
+                HStack(spacing: 8) {
+                    Label(L("Microphone or speech permission denied."), systemImage: "mic.slash.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Button(L("Open System Settings")) {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+            } else if speech.mode == .wakeListening {
+                HStack(spacing: 8) {
+                    Label(speech.livePartialText.isEmpty ? L("Rock is listening — say “Rock, …”") : speech.livePartialText, systemImage: "waveform")
+                        .font(.caption)
+                        .foregroundStyle(.teal)
+                        .lineLimit(1)
+                    Spacer()
+                    Button(L("Pause")) {
+                        store.wakeWordEnabled = false
+                        speech.refreshState()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("assistant.wakeStatus")
+            }
             if !liveMeetings.isEmpty {
                 HStack(spacing: 12) {
                     Menu {

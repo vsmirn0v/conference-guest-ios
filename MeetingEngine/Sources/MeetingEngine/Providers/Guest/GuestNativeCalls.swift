@@ -59,6 +59,7 @@ public final class GuestNativeCalls: @unchecked Sendable {
     /// `start` runs on the native queue; `done` may be called from any thread.
     func call<T>(_ name: String, timeout: TimeInterval = 10,
                  _ start: @escaping (@escaping (Result<T, Error>) -> Void) -> Void) async throws -> T {
+        try Task.checkCancellation()
         let completion = GuestCompletion<T>()
 #if DEBUG
         let timeout = timeoutOverrideForTesting ?? timeout
@@ -67,7 +68,6 @@ public final class GuestNativeCalls: @unchecked Sendable {
         let finish: (Result<T, Error>) -> Void = { result in completion.finish(result) }
         do {
             return try await withTaskCancellationHandler(operation: {
-                try Task.checkCancellation()
                 return try await withCheckedThrowingContinuation { continuation in
                     completion.install(continuation, timeout: timeout)
                     queue.async { [self] in

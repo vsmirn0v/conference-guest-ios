@@ -162,13 +162,14 @@ public enum CloudPayloadCodec {
     private static func decompressLZFSE(_ payload: Data) -> Data? {
         let headerSize = lzfseMagic.count + 4
         guard payload.count > headerSize else { return nil }
+        let base = payload.startIndex
         var lengthLE: UInt32 = 0
         _ = withUnsafeMutableBytes(of: &lengthLE) {
-            payload.copyBytes(to: $0, from: lzfseMagic.count..<headerSize)
+            payload.copyBytes(to: $0, from: (base + lzfseMagic.count)..<(base + headerSize))
         }
         let expectedSize = Int(UInt32(littleEndian: lengthLE))
         guard expectedSize > 0, expectedSize <= maxUncompressedBytes else { return nil }
-        let compressed = payload.subdata(in: headerSize..<payload.count)
+        let compressed = payload.subdata(in: (base + headerSize)..<payload.endIndex)
         var dst = Data(count: expectedSize)
         let decoded: Int = compressed.withUnsafeBytes { srcBytes in
             guard let srcPtr = srcBytes.bindMemory(to: UInt8.self).baseAddress else { return 0 }

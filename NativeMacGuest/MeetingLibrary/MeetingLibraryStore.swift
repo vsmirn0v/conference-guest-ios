@@ -30,6 +30,8 @@ final class MeetingSQLiteConnection: @unchecked Sendable {
     private let path: URL
     private var database: OpaquePointer?
     var onOutboxQueued: (@Sendable () -> Void)?
+    private var transactionDepth = 0
+    private var pendingOutboxWake = false
 
     init(path: URL) throws {
         self.path = path
@@ -75,14 +77,36 @@ final class MeetingSQLiteConnection: @unchecked Sendable {
         }
     }
 
+    func notifyOutboxQueued() {
+        if transactionDepth > 0 {
+            pendingOutboxWake = true
+        } else {
+            onOutboxQueued?()
+        }
+    }
+
     func transaction<T>(_ body: () throws -> T) throws -> T {
-        try execute("BEGIN IMMEDIATE")
+        if transactionDepth == 0 {
+            try execute("BEGIN IMMEDIATE")
+        }
+        transactionDepth += 1
         do {
             let value = try body()
-            try execute("COMMIT")
+            transactionDepth -= 1
+            if transactionDepth == 0 {
+                try execute("COMMIT")
+                if pendingOutboxWake {
+                    pendingOutboxWake = false
+                    onOutboxQueued?()
+                }
+            }
             return value
         } catch {
-            try? execute("ROLLBACK")
+            transactionDepth -= 1
+            if transactionDepth == 0 {
+                pendingOutboxWake = false
+                try? execute("ROLLBACK")
+            }
             throw error
         }
     }
@@ -411,17 +435,22 @@ actor MeetingLibraryStore: @unchecked Sendable {
         let db = try db()
         var sql = "SELECT * FROM meeting_sessions"
         var filters: [String] = []
-        var binders: [(OpaquePointer) throws -> Void] = []
-        if let from { filters.append("started_at >= ?"); binders.append { try Self.bindInt($0, from.ms, at: Int32(binders.count + 1)) } }
-        if let to { filters.append("started_at < ?"); binders.append { try Self.bindInt($0, to.ms, at: Int32(binders.count + 2)) } }
+        var binders: [(OpaquePointer, Int32) throws -> Void] = []
+        if let from {
+            filters.append("started_at >= ?")
+            binders.append { statement, index in try Self.bindInt(statement, from.ms, at: index) }
+        }
+        if let to {
+            filters.append("started_at < ?")
+            binders.append { statement, index in try Self.bindInt(statement, to.ms, at: index) }
+        }
         if !filters.isEmpty { sql += " WHERE " + filters.joined(separator: " AND ") }
         sql += " ORDER BY started_at DESC, session_id DESC"
         var next = 1
         let rows = try db.rows(sql) { statement in
             for binder in binders {
                 let index = Int32(next); next += 1
-                try binder(statement)
-                _ = index
+                try binder(statement, index)
             }
         }
         return rows.map(Self.session(from:))
@@ -876,7 +905,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
                     savedAt: now, canonicalOutcomeID: outcome.id)
             }
             if let previous {
-                let current = Dictionary(uniqueKeysWithValues: outcome.tasks.map { ($0.id, $0) })
+                let current = Dictionary(outcome.tasks.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
                 for task in previous.tasks where task.reminderAt != nil {
                     let updated = current[task.id]
                     if updated == nil || updated?.done == true || updated?.owner != task.owner ||
@@ -945,7 +974,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
         participationNoteChanges.willChange(sessionID)
         let db = try db()
         try db.transaction {
-            for table in ["export_outbox", "export_bindings", "note_chunks", "meeting_sessions"] {
+            for table in ["export_outbox", "export_bindings", "note_chunks", "note_sync_bases", "meeting_sessions"] {
                 try db.run("DELETE FROM \(table) WHERE session_id=?") {
                     try Self.bindText($0, sessionID.uuidString, at: 1)
                 }
@@ -957,7 +986,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
         participationNoteChanges.willChange()
         let db = try db()
         try db.transaction {
-            for table in ["export_outbox", "export_bindings", "export_destinations", "note_chunks", "meeting_notes", "meeting_outcomes", "meeting_sessions"] {
+            for table in ["export_outbox", "export_bindings", "export_destinations", "note_chunks", "note_sync_bases", "task_reminder_cancellations", "meeting_notes", "meeting_outcomes", "meeting_sessions"] {
                 try db.execute("DELETE FROM \(table)")
             }
         }
@@ -1095,7 +1124,7 @@ actor MeetingLibraryStore: @unchecked Sendable {
             try bindInt($0, held ? 1 : 0, at: 8)
         }
         if !held {
-            db.onOutboxQueued?()
+            db.notifyOutboxQueued()
         }
     }
 

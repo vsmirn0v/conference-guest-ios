@@ -144,6 +144,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var assistantBannerView: UIView?
     private var assistantBannerDismissTask: Task<Void, Never>?
     private var assistantBannerTapHandler: (() -> Void)?
+    private let assistantHUDContainer = PassThroughHUDView()
+    private var assistantHUDHost: UIHostingController<IOSAssistantVoiceHUDBanner>?
     private let reactionsButton = AlignedCallButton(frame: .zero)
     private let reactionOverlay = ReceivedReactionOverlay()
     private let meetingStatusButton = UIButton(type: .system)
@@ -688,13 +690,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let hideCompactTalkHere = focus.hidden || !geometry.compactHeader || isTalkRoom || activeMeetingsForSwitcher.count <= 1 || textCapture != nil
         compactTalkHereButton.isHidden = hideCompactTalkHere
         if !hideCompactTalkHere {
-            let talkSize = compactTalkHereButton.sizeThatFits(CGSize(width: max(0, stage.width - 16), height: 34))
+            let talkSize = compactTalkHereButton.sizeThatFits(CGSize(width: max(0, stage.width - 16), height: 44))
             let talkWidth = min(max(110, ceil(talkSize.width)), max(110, stage.width - 16))
             compactTalkHereButton.frame = CGRect(
                 x: floor(stage.midX - talkWidth / 2),
                 y: geometry.header.maxY + 8,
                 width: talkWidth,
-                height: 34
+                height: 44
             )
             view.bringSubviewToFront(compactTalkHereButton)
         }
@@ -769,6 +771,59 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             if hasDockedPanel { view.bringSubviewToFront(conversationHost) }
             header.isHidden = true; compactHeader.isHidden = true; compactTalkHereButton.isHidden = true; accessControls.isHidden = true
         }
+        layoutAssistantHUD(stage: stage, bottomClearY: min(
+            toolbar.isHidden ? view.bounds.maxY - view.safeAreaInsets.bottom : toolbar.frame.minY,
+            accessControls.isHidden ? view.bounds.maxY - view.safeAreaInsets.bottom : accessControls.frame.minY
+        ), hidden: focus.hidden || textCapture != nil)
+    }
+
+    func attachAssistantVoiceHUD(talk: IOSAssistantTalkController,
+                                 speech: IOSAssistantSpeechCoordinator,
+                                 onOpenAssistant: @escaping () -> Void) {
+        let banner = IOSAssistantVoiceHUDBanner(talk: talk, speech: speech, openAsk: onOpenAssistant)
+        if let assistantHUDHost {
+            assistantHUDHost.rootView = banner
+            view.setNeedsLayout()
+            return
+        }
+        let host = UIHostingController(rootView: banner)
+        host.view.backgroundColor = .clear
+        host.overrideUserInterfaceStyle = .dark
+        assistantHUDHost = host
+        assistantHUDContainer.backgroundColor = .clear
+        addChild(host)
+        assistantHUDContainer.addSubview(host.view)
+        if assistantHUDContainer.superview == nil {
+            view.addSubview(assistantHUDContainer)
+        }
+        host.didMove(toParent: self)
+        view.setNeedsLayout()
+    }
+
+    private func layoutAssistantHUD(stage: CGRect, bottomClearY: CGFloat, hidden: Bool) {
+        guard let host = assistantHUDHost else {
+            assistantHUDContainer.isHidden = true
+            return
+        }
+        assistantHUDContainer.isHidden = hidden
+        guard !hidden else { return }
+        let horizontalInset: CGFloat = 12
+        let availableWidth = min(500, max(0, stage.width - horizontalInset * 2))
+        guard availableWidth > 40 else {
+            assistantHUDContainer.isHidden = true
+            return
+        }
+        let fitted = host.sizeThatFits(in: CGSize(width: availableWidth, height: 160))
+        guard fitted.height > 1 else {
+            assistantHUDContainer.frame = .zero
+            host.view.frame = .zero
+            return
+        }
+        let originX = stage.midX - availableWidth / 2
+        let originY = max(view.safeAreaInsets.top + 8, bottomClearY - fitted.height - 8)
+        assistantHUDContainer.frame = CGRect(x: originX, y: originY, width: availableWidth, height: fitted.height)
+        host.view.frame = assistantHUDContainer.bounds
+        view.bringSubviewToFront(assistantHUDContainer)
     }
 
     private func updateShareSpeakerCue() {
@@ -1884,7 +1939,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     private func configureMoreMenu() {
-        reactionsButton.accessibilityValue = floatingVideo?.canShow == true ? L("Floating video available") : nil
+        reactionsButton.accessibilityValue = nil
         var cameraSound: [UIMenuElement] = []
         var sharePresenter: [UIMenuElement] = [
             UIAction(title: isSharingScreen ? L("Stop sharing") : L("Share screen"), image: UIImage(systemName: "rectangle.on.rectangle"),
@@ -2451,16 +2506,26 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleAssistantBannerTap))
         container.addGestureRecognizer(tap)
 
+        let activeHeaderMaxY: CGFloat
+        if !compactHeader.isHidden {
+            activeHeaderMaxY = compactHeader.frame.maxY
+        } else if let header = headerView, !header.isHidden {
+            activeHeaderMaxY = header.frame.maxY
+        } else {
+            activeHeaderMaxY = view.safeAreaInsets.top
+        }
+        let bannerTopOffset = max(8, activeHeaderMaxY - view.safeAreaInsets.top + 8)
+
         NSLayoutConstraint.activate([
             icon.widthAnchor.constraint(equalToConstant: 22),
             icon.heightAnchor.constraint(equalToConstant: 22),
-            closeBtn.widthAnchor.constraint(equalToConstant: 32),
-            closeBtn.heightAnchor.constraint(equalToConstant: 32),
+            closeBtn.widthAnchor.constraint(equalToConstant: 44),
+            closeBtn.heightAnchor.constraint(equalToConstant: 44),
             row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
             row.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
             row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
-            container.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 56),
+            container.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: bannerTopOffset),
             container.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
             container.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12)
         ])
@@ -2576,5 +2641,12 @@ private final class FoldAwareMeetingView: UIView {
             }
         }
         super.updateConstraints()
+    }
+}
+
+private final class PassThroughHUDView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let target = super.hitTest(point, with: event)
+        return target === self ? nil : target
     }
 }

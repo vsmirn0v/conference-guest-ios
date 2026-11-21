@@ -423,6 +423,12 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
     func clearCloudData() async throws {
         pendingSyncTask?.cancel()
         pendingSyncTask = nil
+        pendingSyncAt = nil
+        needsAnotherPass = false
+        let inFlight = activeSyncTask
+        inFlight?.cancel()
+        _ = await inFlight?.value
+        activeSyncTask = nil
         do {
             let libSession = try await libraryTransport.connect()
             try await libraryTransport.clear(session: libSession)

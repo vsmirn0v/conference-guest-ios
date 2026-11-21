@@ -102,8 +102,9 @@ enum VoiceReplySample {
             lock.lock(); defer { lock.unlock() }
             guard let first = buffers.first else { return nil }
             let total = buffers.filter { $0.format == first.format }.reduce(0) { $0 + Int($1.frameLength) }
-            guard let output = AVAudioPCMBuffer(pcmFormat: first.format, frameCapacity: AVAudioFrameCount(total)) else { return nil }
             let frameBytes = Int(first.format.streamDescription.pointee.mBytesPerFrame)
+            guard total > 0, frameBytes > 0, let frameCount = AVAudioFrameCount(exactly: total),
+                  let output = AVAudioPCMBuffer(pcmFormat: first.format, frameCapacity: frameCount) else { return nil }
             for buffer in buffers where buffer.format == first.format {
                 let source = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
                 let target = UnsafeMutableAudioBufferListPointer(output.mutableAudioBufferList)

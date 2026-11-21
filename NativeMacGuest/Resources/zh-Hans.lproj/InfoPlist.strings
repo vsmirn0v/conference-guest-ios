@@ -3,5 +3,6 @@
 "NSRemindersUsageDescription" = "将会议待办事项与你选择的 Apple 提醒事项列表同步，并将任务导入 Rock'N'Roll for Mac。";
 "NSRemindersFullAccessUsageDescription" = "将会议待办事项与你选择的 Apple 提醒事项列表同步，并将任务导入 Rock'N'Roll for Mac。";
 "NSCameraUsageDescription" = "在应用的访客预览中开启视频时共享摄像头画面。";
-"NSMicrophoneUsageDescription" = "在应用的访客预览中取消静音时共享麦克风音频。";
+"NSMicrophoneUsageDescription" = "在会议中取消静音时共享麦克风音频、使用 Rock 免提语音指令，或在此 Mac 上录制声音样本。";
 "NSSpeechRecognitionUsageDescription" = "在未安装本地转写模型时，在此 Mac 上识别对 Rock 发出的语音指令。";
+"NSPersonalVoiceUsageDescription" = "Rock'N'Roll for Mac 可以用你的“个人声音”朗读你发送到会议中的语音回复或助手回答。";

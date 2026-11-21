@@ -83,7 +83,7 @@ struct AttentionCardView: View {
                 }
             }
         }
-        .padding(12).frame(width: 380, alignment: .leading)
+        .padding(12).frame(minWidth: 320, idealWidth: 380, maxWidth: 420, alignment: .leading)
         // Shared screens can be bright white; keep the card opaque so every label stays legible.
         .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
         .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(card.verdict.level.color).frame(width: 4).padding(.vertical, 10) }
@@ -650,11 +650,25 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var voiceFailed = false
     @State private var auditionPreviewing = false
     @State private var auditionMessage: String?
+    @State private var auditionUsedFallback = false
     /// A result from an earlier preview must not overwrite a newer preparation.
     @State private var voicePreviewGeneration = UUID()
+    @ObservedObject private var speech: AssistantSpeechInputCoordinator
+    @ObservedObject private var previewPlayer = VoicePreviewPlayer.shared
     @ObservedObject private var listen = ListenModelStore.shared
     @ObservedObject private var clone = VoiceCloneStore.shared
     @StateObject private var headphones = HeadphoneOutputMonitor()
+
+    init(store: AttentionStore,
+         attention: AttentionCoordinator,
+         area: Binding<NativeDesktopAssistantSettingsArea>,
+         directNavigation: Bool = false) {
+        self.store = store
+        self.attention = attention
+        self._area = area
+        self.directNavigation = directNavigation
+        self._speech = ObservedObject(wrappedValue: attention.speech)
+    }
 
     /// Provider and model as one line; the Apple judge has no model name to show.
     private func describe(_ provider: AttentionProvider) -> String {
@@ -731,6 +745,7 @@ struct NativeDesktopIntelligenceSettings: View {
                 }
                 Spacer()
                 Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                    .flipsForRightToLeftLayoutDirection(true)
             }.contentShape(Rectangle())
         }.buttonStyle(.plain)
             .accessibilityLabel(destination.title)
@@ -990,6 +1005,17 @@ struct NativeDesktopIntelligenceSettings: View {
                                      id: "settings.wake-word", accessibilityID: "assistant.wakeWordEnabled")
                 Text(L("Always ready when you are in the app or muted in a call. Pauses automatically while your meeting microphone is unmuted or while Assistant speaks. Say “Rock, …” or “Рок, …” followed by a request."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if speech.permissionDenied {
+                    HStack(spacing: 8) {
+                        Text(L("Allow Microphone and Speech Recognition in System Settings for voice requests."))
+                            .font(.caption).foregroundStyle(.orange)
+                        Button(L("Open System Settings")) {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                }
                 NativeSettingsSwitch(title: L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk,
                                      id: "settings.push-talk", accessibilityID: "assistant.pushToTalk")
                 Text(L("Hold it in this app or while another app is in front. While it is on, ⌥Space is not typed into any app, including as a non-breaking space. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held, and listening stops within 30 seconds if the key release is missed. You can also type every command."))
@@ -1016,6 +1042,7 @@ struct NativeDesktopIntelligenceSettings: View {
                         }
                     }
                 }
+                .nativeSettingAnchor("settings.audition-voice", nativeControlFocus: true)
                 .accessibilityIdentifier("assistant.auditionVoice")
                 if case .voxPreset(let preset) = store.assistantAuditionVoice {
                     Text(preset.localizedSubtitle + " " + L("Uses on-device VoxCPM2 when downloaded, or falls back to the macOS voice."))
@@ -1024,19 +1051,31 @@ struct NativeDesktopIntelligenceSettings: View {
                     Text(L("Record your cloned voice below first, or responses will fall back to the macOS voice."))
                         .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                 }
-                HStack {
+                HStack(spacing: 8) {
                     NativeSettingsButton(title: auditionPreviewing ? L("Preparing…") : L("Preview assistant voice"), id: "settings.audition-preview") {
                         previewAuditionVoice()
                     }
                     .disabled(auditionPreviewing)
+                    if previewPlayer.isPlaying {
+                        Button(L("Stop")) {
+                            VoicePreviewPlayer.shared.stop()
+                        }
+                    }
                     if let auditionMessage {
-                        Text(auditionMessage).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        Text(auditionMessage)
+                            .font(.caption)
+                            .foregroundStyle(auditionUsedFallback ? Color.orange : .secondary)
+                            .lineLimit(2)
                     }
                 }
                 NativeSettingsSwitch(title: L("Speak voice-triggered replies aloud"), isOn: $store.autoAuditionVoiceReplies,
                                      id: "settings.auto-audition-voice", accessibilityID: "assistant.autoAuditionVoice")
                 NativeSettingsSwitch(title: L("Speak typed replies aloud"), isOn: $store.autoAuditionTypedReplies,
                                      id: "settings.auto-audition-typed", accessibilityID: "assistant.autoAuditionTyped")
+                if (store.autoAuditionVoiceReplies || store.autoAuditionTypedReplies) && !store.talkBack {
+                    Text(L("Auto-spoken replies play on your current output device unless “Speak Assistant answers in headphones” is turned on below."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Section(L("Hear answers privately")) {
                 let approval = HeadphoneApproval(store: store, output: headphones.output)
@@ -1078,6 +1117,16 @@ struct NativeDesktopIntelligenceSettings: View {
                 if store.voiceEngine == .personal {
                     Text(L("Uses the Personal Voice you created in System Settings → Accessibility. macOS asks once whether this app may use it. It speaks the language it was recorded in.")).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if #available(macOS 14.0, *), AVSpeechSynthesizer.personalVoiceAuthorizationStatus == .denied {
+                        HStack(spacing: 8) {
+                            Text(L("Personal Voice permission is denied for this app.")).font(.caption).foregroundStyle(.orange)
+                            Button(L("Open System Settings")) {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                        }
+                    }
                 }
                 if store.voiceEngine == .rapidMLX {
                     TextField(L("Voice model"), text: $store.voiceModel).nativeSettingAnchor("settings.voice-model", nativeControlFocus: true)
@@ -1189,6 +1238,11 @@ struct NativeDesktopIntelligenceSettings: View {
                     voiceMessage = nil; voiceFailed = false
                 }
             }
+            .onChange(of: store.wakeWordEnabled) { enabled in
+                if enabled {
+                    Task { _ = await attention.speech.requestAudioPermissionsIfNeeded() }
+                }
+            }
             .onDisappear {
                 voicePreviewGeneration = UUID()
             }
@@ -1258,35 +1312,53 @@ struct NativeDesktopIntelligenceSettings: View {
     private func previewAuditionVoice() {
         auditionPreviewing = true
         auditionMessage = nil
+        auditionUsedFallback = false
         let selection = store.assistantAuditionVoice
         Task { @MainActor in
             defer { auditionPreviewing = false }
             do {
                 let sample = L("Hello! This is how Assistant answers sound on this Mac.")
-                let buffer = try await VoiceSynthesis.audition(sample, selection: selection)
-                try VoicePreviewPlayer.shared.play(buffer)
-                auditionMessage = selection.localizedSummary
+                let result = try await VoiceSynthesis.auditionWithStatus(sample, selection: selection)
+                try VoicePreviewPlayer.shared.play(result.buffer)
+                auditionUsedFallback = result.usedSystemFallback
+                if result.usedSystemFallback {
+                    auditionMessage = L("Using macOS voice fallback: %@", result.failureReason ?? L("selected voice unavailable"))
+                } else {
+                    auditionMessage = selection.localizedSummary
+                }
             } catch {
+                auditionUsedFallback = true
                 auditionMessage = error.localizedDescription
             }
         }
     }
 
     private static func systemVoiceChoices() -> [AVSpeechSynthesisVoice] {
-        let preferredPrefixes = ["ru", "en"]
+        let preferred = (Bundle.main.preferredLocalizations + Locale.preferredLanguages)
+            .map { $0.replacingOccurrences(of: "_", with: "-").lowercased() }
+        func localeRank(_ language: String) -> Int {
+            let lower = language.replacingOccurrences(of: "_", with: "-").lowercased()
+            let base = lower.split(separator: "-").first.map(String.init) ?? lower
+            if let exactIndex = preferred.firstIndex(where: { $0 == lower }) { return exactIndex }
+            if let prefixIndex = preferred.firstIndex(where: { $0.split(separator: "-").first.map(String.init) == base }) {
+                return preferred.count + prefixIndex
+            }
+            return preferred.count * 2
+        }
         return AVSpeechSynthesisVoice.speechVoices()
             .filter { voice in
                 if #available(macOS 14.0, *), voice.voiceTraits.contains(.isNoveltyVoice) {
                     return false
                 }
-                return preferredPrefixes.contains(where: { voice.language.lowercased().hasPrefix($0) })
+                return true
             }
             .sorted { lhs, rhs in
+                let lhsRank = localeRank(lhs.language)
+                let rhsRank = localeRank(rhs.language)
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
                 if lhs.quality != rhs.quality { return lhs.quality.rawValue > rhs.quality.rawValue }
                 return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
-            .prefix(12)
-            .map { $0 }
     }
 }
 
@@ -1296,6 +1368,7 @@ struct AssistantVoiceHUDView: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject private var speech: AssistantSpeechInputCoordinator
     @ObservedObject private var talk: AssistantTalkController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var openAssistant: () -> Void
 
     init(attention: AttentionCoordinator, openAssistant: @escaping () -> Void) {
@@ -1306,8 +1379,10 @@ struct AssistantVoiceHUDView: View {
     }
 
     private var isVisible: Bool {
-        speech.wakeArmed
+        speech.mode == .wakeListening
+            || speech.wakeArmed
             || speech.mode == .pushToTalk
+            || speech.permissionDenied
             || talk.listening
             || talk.working
             || talk.auditioningItemID != nil
@@ -1344,6 +1419,19 @@ struct AssistantVoiceHUDView: View {
                 if talk.auditioningItemID != nil {
                     Button(L("Stop")) { talk.stopAudition() }
                         .controlSize(.small)
+                } else if speech.permissionDenied {
+                    Button(L("Open System Settings")) {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .controlSize(.small)
+                } else if speech.mode == .wakeListening && !talk.listening && !talk.working {
+                    Button(L("Pause")) {
+                        attention.store.wakeWordEnabled = false
+                        speech.refreshState()
+                    }
+                    .controlSize(.small)
                 }
                 Button(L("Assistant"), action: openAssistant)
                     .buttonStyle(.borderless)
@@ -1351,43 +1439,48 @@ struct AssistantVoiceHUDView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .frame(maxWidth: 460)
+            .frame(maxWidth: 480)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.quaternary))
             .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
             .padding(.bottom, 16)
             .padding(.horizontal, 16)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
         }
     }
 
     private var iconName: String {
+        if speech.permissionDenied { return "mic.slash.fill" }
         if talk.auditioningItemID != nil { return "speaker.wave.2.fill" }
-        if talk.listening || speech.mode == .pushToTalk || speech.wakeArmed { return "waveform.circle.fill" }
+        if talk.listening || speech.mode == .pushToTalk || speech.wakeArmed || speech.mode == .wakeListening { return "waveform.circle.fill" }
         return "sparkles"
     }
 
     private var iconTint: Color {
+        if speech.permissionDenied { return .orange }
         if talk.pending != nil || talk.agentPending != nil { return .orange }
         if talk.auditioningItemID != nil { return .accentColor }
         return .teal
     }
 
     private var headline: String {
+        if speech.permissionDenied { return L("Microphone or speech access needed") }
         if let pending = talk.agentPending { return pending.title }
         if let pending = talk.pending { return pending.title }
         if talk.auditioningItemID != nil { return L("Assistant speaking") }
         if talk.working { return L("Thinking…") }
         if talk.listening || speech.mode == .pushToTalk { return L("Listening…") }
-        if speech.wakeArmed { return L("Rock is listening…") }
+        if speech.wakeArmed || speech.mode == .wakeListening { return L("Rock is listening…") }
         return L("Assistant")
     }
 
     private var detail: String? {
+        if speech.permissionDenied { return L("Allow Microphone and Speech Recognition in System Settings.") }
         if let pending = talk.agentPending, !pending.detail.isEmpty { return pending.detail }
         if let pending = talk.pending, !pending.detail.isEmpty { return pending.detail }
         if !speech.livePartialText.isEmpty { return speech.livePartialText }
         if talk.auditioningItemID != nil { return talk.lastVoiceAnswer }
+        if speech.mode == .wakeListening { return L("Say “Rock, …” or tap Pause.") }
         return nil
     }
 }

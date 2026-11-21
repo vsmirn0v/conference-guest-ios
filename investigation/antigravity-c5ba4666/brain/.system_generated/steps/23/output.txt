@@ -1,4 +1,0 @@
-Command exited with code 0.
-
-Command output:
-NativeMacGuest/Tests/Parity/DesktopParityTests.swift:1357:    func testUndatedLiveTextReceivedWhileMutedIsCaughtUpAndListedWithReactions() async throws {

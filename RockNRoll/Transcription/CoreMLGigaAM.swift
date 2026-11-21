@@ -1,6 +1,7 @@
 import Accelerate
 import CoreML
 import Foundation
+import UIKit
 
 /// GigaAM v3 e2e RNNT as native Core ML (`smkrv/gigaam-v3-e2e-rnnt-coreml`, fp16):
 /// the encoder runs on the Neural Engine (or CPU fallback), the small prediction and joint networks in a
@@ -49,11 +50,24 @@ final class CoreMLGigaAMRecognizer: @unchecked Sendable {
     private static let sharedLock = NSLock()
     private nonisolated(unsafe) static var sharedRecognizers: [URL: CoreMLGigaAMRecognizer] = [:]
     private nonisolated(unsafe) static var sharedInflight: [URL: (id: UUID, task: Task<CoreMLGigaAMRecognizer, Error>)] = [:]
+    private nonisolated(unsafe) static var memoryWarningObserver: NSObjectProtocol?
+
+    private static func installMemoryWarningObserverLocked() {
+        guard memoryWarningObserver == nil else { return }
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: nil
+        ) { _ in
+            CoreMLGigaAMRecognizer.invalidateCache()
+        }
+    }
 
     static func shared(directory: URL) async throws -> CoreMLGigaAMRecognizer {
         let key = directory.standardizedFileURL
         let token = UUID()
         let entry: (id: UUID, task: Task<CoreMLGigaAMRecognizer, Error>) = sharedLock.withLock {
+            installMemoryWarningObserverLocked()
             if let existing = sharedRecognizers[key] {
                 return (token, Task { existing })
             }

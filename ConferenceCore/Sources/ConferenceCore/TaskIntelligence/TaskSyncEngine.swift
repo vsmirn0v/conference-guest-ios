@@ -907,13 +907,18 @@ public enum TaskSyncExecutor {
                         assignee: op.resolvedJiraAssignee
                     )
                     var issue = try await jira.createIssue(payload)
+                    var transitionError: Error?
                     if op.targetWorkflowStatus != .todo && issue.workflowStatus != op.targetWorkflowStatus {
-                        issue = try await jira.updateIssue(
-                            key: issue.key,
-                            payload: payload,
-                            targetStatus: op.targetWorkflowStatus,
-                            comment: nil
-                        )
+                        do {
+                            issue = try await jira.updateIssue(
+                                key: issue.key,
+                                payload: payload,
+                                targetStatus: op.targetWorkflowStatus,
+                                comment: nil
+                            )
+                        } catch {
+                            transitionError = error
+                        }
                     }
                     let binding = ExternalTaskBinding(
                         provider: .jira,
@@ -953,6 +958,9 @@ public enum TaskSyncExecutor {
                     ))
                     report.appliedCount += 1
                     report.createdCount += 1
+                    if let transitionError {
+                        report.failedMessages.append("\(op.title) (\(issue.key)): \(transitionError.localizedDescription)")
+                    }
                 } catch {
                     report.failedMessages.append("\(op.title): \(error.localizedDescription)")
                 }
@@ -1025,6 +1033,41 @@ public enum TaskSyncExecutor {
             case (.jira, .importToLocal), (.jira, .updateLocalFromExternal):
                 guard let issue = op.remoteIssueSnapshot else { continue }
                 let existing = op.localTaskID.flatMap { localTasksByID[$0] }
+                let done = issue.workflowStatus.isTerminalDone
+                let resolvedOwner = existing?.owner.isEmpty == false ? existing!.owner : (issue.assigneeName ?? "")
+                let resolvedDueDay = issue.dueDay ?? existing?.dueDay
+                let resolvedPriority = issue.priority ?? existing?.extended.priority
+                let resolvedParentEpic = issue.parentEpicKey ?? existing?.extended.parentEpicKey
+                let resolvedContextNotes = existing == nil ? issue.description : existing!.extended.contextNotes
+                let historyEntry = TaskMeetingContextEntry(
+                    sessionID: existing?.sessionID,
+                    meetingTitle: existing?.meetingTitle ?? "Jira (\(issue.key))",
+                    observedAt: now,
+                    previousStatus: existing?.extended.workflowStatus,
+                    updatedStatus: issue.workflowStatus,
+                    note: L("Synced from Jira %@ (%@)", issue.key, issue.statusName),
+                    source: .jiraSync
+                )
+                let initialDigest: String = existing?.syncDigest ?? WorkspaceTaskRecord(
+                    id: UUID(),
+                    sessionID: UUID(),
+                    outcomeID: UUID(),
+                    meetingTitle: "Jira (\(issue.key))",
+                    text: issue.summary,
+                    owner: resolvedOwner,
+                    dueDay: resolvedDueDay,
+                    dueAt: nil,
+                    done: done,
+                    completedAt: done ? now : nil,
+                    extended: TaskExtendedMetadata(
+                        workflowStatus: issue.workflowStatus,
+                        priority: resolvedPriority,
+                        issueKind: issue.issueKind,
+                        parentEpicKey: resolvedParentEpic,
+                        contextNotes: resolvedContextNotes,
+                        contextHistory: [historyEntry]
+                    )
+                ).syncDigest
                 let binding = ExternalTaskBinding(
                     provider: .jira,
                     externalID: issue.id,
@@ -1035,31 +1078,22 @@ public enum TaskSyncExecutor {
                     remoteAssignee: issue.assigneeName,
                     lastSyncedAt: now,
                     remoteUpdatedAt: issue.updatedAt,
-                    lastSyncedDigest: existing?.syncDigest
+                    lastSyncedDigest: initialDigest
                 )
-                let done = issue.workflowStatus.isTerminalDone
                 mutations.append(TaskSyncLocalMutation(
                     existingTaskID: existing?.id,
                     title: issue.summary,
-                    owner: existing?.owner.isEmpty == false ? existing!.owner : (issue.assigneeName ?? ""),
-                    dueDay: issue.dueDay ?? existing?.dueDay,
+                    owner: resolvedOwner,
+                    dueDay: resolvedDueDay,
                     dueAt: existing?.dueAt,
                     done: done,
                     completedAt: done ? (existing?.completedAt ?? now) : nil,
                     newStatus: issue.workflowStatus,
-                    priority: issue.priority ?? existing?.extended.priority,
+                    priority: resolvedPriority,
                     issueKind: issue.issueKind,
-                    parentEpicKey: issue.parentEpicKey ?? existing?.extended.parentEpicKey,
+                    parentEpicKey: resolvedParentEpic,
                     contextAddition: existing == nil ? issue.description : "",
-                    historyEntry: TaskMeetingContextEntry(
-                        sessionID: existing?.sessionID,
-                        meetingTitle: existing?.meetingTitle ?? "Jira (\(issue.key))",
-                        observedAt: now,
-                        previousStatus: existing?.extended.workflowStatus,
-                        updatedStatus: issue.workflowStatus,
-                        note: L("Synced from Jira %@ (%@)", issue.key, issue.statusName),
-                        source: .jiraSync
-                    ),
+                    historyEntry: historyEntry,
                     binding: binding
                 ))
                 report.appliedCount += 1

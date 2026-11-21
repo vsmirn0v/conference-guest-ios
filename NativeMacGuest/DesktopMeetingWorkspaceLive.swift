@@ -256,7 +256,7 @@ struct WorkspaceLiveMeeting: View {
                         Text(L("Conversation history")).font(.headline)
                         Text(L("Captured conversation, assistant reply evidence, and bookmarks are saved on this Mac. This conversation history does not contain audio or video recordings."))
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(L("After leaving, open Meeting workspace → Review to inspect or delete the saved conversation."))
+                        Text(L("After leaving, open the saved meeting in the sidebar to inspect or delete the saved conversation."))
                             .fixedSize(horizontal: false, vertical: true)
                     }.padding(14).frame(width: 300)
                 }
@@ -476,7 +476,10 @@ struct WorkspaceLiveMeeting: View {
     @ViewBuilder private var inspectorContent: some View {
         if let reply = events.first(where: { $0.id == selectedReplyID && $0.kind == .assistantReply }) {
             VStack(alignment: .leading, spacing: 9) {
-                Button { state.liveReplyIDs[sessionID] = nil } label: { Label(L("Working context"), systemImage: "chevron.left") }
+                Button { state.liveReplyIDs[sessionID] = nil } label: {
+                    Label(L("Working context"), systemImage: "chevron.left")
+                        .flipsForRightToLeftLayoutDirection(true)
+                }
                     .buttonStyle(.borderless)
                 WorkspaceReplyEvidence(event: reply, title: L("Why this reply"))
             }

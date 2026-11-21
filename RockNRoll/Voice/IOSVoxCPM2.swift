@@ -915,7 +915,7 @@ final class IOSVoxCPM2Store: ObservableObject {
                 }
             }
             try Task.checkCancellation()
-            try IOSListenModelStore.verifyFile(at: dest, expectedBytes: spec.byteCount, expectedSHA256: spec.sha256Hex)
+            try await IOSListenModelStore.verifyFileAsync(at: dest, expectedBytes: spec.byteCount, expectedSHA256: spec.sha256Hex)
             completedBytes += spec.byteCount
             installState = .downloading(progress: min(0.99, Double(completedBytes) / max(1, totalBytes)))
         }

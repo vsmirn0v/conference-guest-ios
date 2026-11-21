@@ -230,12 +230,20 @@ class OfflineRocknrollBackend:
         state.available = True
         modified: str | None = None
         try:
+            root_resolved = self.root.resolve()
             for path in sorted(directory.glob("*.jsonl")):
+                if path.is_symlink():
+                    continue
+                resolved_path = path.resolve()
                 try:
-                    modified = format_time(dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc))
+                    resolved_path.relative_to(root_resolved)
+                except ValueError:
+                    continue
+                try:
+                    modified = format_time(dt.datetime.fromtimestamp(resolved_path.stat().st_mtime, dt.timezone.utc))
                 except OSError:
                     modified = None
-                with path.open("r", encoding="utf-8") as handle:
+                with resolved_path.open("r", encoding="utf-8") as handle:
                     for line_number, raw_line in enumerate(handle, 1):
                         line = raw_line.rstrip("\r\n")
                         if not line:
@@ -324,7 +332,7 @@ class OfflineRocknrollBackend:
                 return note
         raise MCPError("MEETING_NOT_FOUND", "The requested meeting is unavailable.")
 
-    def source_status(self) -> dict[str, Any]:
+    def source_status(self, _args: dict[str, Any] | None = None) -> dict[str, Any]:
         snapshot = self.load_snapshot()
         categories = {
             "outcomes": any(s.available for n, s in snapshot.sources.items() if n == "assistant"),
@@ -397,7 +405,10 @@ class OfflineRocknrollBackend:
     @staticmethod
     def _record_time(record: dict[str, Any], *keys: str) -> dt.datetime | None:
         for key in keys:
-            parsed = parse_time(record.get(key), key)
+            try:
+                parsed = parse_time(record.get(key), key)
+            except MCPError:
+                parsed = None
             if parsed is not None:
                 return parsed
         return None
@@ -989,8 +1000,8 @@ def doctor(backend: OfflineRocknrollBackend) -> int:
     return 0 if not issues else 1
 
 
-def serve(stdin: Iterable[str], stdout) -> None:
-    backend = OfflineRocknrollBackend(default_data_root())
+def serve(stdin: Iterable[str], stdout, backend: OfflineRocknrollBackend | None = None) -> None:
+    backend = backend or OfflineRocknrollBackend(default_data_root())
     server = MCPServer(backend)
     for line in stdin:
         line = line.strip()
@@ -1001,7 +1012,10 @@ def serve(stdin: Iterable[str], stdout) -> None:
         except json.JSONDecodeError:
             response = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
         else:
-            response = server.handle(request)
+            if not isinstance(request, dict):
+                response = {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
+            else:
+                response = server.handle(request)
         if response is not None:
             stdout.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
             stdout.flush()
@@ -1016,7 +1030,7 @@ def main(argv: list[str] | None = None) -> int:
     backend = OfflineRocknrollBackend(root)
     if args.doctor:
         return doctor(backend)
-    serve(sys.stdin, sys.stdout)
+    serve(sys.stdin, sys.stdout, backend=backend)
     return 0
 
 

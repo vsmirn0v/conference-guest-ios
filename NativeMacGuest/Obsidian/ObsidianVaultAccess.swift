@@ -130,7 +130,8 @@ enum ObsidianVaultAccess {
         if exists {
             guard !isDirectory.boolValue else { return .failure(.notARegularFile(url.lastPathComponent)) }
             let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-            if attributes?[.type] as? FileAttributeType == .typeSymbolicLink {
+            guard attributes?[.type] as? FileAttributeType == .typeRegular,
+                  (attributes?[.referenceCount] as? Int ?? 1) == 1 else {
                 return .failure(.notARegularFile(url.lastPathComponent))
             }
         }

@@ -459,7 +459,7 @@ import LiveKitWebRTC
     private func attachSharedAudio(quiet: Bool) async throws -> MeetingAudioAttachment? {
         guard let sharedAudio else { return nil }
         guard await sharedAudio.retirePrewarmedOwnerBeforeLiveKit() else { throw NativeDesktopRockError.cleanupFailed }
-        guard let attached = try? await sharedAudio.attach(meetingID: UUID()) else { return nil }
+        let attached = try await sharedAudio.attach(meetingID: UUID())
         switch sharedAudio.installIntoLiveKit() {
         case .installed: break
         case .factoryUnavailable:
@@ -761,15 +761,20 @@ import LiveKitWebRTC
     }
     #endif
 
+    private var voicePlaybackInFlight = false
+    private var disconnectTask: Task<Bool, Never>?
+
     private func playVoiceReply(_ buffer: AVAudioPCMBuffer, monitorLocally: Bool) async -> Bool {
 #if os(macOS)
-        guard !Task.isCancelled, voicePlayback == nil, let room,
+        guard !Task.isCancelled, !voicePlaybackInFlight, voicePlayback == nil, let room,
               room.connectionState == .connected, playoutIntent, meetingVolume > 0 else { return false }
 #else
-        guard !Task.isCancelled, voicePlayback == nil, let room,
+        guard !Task.isCancelled, !voicePlaybackInFlight, voicePlayback == nil, let room,
               room.connectionState == .connected,
               ownsVoiceInput || (playoutIntent && meetingVolume > 0) else { return false }
 #endif
+        voicePlaybackInFlight = true
+        defer { voicePlaybackInFlight = false }
         let token = revision
         #if os(macOS)
         if inputPermitted && (attachment?.isTalk ?? (audioLease != nil)) && room.localParticipant.isMicrophoneEnabled() {
@@ -1048,6 +1053,16 @@ import LiveKitWebRTC
     func leave() async -> Bool { await disconnect(clearChat: true) }
 
     private func disconnect(clearChat: Bool) async -> Bool {
+        if let existing = disconnectTask { return await existing.value }
+        let task = Task { @MainActor [self] in
+            defer { disconnectTask = nil }
+            return await performDisconnect(clearChat: clearChat)
+        }
+        disconnectTask = task
+        return await task.value
+    }
+
+    private func performDisconnect(clearChat: Bool) async -> Bool {
         leaving = true
         microphoneIntent = false
         cameraIntent = false

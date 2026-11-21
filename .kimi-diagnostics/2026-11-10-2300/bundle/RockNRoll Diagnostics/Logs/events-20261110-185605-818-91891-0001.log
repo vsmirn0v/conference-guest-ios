@@ -1,4 +1,0 @@
-2026-11-10T18:56:05.825Z {"build":"1","event":"app-launch","macOS":"Версия 27.2 (Выпуск 26B123)","uptime":290350.690214,"version":"0.1"}
-2026-11-10T18:56:06.922Z {"event":"voice-reply-start","seconds":0.10000000000000001,"service":"guest","uptime":290351.78804920835,"wasLive":false}
-2026-11-10T18:56:07.170Z {"event":"voice-reply-end","played":true,"service":"guest","uptime":290352.03555395833}
-2026-11-10T18:56:07.331Z {"architecture":"h16g","event":"voice-clone-prepare-started","uptime":290352.19665162504}

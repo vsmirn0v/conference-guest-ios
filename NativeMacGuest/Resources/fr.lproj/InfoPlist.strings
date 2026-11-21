@@ -3,5 +3,6 @@
 "NSRemindersUsageDescription" = "Synchroniser les tâches des réunions avec la liste Rappels Apple choisie et importer des tâches dans Rock'N'Roll for Mac.";
 "NSRemindersFullAccessUsageDescription" = "Synchroniser les tâches des réunions avec la liste Rappels Apple choisie et importer des tâches dans Rock'N'Roll for Mac.";
 "NSCameraUsageDescription" = "Partager l’image de votre caméra lorsque vous activez la vidéo dans l’aperçu invité de l’application.";
-"NSMicrophoneUsageDescription" = "Partager le son de votre micro lorsque vous l’activez dans l’aperçu invité de l’application.";
+"NSMicrophoneUsageDescription" = "Partager votre micro lorsque vous réactivez le son en réunion, utiliser les commandes vocales mains libres pour Rock ou enregistrer un échantillon vocal sur ce Mac.";
 "NSSpeechRecognitionUsageDescription" = "Reconnaître les commandes vocales adressées à Rock sur ce Mac lorsque les modèles de transcription locaux ne sont pas installés.";
+"NSPersonalVoiceUsageDescription" = "Rock'N'Roll for Mac peut utiliser votre voix personnelle pour prononcer les réponses vocales que vous envoyez dans les réunions ou prévisualiser l’assistant.";

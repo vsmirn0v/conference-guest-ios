@@ -3,6 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-xahoApBTXnqY6kyhSrzE2mXtwF34SXjpeK1/hv9qy7U='; style-src 'unsafe-inline';">
 <title>Open a jam</title>
 <main>
   <h1>Open a jam</h1>
@@ -26,7 +27,11 @@
       const passwords = invite.searchParams.getAll('psw');
       const isGuestInvitation = segments.length === 2 && segments[0] === 'calls' &&
           segments[1] && passwords.length === 1 && passwords[0];
-      if (invite.protocol !== 'https:' || !invite.hostname ||
+      const host = invite.hostname.toLowerCase();
+      const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+      const isIPv6 = host.includes(':');
+      const isLocal = host === 'localhost' || host.endsWith('.local') || host.endsWith('.localhost') || isIPv4 || isIPv6;
+      if (invite.protocol !== 'https:' || !host || isLocal ||
           invite.username || invite.password || !(isRockJam || isGuestInvitation)) {
         throw new Error('Enter a supported HTTPS jam invitation.');
       }

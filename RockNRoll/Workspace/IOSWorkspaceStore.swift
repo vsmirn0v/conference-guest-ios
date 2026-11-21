@@ -691,8 +691,10 @@ actor IOSWorkspaceStore {
 
     func deleteTask(_ taskID: UUID) throws {
         try prepare()
-        try run("DELETE FROM tasks WHERE task_id=?") { bindText($0, taskID.uuidString, at: 1) }
-        try run("DELETE FROM task_archive WHERE task_id=?") { bindText($0, taskID.uuidString, at: 1) }
+        try transaction {
+            try run("DELETE FROM tasks WHERE task_id=?") { bindText($0, taskID.uuidString, at: 1) }
+            try run("DELETE FROM task_archive WHERE task_id=?") { bindText($0, taskID.uuidString, at: 1) }
+        }
     }
 
     func applyRemoteOutcomeAndTasks(
@@ -929,19 +931,23 @@ actor IOSWorkspaceStore {
         try prepare()
         let needle = text.trimmingCharacters(in: .whitespacesAndNewlines).workspaceFolded
         guard !needle.isEmpty else { return [] }
-        let pattern = "%" + needle + "%"
+        let escapedNeedle = needle
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        let pattern = "%" + escapedNeedle + "%"
         let sql = """
             SELECT s.session_id, s.title, s.started_at,
                    COALESCE(NULLIF(o.summary,''), COALESCE(n.markdown,'')) AS snippet
             FROM sessions s
             LEFT JOIN outcomes o ON o.session_id = s.session_id
             LEFT JOIN notes n ON n.session_id = s.session_id
-            WHERE s.title_folded LIKE ?
-               OR COALESCE(n.markdown_folded,'') LIKE ?
-               OR COALESCE(o.summary_folded,'') LIKE ?
+            WHERE s.title_folded LIKE ? ESCAPE '\\'
+               OR COALESCE(n.markdown_folded,'') LIKE ? ESCAPE '\\'
+               OR COALESCE(o.summary_folded,'') LIKE ? ESCAPE '\\'
                OR EXISTS (
                    SELECT 1 FROM tasks t
-                   WHERE t.session_id = s.session_id AND t.text_folded LIKE ?
+                   WHERE t.session_id = s.session_id AND t.text_folded LIKE ? ESCAPE '\\'
                )
             ORDER BY s.started_at DESC
             LIMIT ?

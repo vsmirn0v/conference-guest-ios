@@ -10,8 +10,9 @@ import re
 import secrets
 import sqlite3
 import sys
+import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -22,11 +23,12 @@ LIMIT = 50000
 MAX_PERIOD = 32 * 86400
 CODE_LIFETIME = 30 * 60
 REVIEW_PERIOD = 7 * 86400
+IP_PENDING_LIMIT = 20
 VERIFY_KEY = Ed25519PublicKey.from_public_bytes(base64.b64decode('SyVA6vPGDZnu7wKtv9iqQM9Cj+zWxg2BdhkUXSH+og0='))
 DB = '/var/lib/rock-author-support/claims.sqlite3'
 
 def connect(path):
-    db = sqlite3.connect(path, timeout=5, isolation_level=None)
+    db = sqlite3.connect(path, timeout=5, isolation_level=None, check_same_thread=False)
     db.execute('PRAGMA journal_mode=WAL')
     db.execute('PRAGMA max_page_count=8192')
     db.execute('CREATE TABLE IF NOT EXISTS claims (device TEXT NOT NULL, nonce TEXT NOT NULL, code_hash TEXT NOT NULL UNIQUE, expires INTEGER NOT NULL, envelope TEXT, PRIMARY KEY(device,nonce))')
@@ -38,7 +40,7 @@ def new_code():
     s = ''.join(secrets.choice(ALPHABET) for _ in range(10))
     return s[:5] + '-' + s[5:]
 
-def register(db, device, nonce, now):
+def register(db, device, nonce, now, client_ip=None):
     if not valid_pair(device, nonce): raise ValueError('invalid request')
     db.execute('BEGIN IMMEDIATE')
     try:
@@ -51,10 +53,21 @@ def register(db, device, nonce, now):
         db.execute('DELETE FROM claims WHERE COALESCE(review_until,expires)<=? AND envelope IS NULL', (now,))
         db.execute('DELETE FROM claim_codes WHERE expires<=?', (now,))
         if db.execute('SELECT count(*) FROM claims').fetchone()[0] >= LIMIT: raise OverflowError('capacity')
+        if client_ip is not None and 'client_ip' in {r[1] for r in db.execute('PRAGMA table_info(claims)')}:
+            active_for_ip = db.execute(
+                'SELECT count(*) FROM claims WHERE client_ip=? AND envelope IS NULL AND COALESCE(review_until,expires)>?',
+                (client_ip, now)
+            ).fetchone()[0]
+            if active_for_ip >= IP_PENDING_LIMIT:
+                raise OverflowError('capacity')
         for _ in range(8):
             code = new_code(); expiry = now + CODE_LIFETIME
             try:
-                db.execute('INSERT INTO claims(device,nonce,code_hash,expires) VALUES(?,?,?,?)',(device,nonce,codehash(code),expiry))
+                has_ip = 'client_ip' in {r[1] for r in db.execute('PRAGMA table_info(claims)')}
+                if has_ip:
+                    db.execute('INSERT INTO claims(device,nonce,code_hash,expires,client_ip) VALUES(?,?,?,?,?)',(device,nonce,codehash(code),expiry,client_ip))
+                else:
+                    db.execute('INSERT INTO claims(device,nonce,code_hash,expires) VALUES(?,?,?,?)',(device,nonce,codehash(code),expiry))
                 db.execute('INSERT INTO claim_codes VALUES(?,?,?,?)',(device,nonce,code,expiry))
                 break
             except sqlite3.IntegrityError: continue
@@ -71,6 +84,8 @@ def init(db):
         columns = {row[1] for row in db.execute('PRAGMA table_info(claims)')}
         if 'review_until' not in columns:
             db.execute('ALTER TABLE claims ADD COLUMN review_until INTEGER')
+        if 'client_ip' not in columns:
+            db.execute('ALTER TABLE claims ADD COLUMN client_ip TEXT')
         db.execute('CREATE TABLE IF NOT EXISTS claim_codes (device TEXT NOT NULL, nonce TEXT NOT NULL, code TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(device,nonce))')
         db.commit()
     except Exception:
@@ -139,28 +154,47 @@ class Handler(BaseHTTPRequestHandler):
     def reply(self,status,obj):
         data=json.dumps(obj,separators=(',',':')).encode(); self.send_response(status)
         self.send_header('Content-Type','application/json'); self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
+    def _lock(self):
+        lock = getattr(self.server, 'lock', None)
+        if lock is None:
+            lock = threading.Lock()
+            self.server.lock = lock
+        return lock
+
     def do_POST(self):
-        operations = {'/author-support/claims': register, '/author-support/claims/sent': mark_sent}
+        operations = {
+            '/author-support/claims': lambda db, d, n, ts, ip: register(db, d, n, ts, client_ip=ip),
+            '/author-support/claims/sent': lambda db, d, n, ts, _ip: mark_sent(db, d, n, ts),
+        }
         if self.path not in operations: return self.reply(404,{'error':'not found'})
         ip=self.headers.get('X-Real-IP','')
         if len(ip)>64 or not ip: return self.reply(400,{'error':'bad request'})
-        now=time.time(); rates=self.server.rates
-        while rates and rates[0][0] <= now-60: rates.popleft()
-        if len(rates)>=100 or sum(x[1]==ip for x in rates)>=10: return self.reply(429,{'error':'rate limited'})
-        rates.append((now,ip))
+        now=time.time()
+        with self._lock():
+            rates=self.server.rates
+            while rates and rates[0][0] <= now-60: rates.popleft()
+            if len(rates)>=100 or sum(x[1]==ip for x in rates)>=10: return self.reply(429,{'error':'rate limited'})
+            rates.append((now,ip))
         try:
             if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type','').split(';')[0].strip()!='application/json': raise ValueError()
             length=int(self.headers.get('Content-Length','0'))
             if not 1<=length<=1024: raise ValueError()
             data=json.loads(self.rfile.read(length))
             if not isinstance(data,dict) or set(data)!={'device','nonce'}: raise ValueError()
-            result=operations[self.path](self.server.db,data['device'],data['nonce'],int(now)); return self.reply(200,result)
+            with self._lock():
+                result=operations[self.path](self.server.db,data['device'],data['nonce'],int(now),ip)
+            return self.reply(200,result)
         except OverflowError: return self.reply(503,{'error':'capacity'})
+        except sqlite3.Error: return self.reply(503,{'error':'unavailable'})
         except (ValueError,TypeError,KeyError,json.JSONDecodeError): return self.reply(400,{'error':'bad request'})
     def do_GET(self):
         parts=self.path.split('/')
         if len(parts)!=5 or parts[1:3]!=['author-support','receipts'] or not valid_pair(parts[3],parts[4]): return self.reply(404,{'error':'not found'})
-        row=self.server.db.execute('SELECT envelope FROM claims WHERE device=? AND nonce=?',(parts[3],parts[4])).fetchone()
+        try:
+            with self._lock():
+                row=self.server.db.execute('SELECT envelope FROM claims WHERE device=? AND nonce=?',(parts[3],parts[4])).fetchone()
+        except sqlite3.Error:
+            return self.reply(503,{'error':'unavailable'})
         if not row or row[0] is None: return self.reply(404,{'error':'not found'})
         return self.reply(200,json.loads(row[0]))
 
@@ -168,7 +202,7 @@ def main():
     p=argparse.ArgumentParser(); p.add_argument('--db',default=DB); p.add_argument('command',choices=['serve','lookup','consume','lookup-update','update']); a=p.parse_args()
     db=connect(a.db); init(db)
     if a.command=='serve':
-        server=HTTPServer(('127.0.0.1',18792),Handler); server.db=db; server.rates=collections.deque(); server.serve_forever()
+        server=ThreadingHTTPServer(('127.0.0.1',18792),Handler); server.db=db; server.rates=collections.deque(); server.lock=threading.Lock(); server.serve_forever()
     else:
         data=json.load(sys.stdin); now=int(time.time())
         if a.command in ('lookup','lookup-update'): print(json.dumps(lookup(db,data['code'],now,a.command=='lookup-update')))

@@ -33,7 +33,9 @@ import SwiftUI
         })
         if let panel, let visible = NSScreen.main?.visibleFrame {
             let height = min(CGFloat(rows.count) * 140 + 20, max(180, visible.height - 48))
-            panel.setFrame(NSRect(x: visible.maxX - 404, y: visible.maxY - height - 24, width: 380, height: height), display: true)
+            let isRTL = NSApp.userInterfaceLayoutDirection == .rightToLeft
+            let originX = isRTL ? visible.minX + 24 : visible.maxX - 404
+            panel.setFrame(NSRect(x: originX, y: visible.maxY - height - 24, width: 380, height: height), display: true)
             panel.orderFrontRegardless()
             mounted = Set(rows.map { $0.0.id })
         }

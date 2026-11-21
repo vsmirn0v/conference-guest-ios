@@ -35,7 +35,10 @@ enum NativeSettingsResultPresentation {
         for id in ["settings.writer", "settings.writer-model", "settings.writer-key"] { result[id] = "Choose the AI that writes replies and meeting outcomes." }
         for id in ["settings.drafts", "settings.reply-style", "settings.local-drafts"] { result[id] = "Choose how Assistant prepares suggested replies." }
         for id in ["settings.agent", "settings.agent-mcp", "settings.meeting-sends"] { result[id] = "Choose tools and confirmation for Assistant actions." }
-        for id in ["settings.push-talk"] { result[id] = "Talk to Assistant using a keyboard shortcut." }
+        for id in ["settings.wake-word", "settings.push-talk"] { result[id] = "Talk to Assistant hands-free or using a keyboard shortcut." }
+        for id in ["settings.audition-voice", "settings.audition-preview", "settings.auto-audition-voice", "settings.auto-audition-typed"] {
+            result[id] = "Choose the local voice and automatic playback behavior for Assistant replies."
+        }
         for id in ["settings.talk-back", "settings.headphone-approval"] { result[id] = "Hear Assistant answers privately in headphones." }
         for id in ["settings.voice-engine", "settings.voice-model", "settings.voice-description", "settings.voice-address", "settings.voice-preview"] { result[id] = "Choose and preview the voice used for spoken replies." }
         for id in ["settings.saved-voice", "settings.voice-preparation", "settings.voice-download", "settings.voice-delete", "settings.voice-gpu", "settings.voice-gpu-remove"] { result[id] = "Manage your saved voice and its on-device model." }
@@ -122,7 +125,11 @@ enum NativeSettingsResultPresentation {
         case "settings.agent": return store.map { toggle($0.agentAssistantEnabled) }
         case "settings.agent-mcp": return store.map { toggle($0.agentExternalToolsEnabled) }
         case "settings.meeting-sends": return store.map { L($0.agentMeetingSendDefault == .askEveryTime ? "Ask every time" : "Send immediately") }
+        case "settings.wake-word": return store.map { toggle($0.wakeWordEnabled) }
         case "settings.push-talk": return store.map { toggle($0.pushToTalk) }
+        case "settings.audition-voice": return store?.assistantAuditionVoice.localizedSummary
+        case "settings.auto-audition-voice": return store.map { toggle($0.autoAuditionVoiceReplies) }
+        case "settings.auto-audition-typed": return store.map { toggle($0.autoAuditionTypedReplies) }
         case "settings.talk-back": return store.map { toggle($0.talkBack) }
         case "settings.provider": return store?.provider.title
         // hasKey is an in-memory set maintained by AttentionStore; it does not

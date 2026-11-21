@@ -140,7 +140,21 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         conference?.continuation.setForeground(false)
         conference?.backgroundedWithoutFloatingVideo()
         if let workspace = conference?.workspace {
-            Task { await workspace.flushNotesNow() }
+            var taskID: UIBackgroundTaskIdentifier = .invalid
+            taskID = UIApplication.shared.beginBackgroundTask(withName: "Flush notes and replica") {
+                if taskID != .invalid {
+                    UIApplication.shared.endBackgroundTask(taskID)
+                    taskID = .invalid
+                }
+            }
+            Task {
+                await workspace.flushNotesNow()
+                try? await workspace.persistReplicaCheckpoint()
+                if taskID != .invalid {
+                    UIApplication.shared.endBackgroundTask(taskID)
+                    taskID = .invalid
+                }
+            }
         }
     }
 

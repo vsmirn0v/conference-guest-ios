@@ -32,7 +32,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>146</string>
+	<string>147</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>JoinLinkHost</key>
@@ -41,7 +41,7 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
@@ -61,7 +61,7 @@
 	<key>NSCameraUseExternalDeviceType</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Use your microphone to speak in jams and test your sound privately before unmuting.</string>
+	<string>Use your microphone to speak in meetings, use hands-free Rock voice commands, record a local voice sample, and test your sound privately before unmuting.</string>
 	<key>NSPersonalVoiceUsageDescription</key>
 	<string>Rock'n'Roll can use your Personal Voice to speak voice replies you send into meetings.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -94,8 +94,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
-		<string>voip</string>
-		<string>screen-capture</string>
 		<string>remote-notification</string>
 	</array>
 	<key>UILaunchScreen</key>

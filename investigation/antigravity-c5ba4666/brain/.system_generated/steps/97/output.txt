@@ -1,4 +1,0 @@
-Command exited with code 0.
-
-Command output:
-RockNRoll/RockCallViewController.swift:284:        // Media, transcript and controls use a common visible-window geometry.

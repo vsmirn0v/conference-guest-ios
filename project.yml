@@ -66,8 +66,10 @@ targets:
       configs:
         Debug:
           CLOUDKIT_ENVIRONMENT: Development
+          APS_ENVIRONMENT: development
         Release:
           CLOUDKIT_ENVIRONMENT: Production
+          APS_ENVIRONMENT: production
           DEAD_CODE_STRIPPING: YES
           DEPLOYMENT_POSTPROCESSING: YES
           STRIP_INSTALLED_PRODUCT: YES
@@ -130,7 +132,6 @@ targets:
     platform: iOS
     sources:
       - path: RockNRollTests
-      - path: Experiments/VP9Hardware/FixtureSupport.swift
     dependencies:
       - target: RockNRoll
       - package: ConferenceCore

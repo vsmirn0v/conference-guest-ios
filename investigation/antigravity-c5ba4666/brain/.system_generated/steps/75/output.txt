@@ -1,4 +1,0 @@
-Command exited with code 0.
-
-Command output:
-RockNRoll/MeetingReactionsModel.swift:6:    var emoji: String {

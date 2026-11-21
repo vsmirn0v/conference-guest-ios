@@ -29,17 +29,19 @@ public final class NativeDesktopRelayCapture: NSObject, GuestCameraCapture, LKRT
         }
         return try await withTaskCancellationHandler(operation: {
             do {
-                try locked {
+                let seedFrame: LKRTCVideoFrame? = try locked {
                     guard active else { throw CancellationError() }
-                    track.add(self)
-                    if let seed = initialFrame, latest == nil {
+                    let seed = initialFrame
+                    initialFrame = nil
+                    if seed != nil, latest == nil {
                         latest = seed
-                        initialFrame = nil
-                        if !queued {
-                            queued = true
-                            queue.async { [weak self] in self?.forward() }
-                        }
+                        if !queued { queued = true }
                     }
+                    return seed
+                }
+                track.add(self)
+                if seedFrame != nil {
+                    queue.async { [weak self] in self?.forward() }
                 }
                 try Task.checkCancellation()
                 return try await withCheckedThrowingContinuation { done.install($0, timeout: 10) }
@@ -56,19 +58,22 @@ public final class NativeDesktopRelayCapture: NSObject, GuestCameraCapture, LKRT
         if enqueue { queue.async { [weak self] in self?.forward() } }
     }
     private func forward() {
-        let result: (GuestCompletion<GuestCameraInfo>?, GuestCameraInfo)? = locked {
+        let work: (frame: LKRTCVideoFrame, completion: GuestCompletion<GuestCameraInfo>?, width: Int, height: Int)? = locked {
             queued = false
             guard active, let frame = latest else { return nil }; latest = nil
             let rotated = frame.rotation == ._90 || frame.rotation == ._270
             width = Int(rotated ? frame.height : frame.width); height = Int(rotated ? frame.width : frame.height)
-            source.adaptOutputFormat(toWidth: Int32(width), height: Int32(height), fps: 30)
-            source.capturer(capturer, didCapture: frame); count += 1
-            return (completion, GuestCameraInfo(deviceName: "Presenter canvas", width: Int32(width), height: Int32(height), fps: 30,
-                requestedWidth: Int32(width), requestedHeight: Int32(height), requestedFPS: 30,
-                sessionPreset: "Private canvas relay", minimumFrameDuration: CMTime(value: 1, timescale: 30),
-                maximumFrameDuration: CMTime(value: 1, timescale: 30), pixelFormat: kCVPixelFormatType_32BGRA, mirrored: false, rotationDegrees: 0))
+            count += 1
+            return (frame, completion, width, height)
         }
-        if let (completion, info) = result { completion?.finish(.success(info)) }
+        guard let work else { return }
+        source.adaptOutputFormat(toWidth: Int32(work.width), height: Int32(work.height), fps: 30)
+        source.capturer(capturer, didCapture: work.frame)
+        let info = GuestCameraInfo(deviceName: "Presenter canvas", width: Int32(work.width), height: Int32(work.height), fps: 30,
+            requestedWidth: Int32(work.width), requestedHeight: Int32(work.height), requestedFPS: 30,
+            sessionPreset: "Private canvas relay", minimumFrameDuration: CMTime(value: 1, timescale: 30),
+            maximumFrameDuration: CMTime(value: 1, timescale: 30), pixelFormat: kCVPixelFormatType_32BGRA, mirrored: false, rotationDegrees: 0)
+        work.completion?.finish(.success(info))
     }
     public func cancel() {
         let done = locked { active = false; stopped = true; initialFrame = nil; latest = nil; return completion }

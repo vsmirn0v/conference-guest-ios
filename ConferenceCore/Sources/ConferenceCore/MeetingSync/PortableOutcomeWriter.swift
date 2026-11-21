@@ -89,8 +89,10 @@ public struct PortableOutcomeConfiguration: Codable, Equatable, Sendable {
             : providerKind.defaultBaseURL
         guard var url = URL(string: candidate),
               let scheme = url.scheme?.lowercased(),
-              ["https", "http"].contains(scheme),
-              url.host != nil else { return nil }
+              let host = url.host?.lowercased(),
+              !host.isEmpty else { return nil }
+        let isLoopback = ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
+        guard scheme == "https" || (scheme == "http" && (!providerKind.needsKey || isLoopback)) else { return nil }
         if url.absoluteString.hasSuffix("/") {
             url = URL(string: String(url.absoluteString.dropLast())) ?? url
         }

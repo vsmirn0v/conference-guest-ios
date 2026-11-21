@@ -378,27 +378,27 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
         attachment.disableSenders(); attachment.silenceReceived()
         return await work.run { [self] in
             guard attachments[attachment.meetingID] === attachment else { return true }
-            var success = true
+            var hardwareStopFailed = false
             let lastAttachment = attachments.count == 1
             if talkMeetingID == attachment.meetingID {
-                success = await releaseTalkLocked(keepForegroundWarm: lastAttachment && shouldPrepareForegroundInput) && success
+                let released = await releaseTalkLocked(keepForegroundWarm: lastAttachment && shouldPrepareForegroundInput)
+                if !released { hardwareStopFailed = true }
             }
             attachments[attachment.meetingID] = nil; order.removeAll { $0 == attachment.meetingID }
             attachment.markDetached()
             if attachments.isEmpty, shouldPrepareForegroundInput, let module {
-                success = await applyOutputLocked() && success
+                _ = await applyOutputLocked()
                 let prepared = await module.prepareIdleInput(timeout: timeouts.activation)
                 foregroundPrepared = prepared
                 moduleMuted = true
                 if prepared { rebuilding = false }
-                success = prepared && success
             } else if attachments.isEmpty {
-                success = await retireIdleLocked() && success
+                if await !retireIdleLocked() { hardwareStopFailed = true }
             } else {
-                success = await applyOutputLocked() && success
+                _ = await applyOutputLocked()
             }
-            if !success { quarantine() }
-            return success
+            if hardwareStopFailed { quarantine() }
+            return !hardwareStopFailed
         }
     }
 
@@ -534,6 +534,7 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
         sleepObservers = [
             center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor [weak self] in
+                    self?.muteConfirmed = false
                     _ = self?.engineChanged(.stopped)
                     _ = self?.engineChanged(.started)
                 }
@@ -705,8 +706,11 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
         for other in attachments.values where other !== attachment { other.disableSenders() }
         guard attachments.values.allSatisfy({ $0 === attachment || !$0.anySenderEnabled }) else { return false }
         guard await module.activateMicrophone(timeout: timeouts.activation) else { return false }
-        // Still the talk meeting at the same epoch after the (possibly slow) activation.
-        guard talkMeetingID == attachment.meetingID, epoch == talkEpoch else { return false }
+        // Still the attached talk meeting at the same epoch and not rebuilding after activation.
+        guard talkMeetingID == attachment.meetingID,
+              epoch == talkEpoch,
+              attachments[attachment.meetingID] === attachment,
+              !rebuilding else { return false }
         attachment.enableSenders()
         muteConfirmed = false
         guard await module.setMicrophoneMuted(false, timeout: timeouts.mute) else {
@@ -775,10 +779,11 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
             return outputApplied && success
         }
         foregroundPrepared = false
-        let stopped = await module.shutdown(timeout: timeouts.shutdown)
         self.module = nil
+        module.onSpontaneousEngineChange = nil
         playoutOn = false; transcriptionOutputOn = false; outputNeedsRetry = false
         moduleMuted = true; muteConfirmed = false; privateCheckActive = false
+        let stopped = await module.shutdown(timeout: timeouts.shutdown)
         if stopped { rebuilding = false } else { quarantine() }
         return stopped
     }

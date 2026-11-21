@@ -1,9 +1,0 @@
-Exact production actor; model and memory tracker replaced by deterministic stubs.
-cold first request: cloneModelMissing
-  engine=loaded generation=1 idleTimer=false
-second request: success, 2 samples
-  engine=loaded generation=1 idleTimer=true
-first request after unload: cloneModelMissing
-  engine=loaded generation=3 idleTimer=false
-request after explicit preparation: success, 2 samples
-  engine=loaded generation=1 idleTimer=true

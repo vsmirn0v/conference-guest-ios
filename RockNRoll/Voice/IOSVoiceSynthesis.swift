@@ -137,11 +137,7 @@ enum VoiceReplySample {
         defer { timer.cancel() }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                guard !Task.isCancelled else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                once.continuation = continuation
+                guard once.install(continuation) else { return }
                 start { once.resume($0) }
             }
         } onCancel: {
@@ -153,16 +149,34 @@ enum VoiceReplySample {
 
     private final class Once: @unchecked Sendable {
         private let lock = NSLock()
-        var continuation: CheckedContinuation<AVAudioPCMBuffer?, Never>?
+        private var continuation: CheckedContinuation<AVAudioPCMBuffer?, Never>?
+        private var finished = false
+
+        func install(_ continuation: CheckedContinuation<AVAudioPCMBuffer?, Never>) -> Bool {
+            lock.lock()
+            if finished {
+                lock.unlock()
+                continuation.resume(returning: nil)
+                return false
+            }
+            self.continuation = continuation
+            lock.unlock()
+            return true
+        }
 
         @discardableResult
         func resume(_ value: AVAudioPCMBuffer?) -> Bool {
             lock.lock()
+            if finished {
+                lock.unlock()
+                return false
+            }
+            finished = true
             let pending = continuation
             continuation = nil
             lock.unlock()
             pending?.resume(returning: value)
-            return pending != nil
+            return true
         }
     }
 
@@ -189,10 +203,11 @@ enum VoiceReplySample {
             defer { lock.unlock() }
             guard let first = buffers.first else { return nil }
             let total = buffers.filter { $0.format == first.format }.reduce(0) { $0 + Int($1.frameLength) }
-            guard let output = AVAudioPCMBuffer(pcmFormat: first.format, frameCapacity: AVAudioFrameCount(total)) else {
+            let frameBytes = Int(first.format.streamDescription.pointee.mBytesPerFrame)
+            guard total > 0, frameBytes > 0, let frameCount = AVAudioFrameCount(exactly: total),
+                  let output = AVAudioPCMBuffer(pcmFormat: first.format, frameCapacity: frameCount) else {
                 return nil
             }
-            let frameBytes = Int(first.format.streamDescription.pointee.mBytesPerFrame)
             for buffer in buffers where buffer.format == first.format {
                 let source = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
                 let target = UnsafeMutableAudioBufferListPointer(output.mutableAudioBufferList)
@@ -315,10 +330,13 @@ enum IOSVoiceSynthesis {
         do {
             try data.write(to: url, options: .atomic)
             let file = try AVAudioFile(forReading: url)
+            let maxFrames: Int64 = 48_000 * 600
             guard file.length > 0,
+                  file.length <= maxFrames,
+                  let frameCount = AVAudioFrameCount(exactly: file.length),
                   let buffer = AVAudioPCMBuffer(
                       pcmFormat: file.processingFormat,
-                      frameCapacity: AVAudioFrameCount(file.length)
+                      frameCapacity: frameCount
                   ) else {
                 throw IOSVoiceSynthesisError.audio
             }
@@ -341,6 +359,7 @@ final class IOSVoicePreviewPlayer: ObservableObject {
     private var player: AVAudioPlayerNode?
     private var generation = UUID()
     private var completionHandler: (() -> Void)?
+    private var activatedPlaybackSession = false
 
     func play(_ buffer: AVAudioPCMBuffer, onComplete: (() -> Void)? = nil) throws {
         stop()
@@ -348,10 +367,12 @@ final class IOSVoicePreviewPlayer: ObservableObject {
         generation = token
         completionHandler = onComplete
         let session = AVAudioSession.sharedInstance()
-        let inCall = session.mode == .voiceChat || session.mode == .videoChat
+        let inCall = session.mode == .voiceChat || session.mode == .videoChat ||
+            (IOSWorkspaceAudioCoordinator.sharedForVoiceCheck?.activeSessionCount ?? 0) > 0
         if !inCall {
             try? session.setCategory(.playback, mode: .spokenAudio)
             try? session.setActive(true)
+            activatedPlaybackSession = true
         }
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
@@ -377,6 +398,10 @@ final class IOSVoicePreviewPlayer: ObservableObject {
         player = nil
         engine = nil
         isPlaying = false
+        if activatedPlaybackSession {
+            activatedPlaybackSession = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         let completion = completionHandler
         completionHandler = nil
         completion?()
@@ -517,7 +542,14 @@ final class IOSVoiceStore: ObservableObject {
     }
 
     static func availableSystemVoices() -> [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices()
+        var preferredLanguages: [String] = []
+        for lang in Bundle.main.preferredLocalizations + Locale.preferredLanguages {
+            let prefix = String(lang.split(separator: "-").first ?? Substring(lang)).lowercased()
+            if !prefix.isEmpty && !preferredLanguages.contains(prefix) {
+                preferredLanguages.append(prefix)
+            }
+        }
+        return AVSpeechSynthesisVoice.speechVoices()
             .filter { voice in
                 if #available(iOS 17.0, *) {
                     return !voice.voiceTraits.contains(.isPersonalVoice)
@@ -525,8 +557,12 @@ final class IOSVoiceStore: ObservableObject {
                 return true
             }
             .sorted { a, b in
+                let aRank = preferredLanguages.firstIndex(where: { a.language.lowercased().hasPrefix($0) }) ?? Int.max
+                let bRank = preferredLanguages.firstIndex(where: { b.language.lowercased().hasPrefix($0) }) ?? Int.max
+                if aRank != bRank { return aRank < bRank }
+                if a.quality != b.quality { return a.quality.rawValue > b.quality.rawValue }
                 if a.language != b.language { return a.language < b.language }
-                return a.name < b.name
+                return a.name.localizedStandardCompare(b.name) == .orderedAscending
             }
     }
 }

@@ -16,13 +16,14 @@ extension MeetingAudioSource {
         }, detach: { sink in
             guard let renderer = sink.adapterRenderer as? LiveKitAudioSink else { return }
             track.remove(audioRenderer: renderer)
+            sink.adapterRenderer = nil
         })
     }
 }
 
 /// LiveKit's renderer protocol has its own Objective-C selector; this forwards to the sink.
 private final class LiveKitAudioSink: NSObject, AudioRenderer, @unchecked Sendable {
-    let sink: MeetingAudioSink
+    weak var sink: MeetingAudioSink?
     init(_ sink: MeetingAudioSink) { self.sink = sink }
-    func render(pcmBuffer: AVAudioPCMBuffer) { sink.render(pcmBuffer: pcmBuffer) }
+    func render(pcmBuffer: AVAudioPCMBuffer) { sink?.render(pcmBuffer: pcmBuffer) }
 }

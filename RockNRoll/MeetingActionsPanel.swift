@@ -281,6 +281,7 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
                 .accessibilityIdentifier("reactions.compact-content"))
         }
         #endif
+        overrideUserInterfaceStyle = .dark
         preferredContentSize = CGSize(width: 420, height: 480)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

@@ -390,9 +390,11 @@ import XCTest
 
 #if NATIVE_DIRECT_UPDATES
     func testPublishedInventoryNamesTheNewestBuildForTheChannel() {
-        let data = Data(#"{"schemaVersion":1,"stable":{"build":"53","downloadURL":"https://example.test/53.dmg"},"beta":{"build":"55","downloadURL":"https://example.test/55.dmg"}}"#.utf8)
+        let data = Data(#"{"schemaVersion":1,"stable":{"build":"53","downloadURL":"https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-53-arm64.dmg"},"beta":{"build":"55","downloadURL":"https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-55-arm64.dmg"}}"#.utf8)
         XCTAssertEqual(NativeDesktopUpdates.latestBuild(in: data, beta: true)?.build, 55)
         XCTAssertEqual(NativeDesktopUpdates.latestBuild(in: data, beta: false)?.build, 53)
+        let untrusted = Data(#"{"schemaVersion":1,"stable":{"build":"53","downloadURL":"https://example.test/53.dmg"},"beta":{"build":"55","downloadURL":"https://example.test/55.dmg"}}"#.utf8)
+        XCTAssertNil(NativeDesktopUpdates.latestBuild(in: untrusted, beta: true))
         XCTAssertNil(NativeDesktopUpdates.latestBuild(in: Data("{}".utf8), beta: true))
     }
 #endif

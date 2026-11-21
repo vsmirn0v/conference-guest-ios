@@ -122,6 +122,7 @@ enum MeetingNoteSaveStatus: Equatable {
 
     func deleteSession(_ id: UUID) async {
         try? await store.deleteSession(id)
+        workspaceJournal.removeSessionData(sessionID: id)
         noteStatus[id] = nil
         await refresh()
     }
@@ -167,11 +168,10 @@ enum MeetingNoteSaveStatus: Equatable {
     func setOutcomeState(_ outcomeID: UUID, state: MeetingOutcomePersistenceState,
                          generationOwner: String? = nil, errorCode: String? = nil) {
         Task { [store] in
-            guard var outcome = try? await store.outcome(outcomeID) else { return }
+            guard let outcome = try? await store.outcome(outcomeID) else { return }
             do {
                 _ = try await store.saveOutcome(outcome, state: state, generationOwner: generationOwner, errorCode: errorCode)
-                outcome = outcome
-            } catch { }
+            } catch { persistenceError = error.localizedDescription }
             await refresh()
         }
     }
@@ -194,6 +194,7 @@ enum MeetingNoteSaveStatus: Equatable {
     func deleteAll() async {
         do {
             try await store.deleteAll()
+            workspaceJournal.deleteAll()
             noteStatus.removeAll()
             await refresh()
         } catch { persistenceError = error.localizedDescription }
