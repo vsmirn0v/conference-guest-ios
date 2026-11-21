@@ -33,18 +33,28 @@ public struct TrueConfRoster {
         guard let id = body["UserName"] as? String, let status = body["DeviceStatus"] as? Int else { return }
         participants[id]?.devices = status
     }
+    public mutating func updateVideoSource(_ body: [String: Any]) {
+        guard let id = (body["UserName"] as? String) ?? (body["trueconfId"] as? String)
+            ?? (body["PeerId"] as? String) ?? (body["id"] as? String),
+              let type = (body["Type"] as? Int) ?? (body["type"] as? Int) ?? (body["videoType"] as? Int) else { return }
+        participants[id]?.videoType = type
+    }
     public static func regions(_ body: [String: Any]) throws -> [String: CGRect] {
         if let list = body["list"] as? [Any], list.isEmpty { return [:] }
         guard let width = (body["width"] as? NSNumber)?.doubleValue, let height = (body["height"] as? NSNumber)?.doubleValue,
-              width.isFinite, height.isFinite, width >= 2, height >= 2, width <= 4096, height <= 4096,
+              width.isFinite, height.isFinite, width >= 2, height >= 2, width <= 8192, height <= 8192,
               let list = body["list"] as? [[String: Any]], list.count <= 1000 else { throw TrueConfError.invalidResponse }
         var result: [String: CGRect] = [:]
         for slot in list {
             guard let id = slot["id"] as? String, let numbers = slot["rect"] as? [NSNumber], numbers.count == 4 else { throw TrueConfError.invalidResponse }
             let rect = numbers.map(\.doubleValue)
-            guard
-                  rect.allSatisfy(\.isFinite), rect[0] >= 0, rect[1] >= 0, rect[2] - rect[0] >= 2, rect[3] - rect[1] >= 2,
+            guard rect.allSatisfy(\.isFinite), rect[0] >= 0, rect[1] >= 0,
+                  rect[2] >= rect[0], rect[3] >= rect[1],
                   rect[2] <= width + 1, rect[3] <= height + 1 else { throw TrueConfError.invalidResponse }
+            if rect[2] - rect[0] < 2 || rect[3] - rect[1] < 2 {
+                if rect == [0, 0, 0, 0] { continue }
+                throw TrueConfError.invalidResponse
+            }
             result[id] = CGRect(x: rect[0] / width, y: rect[1] / height, width: (min(rect[2], width) - rect[0]) / width,
                                 height: (min(rect[3], height) - rect[1]) / height)
         }

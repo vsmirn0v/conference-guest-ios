@@ -96,7 +96,8 @@ extension TrueConfTransport: TrueConfSignalingTransport {}
 
     private var roster = TrueConfRoster()
     private var regions: [String: CGRect] = [:]
-    private var tracks: [String: LKRTCVideoTrack] = [:]
+    var tracks: [String: LKRTCVideoTrack] = [:]
+    private var layoutRefreshRequested = false
     private var cid = ""
     private var streamID = ""
     var localID = ""
@@ -645,7 +646,13 @@ extension TrueConfTransport: TrueConfSignalingTransport {}
             guard body["result"] as? Bool == true else { throw TrueConfError.rejected }
             mediaAccepted = true; markConnected()
         case "webrtc":
-            guard let type = body["type"] as? String, let publisher else { return }
+            guard let type = body["type"] as? String else { return }
+            if type == "layout" {
+                layoutRefreshRequested = false
+                regions = try TrueConfRoster.regions(body); refresh()
+                return
+            }
+            guard let publisher else { return }
             switch type {
             case "offer":
                 if let superseded = pendingAnswer {
@@ -665,14 +672,17 @@ extension TrueConfTransport: TrueConfSignalingTransport {}
             case "candidate":
                 var candidate = body; candidate["sdpMlineIndex"] = body["sdpMLineIndex"]
                 try await publisher.addCandidate(candidate)
-            case "layout":
-                regions = try TrueConfRoster.regions(body); refresh()
             default: break
             }
         case "SendPartsList":
+            layoutRefreshRequested = false
             try roster.apply(body); refresh()
         case "DeviceStatus":
+            layoutRefreshRequested = false
             roster.updateDevices(body); refresh()
+        case "VideoSourceType":
+            layoutRefreshRequested = false
+            roster.updateVideoSource(body); refresh()
         case "setDeviceState":
             if body["Mute"] as? Bool == true {
                 if body["Type"] as? String == "microphone" { try await setMicrophone(false) }
@@ -891,15 +901,77 @@ extension TrueConfTransport: TrueConfSignalingTransport {}
         }
     }
 
+    private func regionCrop(for participantID: String, contentOnly: Bool = false) -> CGRect? {
+        let suffixes = ["#content", "#screen", "#presentation", "/content", "/screen", "_content", "_screen"]
+        if contentOnly {
+            for suffix in suffixes {
+                if let crop = regions[participantID + suffix] { return crop }
+            }
+            return nil
+        }
+        if let crop = regions[participantID] { return crop }
+        for suffix in suffixes {
+            if let crop = regions[participantID + suffix] { return crop }
+        }
+        return regions.first { key, _ in
+            key.hasPrefix(participantID + "#") || key.hasPrefix(participantID + "/") || key.hasPrefix(participantID + ":")
+        }?.value
+    }
+
     private func refresh() {
         var people: [NativeDesktopParticipant] = [], video: [NativeDesktopExternalVideo] = []
-        let track = tracks.sorted(by: { $0.key < $1.key }).first?.value
-        for person in roster.participants.values where person.id != localID {
+        let sortedTracks = tracks.sorted(by: { $0.key < $1.key }).map(\.value)
+        let primaryTrack = sortedTracks.first
+        let contentTrack = sortedTracks.count > 1 ? sortedTracks.last : nil
+        let remoteParticipants = roster.participants.values.filter { $0.id != localID }
+        let activeVideoSenders = remoteParticipants.filter { person in
+            person.cameraOn || person.screenShareOn || (person.videoType == 2 && (regionCrop(for: person.id) != nil || contentTrack != nil))
+        }
+        var needsLayoutRefresh = false
+        for person in remoteParticipants {
+            let contentCrop = regionCrop(for: person.id, contentOnly: true)
+            let cameraCrop = regions[person.id]
+            let fallbackCrop = contentCrop ?? regionCrop(for: person.id)
+            let isSharing = person.screenShareOn || (person.videoType == 2 && (fallbackCrop != nil || contentTrack != nil))
+            let isCamera = person.cameraOn
             people.append(.init(id: person.id, name: person.name, microphoneOn: person.microphoneOn,
-                cameraOn: person.cameraOn, sharing: person.screenShareOn, speaking: nil))
-            if let track, let crop = regions[person.id], person.cameraOn || person.screenShareOn {
-                let source: NativeDesktopVideoSource = person.screenShareOn ? .screen : .camera
-                video.append(.init(id: person.id + "." + source.rawValue, participantID: person.id, source: source, track: track, crop: crop))
+                cameraOn: isCamera, sharing: isSharing, speaking: nil))
+            if isSharing {
+                if let contentTrack, contentCrop == nil {
+                    video.append(.init(id: person.id + ".screen", participantID: person.id, source: .screen, track: contentTrack, crop: nil))
+                    if let primaryTrack, let cameraCrop {
+                        video.append(.init(id: person.id + ".camera", participantID: person.id, source: .camera, track: primaryTrack, crop: cameraCrop))
+                    }
+                } else if let primaryTrack {
+                    if let crop = contentCrop ?? fallbackCrop {
+                        video.append(.init(id: person.id + ".screen", participantID: person.id, source: .screen, track: primaryTrack, crop: crop))
+                    } else if regions.isEmpty && activeVideoSenders.count == 1 {
+                        video.append(.init(id: person.id + ".screen", participantID: person.id, source: .screen, track: primaryTrack, crop: nil))
+                        needsLayoutRefresh = true
+                    } else {
+                        needsLayoutRefresh = true
+                    }
+                    if contentCrop != nil, let cameraCrop {
+                        video.append(.init(id: person.id + ".camera", participantID: person.id, source: .camera, track: primaryTrack, crop: cameraCrop))
+                    }
+                }
+            } else if isCamera, let primaryTrack {
+                if let crop = fallbackCrop {
+                    video.append(.init(id: person.id + ".camera", participantID: person.id, source: .camera, track: primaryTrack, crop: crop))
+                } else if regions.isEmpty && activeVideoSenders.count == 1 {
+                    video.append(.init(id: person.id + ".camera", participantID: person.id, source: .camera, track: primaryTrack, crop: nil))
+                    needsLayoutRefresh = true
+                } else {
+                    needsLayoutRefresh = true
+                }
+            }
+        }
+        if needsLayoutRefresh, ready, !layoutRefreshRequested, let transport {
+            layoutRefreshRequested = true
+            let attempt = supervisor.generation
+            Task { @MainActor [weak self] in
+                guard let self, self.supervisor.generation == attempt else { return }
+                try? await transport.send(["method": "ManageLayout", "func": "Get"])
             }
         }
         people.sort { $0.id < $1.id }
@@ -966,7 +1038,7 @@ extension TrueConfTransport: TrueConfSignalingTransport {}
             let retiringRoom = roomID.isEmpty ? nil : roomID
             publisher = nil; transport = nil; http = nil
             tx?.setMicrophone(false)
-            roster = TrueConfRoster(); regions = [:]; tracks = [:]
+            roster = TrueConfRoster(); regions = [:]; tracks = [:]; layoutRefreshRequested = false
             cid = ""; streamID = ""; localID = ""; roomID = ""
             incomingVideo = []; onVideo?([]); onLocalCamera?(nil)
             sharedMeeting?.retireTracks()

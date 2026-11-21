@@ -2,6 +2,7 @@ import ConferenceCore
 import CryptoKit
 import LiveKitWebRTC
 import XCTest
+@testable import MeetingEngine
 @testable import RockNRoll
 
 @MainActor
@@ -88,5 +89,79 @@ final class TrueConfTests: XCTestCase {
         CVPixelBufferLockBaseAddress(output, .readOnly); defer { CVPixelBufferUnlockBaseAddress(output, .readOnly) }
         XCTAssertEqual(CVPixelBufferGetBaseAddressOfPlane(output, 0)!.assumingMemoryBound(to: UInt8.self).pointee, 52)
         XCTAssertNil(NativeVideoPixelBuffer().convert(frame, region: CGRect(x: 1, y: 0, width: 1, height: 1)))
+    }
+    func testRegionsSkipsZeroAreaHiddenSlotAndUpdatesVideoSource() throws {
+        var roster = TrueConfRoster()
+        try roster.apply(["type": 1, "list": [["trueconfId": "alice", "displayname": "Alice", "videoType": 0, "DeviceStatus": 0]]])
+        XCTAssertEqual(roster.participants["alice"]?.cameraOn, true)
+        roster.updateVideoSource(["UserName": "alice", "Type": 2])
+        XCTAssertEqual(roster.participants["alice"]?.screenShareOn, true)
+        XCTAssertEqual(roster.participants["alice"]?.cameraOn, false)
+
+        let regions = try TrueConfRoster.regions([
+            "width": 1920,
+            "height": 1080,
+            "list": [
+                ["id": "hidden", "rect": [0, 0, 0, 0]],
+                ["id": "alice", "rect": [0, 0, 1920, 1080]]
+            ]
+        ])
+        XCTAssertNil(regions["hidden"])
+        XCTAssertEqual(regions["alice"], CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    func testAdapterReceivesScreenShareAcrossLayoutModesAndDedicatedTrack() async throws {
+        let factory = LKRTCPeerConnectionFactory()
+        let primaryTrack = factory.videoTrack(with: factory.videoSource(), trackId: "tc-primary")
+        let contentTrack = factory.videoTrack(with: factory.videoSource(), trackId: "tc-content")
+
+        let adapter = TrueConfAdapter()
+        adapter.snapshot.phase = .connected
+        adapter.localID = "self"
+        adapter.transport = TrueConfTransport(server: URL(string: "wss://example.invalid")!, session: URLSession(configuration: .ephemeral))
+        let attempt = adapter.supervisor.generation
+        adapter.tracks["0"] = primaryTrack
+
+        // 1. Sole screen sharer with empty layout falls back to full-frame primary track.
+        try await adapter.receiveTrueConf(["method": "SendPartsList", "type": 1, "list": [
+            ["trueconfId": "alice", "displayname": "Alice", "DeviceStatus": 0, "videoType": 2]
+        ]], attempt: attempt)
+        XCTAssertEqual(adapter.incomingVideo.map(\.id), ["alice.screen"])
+        XCTAssertEqual(adapter.incomingVideo.first?.source, .screen)
+        XCTAssertNil(adapter.incomingVideo.first?.crop)
+        XCTAssertTrue(adapter.incomingVideo.first?.track.isEqual(primaryTrack) == true)
+
+        // 2. Screen sharer with camera-muted DeviceStatus (4 << 16) still emits screen when layout has their region.
+        try await adapter.receiveTrueConf(["method": "SendPartsList", "type": 4, "list": [
+            ["trueconfId": "alice", "displayname": "Alice", "DeviceStatus": 262148, "videoType": 2]
+        ]], attempt: attempt)
+        try await adapter.receiveTrueConf(["method": "webrtc", "type": "layout", "width": 1920, "height": 1080, "list": [
+            ["id": "alice", "rect": [0, 0, 1920, 1080]]
+        ]], attempt: attempt)
+        XCTAssertEqual(adapter.snapshot.participants.first { $0.id == "alice" }?.sharing, true)
+        XCTAssertEqual(adapter.incomingVideo.map(\.id), ["alice.screen"])
+        XCTAssertEqual(adapter.incomingVideo.first?.crop, CGRect(x: 0, y: 0, width: 1, height: 1))
+
+        // 3. Layout with both camera region and #content region emits both camera and screen.
+        try await adapter.receiveTrueConf(["method": "webrtc", "type": "layout", "width": 1920, "height": 1080, "list": [
+            ["id": "alice", "rect": [0, 0, 960, 1080]],
+            ["id": "alice#content", "rect": [960, 0, 1920, 1080]]
+        ]], attempt: attempt)
+        XCTAssertEqual(adapter.incomingVideo.map(\.id), ["alice.camera", "alice.screen"])
+        XCTAssertEqual(adapter.incomingVideo.first { $0.source == .camera }?.crop, CGRect(x: 0, y: 0, width: 0.5, height: 1))
+        XCTAssertEqual(adapter.incomingVideo.first { $0.source == .screen }?.crop, CGRect(x: 0.5, y: 0, width: 0.5, height: 1))
+
+        // 4. Dedicated second video track for screen share without #content layout crop.
+        adapter.tracks["1"] = contentTrack
+        try await adapter.receiveTrueConf(["method": "webrtc", "type": "layout", "width": 1920, "height": 1080, "list": [
+            ["id": "alice", "rect": [0, 0, 1920, 1080]]
+        ]], attempt: attempt)
+        let screen = try XCTUnwrap(adapter.incomingVideo.first { $0.source == .screen })
+        XCTAssertTrue(screen.track.isEqual(contentTrack))
+        XCTAssertNil(screen.crop)
+
+        // 5. VideoSourceType switches back to camera when DeviceStatus clears video mute.
+        try await adapter.receiveTrueConf(["method": "DeviceStatus", "UserName": "alice", "DeviceStatus": 0], attempt: attempt)
+        try await adapter.receiveTrueConf(["method": "VideoSourceType", "UserName": "alice", "Type": 0], attempt: attempt)
+        XCTAssertEqual(adapter.incomingVideo.map(\.id), ["alice.camera"])
     }
 }
