@@ -1344,9 +1344,6 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         _ report: MeetingWorkspaceSyncDocument.LibraryMergeOutcome,
         preMergeLocalNoteMarkdown: [UUID: String] = [:]
     ) async throws {
-        remoteApplyDepth += 1
-        defer { remoteApplyDepth -= 1 }
-
         let store = meetingLibrary.store
         for sessionID in report.changedSessions {
             let canonical = replica.workspaceDoc.resolveCanonicalSessionID(for: sessionID)
