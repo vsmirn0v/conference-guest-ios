@@ -1,0 +1,53 @@
+Command exited with code 0.
+
+Command output:
+RockNRoll/ConversationPanelViewController.swift-23-    private let reactionHistoryInfo = UIButton(type: .system)
+RockNRoll/ConversationPanelViewController.swift-24-    private let activityTools = UIStackView()
+RockNRoll/ConversationPanelViewController.swift-25-    private let reactionsButton = UIButton(type: .system)
+RockNRoll/ConversationPanelViewController.swift-26-    private var reactionToolsPresented = false
+RockNRoll/ConversationPanelViewController.swift-27-    private var activityFilter: ConversationActivityFilter
+RockNRoll/ConversationPanelViewController.swift:28:    private var reactionViews: [String: ReactionHistoryRowView] = [:]
+RockNRoll/ConversationPanelViewController.swift-29-    private var renderedReactionIDs = [String]()
+RockNRoll/ConversationPanelViewController.swift-30-    private var renderingMessages = false
+RockNRoll/ConversationPanelViewController.swift-31-    private var panelVisible = false
+RockNRoll/ConversationPanelViewController.swift-32-    private var contentVisible = false
+RockNRoll/ConversationPanelViewController.swift-33-    private var applicationActive = UIApplication.shared.applicationState == .active
+--
+RockNRoll/ConversationPanelViewController.swift-768-        if activityFilter != .messages && chat.reactionHistoryAvailable {
+RockNRoll/ConversationPanelViewController.swift-769-            let groups = chat.reactionHistory.projection(chatBoundaries: items.map(\.sentAt))
+RockNRoll/ConversationPanelViewController.swift-770-            let groupIDs = Set(groups.map(\.id))
+RockNRoll/ConversationPanelViewController.swift-771-            reactionViews = reactionViews.filter { groupIDs.contains($0.key) }
+RockNRoll/ConversationPanelViewController.swift-772-            for group in groups {
+RockNRoll/ConversationPanelViewController.swift:773:                let row: ReactionHistoryRowView
+RockNRoll/ConversationPanelViewController.swift-774-                if let cached = reactionViews[group.id] { row = cached; if !cached.matchesContent(group) { cached.update(group) } }
+RockNRoll/ConversationPanelViewController.swift-775-                else {
+RockNRoll/ConversationPanelViewController.swift:776:                    row = ReactionHistoryRowView(group: group)
+RockNRoll/ConversationPanelViewController.swift-777-                    row.onExpansionChanged = { [weak self] in self?.messageList.layoutIfNeeded(); self?.markVisibleReactions() }
+RockNRoll/ConversationPanelViewController.swift-778-                    reactionViews[group.id] = row
+RockNRoll/ConversationPanelViewController.swift-779-                }
+RockNRoll/ConversationPanelViewController.swift-780-                timeline.append((group.start, "r:" + group.id, row))
+RockNRoll/ConversationPanelViewController.swift-781-            }
+--
+RockNRoll/ConversationPanelViewController.swift-819-            viewIfLoaded?.window != nil && !reactionToolsPresented && presentedViewController == nil
+RockNRoll/ConversationPanelViewController.swift-820-        let nearBottom = messageList.contentSize.height - messageList.contentOffset.y - messageList.bounds.height < 60
+RockNRoll/ConversationPanelViewController.swift-821-        chat.reactionHistory.isReadingLatest = reading && nearBottom
+RockNRoll/ConversationPanelViewController.swift-822-        guard reading, !renderingMessages else { return }
+RockNRoll/ConversationPanelViewController.swift-823-        let ids = messageRows.arrangedSubviews.flatMap { row -> [String] in
+RockNRoll/ConversationPanelViewController.swift:824:            (row as? ReactionHistoryRowView)?.visibleEventIDs(in: messageList) ?? []
+RockNRoll/ConversationPanelViewController.swift-825-        }
+RockNRoll/ConversationPanelViewController.swift-826-        chat.reactionHistory.markSeen(ids: ids)
+RockNRoll/ConversationPanelViewController.swift-827-    }
+RockNRoll/ConversationPanelViewController.swift-828-
+RockNRoll/ConversationPanelViewController.swift-829-    private func messageRow(_ entry: ChatEntry) -> UIView {
+--
+RockNRoll/ReactionHistoryRowView.swift-1-import ConferenceCore
+RockNRoll/ReactionHistoryRowView.swift-2-import UIKit
+RockNRoll/ReactionHistoryRowView.swift-3-
+RockNRoll/ReactionHistoryRowView.swift-4-/// A compact activity row; reactions never impersonate chat messages.
+RockNRoll/ReactionHistoryRowView.swift-5-@MainActor
+RockNRoll/ReactionHistoryRowView.swift:6:final class ReactionHistoryRowView: UIStackView {
+RockNRoll/ReactionHistoryRowView.swift-7-    private(set) var group: ReactionHistoryGroup
+RockNRoll/ReactionHistoryRowView.swift-8-    var onExpansionChanged: (() -> Void)?
+RockNRoll/ReactionHistoryRowView.swift-9-    private let title = UILabel()
+RockNRoll/ReactionHistoryRowView.swift-10-    private let caption = UILabel()
+RockNRoll/ReactionHistoryRowView.swift-11-    private let details = UIStackView()

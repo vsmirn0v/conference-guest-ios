@@ -39,11 +39,15 @@ enum MarkdownStructureScanner {
 
         // Frontmatter is recognized only at the very start of the file.
         var hasFrontmatter = false
+        var frontmatterEndLine: Int?
         if lines.first?.text == "---", lines.count > 1 {
             let close = lines.indices.first { index in
                 index > 0 && (lines[index].text == "---" || lines[index].text == "...")
             }
-            if let close, close > 1 { hasFrontmatter = true }
+            if let close, close > 1 {
+                hasFrontmatter = true
+                frontmatterEndLine = close
+            }
         }
 
         // Fenced code: toggle on ```/~~~ fences (at least three, allowing the rest of the line).
@@ -52,13 +56,14 @@ enum MarkdownStructureScanner {
         var fenceCharacter: Character?
         var fenceLength = 0
         for (index, line) in lines.enumerated() {
+            if let frontmatterEndLine, index <= frontmatterEndLine { continue }
             let trimmed = line.text.trimmingCharacters(in: .whitespaces)
             let first = trimmed.first
             let isFenceCharacter = first == "`" || first == "~"
             let run = isFenceCharacter ? trimmed.prefix(while: { $0 == first }).count : 0
             let isFence = run >= 3
             if fenceStart == nil {
-                if isFence, hasFrontmatter ? index > 0 : true {
+                if isFence {
                     fenceCharacter = first
                     fenceLength = run
                     fenceStart = index

@@ -1,0 +1,6 @@
+Command exited with code 0.
+
+Command output:
+NativeMacGuest/DesktopMeetingModel.swift:253:    func catchUpReactions(_ interval: MissedInterval, now: Date = Date()) -> [MeetingReactionEvent] {
+NativeMacGuest/DesktopMeetingView.swift:826:                                    let reactions = model.catchUpReactions(interval)
+NativeMacGuest/Tests/Parity/DesktopParityTests.swift:1373:        XCTAssertEqual(model.catchUpReactions(try XCTUnwrap(model.catchUpInterval(offer))).count, 1)

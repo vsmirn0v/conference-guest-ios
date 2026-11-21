@@ -1,0 +1,29 @@
+Command exited with code 0.
+
+Command output:
+exit 0
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testLiveTracksActAsSenders]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testLiveTracksActAsSenders]' passed (0.002 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testMovingTheTalkRoleMutesFirstAndRefusesAStaleUnmute]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testMovingTheTalkRoleMutesFirstAndRefusesAStaleUnmute]' passed (0.001 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testMutedMeansSilentPerMeeting]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testMutedMeansSilentPerMeeting]' passed (0.001 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testOnlyTheTalkMeetingCanBeHeardWithTwoAndFourMeetings]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testOnlyTheTalkMeetingCanBeHeardWithTwoAndFourMeetings]' passed (0.002 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testOnlyTheTalkMeetingReceivesYourMicrophoneAndPlaysReplies]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testOnlyTheTalkMeetingReceivesYourMicrophoneAndPlaysReplies]' passed (0.104 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testPrivateCheckOnlyWhileNoSenderIsEnabled]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testPrivateCheckOnlyWhileNoSenderIsEnabled]' passed (0.002 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testRebuildSilencesEveryoneThenRestoresOnlyTheTalkMeetingsUnmute]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testRebuildSilencesEveryoneThenRestoresOnlyTheTalkMeetingsUnmute]' passed (0.009 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testRebuildWhileConfirmedMutedSkipsTheNativeMute]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testRebuildWhileConfirmedMutedSkipsTheNativeMute]' passed (0.002 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testReleasingTheTalkRoleReleasesTheDeviceUnlessKeptWarm]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testReleasingTheTalkRoleReleasesTheDeviceUnlessKeptWarm]' passed (0.001 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testSoundAndVolumesArePerMeetingOnOneOutput]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testSoundAndVolumesArePerMeetingOnOneOutput]' passed (0.002 seconds).
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testTheLastMeetingOutShutsTheModuleDownAndTheNextStartsAFreshOne]' started.
+Test Case '-[NativeDesktopTests.SharedAudioEngineTests testTheLastMeetingOutShutsTheModuleDownAndTheNextStartsAFreshOne]' passed (0.001 seconds).
+	 Executed 17 tests, with 0 failures (0 unexpected) in 0.563 (0.568) seconds
+	 Executed 17 tests, with 0 failures (0 unexpected) in 0.563 (0.569) seconds
+	 Executed 17 tests, with 0 failures (0 unexpected) in 0.563 (0.570) seconds

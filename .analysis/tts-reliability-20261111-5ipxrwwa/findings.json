@@ -1,0 +1,75 @@
+{
+  "scope": "Read-only investigation of native Mac cloned speech; no production source, installed app, cache, model or settings changed.",
+  "archive": "/Users/v.smirnov/Downloads/RockNRoll Diagnostics 2026-11-11 22.31.zip",
+  "archive_sha256": "8da03c40f31a7d3203bb7886fb7cf5dd885315c39ab90ba421b378b2c476a34b",
+  "source_head": "440a7e6797da967a0b3c4a00efbb1b797359365a",
+  "installed_build": "94",
+  "release_record_source_commit": "40ab113e71e53806875c3720c0e759b132d64bb1",
+  "source_matches_release": true,
+  "source_sha256": {
+    "NativeMacGuest/Attention/VoiceClone.swift": "020d7c7c3bf6e6d28eb1694dd99db1ccce33c05fd2eac8a89286f384f97edb1c",
+    "NativeMacGuest/Attention/VoxCPM2/VoxCoreAI.swift": "54b278aa252dbf0c44a8ad61503d9a76645af6ddcc812c5638d1742c2c6dfbca",
+    "NativeMacGuest/Attention/VoxCPM2/VoxCPM2.swift": "7aa55ac983f18053bc44bff58d6f4e1370c411fdd88fb29347bd4c67ec3afa49",
+    "NativeMacGuest/Attention/VoiceSynthesis.swift": "3723d99b8f497d05394b1f02be9d78e0778335787d12d33666bd9e81c6510bba",
+    "NativeMacGuest/Attention/AttentionViews.swift": "8bacdb121cabce48f2124b40da7e7b3069f50c9382d65e6cf7251bcd502fc13b"
+  },
+  "confirmed": [
+    {
+      "finding": "All four Core AI entries present, base lazy function load fails; rebuild lasts 3145.286 seconds then fails.",
+      "evidence": "archive-events.json; coreai-system.log",
+      "time_moscow": "2026-11-11 13:00:37 through 13:53:07"
+    },
+    {
+      "finding": "ANE reports cachedModelFilePath does not exist, AppleNeuralEngine code 16; MPSGraph specialized modules fail to materialize and delegate compilation fails.",
+      "evidence": "failure-detail-system.log"
+    },
+    {
+      "finding": "Explicit app-group cache with purgeConditions rawValue 2 is active, but ANE reports updateCachedModelLocationForModelTrackedByHash toAppGroup errors. This does not establish why the lower-level file vanished.",
+      "evidence": "coreai-system.log"
+    },
+    {
+      "finding": "Later build 94 launches miss base-0 cache. Current launch reports prepared after 137 seconds at 22:32:19 Moscow; no inference or audible success asserted.",
+      "evidence": "archive-events.json; coreai-system.log"
+    },
+    {
+      "finding": "Cold speech rejects successful internal load because generate captures generation before loaded increments it. Reproduced first request and after unload; second request and explicit preload work.",
+      "evidence": "LifecycleProbe.swift; lifecycle-results.txt",
+      "source": "NativeMacGuest/Attention/VoiceClone.swift:324,370"
+    },
+    {
+      "finding": "Prepared receipt uses app build plus OS string; prepare only constructs model, without synthesis smoke test.",
+      "source": "NativeMacGuest/Attention/VoiceClone.swift:98,152,181; NativeMacGuest/Attention/VoxCPM2/VoxCPM2.swift:208"
+    },
+    {
+      "finding": "Preview timeout ends caller wait after 30 seconds while synthesis continues; late result is discarded. Preparation itself has no deadline.",
+      "source": "NativeMacGuest/Attention/AttentionViews.swift:909; NativeMacGuest/Attention/VoiceSynthesis.swift:63"
+    },
+    {
+      "finding": "All CoreAIDelegates.AIModelError failures trigger cache repair; repair deletes entry before rebuilding. Retry budget is not durable across launches.",
+      "source": "NativeMacGuest/Attention/VoxCPM2/VoxCoreAI.swift:18,68,145,172"
+    },
+    {
+      "finding": "Memory contention label describes unmeasurable overlapping loads, not a resource admission gate.",
+      "source": "NativeMacGuest/Attention/LocalModelMemory.swift:77,99"
+    }
+  ],
+  "limits": [
+    "No end-to-end synthesis or audio playback test performed.",
+    "No real model compilation initiated by this investigation.",
+    "Direct private container file reads were denied by macOS; no access setting changed.",
+    "Why the lower-level ANE cache file disappeared remains unproven."
+  ],
+  "design": [
+    "One coordinator with typed, persisted preparation and health state; fingerprint model digest, model-runtime ABI, OS build, architecture and options instead of app build.",
+    "Dedicated supervised speech worker; separate caller deadline from worker lifecycle, reject stale results, bound queues and coordinate ownership across restarts.",
+    "Prepare all assets and validate real function execution and short finite non-silent PCM before persisting validated readiness; validate supported function/capacity paths in qualification.",
+    "Persist failed/interrupted attempt and bounded retry budget; retry transient loads before considering exact-entry invalidation. Preserve healthy assets and source weights.",
+    "Show actual stage, elapsed time, actionable failure and retry; offer explicitly selected system voice if clone unavailable.",
+    "Benchmark a pinned native Swift/MLX VoxCPM2 worker as an alternative to the ANE specialization dependency, with real 16 GB Mac meeting-load and voice-compatibility acceptance."
+  ],
+  "sources": [
+    "https://developer.apple.com/documentation/coreai/managing-model-specialization-and-caching",
+    "https://github.com/Neywa-Labs/mlx-audio-swift/releases",
+    "https://huggingface.co/wegotomars/VoxCPM2-LUT8-CoreAI-ANE"
+  ]
+}

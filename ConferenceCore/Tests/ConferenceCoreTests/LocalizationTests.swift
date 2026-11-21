@@ -11,6 +11,15 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(russian.localizedString(forKey: "This message is too long to send. Shorten it and try again.", value: nil, table: nil),
                        "Сообщение слишком длинное. Сократите его и попробуйте ещё раз.")
     }
+
+    func testFormattingLocalePreservesLanguageAndRegionAndCachesResult() {
+        let region = Locale(identifier: "en_GB")
+        let first = Localization.formattingLocale(language: "ru", region: region)
+        let second = Localization.formattingLocale(language: "ru", region: region)
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.language.languageCode?.identifier, "ru")
+        XCTAssertEqual(first.region?.identifier, "GB")
+    }
 }
 
 extension LocalizationTests {

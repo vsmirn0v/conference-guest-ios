@@ -29,6 +29,7 @@ private enum MeetingSQLiteError: LocalizedError {
 final class MeetingSQLiteConnection: @unchecked Sendable {
     private let path: URL
     private var database: OpaquePointer?
+    var onOutboxQueued: (@Sendable () -> Void)?
 
     init(path: URL) throws {
         self.path = path
@@ -183,9 +184,27 @@ extension MeetingSQLiteRow {
 private final class MeetingSQLiteConnectionBox: @unchecked Sendable {
     private let lock = NSLock()
     private var connection: MeetingSQLiteConnection?
+    private var outboxWakeHandler: (@Sendable () -> Void)?
 
     func install(_ connection: MeetingSQLiteConnection) {
-        lock.lock(); self.connection = connection; lock.unlock()
+        lock.lock()
+        connection.onOutboxQueued = outboxWakeHandler
+        self.connection = connection
+        lock.unlock()
+    }
+
+    func setOutboxWakeHandler(_ handler: (@Sendable () -> Void)?) {
+        lock.lock()
+        outboxWakeHandler = handler
+        connection?.onOutboxQueued = handler
+        lock.unlock()
+    }
+
+    func notifyOutboxQueued() {
+        lock.lock()
+        let handler = outboxWakeHandler
+        lock.unlock()
+        handler?()
     }
 
     func current() -> MeetingSQLiteConnection? {
@@ -1074,6 +1093,9 @@ actor MeetingLibraryStore: @unchecked Sendable {
             try bindText($0, intent.rawValue, at: 6)
             try bindBlob($0, JSONEncoder.attention.encode(snapshot), at: 7)
             try bindInt($0, held ? 1 : 0, at: 8)
+        }
+        if !held {
+            db.onOutboxQueued?()
         }
     }
 
@@ -2116,11 +2138,44 @@ extension MeetingLibraryStore {
     /// The library root: <root>/MeetingLibrary. Used for export backups beside the database.
     nonisolated var storeRoot: URL { root }
 
+    /// Registers a wakeup callback invoked whenever new non-held work enters `export_outbox`.
+    nonisolated func setOutboxWakeHandler(_ handler: (@Sendable () -> Void)?) {
+        connectionBox.setOutboxWakeHandler(handler)
+    }
+
+    /// Persists a refreshed security-scoped vault bookmark without bumping `config_revision`
+    /// or resetting existing bindings when macOS reports a stale-but-accessible bookmark.
+    func refreshDestinationVaultBookmark(id: UUID, expectedConfigRevision: Int, bookmark: Data) throws {
+        let db = try db()
+        try db.run("""
+            UPDATE export_destinations SET vault_bookmark=?, updated_at=?
+            WHERE destination_id=? AND config_revision=?
+            """) {
+            try Self.bindBlob($0, bookmark, at: 1)
+            try Self.bindInt($0, Date().ms, at: 2)
+            try Self.bindText($0, id.uuidString, at: 3)
+            try Self.bindInt($0, Int64(expectedConfigRevision), at: 4)
+        }
+    }
+
+    /// Returns the earliest `next_attempt_at` timestamp among active unpaused outbox rows,
+    /// or `nil` when the outbox has no active rows for `destinationID`.
+    func earliestActiveOutboxAttempt(destinationID: UUID) throws -> Date? {
+        guard let ms = try db().one("""
+            SELECT MIN(next_attempt_at) FROM export_outbox
+            WHERE destination_id=? AND paused=0 AND policy_held=0
+            """, bind: { try Self.bindText($0, destinationID.uuidString, at: 1) })?.integer(0) else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: Double(ms) / 1000)
+    }
+
     /// User-initiated retry: every paused or delayed row becomes due immediately.
     func retryAllOutbox() async throws {
         let db = try db()
         try db.run("UPDATE export_outbox SET attempt_count=0,next_attempt_at=0,last_error_code=NULL,updated_at=? WHERE paused=0 AND policy_held=0") {
             try Self.bindInt($0, Date().ms, at: 1)
         }
+        connectionBox.notifyOutboxQueued()
     }
 }

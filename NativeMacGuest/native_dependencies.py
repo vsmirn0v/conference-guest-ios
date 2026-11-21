@@ -15,11 +15,39 @@ SDK_URL = "https://github.com/livekit/client-sdk-swift.git"
 
 
 def sha256(path):
+    target = pathlib.Path(path)
+    cache_file = os.environ.get("RNR_SHA256_CACHE_PATH")
+    if cache_file:
+        try:
+            stat = target.stat()
+            resolved_key = str(target.resolve())
+            cache = json.loads(pathlib.Path(cache_file).read_text()) if pathlib.Path(cache_file).is_file() else {}
+            entry = cache.get(resolved_key)
+            if (isinstance(entry, dict)
+                    and entry.get("size") == stat.st_size
+                    and entry.get("mtime_ns") == stat.st_mtime_ns
+                    and isinstance(entry.get("sha256"), str)):
+                return entry["sha256"]
+        except (OSError, ValueError):
+            cache = {}
+            stat = None
+            resolved_key = None
     result = hashlib.sha256()
-    with pathlib.Path(path).open("rb") as stream:
+    with target.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             result.update(block)
-    return result.hexdigest()
+    digest = result.hexdigest()
+    if cache_file and stat is not None and resolved_key is not None:
+        try:
+            cache_path = pathlib.Path(cache_file)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache[resolved_key] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "sha256": digest}
+            tmp_path = cache_path.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(cache))
+            tmp_path.replace(cache_path)
+        except OSError:
+            pass
+    return digest
 
 
 def sdk_lock(repository=REPOSITORY):

@@ -1,0 +1,2 @@
+Timestamp               Ty Process[PID:TID]
+2026-11-14 09:25:10.025 Df RockClonedVoiceWorker[22765:a33484] [dev.vsmirn0v.conferenceguest.nativeguest:guest] {"asset":"base-0.h16g.aimodelc","event":"vox-cache-lookup","present":false,"uptime":520892.5850266667}

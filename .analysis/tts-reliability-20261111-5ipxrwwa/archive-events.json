@@ -1,0 +1,284 @@
+[
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 1,
+    "timestamp_utc": "2026-11-11T10:00:08.174Z",
+    "event": {
+      "build": "91",
+      "event": "app-launch",
+      "macOS": "Версия 27.2 (Выпуск 26B123)",
+      "uptime": 344592.8518297084,
+      "version": "0.3.0"
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 18,
+    "timestamp_utc": "2026-11-11T10:00:37.875Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": true,
+      "uptime": 344622.55284329166
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 19,
+    "timestamp_utc": "2026-11-11T10:00:37.877Z",
+    "event": {
+      "asset": "residual.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": true,
+      "uptime": 344622.55549275
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 20,
+    "timestamp_utc": "2026-11-11T10:00:37.879Z",
+    "event": {
+      "asset": "encoder.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": true,
+      "uptime": 344622.55753970833
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 21,
+    "timestamp_utc": "2026-11-11T10:00:37.881Z",
+    "event": {
+      "asset": "dit.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": true,
+      "uptime": 344622.55912975
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 22,
+    "timestamp_utc": "2026-11-11T10:00:42.680Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "availableMB": 11516,
+      "event": "vox-cache-rebuild-disk",
+      "low": false,
+      "uptime": 344627.35853233334
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 23,
+    "timestamp_utc": "2026-11-11T10:00:42.680Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "event": "vox-cache-rebuild-started",
+      "uptime": 344627.35858708335
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 72,
+    "timestamp_utc": "2026-11-11T10:01:12.541Z",
+    "event": {
+      "event": "voice-preview-still-preparing",
+      "seconds": 30,
+      "uptime": 344657.21876095835
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 4092,
+    "timestamp_utc": "2026-11-11T10:53:07.966Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "domain": "CoreAIDelegates.AIModelError",
+      "event": "vox-cache-rebuild-failed",
+      "uptime": 347772.63836733333
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 4665,
+    "timestamp_utc": "2026-11-11T11:03:47.404Z",
+    "event": {
+      "architecture": "h16g",
+      "event": "voice-clone-prepare-started",
+      "uptime": 348412.072543375
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-100008-170-94770-0001.log",
+    "line": 4666,
+    "timestamp_utc": "2026-11-11T11:03:47.876Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": false,
+      "uptime": 348412.543884125
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-193001-266-83700-0001.log",
+    "line": 1,
+    "timestamp_utc": "2026-11-11T19:30:01.288Z",
+    "event": {
+      "build": "94",
+      "event": "app-launch",
+      "macOS": "Версия 27.2 (Выпуск 26B123)",
+      "uptime": 355052.223930875,
+      "version": "0.3.0"
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-193001-266-83700-0001.log",
+    "line": 2,
+    "timestamp_utc": "2026-11-11T19:30:02.101Z",
+    "event": {
+      "architecture": "h16g",
+      "event": "voice-clone-prepare-started",
+      "uptime": 355053.037078125
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-193001-266-83700-0001.log",
+    "line": 4,
+    "timestamp_utc": "2026-11-11T19:30:02.729Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": false,
+      "uptime": 355053.665107125
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-193001-266-83700-0001.log",
+    "line": 6,
+    "timestamp_utc": "2026-11-11T19:30:05.188Z",
+    "event": {
+      "event": "local-model-memory-contended",
+      "role": "speech",
+      "uptime": 355056.12348775
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130813-444-66628-0001.log",
+    "line": 1,
+    "timestamp_utc": "2026-11-11T13:08:13.476Z",
+    "event": {
+      "build": "94",
+      "event": "app-launch",
+      "macOS": "Версия 27.2 (Выпуск 26B123)",
+      "uptime": 351888.610833375,
+      "version": "0.3.0"
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130813-444-66628-0001.log",
+    "line": 2,
+    "timestamp_utc": "2026-11-11T13:08:14.568Z",
+    "event": {
+      "architecture": "h16g",
+      "event": "voice-clone-prepare-started",
+      "uptime": 351889.7030970834
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130813-444-66628-0001.log",
+    "line": 4,
+    "timestamp_utc": "2026-11-11T13:08:15.374Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": false,
+      "uptime": 351890.5090925834
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130813-444-66628-0001.log",
+    "line": 5,
+    "timestamp_utc": "2026-11-11T13:08:17.793Z",
+    "event": {
+      "event": "local-model-memory-contended",
+      "role": "speech",
+      "uptime": 351892.9282538334
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130813-444-66628-0001.log",
+    "line": 50,
+    "timestamp_utc": "2026-11-11T13:08:20.348Z",
+    "event": {
+      "event": "local-model-memory-contended",
+      "role": "speech",
+      "uptime": 351895.48306970834
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130853-911-67866-0001.log",
+    "line": 1,
+    "timestamp_utc": "2026-11-11T13:08:53.913Z",
+    "event": {
+      "build": "94",
+      "event": "app-launch",
+      "macOS": "Версия 27.2 (Выпуск 26B123)",
+      "uptime": 351929.0483088333,
+      "version": "0.3.0"
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130853-911-67866-0001.log",
+    "line": 2,
+    "timestamp_utc": "2026-11-11T13:08:54.267Z",
+    "event": {
+      "architecture": "h16g",
+      "event": "voice-clone-prepare-started",
+      "uptime": 351929.4021255834
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130853-911-67866-0001.log",
+    "line": 4,
+    "timestamp_utc": "2026-11-11T13:08:54.681Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": false,
+      "uptime": 351929.816272375
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130700-664-66382-0001.log",
+    "line": 1,
+    "timestamp_utc": "2026-11-11T13:07:00.669Z",
+    "event": {
+      "build": "91",
+      "event": "app-launch",
+      "macOS": "Версия 27.2 (Выпуск 26B123)",
+      "uptime": 351815.80380862503,
+      "version": "0.3.0"
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130700-664-66382-0001.log",
+    "line": 2,
+    "timestamp_utc": "2026-11-11T13:07:01.245Z",
+    "event": {
+      "architecture": "h16g",
+      "event": "voice-clone-prepare-started",
+      "uptime": 351816.3805026667
+    }
+  },
+  {
+    "archive_member": "RockNRoll Diagnostics/Logs/events-20261111-130700-664-66382-0001.log",
+    "line": 4,
+    "timestamp_utc": "2026-11-11T13:07:01.905Z",
+    "event": {
+      "asset": "base-0.h16g.aimodelc",
+      "event": "vox-cache-lookup",
+      "present": false,
+      "uptime": 351817.04046316666
+    }
+  }
+]

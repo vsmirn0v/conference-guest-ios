@@ -344,7 +344,11 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
                         if record.encryptedValues["generation"] as? String != session.generation {
                             throw CloudZoneError.generationChanged
                         }
-                    } else if let decoded = try Self.decodeRecord(record, generation: session.generation, zone: targetZone) {
+                    } else if let decoded = try Self.decodeChangedItemRecord(
+                        record,
+                        generation: session.generation,
+                        zone: targetZone
+                    ) {
                         lock.lock()
                         records.append(decoded)
                         lock.unlock()
@@ -575,13 +579,64 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
         return control
     }
 
+    nonisolated internal static func decodeChangedItemRecord(
+        _ record: CKRecord,
+        generation: String,
+        zone: CKRecordZone.ID
+    ) throws -> Record? {
+        try decodeChangedItemPayload(
+            record.encryptedValues["payload"] as? Data,
+            hasChangeTag: record.recordChangeTag != nil,
+            recordID: record.recordID,
+            generation: generation,
+            zone: zone
+        )
+    }
+
+    nonisolated internal static func decodeChangedItemPayload(
+        _ data: Data?,
+        hasChangeTag: Bool,
+        recordID: CKRecord.ID,
+        generation: String,
+        zone: CKRecordZone.ID
+    ) throws -> Record? {
+        do {
+            return try decodePayload(
+                data,
+                hasChangeTag: hasChangeTag,
+                recordID: recordID,
+                generation: generation,
+                zone: zone
+            )
+        } catch CloudZoneError.incompatibleData, is DecodingError {
+            // Skip individual corrupted or future-schema item records so one poisoned item cannot block the zone.
+            return nil
+        }
+    }
+
     nonisolated private static func decodeRecord(
         _ record: CKRecord,
         generation: String,
         zone: CKRecordZone.ID
     ) throws -> Record? {
-        guard let data = record.encryptedValues["payload"] as? Data else {
-            if record.recordChangeTag == nil { return nil }
+        try decodePayload(
+            record.encryptedValues["payload"] as? Data,
+            hasChangeTag: record.recordChangeTag != nil,
+            recordID: record.recordID,
+            generation: generation,
+            zone: zone
+        )
+    }
+
+    nonisolated private static func decodePayload(
+        _ data: Data?,
+        hasChangeTag: Bool,
+        recordID: CKRecord.ID,
+        generation: String,
+        zone: CKRecordZone.ID
+    ) throws -> Record? {
+        guard let data else {
+            if !hasChangeTag { return nil }
             throw CloudZoneError.incompatibleData
         }
         let envelope = try CloudPayloadCodec.decode(data, as: Envelope.self)
@@ -594,7 +649,7 @@ public final class CloudEnvelopeTransport<Record: SyncZoneRecord>: CloudZoneTran
             throw CloudZoneError.generationChanged
         }
         let expectedID = CKRecord.ID(recordName: Self.cloudRecordName(for: envelope.record.syncRecordID), zoneID: zone)
-        guard expectedID == record.recordID else {
+        guard expectedID == recordID else {
             throw CloudZoneError.incompatibleData
         }
         return envelope.record

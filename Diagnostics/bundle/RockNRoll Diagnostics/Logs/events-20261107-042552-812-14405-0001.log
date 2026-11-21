@@ -1,0 +1,5 @@
+2026-11-07T04:25:52.815Z {"build":"75","event":"app-launch","macOS":"Версия 27.2 (Выпуск 26B123)","uptime":399357.61777870834,"version":"0.3.0"}
+2026-11-07T04:25:55.917Z {"architecture":"h16g","event":"voice-clone-prepare-started","uptime":399360.72040533338}
+2026-11-07T04:25:56.375Z {"event":"voice-clone-prepared","seconds":0,"uptime":399361.17748054169}
+2026-11-07T04:26:11.864Z {"engine":"coreml","event":"local-transcription-loaded","seconds":15.945946374966297,"uptime":399376.66655304166}
+2026-11-07T04:26:11.864Z {"event":"local-transcription-warmed","kept":false,"seconds":15.946077583357692,"uptime":399376.66667183337}

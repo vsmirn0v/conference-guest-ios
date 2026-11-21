@@ -1,0 +1,21 @@
+Command exited with code 0.
+
+Command output:
+.build/native-mac-guest/Project/RockNativeGuest.xcodeproj
+.build/native-dmg/focus-testrun2/Project/RockNativeGuest.xcodeproj
+.build/native-dmg/modes-testrun/Project/RockNativeGuest.xcodeproj
+.build/native-dmg/modes-testrun2/Project/RockNativeGuest.xcodeproj
+.build/native-dmg/assistant-fixes/Project/RockNativeGuest.xcodeproj
+.build/native-dmg/focus-testrun/Project/RockNativeGuest.xcodeproj
+.build/native-dmg/build/Project/RockNativeGuest.xcodeproj
+.build/native-dmg/redesign-test/Project/RockNativeGuest.xcodeproj
+.build/native-dmg/SparkleSource/Sparkle.xcodeproj
+Dependencies
+Project
+RockNRoll Native Guest.app
+Spec
+Xcode
+archives
+build-evidence.json
+v2
+zsh:1: no matches found: --include=*.sh

@@ -1,0 +1,94 @@
+Command exited with code 0.
+
+Command output:
+cannot re-enable capture after mute/Leave. For host-owned meetings, the helper watches the host heartbeat
+and ends media if ownership is lost; host failure cleanup targets only its own
+launched process and does not automatically fall back to a second SDK session.
+
+## Validation
+
+Deterministic checks:
+
+```sh
+bash Experiments/NativeGuestTests/run-session.sh
+bash Experiments/NativeGuestTests/run-engine.sh
+bash Experiments/NativeGuestTests/run-companion-policy.sh
+bash NativeMacGuest/test-standalone.sh
+bash NativeMacGuest/test-rock.sh \
+  --framework-root .build/webrtc-m156-desktop-audio/native-framework-r4
+```
+
+The Rock adapter unit harness defaults to the current r4 framework. It prepares
+its pinned LiveKit source and compiler outputs under
+`.build/native-rock-unit/<framework SHA256>/`, verifies that the built SDK uses
+that exact WebRTC binary, then runs synthetic bridge, policy and lifecycle
+checks. It does not join a room or start physical capture. Older framework
+experiments remain available by passing another `--framework-root`; their
+compiler outputs are isolated by binary identity. Optional `--dependency-dir`,
+`--sdk-build-dir` and `--sdk-source` override those paths explicitly. The generic
+`prepare-livekit.py` defaults remain unchanged for existing experiments.
+
+The standalone harness uses the real meeting controller with a fake media
+engine, waits beyond the host-death timeout, verifies media-off join/Leave/rejoin,
+blocks rejoin after failed teardown, and exercises exact-PID, one-use host-ticket
+admission. It does not qualify a live provider or physical media.
+#!/bin/bash
+set -euo pipefail
+source_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+repo_dir="$(dirname -- "$source_dir")"
+framework_root="${NATIVE_GUEST_FRAMEWORK_ROOT:-$repo_dir/.build/webrtc-m156-desktop-audio/native-framework-r4}"
+dependency_root="${NATIVE_GUEST_LIVEKIT_DEPENDENCIES:-}"
+livekit_dir="${NATIVE_GUEST_LIVEKIT_BUILD_DIR:-}"
+sdk_source="${NATIVE_GUEST_LIVEKIT_SOURCE:-$repo_dir/.build/native-mac-guest-m156/HostDerivedData/SourcePackages/checkouts/client-sdk-swift}"
+usage() {
+    echo "Usage: $0 [--framework-root DIR] [--dependency-dir DIR] [--sdk-build-dir DIR] [--sdk-source DIR]"
+}
+while (($#)); do
+    case "$1" in
+        --help|-h) usage; exit 0 ;;
+        --framework-root|--dependency-dir|--sdk-build-dir|--sdk-source)
+            if (($# < 2)); then usage >&2; exit 64; fi
+            case "$1" in
+                --framework-root) framework_root="$2" ;;
+                --dependency-dir) dependency_root="$2" ;;
+                --sdk-build-dir) livekit_dir="$2" ;;
+                --sdk-source) sdk_source="$2" ;;
+            esac
+            shift 2 ;;
+        *) usage >&2; exit 64 ;;
+    esac
+done
+framework_sha="$(python3 - "$framework_root" <<'PYFRAMEWORK'
+import hashlib, pathlib, plistlib, sys
+framework = pathlib.Path(sys.argv[1]).resolve() / 'LiveKitWebRTC.xcframework'
+info = plistlib.loads((framework / 'Info.plist').read_bytes())
+slices = [value for value in info['AvailableLibraries'] if value['SupportedPlatform'] == 'macos' and 'arm64' in value['SupportedArchitectures']]
+if len(slices) != 1: raise SystemExit('Expected exactly one native arm64 macOS framework slice')
+binary = framework / slices[0]['LibraryIdentifier'] / slices[0]['LibraryPath'] / 'LiveKitWebRTC'
+digest = hashlib.sha256()
+with binary.open('rb') as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b''): digest.update(chunk)
+print(digest.hexdigest())
+PYFRAMEWORK
+)"
+# The binary identity isolates both source/package state and compiler outputs.
+# Selecting an older artifact never repoints the baseline SDK or its framework.
+unit_root="$repo_dir/.build/native-rock-unit/$framework_sha"
+dependency_root="${dependency_root:-$unit_root/Dependencies}"
+livekit_dir="${livekit_dir:-$unit_root/LiveKitDerived}"
+build_dir="$(mktemp -d "${TMPDIR:-/tmp}/native-guest-rock.XXXXXX")"
+trap 'rm -rf -- "$build_dir"' EXIT
+python3 "$source_dir/prepare-livekit.py" --source "$sdk_source" \
+    --framework "$framework_root/LiveKitWebRTC.xcframework" --destination "$dependency_root"
+livekit_source="$dependency_root/client-sdk-swift"
+core_dir="${NATIVE_GUEST_CORE_BUILD_DIR:-$repo_dir/.build/native-guest/library-core}"
+swift build --package-path "$livekit_source" --scratch-path "$livekit_dir" --product LiveKit
+swift build --package-path "$repo_dir/ConferenceCore" --scratch-path "$core_dir" --product ConferenceCore
+products="$(swift build --package-path "$livekit_source" --scratch-path "$livekit_dir" --show-bin-path)"
+core_products="$(swift build --package-path "$repo_dir/ConferenceCore" --scratch-path "$core_dir" --show-bin-path)"
+python3 - "$dependency_root/native-livekit.json" "$products/LiveKitWebRTC.framework/LiveKitWebRTC" <<'PYVERIFY'
+import hashlib, json, pathlib, sys
+marker = json.loads(pathlib.Path(sys.argv[1]).read_text())
+digest = hashlib.sha256()
+with pathlib.Path(sys.argv[2]).open('rb') as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b''): digest.update(chunk)

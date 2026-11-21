@@ -970,4 +970,92 @@ final class MacWorkspaceSyncAndObsidianTests: XCTestCase {
         XCTAssertEqual(f.assistant.outcomes.first(where: { $0.meetingID == sid })?.tasks.map(\.id), [task.id])
     }
 
+    func testDelayedTranscriptArrivalUpdatesObsidianAndConflictingNoteMergesOnce() async throws {
+        let f = try await makeFixture(includeTranscript: true)
+        let sessionID = UUID()
+        let noteID = UUID()
+        let startedAt = Date(timeIntervalSince1970: 1_795_100_000)
+        let endedAt = startedAt.addingTimeInterval(900)
+        let v1 = SyncVersion(counter: 1, device: "iphone-1")
+
+        let session = SyncedMeetingSession(
+            id: sessionID,
+            occurrenceKey: "room:delayed-transcript-1",
+            title: SyncValue("Delayed Transcript Sync", version: v1),
+            hasTitleOverride: SyncValue(false, version: v1),
+            invitation: SyncValue(URL(string: "https://meet.example.com/delayed"), version: v1),
+            roomIdentity: "https://meet.example.com/delayed",
+            startedAt: startedAt,
+            endedAt: SyncValue(endedAt, version: v1),
+            timeZoneID: "UTC",
+            state: SyncValue("ended", version: v1),
+            legs: ["iphone-1": DeviceParticipationLeg(deviceID: "iphone-1", deviceKind: .ios, joinedAt: startedAt, leftAt: endedAt, hasOutcomeWriter: false)],
+            isDeleted: SyncValue(false, version: v1),
+            createdAt: startedAt,
+            updatedAt: endedAt
+        )
+        let baseNote = SyncedMeetingNote(
+            sessionID: sessionID,
+            noteID: noteID,
+            markdown: "Initial note line",
+            version: v1,
+            updatedAt: endedAt,
+            isDeleted: SyncValue(false, version: v1)
+        )
+        f.libraryCloud.records["session:" + sessionID.uuidString] = .session(session)
+        f.libraryCloud.records["note:" + sessionID.uuidString] = .note(baseNote)
+
+        // Pass 1: library arrives before transcript chunks are uploaded.
+        await f.sync.synchronizeNow()
+
+        let destination = try await f.library.store.destination()
+        let destID = try XCTUnwrap(destination?.id)
+        let storedBinding = try await f.library.store.binding(destinationID: destID, sessionID: sessionID, component: .meeting)
+        let binding = try XCTUnwrap(storedBinding)
+        let fileURL = vault.appendingPathComponent(binding.relativePath)
+        let firstExport = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertFalse(firstExport.contains("Delayed spoken line from iPhone"))
+
+        // Pass 2: ONLY transcript chunk arrives (library zone has zero changes) -> Obsidian file must update!
+        let delayedChunk = SyncedTranscriptChunk(
+            sessionID: sessionID,
+            deviceID: "iphone-1",
+            chunkIndex: 0,
+            sessionStartedAt: startedAt,
+            sessionEndedAt: endedAt,
+            events: [
+                SyncedTranscriptEvent(
+                    id: "delayed-ev-1",
+                    kind: "transcript",
+                    occurredAt: startedAt.addingTimeInterval(30),
+                    speaker: "Anna",
+                    text: "Delayed spoken line from iPhone",
+                    deviceID: "iphone-1"
+                )
+            ]
+        )
+        f.transcriptCloud.records["transcript:" + delayedChunk.id] = .chunk(delayedChunk)
+        await f.sync.synchronizeNow()
+
+        let secondExport = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertTrue(secondExport.contains("Delayed spoken line from iPhone"))
+
+        // Pass 3: conflicting local Mac edit + remote iPhone edit must merge once without duplicate quote blocks.
+        _ = try await f.library.store.saveNote(sessionID: sessionID, markdown: "Mac local rewrite")
+        let phoneConflict = SyncedMeetingNote(
+            sessionID: sessionID,
+            noteID: noteID,
+            markdown: "iPhone remote rewrite",
+            version: SyncVersion(counter: 99, device: "iphone-1"),
+            parentSHA256: baseNote.sha256,
+            updatedAt: endedAt.addingTimeInterval(120),
+            isDeleted: SyncValue(false, version: SyncVersion(counter: 99, device: "iphone-1"))
+        )
+        f.libraryCloud.records["note:" + sessionID.uuidString] = .note(phoneConflict)
+        await f.sync.synchronizeNow()
+
+        let thirdExport = try String(contentsOf: fileURL, encoding: .utf8)
+        let quoteCount = thirdExport.components(separatedBy: "> Note from another device:").count - 1
+        XCTAssertEqual(quoteCount, 1, "Expected exactly one conflict quote block in Obsidian export, got:\n\(thirdExport)")
+    }
 }

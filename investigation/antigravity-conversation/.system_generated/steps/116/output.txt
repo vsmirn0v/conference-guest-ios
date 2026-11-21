@@ -1,0 +1,5 @@
+Command exited with code 0.
+
+Command output:
+native-dmg			sherpa-onnx-cache
+native-sdk			webrtc-m156-desktop-audio

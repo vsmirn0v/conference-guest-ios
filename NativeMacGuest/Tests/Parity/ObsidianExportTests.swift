@@ -551,4 +551,47 @@ final class ObsidianExportTests: XCTestCase {
         XCTAssertTrue(updated.contains(userTitle))
         XCTAssertTrue(updated.contains("two"))
     }
+
+    func testCRLFPatcherFrontmatterCodeFencesAndLongPathBackupIsolation() throws {
+        let sessionID = UUID()
+        let nonce = ManagedBlock.newNonce()
+        let frontmatter = """
+        ---
+        title: "Frontmatter With Fence"
+        notes_preview: |
+          ~~~
+          yaml sample inside frontmatter
+        ---
+        """
+        let created = MarkdownFilePatcher.create(
+            sessionID: sessionID,
+            nonce: nonce,
+            frontmatter: frontmatter,
+            managedContent: "## Notes\n\nLine 1\nLine 2"
+        )
+        // Convert the entire file on disk to Windows/Git CRLF line endings.
+        let crlfOnDisk = created.text.replacingOccurrences(of: "\n", with: "\r\n") + "\r\nExternal note outside block.\r\n"
+
+        // Must recognize markers despite `~~~` inside YAML frontmatter AND match expectedBlockSHA256 despite CRLF!
+        let patched = try MarkdownFilePatcher.patch(
+            existing: crlfOnDisk,
+            sessionID: sessionID,
+            nonce: nonce,
+            component: .meeting,
+            managedContent: "## Notes\n\nUpdated line",
+            expectedBlockSHA256: created.blockSHA256
+        )
+        XCTAssertTrue(patched.text.contains("Updated line"))
+        XCTAssertTrue(patched.text.contains("External note outside block."))
+
+        // Long iCloud Drive Obsidian paths (>150 chars) must never collide in backup folder naming.
+        let deepPrefix = "/Users/example/Library/Mobile Documents/iCloud~md~obsidian/Documents/EnterpriseArchitectureVault/2026/11/WeeklySyncsWithVeryLongSubfolderHierarchy"
+        let fileA = URL(fileURLWithPath: deepPrefix + "/2026-11-21-Architecture-Review.md")
+        let fileB = URL(fileURLWithPath: deepPrefix + "/2026-11-21-Security-Postmortem.md")
+        let nameA = ObsidianFileWriter.safeBackupName(for: fileA)
+        let nameB = ObsidianFileWriter.safeBackupName(for: fileB)
+        XCTAssertNotEqual(nameA, nameB)
+        XCTAssertLessThanOrEqual(nameA.count, 90)
+        XCTAssertLessThanOrEqual(nameB.count, 90)
+    }
 }

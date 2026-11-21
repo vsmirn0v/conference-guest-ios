@@ -1,0 +1,7 @@
+Command exited with code 0.
+
+Command output:
+NativeMacGuest/DesktopMeetingModel.swift:238:    func liveTextRows(limit: Int = 1000) -> [LiveTextRow] {
+NativeMacGuest/DesktopMeetingView.swift:878:                            ForEach(model.liveTextRows()) { row in
+NativeMacGuest/Tests/Parity/DesktopParityTests.swift:1374:        let rows = model.liveTextRows()
+NativeMacGuest/Tests/Parity/LocalTranscriptionTests.swift:147:        guard case .line(_, let time) = try XCTUnwrap(model.liveTextRows().first) else { return XCTFail("line") }

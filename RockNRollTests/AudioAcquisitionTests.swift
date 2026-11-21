@@ -270,4 +270,21 @@ final class AudioAcquisitionTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
     }
+
+    func testBuiltInSpeakerSwitchPreservesVoiceChatModeAndAvoidsRedundantInputReset() {
+        // Switching to speaker while in `.voiceChat` must keep `.voiceChat` so `overrideOutputAudioPort(.speaker)`
+        // routes without a VPIO `setCategory` teardown gap.
+        XCTAssertEqual(AudioCoordinator.builtInOutputMode(currentMode: .voiceChat, speaker: true), .voiceChat)
+        XCTAssertEqual(AudioCoordinator.builtInOutputMode(currentMode: .videoChat, speaker: true), .videoChat)
+        // Switching to receiver from `.videoChat` must move to `.voiceChat` since `.videoChat` cannot select receiver.
+        XCTAssertEqual(AudioCoordinator.builtInOutputMode(currentMode: .videoChat, speaker: false), .voiceChat)
+        XCTAssertEqual(AudioCoordinator.builtInOutputMode(currentMode: .voiceChat, speaker: false), .voiceChat)
+        XCTAssertEqual(AudioCoordinator.builtInOutputMode(currentMode: .default, speaker: false), .default)
+
+        // Built-in route with nil or builtInMic preferred input must not re-apply setPreferredInput.
+        XCTAssertFalse(AudioCoordinator.shouldForceBuiltInMicInput(route: .builtIn, preferredInputPort: nil))
+        XCTAssertFalse(AudioCoordinator.shouldForceBuiltInMicInput(route: .builtIn, preferredInputPort: .builtInMic))
+        XCTAssertTrue(AudioCoordinator.shouldForceBuiltInMicInput(route: .accessory, preferredInputPort: nil))
+        XCTAssertTrue(AudioCoordinator.shouldForceBuiltInMicInput(route: .builtIn, preferredInputPort: .bluetoothHFP))
+    }
 }

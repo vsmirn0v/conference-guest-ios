@@ -1,0 +1,129 @@
+Command exited with code 0.
+
+Command output:
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   Experiments/NativeGuest/GuestSystemAudio.swift
+	modified:   NativeMacGuest/Engines/SharedAudioEngine.swift
+	modified:   NativeMacGuest/Tests/Parity/SharedAudioEngineTests.swift
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.analysis/
+	.kimi-tmp/
+	Dependencies/native-macos/LiveKitWebRTC-m156-microphone-r2.tar.gz
+	Dependencies/native-macos/native-macos-m156-vpio-private-r3.tar.gz
+	Dependencies/native-macos/native-macos-m156-vpio-private-r4.tar.gz
+	Dependencies/native-macos/sdk.screen-r5.lock.json
+	Dependencies/native-macos/sdk.vpio-private-r3.lock.json
+	Dependencies/native-macos/sdk.vpio-private-r4.lock.json
+	Diagnostics/bundle/
+	Diagnostics/diagnostics.zip
+	Diagnostics/screenshot.png
+	Diagnostics/system-voice.log
+	Diagnostics/upstream/
+	Experiments/NativeGuest/GuestAudioTestFileBridge.swift
+	Experiments/NativeGuest/GuestAudioTestRecording.swift
+	Experiments/NativeGuest/GuestPostAPMTestRecording.swift
+	Experiments/NativeGuestTests/AcousticFileBridgeTests.swift
+	Experiments/NativeGuestTests/AcousticRecordingTests.swift
+	Experiments/NativeGuestTests/CameraReuseTests.swift
+	Experiments/NativeGuestTests/PostAPMRecordingTests.swift
+	Experiments/NativeGuestTests/PrivateCheckAdmissionAdapterTests.swift
+	Experiments/NativeGuestTests/PrivateCheckAdmissionTests.swift
+	Experiments/NativeGuestTests/R4CaptureGuardTests.swift
+	Experiments/NativeGuestTests/R4RetirementResetTests.cc
+	Experiments/NativeGuestTests/R4SenderTrackQueryTests.swift
+	Experiments/NativeGuestTests/R4VPIOPolicyTests.swift
+	Experiments/NativeGuestTests/README-private-check-admission.md
+	Experiments/NativeGuestTests/RawOutputSupersessionTests.swift
+	Experiments/NativeGuestTests/StoppedInputRenewalTests.swift
+	Experiments/NativeGuestTests/run-acoustic-file-bridge.sh
+	Experiments/NativeGuestTests/run-acoustic-recording.sh
+	Experiments/NativeGuestTests/run-camera-reuse.sh
+	Experiments/NativeGuestTests/run-post-apm-recording.sh
+	Experiments/NativeGuestTests/run-private-check-admission.py
+	Experiments/NativeGuestTests/run-r4-policy-tests.py
+	Experiments/NativeGuestTests/run-r4-retirement-reset.py
+	Experiments/NativeGuestTests/run-raw-output-supersession.sh
+	Experiments/NativeGuestTests/run-stopped-input-renewal.sh
+	Experiments/WebRTCM156/coreaudio-aec3-experiment-r1.lock.json
+	Experiments/WebRTCM156/coreaudio-aec3-experiment-r1.md
+	Experiments/WebRTCM156/coreaudio-aec3-experiment-r1.patch
+	Experiments/WebRTCM156/coreaudio-diagnostic-r4.lock.json
+	Experiments/WebRTCM156/coreaudio-diagnostic-r4.md
+	Experiments/WebRTCM156/coreaudio-diagnostic-r4.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r6-activation-proof.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r6-activation-proof.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r6-create-admission.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r6-create-admission.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r6-early-leave.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r6-early-leave.md
+	Experiments/WebRTCM156/coreaudio-duplex-r6-early-leave.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r6-post-apm-diagnostic.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r6-post-apm-diagnostic.md
+	Experiments/WebRTCM156/coreaudio-duplex-r6-post-apm-diagnostic.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r6-receive-demand.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r6-receive-demand.md
+	Experiments/WebRTCM156/coreaudio-duplex-r6-receive-demand.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r6-recording-demand.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r6-recording-demand.md
+	Experiments/WebRTCM156/coreaudio-duplex-r6-recording-demand.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r6.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r6.md
+	Experiments/WebRTCM156/coreaudio-duplex-r6.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r7.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r7.md
+	Experiments/WebRTCM156/coreaudio-duplex-r7.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r8-app-consumption.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r8-app-consumption.md
+	Experiments/WebRTCM156/coreaudio-duplex-r8-app-consumption.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r8-controlled-supersession-r3.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r8-controlled-supersession-r3.md
+	Experiments/WebRTCM156/coreaudio-duplex-r8-controlled-supersession-r3.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r8-controlled-supersession.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r8-controlled-supersession.md
+	Experiments/WebRTCM156/coreaudio-duplex-r8-controlled-supersession.patch
+	Experiments/WebRTCM156/coreaudio-duplex-r8.lock.json
+	Experiments/WebRTCM156/coreaudio-duplex-r8.md
+	Experiments/WebRTCM156/coreaudio-duplex-r8.patch
+	Experiments/WebRTCM156/coreaudio-retirement-r5.lock.json
+	Experiments/WebRTCM156/coreaudio-retirement-r5.md
+	Experiments/WebRTCM156/coreaudio-retirement-r5.patch
+	Experiments/WebRTCM156/first-microphone-fallback.lock.json
+	Experiments/WebRTCM156/first-microphone-fallback.patch
+	Experiments/WebRTCM156/first-microphone-handover.lock.json
+	Experiments/WebRTCM156/first-microphone-handover.patch
+	Experiments/WebRTCM156/private-input-experiment-r1.lock.json
+	Experiments/WebRTCM156/private-input-experiment-r1.md
+	Experiments/WebRTCM156/private-input-experiment-r1.patch
+	Experiments/WebRTCM156/private-input-experiment-r2.lock.json
+	Experiments/WebRTCM156/private-input-experiment-r2.md
+	Experiments/WebRTCM156/private-input-experiment-r2.patch
+	Experiments/WebRTCM156/private-input-experiment-r3.lock.json
+	Experiments/WebRTCM156/private-input-experiment-r3.md
+	Experiments/WebRTCM156/private-input-experiment-r3.patch
+	Experiments/WebRTCM156/private-input-experiment-r4.patch
+	NativeMacGuest/MicrophoneActivationExperiment.swift
+	NativeMacGuest/MicrophoneGraphExperiment.swift
+	NativeMacGuest/StartupCaptureReceiver.swift
+	NativeMacGuest/StartupRawOutputSupersession.swift
+	NativeMacGuest/StartupTransportReadiness.swift
+	NativeMacGuest/Tests/StartupTransportReadinessTests.swift
+	NativeMacGuest/Tests/run-startup-transport.sh
+	design/
+	docs/native-mac-acoustic-validation-harness-2026-10-27.md
+	docs/native-mac-airpods-transition-startup-2026-10-28.md
+	docs/native-mac-audio-startup-private-check-2026-10-27.md
+	docs/native-mac-bluetooth-acoustic-validation-2026-10-27.md
+	docs/native-mac-first-microphone-interruption-2026-10-27.md
+	docs/native-mac-media-experiments-2026-10-27.md
+	docs/zoom-media-warmup-comparison-2026-10-27.md
+	work/assistant-moments/
+	work/neural-voice-cache-repair/
+
+no changes added to commit (use "git add" and/or "git commit -a")

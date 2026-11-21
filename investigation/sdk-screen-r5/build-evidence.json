@@ -1,0 +1,14 @@
+{
+  "scope": "native screen quality r5 candidate; QP24 relaxed below 0.5 bits per source pixel per second with 25 percent recovery hysteresis; r4 preserved",
+  "sourceRevision": "19576e37870bfe5a0a910a32f98ff411f722f43a",
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "previousFrameworkEvidence": "/Users/v.smirnov/docs/conference-guest-ios/.build/webrtc-m156-desktop-audio/native-framework-r4/build-evidence.json",
+  "previousFrameworkEvidenceSHA256": "637d6f443d64238e1fb0c5af3768f9198b7c0fd3d80c47eef6337a13f7c1886b",
+  "previousFrameworkBinarySHA256": "302356efe57063e1b3b563eb018cca94b3ca7ebf8e4cbf520eec5ae1d823fd7b",
+  "sourceManifest": "/Users/v.smirnov/docs/conference-guest-ios/.build/webrtc-m156-desktop-audio/source-manifest-screen-r5.json",
+  "sourceManifestSHA256": "c721741efe93373c953cc4bacc78438104862e8a8050b73a04313a36ac274adb",
+  "screenQualityPatch": "/Users/v.smirnov/docs/conference-guest-ios/Experiments/WebRTCM156/screen-detail-budget.patch",
+  "screenQualityPatchSHA256": "406eb6e564f275d1d1879f65f161a042153561794fe712ba2eb86ebdcb3e58ea",
+  "compilerSHA256": "f3f0259de6f7bf1c026760855d505b07ee626b6e64ecd9600f252ed0faac95ff",
+  "gnArgsSHA256": "a60e3c5807c949d14b2db2f293062066e107963a031eea17be48bce7a51ac6b8"
+}

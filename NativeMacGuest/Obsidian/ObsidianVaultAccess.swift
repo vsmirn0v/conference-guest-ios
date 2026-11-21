@@ -54,21 +54,37 @@ enum ObsidianVaultAccess {
     }
 
     static func resolve(_ bookmark: Data) -> Resolution {
+        resolveWithRefresh(bookmark).resolution
+    }
+
+    /// Resolves a security-scoped vault bookmark and, when macOS reports `bookmarkDataIsStale`
+    /// while still granting security-scoped access (common after OS/app updates or iCloud Drive
+    /// metadata updates), mints a refreshed bookmark so export continues without manual re-selection.
+    static func resolveWithRefresh(_ bookmark: Data) -> (resolution: Resolution, refreshedBookmark: Data?) {
         var stale = false
         do {
             let url = try resolveURL(bookmark, stale: &stale)
-            if stale { return .stale }
             guard url.startAccessingSecurityScopedResource() else {
-                return .denied(L("macOS denied access to the vault."))
+                if stale { return (.stale, nil) }
+                return (.denied(L("macOS denied access to the vault.")), nil)
             }
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
                 url.stopAccessingSecurityScopedResource()
-                return .missing
+                return (.missing, nil)
             }
-            return .granted(url)
+            var refreshed: Data?
+            if stale {
+                refreshed = try? url.bookmarkData(
+                    options: [.withSecurityScope],
+                    includingResourceValuesForKeys: [.fileResourceIdentifierKey],
+                    relativeTo: nil
+                )
+            }
+            return (.granted(url), refreshed)
         } catch {
-            return .missing
+            if stale { return (.stale, nil) }
+            return (.missing, nil)
         }
     }
 

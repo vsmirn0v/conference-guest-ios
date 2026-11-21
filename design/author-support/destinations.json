@@ -1,0 +1,151 @@
+{
+  "scope": "Local design preview; no payment was made and wallet ownership was not tested.",
+  "boostyPriceSnapshot": {
+    "observedOn": "2026-11-19",
+    "source": "https://boosty.to/rwrt",
+    "context": "Monthly prices displayed to a signed-out visitor in Boosty’s English storefront. Boosty confirms the applicable price at checkout."
+  },
+  "destinations": [
+    {
+      "id": "tbank",
+      "label": "T-Bank collection",
+      "url": "https://t.tb.ru/pm_short/6cgsSxNwt2m",
+      "qrPayload": "https://t.tb.ru/pm_short/6cgsSxNwt2m",
+      "qrFile": "tbank.png"
+    },
+    {
+      "id": "btc",
+      "asset": "BTC",
+      "network": "Bitcoin mainnet",
+      "address": "bc1q6e0ut7yst2tgxpfgy262h4mm238eqph2nm79ml",
+      "qrPayload": "bc1q6e0ut7yst2tgxpfgy262h4mm238eqph2nm79ml",
+      "qrFile": "btc.png"
+    },
+    {
+      "id": "eth",
+      "asset": "ETH",
+      "network": "Ethereum mainnet",
+      "chainId": 1,
+      "address": "0xd094B9B06E328fD8Ea120A637078D7AD69A7172A",
+      "qrPayload": "ethereum:0xd094B9B06E328fD8Ea120A637078D7AD69A7172A@1",
+      "qrFile": "eth.png"
+    },
+    {
+      "id": "bnb",
+      "asset": "BNB",
+      "network": "BNB Smart Chain mainnet",
+      "chainId": 56,
+      "address": "0xd094B9B06E328fD8Ea120A637078D7AD69A7172A",
+      "qrPayload": "ethereum:0xd094B9B06E328fD8Ea120A637078D7AD69A7172A@56",
+      "qrFile": "bnb.png"
+    },
+    {
+      "id": "usdt",
+      "asset": "USDT",
+      "network": "Ethereum mainnet · ERC-20",
+      "chainId": 1,
+      "address": "0xd094B9B06E328fD8Ea120A637078D7AD69A7172A",
+      "contract": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "issuerSource": "https://tether.to/en/supported-protocols/",
+      "walletInstructions": "Choose the amount in a compatible wallet. For manual entry, select the token on Ethereum mainnet and paste the receiving address.",
+      "qrPayload": "ethereum:0xdAC17F958D2ee523a2206206994597C13D831ec7@1/transfer?address=0xd094B9B06E328fD8Ea120A637078D7AD69A7172A",
+      "qrFile": "usdt.png"
+    },
+    {
+      "id": "usdc",
+      "asset": "USDC",
+      "network": "Ethereum mainnet · ERC-20",
+      "chainId": 1,
+      "address": "0xd094B9B06E328fD8Ea120A637078D7AD69A7172A",
+      "contract": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "issuerSource": "https://developers.circle.com/stablecoins/usdc-contract-addresses",
+      "walletInstructions": "Choose the amount in a compatible wallet. For manual entry, select the token on Ethereum mainnet and paste the receiving address.",
+      "qrPayload": "ethereum:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48@1/transfer?address=0xd094B9B06E328fD8Ea120A637078D7AD69A7172A",
+      "qrFile": "usdc.png"
+    },
+    {
+      "id": "sol",
+      "asset": "SOL",
+      "network": "Solana mainnet",
+      "address": "AwFswTyQrqw5ZbdgLbupHjLnDQCjvSurfApa5tRxHkVL",
+      "qrPayload": "AwFswTyQrqw5ZbdgLbupHjLnDQCjvSurfApa5tRxHkVL",
+      "qrFile": "sol.png"
+    },
+    {
+      "id": "trx",
+      "asset": "TRX",
+      "network": "Tron mainnet",
+      "address": "TLdLdzQazc9fBuc1kpv1wbCJMkWF5LPcbp",
+      "qrPayload": "TLdLdzQazc9fBuc1kpv1wbCJMkWF5LPcbp",
+      "qrFile": "trx.png"
+    },
+    {
+      "id": "kas",
+      "asset": "KAS",
+      "network": "Kaspa mainnet",
+      "address": "kaspa:prt3nsy3qx4qm5pvqdrg80nywqr045y94r7vmy2fj0nxtxdr74udcf86l5p3w",
+      "qrPayload": "kaspa:prt3nsy3qx4qm5pvqdrg80nywqr045y94r7vmy2fj0nxtxdr74udcf86l5p3w",
+      "qrFile": "kas.png"
+    },
+    {
+      "id": "hipolink-tips",
+      "label": "Hipolink tips",
+      "url": "https://hipolink.net/vsmirnov/tips?currency=USD&amount=9",
+      "suggestedUsdInApp": 9,
+      "status": "Provider account verification pending.",
+      "qrPayload": "https://hipolink.net/vsmirnov/tips?currency=USD&amount=9",
+      "qrFile": "hipolink-tips.png"
+    },
+    {
+      "id": "hipolink-paylink",
+      "label": "Hipolink payment link",
+      "url": "https://hipolink.net/vsmirnov/paylink/5ddb5688-bca3-4e0b-8b70-19d484b9c660",
+      "status": "Provider account verification pending.",
+      "qrPayload": "https://hipolink.net/vsmirnov/paylink/5ddb5688-bca3-4e0b-8b70-19d484b9c660",
+      "qrFile": "hipolink-paylink.png"
+    },
+    {
+      "id": "boosty-donate",
+      "label": "Boosty one-time donation",
+      "url": "https://boosty.to/rwrt/donate",
+      "qrPayload": "https://boosty.to/rwrt/donate",
+      "qrFile": "boosty-donate.png"
+    },
+    {
+      "id": "boosty-299",
+      "label": "Boosty monthly support · ₽299",
+      "url": "https://boosty.to/rwrt/purchase/4182682?ssource=DIRECT&share=subscription_link",
+      "rubPerMonth": 299,
+      "displayedUsdPerMonth": "3.90",
+      "qrPayload": "https://boosty.to/rwrt/purchase/4182682?ssource=DIRECT&share=subscription_link",
+      "qrFile": "boosty-299.png"
+    },
+    {
+      "id": "boosty-499",
+      "label": "Boosty monthly support · ₽499",
+      "url": "https://boosty.to/rwrt/purchase/4182683?ssource=DIRECT&share=subscription_link",
+      "rubPerMonth": 499,
+      "displayedUsdPerMonth": "6.50",
+      "qrPayload": "https://boosty.to/rwrt/purchase/4182683?ssource=DIRECT&share=subscription_link",
+      "qrFile": "boosty-499.png"
+    },
+    {
+      "id": "boosty-999",
+      "label": "Boosty monthly support · ₽999",
+      "url": "https://boosty.to/rwrt/purchase/4182685?ssource=DIRECT&share=subscription_link",
+      "rubPerMonth": 999,
+      "displayedUsdPerMonth": "12.90",
+      "qrPayload": "https://boosty.to/rwrt/purchase/4182685?ssource=DIRECT&share=subscription_link",
+      "qrFile": "boosty-999.png"
+    },
+    {
+      "id": "boosty-1999",
+      "label": "Boosty monthly support · ₽1999",
+      "url": "https://boosty.to/rwrt/purchase/4182688?ssource=DIRECT&share=subscription_link",
+      "rubPerMonth": 1999,
+      "displayedUsdPerMonth": "25.80",
+      "qrPayload": "https://boosty.to/rwrt/purchase/4182688?ssource=DIRECT&share=subscription_link",
+      "qrFile": "boosty-1999.png"
+    }
+  ]
+}

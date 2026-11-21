@@ -1,0 +1,869 @@
+{
+  "timeStampEnd" : "2026-11-06 22:48:01",
+  "timeStampBegin" : "2026-11-06 22:48:01",
+  "diskWriteExceptionDiagnostics" : [
+    {
+      "version" : "1.0.0",
+      "callStackTree" : {
+        "callStacks" : [
+          {
+            "callStackRootFrames" : [
+              {
+                "binaryUUID" : "D5E656B3-84B5-368D-A6E7-CCC1A736FB75",
+                "offsetIntoBinaryTextSegment" : 7363,
+                "sampleCount" : 192,
+                "subFrames" : [
+                  {
+                    "binaryUUID" : "D5E656B3-84B5-368D-A6E7-CCC1A736FB75",
+                    "offsetIntoBinaryTextSegment" : 12099,
+                    "sampleCount" : 149,
+                    "subFrames" : [
+                      {
+                        "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                        "offsetIntoBinaryTextSegment" : 82503,
+                        "sampleCount" : 149,
+                        "subFrames" : [
+                          {
+                            "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                            "offsetIntoBinaryTextSegment" : 80555,
+                            "sampleCount" : 149,
+                            "subFrames" : [
+                              {
+                                "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                "offsetIntoBinaryTextSegment" : 24139,
+                                "sampleCount" : 149,
+                                "subFrames" : [
+                                  {
+                                    "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                    "offsetIntoBinaryTextSegment" : 230943,
+                                    "sampleCount" : 149,
+                                    "subFrames" : [
+                                      {
+                                        "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                        "offsetIntoBinaryTextSegment" : 112031,
+                                        "sampleCount" : 149,
+                                        "subFrames" : [
+                                          {
+                                            "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                            "offsetIntoBinaryTextSegment" : 200787,
+                                            "sampleCount" : 149,
+                                            "subFrames" : [
+                                              {
+                                                "binaryUUID" : "F2BCEB9A-0FEC-3C92-B6EA-8E37157050A8",
+                                                "offsetIntoBinaryTextSegment" : 19432,
+                                                "sampleCount" : 149,
+                                                "binaryName" : "libsystem_kernel.dylib",
+                                                "address" : 6770375656
+                                              }
+                                            ],
+                                            "binaryName" : "libdispatch.dylib",
+                                            "address" : 6854197332
+                                          }
+                                        ],
+                                        "binaryName" : "libdispatch.dylib",
+                                        "address" : 6854108576
+                                      }
+                                    ],
+                                    "binaryName" : "libdispatch.dylib",
+                                    "address" : 6854227488
+                                  }
+                                ],
+                                "binaryName" : "libdispatch.dylib",
+                                "address" : 6854020684
+                              }
+                            ],
+                            "binaryName" : "libdispatch.dylib",
+                            "address" : 6854077100
+                          }
+                        ],
+                        "binaryName" : "libdispatch.dylib",
+                        "address" : 6854079048
+                      }
+                    ],
+                    "binaryName" : "libsystem_pthread.dylib",
+                    "address" : 6770626372
+                  },
+                  {
+                    "binaryUUID" : "D5E656B3-84B5-368D-A6E7-CCC1A736FB75",
+                    "offsetIntoBinaryTextSegment" : 12159,
+                    "sampleCount" : 43,
+                    "subFrames" : [
+                      {
+                        "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                        "offsetIntoBinaryTextSegment" : 84059,
+                        "sampleCount" : 43,
+                        "subFrames" : [
+                          {
+                            "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                            "offsetIntoBinaryTextSegment" : 85847,
+                            "sampleCount" : 43,
+                            "subFrames" : [
+                              {
+                                "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                "offsetIntoBinaryTextSegment" : 43707,
+                                "sampleCount" : 43,
+                                "subFrames" : [
+                                  {
+                                    "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                    "offsetIntoBinaryTextSegment" : 40895,
+                                    "sampleCount" : 43,
+                                    "subFrames" : [
+                                      {
+                                        "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                        "offsetIntoBinaryTextSegment" : 112031,
+                                        "sampleCount" : 43,
+                                        "subFrames" : [
+                                          {
+                                            "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                            "offsetIntoBinaryTextSegment" : 6707,
+                                            "sampleCount" : 43,
+                                            "subFrames" : [
+                                              {
+                                                "binaryUUID" : "B01E8FB7-C21A-3550-BB94-B173ED08074D",
+                                                "offsetIntoBinaryTextSegment" : 2291419,
+                                                "sampleCount" : 43,
+                                                "subFrames" : [
+                                                  {
+                                                    "binaryUUID" : "B01E8FB7-C21A-3550-BB94-B173ED08074D",
+                                                    "offsetIntoBinaryTextSegment" : 3827939,
+                                                    "sampleCount" : 43,
+                                                    "subFrames" : [
+                                                      {
+                                                        "binaryUUID" : "B01E8FB7-C21A-3550-BB94-B173ED08074D",
+                                                        "offsetIntoBinaryTextSegment" : 3826271,
+                                                        "sampleCount" : 43,
+                                                        "subFrames" : [
+                                                          {
+                                                            "binaryUUID" : "B01E8FB7-C21A-3550-BB94-B173ED08074D",
+                                                            "offsetIntoBinaryTextSegment" : 1150383,
+                                                            "sampleCount" : 43,
+                                                            "subFrames" : [
+                                                              {
+                                                                "binaryUUID" : "B01E8FB7-C21A-3550-BB94-B173ED08074D",
+                                                                "offsetIntoBinaryTextSegment" : 1166543,
+                                                                "sampleCount" : 43,
+                                                                "subFrames" : [
+                                                                  {
+                                                                    "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                    "offsetIntoBinaryTextSegment" : 3825299,
+                                                                    "sampleCount" : 43,
+                                                                    "subFrames" : [
+                                                                      {
+                                                                        "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                        "offsetIntoBinaryTextSegment" : 3279479,
+                                                                        "sampleCount" : 43,
+                                                                        "subFrames" : [
+                                                                          {
+                                                                            "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                            "offsetIntoBinaryTextSegment" : 4213479,
+                                                                            "sampleCount" : 43,
+                                                                            "subFrames" : [
+                                                                              {
+                                                                                "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                "offsetIntoBinaryTextSegment" : 4122747,
+                                                                                "sampleCount" : 43,
+                                                                                "subFrames" : [
+                                                                                  {
+                                                                                    "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                                                                    "offsetIntoBinaryTextSegment" : 70799,
+                                                                                    "sampleCount" : 43,
+                                                                                    "subFrames" : [
+                                                                                      {
+                                                                                        "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                                                                        "offsetIntoBinaryTextSegment" : 112031,
+                                                                                        "sampleCount" : 43,
+                                                                                        "subFrames" : [
+                                                                                          {
+                                                                                            "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                            "offsetIntoBinaryTextSegment" : 4123059,
+                                                                                            "sampleCount" : 43,
+                                                                                            "subFrames" : [
+                                                                                              {
+                                                                                                "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                "offsetIntoBinaryTextSegment" : 2666891,
+                                                                                                "sampleCount" : 43,
+                                                                                                "subFrames" : [
+                                                                                                  {
+                                                                                                    "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                    "offsetIntoBinaryTextSegment" : 3413695,
+                                                                                                    "sampleCount" : 43,
+                                                                                                    "subFrames" : [
+                                                                                                      {
+                                                                                                        "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                        "offsetIntoBinaryTextSegment" : 3414327,
+                                                                                                        "sampleCount" : 43,
+                                                                                                        "subFrames" : [
+                                                                                                          {
+                                                                                                            "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                            "offsetIntoBinaryTextSegment" : 3423735,
+                                                                                                            "sampleCount" : 43,
+                                                                                                            "subFrames" : [
+                                                                                                              {
+                                                                                                                "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                "offsetIntoBinaryTextSegment" : 3425199,
+                                                                                                                "sampleCount" : 43,
+                                                                                                                "subFrames" : [
+                                                                                                                  {
+                                                                                                                    "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                    "offsetIntoBinaryTextSegment" : 3427227,
+                                                                                                                    "sampleCount" : 43,
+                                                                                                                    "subFrames" : [
+                                                                                                                      {
+                                                                                                                        "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                        "offsetIntoBinaryTextSegment" : 3419063,
+                                                                                                                        "sampleCount" : 43,
+                                                                                                                        "subFrames" : [
+                                                                                                                          {
+                                                                                                                            "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                            "offsetIntoBinaryTextSegment" : 3796019,
+                                                                                                                            "sampleCount" : 43,
+                                                                                                                            "subFrames" : [
+                                                                                                                              {
+                                                                                                                                "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                                "offsetIntoBinaryTextSegment" : 3795103,
+                                                                                                                                "sampleCount" : 43,
+                                                                                                                                "subFrames" : [
+                                                                                                                                  {
+                                                                                                                                    "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                                    "offsetIntoBinaryTextSegment" : 4392147,
+                                                                                                                                    "sampleCount" : 43,
+                                                                                                                                    "subFrames" : [
+                                                                                                                                      {
+                                                                                                                                        "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                                                                                                                        "offsetIntoBinaryTextSegment" : 70799,
+                                                                                                                                        "sampleCount" : 43,
+                                                                                                                                        "subFrames" : [
+                                                                                                                                          {
+                                                                                                                                            "binaryUUID" : "6F5E8225-AD67-3644-AFEF-25A4A43BF604",
+                                                                                                                                            "offsetIntoBinaryTextSegment" : 112031,
+                                                                                                                                            "sampleCount" : 43,
+                                                                                                                                            "subFrames" : [
+                                                                                                                                              {
+                                                                                                                                                "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                                                "offsetIntoBinaryTextSegment" : 4392423,
+                                                                                                                                                "sampleCount" : 43,
+                                                                                                                                                "subFrames" : [
+                                                                                                                                                  {
+                                                                                                                                                    "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                                                    "offsetIntoBinaryTextSegment" : 4391871,
+                                                                                                                                                    "sampleCount" : 43,
+                                                                                                                                                    "subFrames" : [
+                                                                                                                                                      {
+                                                                                                                                                        "binaryUUID" : "65CABC2C-49D9-3EDD-8FF5-AADA19BE53C3",
+                                                                                                                                                        "offsetIntoBinaryTextSegment" : 2533955,
+                                                                                                                                                        "sampleCount" : 43,
+                                                                                                                                                        "subFrames" : [
+                                                                                                                                                          {
+                                                                                                                                                            "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                            "offsetIntoBinaryTextSegment" : 727027,
+                                                                                                                                                            "sampleCount" : 43,
+                                                                                                                                                            "subFrames" : [
+                                                                                                                                                              {
+                                                                                                                                                                "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                "offsetIntoBinaryTextSegment" : 675543,
+                                                                                                                                                                "sampleCount" : 43,
+                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                  {
+                                                                                                                                                                    "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 38675,
+                                                                                                                                                                    "sampleCount" : 43,
+                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                      {
+                                                                                                                                                                        "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 844895,
+                                                                                                                                                                        "sampleCount" : 43,
+                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                          {
+                                                                                                                                                                            "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 839127,
+                                                                                                                                                                            "sampleCount" : 43,
+                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                              {
+                                                                                                                                                                                "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 1319427,
+                                                                                                                                                                                "sampleCount" : 43,
+                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                  {
+                                                                                                                                                                                    "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 9678871,
+                                                                                                                                                                                    "sampleCount" : 43,
+                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                      {
+                                                                                                                                                                                        "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 9946623,
+                                                                                                                                                                                        "sampleCount" : 43,
+                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                          {
+                                                                                                                                                                                            "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 8774899,
+                                                                                                                                                                                            "sampleCount" : 43,
+                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                              {
+                                                                                                                                                                                                "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 9929795,
+                                                                                                                                                                                                "sampleCount" : 43,
+                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                  {
+                                                                                                                                                                                                    "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 9877631,
+                                                                                                                                                                                                    "sampleCount" : 43,
+                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                      {
+                                                                                                                                                                                                        "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 9950551,
+                                                                                                                                                                                                        "sampleCount" : 42,
+                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                          {
+                                                                                                                                                                                                            "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 10745475,
+                                                                                                                                                                                                            "sampleCount" : 42,
+                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                              {
+                                                                                                                                                                                                                "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 10743939,
+                                                                                                                                                                                                                "sampleCount" : 42,
+                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                    "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 1143391,
+                                                                                                                                                                                                                    "sampleCount" : 41,
+                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                        "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 1008811,
+                                                                                                                                                                                                                        "sampleCount" : 41,
+                                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                                          {
+                                                                                                                                                                                                                            "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 1011163,
+                                                                                                                                                                                                                            "sampleCount" : 41,
+                                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                                              {
+                                                                                                                                                                                                                                "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 1011899,
+                                                                                                                                                                                                                                "sampleCount" : 41,
+                                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                                    "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 1012683,
+                                                                                                                                                                                                                                    "sampleCount" : 41,
+                                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                                        "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 1014567,
+                                                                                                                                                                                                                                        "sampleCount" : 41,
+                                                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                                                          {
+                                                                                                                                                                                                                                            "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 1015831,
+                                                                                                                                                                                                                                            "sampleCount" : 41,
+                                                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                                                              {
+                                                                                                                                                                                                                                                "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 1027483,
+                                                                                                                                                                                                                                                "sampleCount" : 41,
+                                                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                                                    "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 1027155,
+                                                                                                                                                                                                                                                    "sampleCount" : 41,
+                                                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                                                        "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 1018451,
+                                                                                                                                                                                                                                                        "sampleCount" : 41,
+                                                                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                                                                          {
+                                                                                                                                                                                                                                                            "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 1040867,
+                                                                                                                                                                                                                                                            "sampleCount" : 41,
+                                                                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                                                                              {
+                                                                                                                                                                                                                                                                "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 537499,
+                                                                                                                                                                                                                                                                "sampleCount" : 41,
+                                                                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                                                                    "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 521659,
+                                                                                                                                                                                                                                                                    "sampleCount" : 41,
+                                                                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                                                                        "binaryUUID" : "29FF7149-AB23-3DEC-8DA3-39E2CB145F89",
+                                                                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 36903,
+                                                                                                                                                                                                                                                                        "sampleCount" : 41,
+                                                                                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                                                                                          {
+                                                                                                                                                                                                                                                                            "binaryUUID" : "4BF47EBB-4CD0-3F4A-995A-717B8550CB12",
+                                                                                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 136743,
+                                                                                                                                                                                                                                                                            "sampleCount" : 41,
+                                                                                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                                                                                              {
+                                                                                                                                                                                                                                                                                "binaryUUID" : "4BF47EBB-4CD0-3F4A-995A-717B8550CB12",
+                                                                                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 20167,
+                                                                                                                                                                                                                                                                                "sampleCount" : 41,
+                                                                                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                                                                                    "binaryUUID" : "4BF47EBB-4CD0-3F4A-995A-717B8550CB12",
+                                                                                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 76143,
+                                                                                                                                                                                                                                                                                    "sampleCount" : 41,
+                                                                                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                                                                                        "binaryUUID" : "F2BCEB9A-0FEC-3C92-B6EA-8E37157050A8",
+                                                                                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 19432,
+                                                                                                                                                                                                                                                                                        "sampleCount" : 41,
+                                                                                                                                                                                                                                                                                        "binaryName" : "libsystem_kernel.dylib",
+                                                                                                                                                                                                                                                                                        "address" : 6770375656
+                                                                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                                                                                    "binaryName" : "libsystem_c.dylib",
+                                                                                                                                                                                                                                                                                    "address" : 6770817392
+                                                                                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                                                                                "binaryName" : "libsystem_c.dylib",
+                                                                                                                                                                                                                                                                                "address" : 6770761416
+                                                                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                                                                            ],
+                                                                                                                                                                                                                                                                            "binaryName" : "libsystem_c.dylib",
+                                                                                                                                                                                                                                                                            "address" : 6770877992
+                                                                                                                                                                                                                                                                          }
+                                                                                                                                                                                                                                                                        ],
+                                                                                                                                                                                                                                                                        "binaryName" : "libc++.1.dylib",
+                                                                                                                                                                                                                                                                        "address" : 6854377512
+                                                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                                                                    "binaryName" : "MIL",
+                                                                                                                                                                                                                                                                    "address" : 11436545468
+                                                                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                                                                "binaryName" : "MIL",
+                                                                                                                                                                                                                                                                "address" : 11436561308
+                                                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                                                            ],
+                                                                                                                                                                                                                                                            "binaryName" : "MIL",
+                                                                                                                                                                                                                                                            "address" : 11437064676
+                                                                                                                                                                                                                                                          }
+                                                                                                                                                                                                                                                        ],
+                                                                                                                                                                                                                                                        "binaryName" : "MIL",
+                                                                                                                                                                                                                                                        "address" : 11437042260
+                                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                                                    "binaryName" : "MIL",
+                                                                                                                                                                                                                                                    "address" : 11437050964
+                                                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                                                "binaryName" : "MIL",
+                                                                                                                                                                                                                                                "address" : 11437051292
+                                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                                            ],
+                                                                                                                                                                                                                                            "binaryName" : "MIL",
+                                                                                                                                                                                                                                            "address" : 11437039640
+                                                                                                                                                                                                                                          }
+                                                                                                                                                                                                                                        ],
+                                                                                                                                                                                                                                        "binaryName" : "MIL",
+                                                                                                                                                                                                                                        "address" : 11437038376
+                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                                    "binaryName" : "MIL",
+                                                                                                                                                                                                                                    "address" : 11437036492
+                                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                                "binaryName" : "MIL",
+                                                                                                                                                                                                                                "address" : 11437035708
+                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                            ],
+                                                                                                                                                                                                                            "binaryName" : "MIL",
+                                                                                                                                                                                                                            "address" : 11437034972
+                                                                                                                                                                                                                          }
+                                                                                                                                                                                                                        ],
+                                                                                                                                                                                                                        "binaryName" : "MIL",
+                                                                                                                                                                                                                        "address" : 11437032620
+                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                    "binaryName" : "MIL",
+                                                                                                                                                                                                                    "address" : 11437167200
+                                                                                                                                                                                                                  },
+                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                    "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 1143399,
+                                                                                                                                                                                                                    "sampleCount" : 1,
+                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                        "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 1005803,
+                                                                                                                                                                                                                        "sampleCount" : 1,
+                                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                                          {
+                                                                                                                                                                                                                            "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 1112003,
+                                                                                                                                                                                                                            "sampleCount" : 1,
+                                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                                              {
+                                                                                                                                                                                                                                "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 1112075,
+                                                                                                                                                                                                                                "sampleCount" : 1,
+                                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                                    "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 8543,
+                                                                                                                                                                                                                                    "sampleCount" : 1,
+                                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                                        "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 8727,
+                                                                                                                                                                                                                                        "sampleCount" : 1,
+                                                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                                                          {
+                                                                                                                                                                                                                                            "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 535163,
+                                                                                                                                                                                                                                            "sampleCount" : 1,
+                                                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                                                              {
+                                                                                                                                                                                                                                                "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 541331,
+                                                                                                                                                                                                                                                "sampleCount" : 1,
+                                                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                                                    "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 541391,
+                                                                                                                                                                                                                                                    "sampleCount" : 1,
+                                                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                                                        "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 541455,
+                                                                                                                                                                                                                                                        "sampleCount" : 1,
+                                                                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                                                                          {
+                                                                                                                                                                                                                                                            "binaryUUID" : "5CE8DCAA-CD7E-330D-BB98-7F91983CC410",
+                                                                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 520215,
+                                                                                                                                                                                                                                                            "sampleCount" : 1,
+                                                                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                                                                              {
+                                                                                                                                                                                                                                                                "binaryUUID" : "29FF7149-AB23-3DEC-8DA3-39E2CB145F89",
+                                                                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 225579,
+                                                                                                                                                                                                                                                                "sampleCount" : 1,
+                                                                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                                                                    "binaryUUID" : "29FF7149-AB23-3DEC-8DA3-39E2CB145F89",
+                                                                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 225803,
+                                                                                                                                                                                                                                                                    "sampleCount" : 1,
+                                                                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                                                                        "binaryUUID" : "F2BCEB9A-0FEC-3C92-B6EA-8E37157050A8",
+                                                                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 9596,
+                                                                                                                                                                                                                                                                        "sampleCount" : 1,
+                                                                                                                                                                                                                                                                        "binaryName" : "libsystem_kernel.dylib",
+                                                                                                                                                                                                                                                                        "address" : 6770365820
+                                                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                                                                    "binaryName" : "libc++.1.dylib",
+                                                                                                                                                                                                                                                                    "address" : 6854566412
+                                                                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                                                                "binaryName" : "libc++.1.dylib",
+                                                                                                                                                                                                                                                                "address" : 6854566188
+                                                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                                                            ],
+                                                                                                                                                                                                                                                            "binaryName" : "MIL",
+                                                                                                                                                                                                                                                            "address" : 11436544024
+                                                                                                                                                                                                                                                          }
+                                                                                                                                                                                                                                                        ],
+                                                                                                                                                                                                                                                        "binaryName" : "MIL",
+                                                                                                                                                                                                                                                        "address" : 11436565264
+                                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                                                    "binaryName" : "MIL",
+                                                                                                                                                                                                                                                    "address" : 11436565200
+                                                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                                                "binaryName" : "MIL",
+                                                                                                                                                                                                                                                "address" : 11436565140
+                                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                                            ],
+                                                                                                                                                                                                                                            "binaryName" : "MIL",
+                                                                                                                                                                                                                                            "address" : 11436558972
+                                                                                                                                                                                                                                          }
+                                                                                                                                                                                                                                        ],
+                                                                                                                                                                                                                                        "binaryName" : "MIL",
+                                                                                                                                                                                                                                        "address" : 11436032536
+                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                                    "binaryName" : "MIL",
+                                                                                                                                                                                                                                    "address" : 11436032352
+                                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                                "binaryName" : "MIL",
+                                                                                                                                                                                                                                "address" : 11437135884
+                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                            ],
+                                                                                                                                                                                                                            "binaryName" : "MIL",
+                                                                                                                                                                                                                            "address" : 11437135812
+                                                                                                                                                                                                                          }
+                                                                                                                                                                                                                        ],
+                                                                                                                                                                                                                        "binaryName" : "MIL",
+                                                                                                                                                                                                                        "address" : 11437029612
+                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                    "binaryName" : "MIL",
+                                                                                                                                                                                                                    "address" : 11437167208
+                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                "binaryName" : "Espresso",
+                                                                                                                                                                                                                "address" : 7182430340
+                                                                                                                                                                                                              }
+                                                                                                                                                                                                            ],
+                                                                                                                                                                                                            "binaryName" : "Espresso",
+                                                                                                                                                                                                            "address" : 7182431876
+                                                                                                                                                                                                          }
+                                                                                                                                                                                                        ],
+                                                                                                                                                                                                        "binaryName" : "Espresso",
+                                                                                                                                                                                                        "address" : 7181636952
+                                                                                                                                                                                                      },
+                                                                                                                                                                                                      {
+                                                                                                                                                                                                        "binaryUUID" : "350C733E-9330-3126-85A1-C91F4CC0C1EB",
+                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 9952619,
+                                                                                                                                                                                                        "sampleCount" : 1,
+                                                                                                                                                                                                        "subFrames" : [
+                                                                                                                                                                                                          {
+                                                                                                                                                                                                            "binaryUUID" : "29FF7149-AB23-3DEC-8DA3-39E2CB145F89",
+                                                                                                                                                                                                            "offsetIntoBinaryTextSegment" : 424939,
+                                                                                                                                                                                                            "sampleCount" : 1,
+                                                                                                                                                                                                            "subFrames" : [
+                                                                                                                                                                                                              {
+                                                                                                                                                                                                                "binaryUUID" : "29FF7149-AB23-3DEC-8DA3-39E2CB145F89",
+                                                                                                                                                                                                                "offsetIntoBinaryTextSegment" : 425243,
+                                                                                                                                                                                                                "sampleCount" : 1,
+                                                                                                                                                                                                                "subFrames" : [
+                                                                                                                                                                                                                  {
+                                                                                                                                                                                                                    "binaryUUID" : "29FF7149-AB23-3DEC-8DA3-39E2CB145F89",
+                                                                                                                                                                                                                    "offsetIntoBinaryTextSegment" : 425903,
+                                                                                                                                                                                                                    "sampleCount" : 1,
+                                                                                                                                                                                                                    "subFrames" : [
+                                                                                                                                                                                                                      {
+                                                                                                                                                                                                                        "binaryUUID" : "F2BCEB9A-0FEC-3C92-B6EA-8E37157050A8",
+                                                                                                                                                                                                                        "offsetIntoBinaryTextSegment" : 43860,
+                                                                                                                                                                                                                        "sampleCount" : 1,
+                                                                                                                                                                                                                        "binaryName" : "libsystem_kernel.dylib",
+                                                                                                                                                                                                                        "address" : 6770400084
+                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                    "binaryName" : "libc++.1.dylib",
+                                                                                                                                                                                                                    "address" : 6854766512
+                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                ],
+                                                                                                                                                                                                                "binaryName" : "libc++.1.dylib",
+                                                                                                                                                                                                                "address" : 6854765852
+                                                                                                                                                                                                              }
+                                                                                                                                                                                                            ],
+                                                                                                                                                                                                            "binaryName" : "libc++.1.dylib",
+                                                                                                                                                                                                            "address" : 6854765548
+                                                                                                                                                                                                          }
+                                                                                                                                                                                                        ],
+                                                                                                                                                                                                        "binaryName" : "Espresso",
+                                                                                                                                                                                                        "address" : 7181639020
+                                                                                                                                                                                                      }
+                                                                                                                                                                                                    ],
+                                                                                                                                                                                                    "binaryName" : "Espresso",
+                                                                                                                                                                                                    "address" : 7181564032
+                                                                                                                                                                                                  }
+                                                                                                                                                                                                ],
+                                                                                                                                                                                                "binaryName" : "Espresso",
+                                                                                                                                                                                                "address" : 7181616196
+                                                                                                                                                                                              }
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "binaryName" : "Espresso",
+                                                                                                                                                                                            "address" : 7180461300
+                                                                                                                                                                                          }
+                                                                                                                                                                                        ],
+                                                                                                                                                                                        "binaryName" : "Espresso",
+                                                                                                                                                                                        "address" : 7181633024
+                                                                                                                                                                                      }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "binaryName" : "Espresso",
+                                                                                                                                                                                    "address" : 7181365272
+                                                                                                                                                                                  }
+                                                                                                                                                                                ],
+                                                                                                                                                                                "binaryName" : "Espresso",
+                                                                                                                                                                                "address" : 7173005828
+                                                                                                                                                                              }
+                                                                                                                                                                            ],
+                                                                                                                                                                            "binaryName" : "Espresso",
+                                                                                                                                                                            "address" : 7172525528
+                                                                                                                                                                          }
+                                                                                                                                                                        ],
+                                                                                                                                                                        "binaryName" : "Espresso",
+                                                                                                                                                                        "address" : 7172531296
+                                                                                                                                                                      }
+                                                                                                                                                                    ],
+                                                                                                                                                                    "binaryName" : "Espresso",
+                                                                                                                                                                    "address" : 7171725076
+                                                                                                                                                                  }
+                                                                                                                                                                ],
+                                                                                                                                                                "binaryName" : "Espresso",
+                                                                                                                                                                "address" : 7172361944
+                                                                                                                                                              }
+                                                                                                                                                            ],
+                                                                                                                                                            "binaryName" : "Espresso",
+                                                                                                                                                            "address" : 7172413428
+                                                                                                                                                          }
+                                                                                                                                                        ],
+                                                                                                                                                        "binaryName" : "CoreML",
+                                                                                                                                                        "address" : 6867995204
+                                                                                                                                                      }
+                                                                                                                                                    ],
+                                                                                                                                                    "binaryName" : "CoreML",
+                                                                                                                                                    "address" : 6869853120
+                                                                                                                                                  }
+                                                                                                                                                ],
+                                                                                                                                                "binaryName" : "CoreML",
+                                                                                                                                                "address" : 6869853672
+                                                                                                                                              }
+                                                                                                                                            ],
+                                                                                                                                            "binaryName" : "libdispatch.dylib",
+                                                                                                                                            "address" : 6854108576
+                                                                                                                                          }
+                                                                                                                                        ],
+                                                                                                                                        "binaryName" : "libdispatch.dylib",
+                                                                                                                                        "address" : 6854067344
+                                                                                                                                      }
+                                                                                                                                    ],
+                                                                                                                                    "binaryName" : "CoreML",
+                                                                                                                                    "address" : 6869853396
+                                                                                                                                  }
+                                                                                                                                ],
+                                                                                                                                "binaryName" : "CoreML",
+                                                                                                                                "address" : 6869256352
+                                                                                                                              }
+                                                                                                                            ],
+                                                                                                                            "binaryName" : "CoreML",
+                                                                                                                            "address" : 6869257268
+                                                                                                                          }
+                                                                                                                        ],
+                                                                                                                        "binaryName" : "CoreML",
+                                                                                                                        "address" : 6868880312
+                                                                                                                      }
+                                                                                                                    ],
+                                                                                                                    "binaryName" : "CoreML",
+                                                                                                                    "address" : 6868888476
+                                                                                                                  }
+                                                                                                                ],
+                                                                                                                "binaryName" : "CoreML",
+                                                                                                                "address" : 6868886448
+                                                                                                              }
+                                                                                                            ],
+                                                                                                            "binaryName" : "CoreML",
+                                                                                                            "address" : 6868884984
+                                                                                                          }
+                                                                                                        ],
+                                                                                                        "binaryName" : "CoreML",
+                                                                                                        "address" : 6868875576
+                                                                                                      }
+                                                                                                    ],
+                                                                                                    "binaryName" : "CoreML",
+                                                                                                    "address" : 6868874944
+                                                                                                  }
+                                                                                                ],
+                                                                                                "binaryName" : "CoreML",
+                                                                                                "address" : 6868128140
+                                                                                              }
+                                                                                            ],
+                                                                                            "binaryName" : "CoreML",
+                                                                                            "address" : 6869584308
+                                                                                          }
+                                                                                        ],
+                                                                                        "binaryName" : "libdispatch.dylib",
+                                                                                        "address" : 6854108576
+                                                                                      }
+                                                                                    ],
+                                                                                    "binaryName" : "libdispatch.dylib",
+                                                                                    "address" : 6854067344
+                                                                                  }
+                                                                                ],
+                                                                                "binaryName" : "CoreML",
+                                                                                "address" : 6869583996
+                                                                              }
+                                                                            ],
+                                                                            "binaryName" : "CoreML",
+                                                                            "address" : 6869674728
+                                                                          }
+                                                                        ],
+                                                                        "binaryName" : "CoreML",
+                                                                        "address" : 6868740728
+                                                                      }
+                                                                    ],
+                                                                    "binaryName" : "CoreML",
+                                                                    "address" : 6869286548
+                                                                  }
+                                                                ],
+                                                                "binaryName" : "RockNRoll Native Guest",
+                                                                "address" : 4342893776
+                                                              }
+                                                            ],
+                                                            "binaryName" : "RockNRoll Native Guest",
+                                                            "address" : 4342877616
+                                                          }
+                                                        ],
+                                                        "binaryName" : "RockNRoll Native Guest",
+                                                        "address" : 4345553504
+                                                      }
+                                                    ],
+                                                    "binaryName" : "RockNRoll Native Guest",
+                                                    "address" : 4345555172
+                                                  }
+                                                ],
+                                                "binaryName" : "RockNRoll Native Guest",
+                                                "address" : 4344018652
+                                              }
+                                            ],
+                                            "binaryName" : "libdispatch.dylib",
+                                            "address" : 6854003252
+                                          }
+                                        ],
+                                        "binaryName" : "libdispatch.dylib",
+                                        "address" : 6854108576
+                                      }
+                                    ],
+                                    "binaryName" : "libdispatch.dylib",
+                                    "address" : 6854037440
+                                  }
+                                ],
+                                "binaryName" : "libdispatch.dylib",
+                                "address" : 6854040252
+                              }
+                            ],
+                            "binaryName" : "libdispatch.dylib",
+                            "address" : 6854082392
+                          }
+                        ],
+                        "binaryName" : "libdispatch.dylib",
+                        "address" : 6854080604
+                      }
+                    ],
+                    "binaryName" : "libsystem_pthread.dylib",
+                    "address" : 6770626432
+                  }
+                ],
+                "binaryName" : "libsystem_pthread.dylib",
+                "address" : 6770621636
+              }
+            ]
+          }
+        ],
+        "callStackPerThread" : false
+      },
+      "diagnosticMetaData" : {
+        "appBuildVersion" : "74",
+        "isTestFlightApp" : false,
+        "regionFormat" : "RU",
+        "appVersion" : "0.3.0",
+        "osVersion" : "macOS 27.2 (26B123)",
+        "deviceType" : "Mac16,12",
+        "bundleIdentifier" : "dev.vsmirn0v.conferenceguest.nativeguest",
+        "pid" : 32633,
+        "writesCaused" : "2148 MB",
+        "platformArchitecture" : "arm64e",
+        "lowPowerModeEnabled" : false
+      }
+    }
+  ]
+}

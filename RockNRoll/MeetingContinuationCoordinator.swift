@@ -43,6 +43,12 @@ final class MeetingContinuationCoordinator: ObservableObject {
         let deadline: Task<Void, Never>
     }
     private var refreshWaiters: [UUID: RefreshWaiter] = [:]
+    private struct TargetConnectWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+        let deadline: Task<Void, Never>
+    }
+    private var targetConnectWaiter: TargetConnectWaiter?
     private var foreground = true
     private var tick: Task<Void, Never>?
     private var transferTask: Task<Void, Never>?
@@ -56,7 +62,12 @@ final class MeetingContinuationCoordinator: ObservableObject {
     private var cancellingRequestID: UUID?
     private var prepared: JamTransfer?
     private var holdExpiry: Task<Void, Never>?
-    private var revision = 0 { didSet { cancelRefreshWaiters() } }
+    private var revision = 0 {
+        didSet {
+            cancelRefreshWaiters()
+            finishTargetConnectWaiter(result: .failure(CancellationError()))
+        }
+    }
     private var published: ActiveJam?
     private var lastPublished = Date.distantPast
     private var targetConnected = false
@@ -81,6 +92,9 @@ final class MeetingContinuationCoordinator: ObservableObject {
         for waiter in refreshWaiters.values {
             waiter.deadline.cancel(); waiter.continuation.resume(throwing: CancellationError())
         }
+        if let waiter = targetConnectWaiter {
+            waiter.deadline.cancel(); waiter.continuation.resume(throwing: CancellationError())
+        }
     }
     func setEnabled(_ value: Bool) {
         guard enabled != value else { return }
@@ -102,6 +116,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
     }
     private func stopSharing(withdraw: Bool = true) {
         cancelRefreshWaiters()
+        finishTargetConnectWaiter(result: .failure(CancellationError()))
         let abandoned = targetConnected ? nil : receiver
         let invitation = destinationInvitation, targetID = targetSession
         tick?.cancel(); tick = nil; candidates = []; moving = false; receiver = nil
@@ -156,6 +171,45 @@ final class MeetingContinuationCoordinator: ObservableObject {
         guard receiver != nil, invitation == destinationInvitation, sessionID == targetSession, !targetConnected else { return }
         targetConnected = true
         show(L("Connected here. Finishing the move…"))
+        finishTargetConnectWaiter(result: .success(()))
+    }
+
+    private func finishTargetConnectWaiter(id: UUID? = nil, result: Result<Void, Error>) {
+        guard let waiter = targetConnectWaiter, id == nil || waiter.id == id else { return }
+        targetConnectWaiter = nil
+        waiter.deadline.cancel()
+        waiter.continuation.resume(with: result)
+    }
+
+    private func waitForTargetConnected(expected: Int, timeout: Duration = .seconds(35)) async throws {
+        try Task.checkCancellation()
+        guard expected == revision else { throw CancellationError() }
+        if targetConnected { return }
+        finishTargetConnectWaiter(result: .failure(CancellationError()))
+        let waiterID = UUID()
+        let _: Void = try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard !Task.isCancelled, expected == revision else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if targetConnected {
+                    continuation.resume()
+                    return
+                }
+                let deadline = Task { [weak self] in
+                    do { try await Task.sleep(for: timeout) } catch { return }
+                    self?.finishTargetConnectWaiter(id: waiterID, result: .failure(ContinuationError.expired))
+                }
+                targetConnectWaiter = .init(id: waiterID, continuation: continuation, deadline: deadline)
+            }
+        }, onCancel: { [weak self] in
+            Task { @MainActor in
+                self?.finishTargetConnectWaiter(id: waiterID, result: .failure(CancellationError()))
+            }
+        })
+        try Task.checkCancellation()
+        guard expected == revision else { throw CancellationError() }
     }
     func targetDidFail() {
         requestCancellation(message: L("Could not move the jam. Check the other device before retrying."))
@@ -292,7 +346,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
         let currentNow = now()
         let delay: TimeInterval
         if prepared != nil {
-            delay = 1
+            delay = 0.35
         } else if currentNow < cloudBackoffUntil {
             delay = max(1, ceil(cloudBackoffUntil.timeIntervalSince(currentNow)))
         } else if current != nil {
@@ -408,13 +462,8 @@ final class MeetingContinuationCoordinator: ObservableObject {
                 let prepared = try await waitFor(request, expected: expected, phases: [.prepared, .rejected], limit: 20)
                 guard ownsTransfer(request, expected: expected), !Task.isCancelled else { return }
                 guard prepared.phase == .prepared else { throw ContinuationError.unavailable }
-                for _ in 0..<35 {
-                    try Task.checkCancellation()
-                    guard expected == revision else { throw CancellationError() }
-                    if targetConnected { break }
-                    try await Task.sleep(for: .seconds(1))
-                }
-                guard targetConnected else { throw ContinuationError.expired }
+                try await waitForTargetConnected(expected: expected)
+                guard ownsTransfer(request, expected: expected), targetConnected else { throw ContinuationError.expired }
                 let connected = try await transport.transition(prepared, to: .connected, actor: deviceID)
                 guard ownsTransfer(request, expected: expected), !Task.isCancelled else { return }
                 receiver = connected
@@ -437,7 +486,11 @@ final class MeetingContinuationCoordinator: ObservableObject {
         }
     }
     private func waitFor(_ request: JamTransfer, expected: Int, phases: [JamTransfer.Phase], limit: Int) async throws -> JamTransfer {
-        for _ in 0..<limit {
+        let budget = TimeInterval(limit)
+        var elapsed: TimeInterval = 0
+        var step = 0
+        let initialIntervals: [TimeInterval] = [0.2, 0.3, 0.5]
+        while elapsed < budget {
             try Task.checkCancellation()
             guard expected == revision else { throw CancellationError() }
             if let value = try await transport.transfer(sourceSession: request.sourceSession) {
@@ -447,7 +500,10 @@ final class MeetingContinuationCoordinator: ObservableObject {
                 if phases.contains(value.phase) { return value }
                 if value.phase == .cancelled || value.phase == .rejected { throw ContinuationError.unavailable }
             }
-            try await Task.sleep(for: .seconds(1))
+            let delay = step < initialIntervals.count ? initialIntervals[step] : 1.0
+            step += 1
+            elapsed += delay
+            try await Task.sleep(for: .milliseconds(Int((delay * 1000).rounded())))
         }
         throw ContinuationError.expired
     }
@@ -488,6 +544,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
         show(message); await refresh()
     }
     private func clearReceiver() {
+        finishTargetConnectWaiter(result: .failure(CancellationError()))
         receiver = nil; moving = false; transferTask = nil; targetConnected = false
         destinationInvitation = nil
         targetSession = nil

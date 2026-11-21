@@ -1,0 +1,8 @@
+2026-11-10T18:56:43.886Z {"build":"1","event":"app-launch","macOS":"Версия 27.2 (Выпуск 26B123)","uptime":290388.75193041668,"version":"0.1"}
+2026-11-10T18:56:44.499Z {"event":"voice-reply-start","seconds":0.10000000000000001,"service":"guest","uptime":290389.36488762504,"wasLive":false}
+2026-11-10T18:56:44.736Z {"event":"voice-reply-end","played":true,"service":"guest","uptime":290389.60155420838}
+2026-11-10T18:56:44.868Z {"architecture":"h16g","event":"voice-clone-prepare-started","uptime":290389.73316045833}
+2026-11-10T18:56:44.892Z {"event":"voice-reply-start","seconds":0.20000000000000001,"service":"guest","uptime":290389.75748666667,"wasLive":false}
+2026-11-10T18:56:45.053Z {"event":"voice-reply-end","played":true,"service":"guest","uptime":290389.9184355}
+2026-11-10T18:56:45.070Z {"event":"voice-reply-start","seconds":0.20000000000000001,"service":"guest","uptime":290389.93600245833,"wasLive":true}
+2026-11-10T18:56:45.228Z {"event":"voice-reply-end","played":true,"service":"guest","uptime":290390.09320545837}

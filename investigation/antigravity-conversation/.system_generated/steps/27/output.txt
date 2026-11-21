@@ -1,0 +1,21 @@
+Command exited with code 0.
+
+Command output:
+Experiments/NativeGuest/GuestAcousticEnvironment.swift:20:        guard let input = integer(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice),
+Experiments/NativeGuest/GuestAcousticEnvironment.swift:21:              let output = integer(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice),
+Experiments/NativeGuest/GuestAcousticEnvironment.swift:76:        return ["input": device(kAudioHardwarePropertyDefaultInputDevice), "output": device(kAudioHardwarePropertyDefaultOutputDevice)]
+Experiments/NativeGuest/GuestSystemAudio.swift:317:enum GuestEngineChange: Sendable { case stopped, started }
+Experiments/NativeGuest/GuestSystemAudio.swift:349:    /// system (device or route change, sleep) and are reported to `onSpontaneousEngineChange`.
+Experiments/NativeGuest/GuestSystemAudio.swift:351:    private var spontaneousChangeHandler: ((GuestEngineChange) -> Void)?
+Experiments/NativeGuest/GuestSystemAudio.swift:353:    var onSpontaneousEngineChange: ((GuestEngineChange) -> Void)? {
+Experiments/NativeGuest/GuestSystemAudio.swift:357:    private func reportSpontaneous(_ change: GuestEngineChange) {
+NativeMacGuest/AcousticValidationExperiment.swift:316:            "independentRemote": peer?.ipcEvidence ?? [:], "systemDefaultRoutes": routes,
+NativeMacGuest/AcousticValidationExperiment.swift:358:        let input: UInt32? = AcousticDefaultRoutes.property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, initial: UInt32(0))
+NativeMacGuest/AcousticValidationExperiment.swift:359:        let output: UInt32? = AcousticDefaultRoutes.property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, initial: UInt32(0))
+NativeMacGuest/AcousticValidationExperiment.swift:698:            "input": device(kAudioHardwarePropertyDefaultInputDevice, kAudioDevicePropertyScopeInput),
+NativeMacGuest/AcousticValidationExperiment.swift:699:            "output": device(kAudioHardwarePropertyDefaultOutputDevice, kAudioDevicePropertyScopeOutput)]
+NativeMacGuest/Attention/AssistantTalk.swift:677:        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+NativeMacGuest/Attention/AssistantTalk.swift:706:    private var defaultAddress = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+NativeMacGuest/Engines/SharedAudioEngine.swift:29:    var onSpontaneousEngineChange: ((GuestEngineChange) -> Void)? { get set }
+NativeMacGuest/Engines/SharedAudioEngine.swift:333:    @discardableResult func engineChanged(_ change: GuestEngineChange) -> Task<Bool, Never>? {
+NativeMacGuest/Engines/SharedAudioEngine.swift:472:            created.onSpontaneousEngineChange = { [weak self] change in

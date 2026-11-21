@@ -113,6 +113,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
     private var noteDebounceTasks: [UUID: Task<Void, Never>] = [:]
     private var liveEventsBySession: [UUID: [SyncedTranscriptEvent]] = [:]
     private var micIntervalsBySession: [UUID: [DateInterval]] = [:]
+    private var transcriptWriteTasks: [UUID: Task<Void, Never>] = [:]
     private var lastLocalSchedule: (meetings: [CalendarMeeting], bindings: [String: URL], suppressed: [String: Date])?
     private var archivedFingerprints: [UUID: Int] = [:]
     private let replicaIOQueue = DispatchQueue(label: "dev.vsmirn0v.ios.workspace.replica-io", qos: .utility)
@@ -132,6 +133,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         var acknowledgedSchedule: [String: MeetingScheduleSyncRecord] = [:]
         var pendingCloudSessions: Set<UUID>?
         var pendingCloudSettings: Set<String>?
+        var lastExportedNoteMarkdown: [UUID: String]?
     }
 
     init(
@@ -217,7 +219,13 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor [weak self] in
-                self?.reachabilityOnline = (path.status == .satisfied)
+                guard let self else { return }
+                let online = (path.status == .satisfied)
+                let becameOnline = !self.reachabilityOnline && online
+                self.reachabilityOnline = online
+                if becameOnline && self.syncPreferences.enabled {
+                    self.scheduleSync(delayMilliseconds: 250)
+                }
             }
         }
         monitor.start(queue: DispatchQueue(label: "dev.vsmirn0v.ios.workspace.reachability"))
@@ -257,14 +265,14 @@ final class IOSWorkspaceCoordinator: ObservableObject {
 
     func reloadFromStore() async {
         do {
-            sessions = try await store.allSessions()
-            notesBySession = try await store.allNotes()
-            outcomesBySession = try await store.allOutcomes()
-            tasks = try await store.allTasks()
-            let profile = try await store.taskProfile()
-            taskProfile = profile
-            taskArchiveDates = try await store.taskArchiveDates(profileID: profile.profileID)
-            contextSettings = try await store.allContextSettings()
+            let snapshot = try await store.loadSnapshot()
+            if sessions != snapshot.sessions { sessions = snapshot.sessions }
+            if notesBySession != snapshot.notesBySession { notesBySession = snapshot.notesBySession }
+            if outcomesBySession != snapshot.outcomesBySession { outcomesBySession = snapshot.outcomesBySession }
+            if tasks != snapshot.tasks { tasks = snapshot.tasks }
+            if taskProfile != snapshot.taskProfile { taskProfile = snapshot.taskProfile }
+            if taskArchiveDates != snapshot.taskArchiveDates { taskArchiveDates = snapshot.taskArchiveDates }
+            if contextSettings != snapshot.contextSettings { contextSettings = snapshot.contextSettings }
         } catch {
             syncError = error.localizedDescription
         }
@@ -410,11 +418,19 @@ final class IOSWorkspaceCoordinator: ObservableObject {
                     events: slice,
                     updatedAt: Date()
                 )
-                replica.workspaceDoc.upsertTranscriptChunk(chunk)
+                let existing = replica.workspaceDoc.transcriptChunks[chunk.id]
+                if existing?.events != chunk.events || existing?.micActiveIntervals != chunk.micActiveIntervals {
+                    replica.workspaceDoc.upsertTranscriptChunk(chunk)
+                }
             }
         }
-        Task {
-            try? await store.appendTranscriptEvents(sessionID: canonical, events: events)
+        transcriptWriteTasks[canonical]?.cancel()
+        transcriptWriteTasks[canonical] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+            let latest = self.liveEventsBySession[canonical] ?? events
+            self.transcriptWriteTasks[canonical] = nil
+            try? await self.store.appendTranscriptEvents(sessionID: canonical, events: latest)
         }
     }
 
@@ -424,6 +440,8 @@ final class IOSWorkspaceCoordinator: ObservableObject {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            self.transcriptWriteTasks[sid]?.cancel()
+            self.transcriptWriteTasks[sid] = nil
             await self.flushNote(sessionID: sid)
 
             guard var session = (try? await self.store.session(sid)) ?? self.sessions.first(where: { $0.id == sid }) else { return }
@@ -437,13 +455,16 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             )
             myLeg.endInterval(id: controllerID, at: endedAt)
             myLeg.leftAt = endedAt
-            myLeg.transcriptChunkCount = self.liveEventsBySession[sid]?.count ?? myLeg.transcriptChunkCount
+            let chunkSize = 200
+            if let liveCount = self.liveEventsBySession[sid]?.count {
+                myLeg.transcriptChunkCount = liveCount == 0 ? 0 : (liveCount + chunkSize - 1) / chunkSize
+            }
             myLeg.updatedAt = endedAt
             legs[self.deviceID] = myLeg
 
             let stillActiveRemote = legs.values.contains { $0.deviceID != self.deviceID && $0.leftAt == nil }
             session.legs = legs
-            session.endedAt = endedAt
+            session.endedAt = stillActiveRemote ? nil : endedAt
             session.state = stillActiveRemote ? "active" : "ended"
             session.updatedAt = Date()
 
@@ -451,11 +472,14 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             let finalEvents: [SyncedTranscriptEvent]
             if let cachedEvents {
                 finalEvents = cachedEvents
+                try? await self.store.appendTranscriptEvents(sessionID: sid, events: cachedEvents)
             } else {
                 finalEvents = (try? await self.store.loadTranscriptEvents(sessionID: sid)) ?? []
             }
+            let finalMicIntervals = self.micIntervalsBySession[sid] ?? []
+            self.liveEventsBySession.removeValue(forKey: sid)
+            self.micIntervalsBySession.removeValue(forKey: sid)
             if !finalEvents.isEmpty {
-                let chunkSize = 200
                 for (idx, start) in stride(from: 0, to: finalEvents.count, by: chunkSize).enumerated() {
                     let slice = Array(finalEvents[start..<min(start + chunkSize, finalEvents.count)])
                     let chunk = SyncedTranscriptChunk(
@@ -463,12 +487,16 @@ final class IOSWorkspaceCoordinator: ObservableObject {
                         deviceID: self.deviceID,
                         chunkIndex: idx,
                         sessionStartedAt: session.startedAt,
-                        sessionEndedAt: endedAt,
-                        micActiveIntervals: self.micIntervalsBySession[sid] ?? [],
+                        sessionEndedAt: session.endedAt,
+                        micActiveIntervals: finalMicIntervals,
                         events: slice,
                         updatedAt: Date()
                     )
-                    self.replica.workspaceDoc.upsertTranscriptChunk(chunk)
+                    let existing = self.replica.workspaceDoc.transcriptChunks[chunk.id]
+                    if existing?.events != chunk.events || existing?.sessionEndedAt != chunk.sessionEndedAt ||
+                        existing?.micActiveIntervals != chunk.micActiveIntervals {
+                        self.replica.workspaceDoc.upsertTranscriptChunk(chunk)
+                    }
                 }
             }
 
@@ -765,6 +793,9 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             let noteID = notesBySession[sessionID]?.noteID ?? UUID()
             let saved = try await store.saveNote(sessionID: sessionID, noteID: noteID, markdown: draft)
             replica.workspaceDoc.saveNote(sessionID: sessionID, noteID: saved.noteID, markdown: saved.markdown, now: saved.updatedAt)
+            var exported = replica.lastExportedNoteMarkdown ?? [:]
+            exported[sessionID] = saved.markdown
+            replica.lastExportedNoteMarkdown = exported
             await reloadFromStore()
         } catch {
             syncError = error.localizedDescription
@@ -1120,9 +1151,15 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             if let prev, prev.value == value { return prev }
             return SyncValue(value, version: replica.workspaceDoc.nextVersion())
         }
-        func opt<V: Equatable>(_ value: V?, _ prev: SyncValue<V>?) -> SyncValue<V>? {
-            guard let value else { return prev }
-            return scalar(value, prev)
+        func opt(_ value: String?, _ prev: SyncValue<String>?) -> SyncValue<String>? {
+            if let value { return scalar(value, prev) }
+            guard prev != nil else { return nil }
+            return scalar("", prev)
+        }
+        func optArray<E: Equatable>(_ value: [E]?, _ prev: SyncValue<[E]>?) -> SyncValue<[E]>? {
+            if let value { return scalar(value, prev) }
+            guard prev != nil else { return nil }
+            return scalar([], prev)
         }
         let updated = SyncedMeetingContextSettings(
             scopeKey: scopeKey,
@@ -1135,7 +1172,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             about: opt(about, existing?.about),
             matters: opt(matters, existing?.matters),
             never: opt(never, existing?.never),
-            people: opt(people, existing?.people),
+            people: optArray(people, existing?.people),
             defaultReminderOverride: existing?.defaultReminderOverride,
             guidanceRules: existing?.guidanceRules ?? [:]
         )
@@ -1455,6 +1492,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         } while needsAnotherPass && !Task.isCancelled
     }
 
+<<<<<<< HEAD
     private func recoverPersistedTasks() async throws {
         // Older versions saved edits only in SQLite until a cloud pass succeeded.
         // Rehydrate missing/newer task fields without retimestamping unchanged ones.
@@ -1481,20 +1519,35 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         try await persistReplicaCheckpoint()
     }
 
-    private func applyPendingCloudChanges() async throws {
+    private func applyPendingCloudChanges(preMergeLocalNoteMarkdown: [UUID: String] = [:]) async throws {
         guard let sessions = replica.pendingCloudSessions else { return }
         var report = MeetingWorkspaceSyncDocument.LibraryMergeOutcome()
         report.changedSessions = sessions
         report.changedSettingsKeys = replica.pendingCloudSettings ?? []
-        try await applyReportToLocalStore(report)
+        try await applyReportToLocalStore(report, preMergeLocalNoteMarkdown: preMergeLocalNoteMarkdown)
         replica.pendingCloudSessions = nil
         replica.pendingCloudSettings = nil
         try await persistReplicaCheckpoint()
     }
 
+    private func ingestLocalNotesIntoDocument() async {
+        guard let localNotes = try? await store.allNotes() else { return }
+        var exported = replica.lastExportedNoteMarkdown ?? [:]
+        for (rawSID, note) in localNotes {
+            let sid = replica.workspaceDoc.resolveCanonicalSessionID(for: rawSID)
+            if exported[sid] != note.markdown && replica.workspaceDoc.notes[sid]?.markdown != note.markdown {
+                replica.workspaceDoc.saveNote(sessionID: sid, noteID: note.noteID, markdown: note.markdown, now: note.updatedAt)
+            }
+            exported[sid] = note.markdown
+        }
+        replica.lastExportedNoteMarkdown = exported
+    }
+
     private func syncLibraryPass() async throws {
         try await applyPendingCloudChanges()
         try await recoverPersistedTasks()
+        await ingestLocalNotesIntoDocument()
+        let preMergeLocalNoteMarkdown = replica.workspaceDoc.notes.mapValues(\.markdown)
         let session = try await connectZone(name: "library", transport: libraryTransport) {
             self.replica.libraryToken = nil
             self.replica.acknowledgedLibrary.removeAll()
@@ -1529,7 +1582,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
             replica.pendingCloudSessions = report.changedSessions
             replica.pendingCloudSettings = report.changedSettingsKeys
             try await persistReplicaCheckpoint()
-            try await applyPendingCloudChanges()
+            try await applyPendingCloudChanges(preMergeLocalNoteMarkdown: preMergeLocalNoteMarkdown)
         }
 
         let pending = replica.workspaceDoc.pendingLibraryRecords(acknowledged: replica.acknowledgedLibrary)
@@ -1620,20 +1673,35 @@ final class IOSWorkspaceCoordinator: ObservableObject {
         calendar?.applyRemoteSchedule(replica.scheduleDoc.projectedOccurrences(), localDeviceID: deviceID)
     }
 
-    private func applyReportToLocalStore(_ report: MeetingWorkspaceSyncDocument.LibraryMergeOutcome) async throws {
+    private func applyReportToLocalStore(
+        _ report: MeetingWorkspaceSyncDocument.LibraryMergeOutcome,
+        preMergeLocalNoteMarkdown: [UUID: String] = [:]
+    ) async throws {
+        var exportedNotes = replica.lastExportedNoteMarkdown ?? [:]
         for sid in report.changedSessions {
             if let synced = replica.workspaceDoc.sessions[sid] {
                 _ = try await store.applyRemoteSession(synced)
                 if synced.isDeleted.value || (synced.canonicalSessionID?.value != nil && synced.canonicalSessionID?.value != sid) {
                     noteDrafts.removeValue(forKey: sid)
                     dirtyNoteSessions.remove(sid)
+                    exportedNotes.removeValue(forKey: sid)
                     continue
                 }
             }
             if let syncedNote = replica.workspaceDoc.notes[sid] {
-                let (merged, _) = try await store.applyRemoteNote(syncedNote, localDeviceID: deviceID)
+                let (merged, _) = try await store.applyRemoteNote(
+                    syncedNote,
+                    localDeviceID: deviceID,
+                    alreadyMergedFromLocalMarkdown: preMergeLocalNoteMarkdown[sid],
+                    syncBaseMarkdown: replica.workspaceDoc.noteBases[sid]?.markdown
+                )
                 if merged != syncedNote.markdown && !syncedNote.isDeleted.value {
                     replica.workspaceDoc.saveNote(sessionID: sid, noteID: syncedNote.noteID, markdown: merged)
+                }
+                if syncedNote.isDeleted.value {
+                    exportedNotes.removeValue(forKey: sid)
+                } else {
+                    exportedNotes[sid] = merged
                 }
                 if !dirtyNoteSessions.contains(sid) {
                     noteDrafts[sid] = merged
@@ -1655,6 +1723,7 @@ final class IOSWorkspaceCoordinator: ObservableObject {
                 )
             }
         }
+        replica.lastExportedNoteMarkdown = exportedNotes
 
         if let profile = replica.workspaceDoc.canonicalTaskProfile {
             let mapped = IOSTaskProfile(profileID: profile.profileID, assigneeID: profile.assigneeID.value, aliases: profile.aliases.value)

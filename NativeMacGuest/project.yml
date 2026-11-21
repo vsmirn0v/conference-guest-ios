@@ -28,7 +28,8 @@ targets:
         # These diagnostic harnesses target experiment-only test hooks and helper
         # types that have not landed. Exclude them until their dependencies are tracked;
         # no production code references either harness.
-        excludes: ['*.yml', '*.py', '*.md', '*.sh', Tests, __pycache__, NativeGuest.entitlements, Info.plist, AuthorSupport/SupportLanguage.bundle,
+        excludes: ['*.yml', '*.py', '**/*.py', '*.md', '*.sh', Tests, __pycache__, '**/__pycache__',
+                   NativeGuest.entitlements, Info.plist, Package.resolved, AuthorSupport/SupportLanguage.bundle,
                    MicrophoneActivationExperiment.swift, AcousticValidationExperiment.swift,
                    StartupCaptureReceiver.swift, VoiceWorker, VoiceGPUWorker, ThirdPartyNotices]
       - path: ThirdPartyNotices
@@ -84,7 +85,11 @@ targets:
           dest="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/mlx-swift_Cmlx.bundle"
           test -f "${src}/Contents/Resources/default.metallib"
           /usr/bin/ditto "${src}" "${dest}"
-        basedOnDependencyAnalysis: false
+        inputFiles:
+          - "${BUILT_PRODUCTS_DIR}/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+        outputFiles:
+          - "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+        basedOnDependencyAnalysis: true
     settings:
       configs:
         Debug:
@@ -93,6 +98,11 @@ targets:
         Release:
           CLOUDKIT_ENVIRONMENT: Production
           APS_ENVIRONMENT: production
+          DEAD_CODE_STRIPPING: YES
+          DEPLOYMENT_POSTPROCESSING: YES
+          STRIP_INSTALLED_PRODUCT: YES
+          STRIP_STYLE: all
+          COPY_PHASE_STRIP: YES
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.nativeguest
         PRODUCT_NAME: Rock'N'Roll for Mac
@@ -150,6 +160,10 @@ targets:
           SWIFT_COMPILATION_MODE: wholemodule
         Release:
           CODE_SIGN_ENTITLEMENTS: VoiceWorker/Worker.entitlements
+          DEAD_CODE_STRIPPING: YES
+          DEPLOYMENT_POSTPROCESSING: YES
+          STRIP_INSTALLED_PRODUCT: YES
+          STRIP_STYLE: all
   RockClonedVoiceGPUWorker:
     type: tool
     platform: macOS
@@ -179,6 +193,12 @@ targets:
         SWIFT_VERSION: '5.0'
         OTHER_LDFLAGS: ['$(inherited)', '-weak_framework', 'CoreAI']
         ARCHS: arm64
+      configs:
+        Release:
+          DEAD_CODE_STRIPPING: YES
+          DEPLOYMENT_POSTPROCESSING: YES
+          STRIP_INSTALLED_PRODUCT: YES
+          STRIP_STYLE: all
   NativeDesktopTests:
     type: bundle.unit-test
     platform: macOS

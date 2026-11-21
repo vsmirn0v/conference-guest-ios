@@ -1,0 +1,273 @@
+Command exited with code 0.
+
+Command output:
+            guard talkMeetingID == attachment.meetingID else { return true }
+            return await releaseTalkLocked()
+        }
+    }
+
+    // MARK: Mute (guarantees 1 and 2)
+
+    /// Muting always succeeds locally: senders off at once, module muted in order.
+    /// Unmuting needs the talk role, the epoch it was granted at, no private check,
+    /// and every other meeting's sender off before the module opens.
+    @discardableResult func setMuted(_ muted: Bool, for attachment: MeetingAudioAttachment, epoch: UInt64) async -> Bool {
+        if muted { attachment.disableSenders() }
+        return await work.run { [self] in
+            guard let module, attachments[attachment.meetingID] === attachment else { return muted }
+            let isTalk = talkMeetingID == attachment.meetingID
+            if muted {
+                attachment.disableSenders()
+                guard isTalk else { return true }
+                talkUnmuted = false
+                return await muteModuleLocked(module)
+            }
+            guard isTalk, epoch == talkEpoch, !privateCheckActive, !cleanupFailed else { return false }
+            let unmuted = await unmuteLocked(attachment, module: module, epoch: epoch)
+            if unmuted { talkUnmuted = true }
+            return unmuted
+        }
+    }
+
+    // MARK: Recovery (guarantee 9)
+
+    /// An engine stop the app did not ask for (device or route change, sleep): every sender
+    /// off at once, the module muted in order. The next start restores the talk meeting's
+    /// last confirmed unmute, through the same ordered path as a user's unmute.
+    @discardableResult func engineChanged(_ change: GuestEngineChange) -> Task<Bool, Never>? {
+        switch change {
+        case .stopped:
+            guard !rebuilding else { return nil }
+            rebuilding = true
+            for attachment in attachments.values { attachment.disableSenders() }
+            return Task { await work.run { [self] in
+                guard let module else { return true }
+                return await muteModuleLocked(module)
+            } }
+        case .started:
+            guard rebuilding else { return nil }
+            return Task { await work.run { [self] in
+                guard rebuilding else { return true }
+                rebuilding = false; recoveries += 1
+                guard talkUnmuted, let id = talkMeetingID, let talk = attachments[id], let module,
+                      !privateCheckActive, !cleanupFailed else { return true }
+                let restored = await unmuteLocked(talk, module: module, epoch: talkEpoch)
+                if !restored { talkUnmuted = false; onRecoveryFailed?(id) }
+                return restored
+            } }
+        }
+    }
+
+    /// Sleep and wake go through the same path as an engine rebuild.
+    func observeSystemSleep() {
+        guard sleepObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObservers = [
+            center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { _ = self?.engineChanged(.stopped) }
+            },
+            center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { _ = self?.engineChanged(.started) }
+            },
+        ]
+    }
+
+    /// Starts the microphone muted for the talk meeting after an explicit microphone
+    /// action; another meeting's request waits for its next unmute with the talk role.
+    func activateInput(for attachment: MeetingAudioAttachment) async -> Bool {
+        await work.run { [self] in
+            guard let module, attachments[attachment.meetingID] === attachment, !cleanupFailed else { return false }
+            guard talkMeetingID == attachment.meetingID else { return true }
+            return await module.activateMicrophone(timeout: timeouts.activation)
+        }
+    }
+
+    /// Recovery (S5): every sender off and the module muted until each meeting re-confirms.
+    @discardableResult func disableAllSenders() async -> Bool {
+        await work.run { [self] in await muteEverythingLocked() }
+    }
+
+    // MARK: Private microphone check (guarantee 4)
+
+    /// Only while no sender is enabled and the module is muted; unmuting is refused meanwhile.
+    func beginPrivateCheck() async -> Bool {
+        await work.run { [self] in
+            guard let module, !privateCheckActive, moduleMuted,
+                  attachments.values.allSatisfy({ !$0.anySenderEnabled }) else { return false }
+            // Without a talk meeting input is withdrawn; the check permits it for itself.
+            if talkMeetingID == nil, !(await module.setInputPermitted(true, keepWarm: false, timeout: timeouts.mute)) { return false }
+            guard await module.beginPrivateInputCheck(timeout: nil) else {
+                if talkMeetingID == nil { _ = await module.setInputPermitted(false, keepWarm: false, timeout: timeouts.activation) }
+                return false
+            }
+            privateCheckActive = true
+            return true
+        }
+    }
+
+    @discardableResult func endPrivateCheck() async -> Bool {
+        await work.run { [self] in
+            guard privateCheckActive, let module else { return true }
+            privateCheckActive = false
+            let ended = await module.endPrivateInputCheck(timeout: timeouts.mute)
+            guard talkMeetingID == nil else { return ended }
+            let keepWarm = keepInputWarm || (attachments.isEmpty && shouldPrepareForegroundInput)
+            return await module.setInputPermitted(false, keepWarm: keepWarm, timeout: timeouts.activation) && ended
+        }
+    }
+
+    // MARK: Output
+
+    /// Playout runs while any meeting has sound on; otherwise output runs silenced
+    /// while any meeting transcribes. Per-meeting sound is the received tracks' volume.
+    @discardableResult func outputChanged() async -> Bool {
+        await work.run { [self] in await applyOutputLocked() }
+----
+        guard let module else { return true }
+        return await muteModuleLocked(module)
+    }
+
+    private func muteModuleLocked(_ module: SharedAudioModule) async -> Bool {
+        moduleMuted = true
+        guard await module.setMicrophoneMuted(true, timeout: timeouts.mute) else {
+            module.suppressMicrophone(); return false
+        }
+        return true
+    }
+
+    private func ensureModuleLocked() async -> Result<SharedAudioModule, Error> {
+        if let module { return .success(module) }
+        do {
+            let created = try await makeModule()
+            created.setInputTranscriptionSink { [inputSink] buffer in inputSink.deliver(buffer) }
+            created.onSpontaneousEngineChange = { [weak self] change in
+                Task { @MainActor in self?.engineChanged(change) }
+            }
+            module = created
+            return .success(created)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private func retireIdleLocked() async -> Bool {
+        guard attachments.isEmpty, !privateCheckActive else { return true }
+        guard let module else { foregroundPrepared = false; return true }
+        inputSink.set(nil)
+        if pinnedForProcess {
+            // LiveKit holds the factory: idle (the talk role already released input,
+            // or foreground preparation must now release input).
+            var success = true
+            if foregroundPrepared {
+                foregroundPrepared = false
+                success = await module.setInputPermitted(false, keepWarm: false, timeout: timeouts.activation) && success
+            }
+            moduleMuted = true
+            return await applyOutputLocked() && success
+        }
+        foregroundPrepared = false
+        let stopped = await module.shutdown(timeout: timeouts.shutdown)
+        self.module = nil
+        playoutOn = false; transcriptionOutputOn = false; moduleMuted = true; privateCheckActive = false
+----
+    static func isPeripheralTransport(_ transport: UInt32) -> Bool {
+        transport == bluetoothTransport || transport == bluetoothLETransport || transport == usbTransport
+    }
+    /// `approved` holds device UIDs the person marked with "This is a headphone". Names are never read.
+    static func accepts(source: UInt32, transport: UInt32, deviceUID: String, approved: Set<String>) -> Bool {
+        if isHeadphoneSource(source) { return true }
+        if isSpeakerSource(source) { return false }
+        return isPeripheralTransport(transport) && !deviceUID.isEmpty && approved.contains(deviceUID)
+    }
+    struct Snapshot: Equatable {
+        var deviceID: AudioDeviceID
+        var uid: String
+        var source: UInt32
+        var transport: UInt32
+    }
+    static func outputDevice() -> Snapshot? {
+        var device = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr,
+              device != kAudioObjectUnknown else { return nil }
+        var source = UInt32(0); size = UInt32(MemoryLayout<UInt32>.size)
+        address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDataSource,
+            mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
+        _ = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &source)
+        var transport = UInt32(0); size = UInt32(MemoryLayout<UInt32>.size)
+        address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        _ = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport)
+        var unmanaged: Unmanaged<CFString>?
+        size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &unmanaged) == noErr, let unmanaged else { return nil }
+        return Snapshot(deviceID: device, uid: unmanaged.takeRetainedValue() as String, source: source, transport: transport)
+    }
+    static func isConnected(approved: Set<String>) -> Bool {
+        guard let device = outputDevice() else { return false }
+        return accepts(source: device.source, transport: device.transport, deviceUID: device.uid, approved: approved)
+    }
+}
+
+/// Refreshes the settings row when the default output device changes, and when that device's jack changes.
+@MainActor final class HeadphoneOutputMonitor: ObservableObject {
+    @Published private(set) var output: AssistantHeadphoneRoute.Snapshot?
+    private var listener: AudioObjectPropertyListenerBlock?
+    private var defaultAddress = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    private var sourceAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDataSource,
+        mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
+    private var watchedDevice: AudioDeviceID = 0
+
+    init() {
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor in self?.refresh() }
+        }
+        listener = block
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defaultAddress, DispatchQueue.main, block)
+        refresh()
+    }
+
+    func refresh() {
+        let next = AssistantHeadphoneRoute.outputDevice()
+        if output != next { output = next }
+        watchSource(of: next?.deviceID ?? 0)
+    }
+
+    private func watchSource(of device: AudioDeviceID) {
+        guard let listener else { return }
+        if watchedDevice != 0, watchedDevice != device {
+            AudioObjectRemovePropertyListenerBlock(watchedDevice, &sourceAddress, DispatchQueue.main, listener)
+            watchedDevice = 0
+        }
+        guard device != 0, device != watchedDevice else { return }
+        AudioObjectAddPropertyListenerBlock(device, &sourceAddress, DispatchQueue.main, listener)
+        watchedDevice = device
+    }
+
+    deinit {
+        guard let listener else { return }
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defaultAddress, DispatchQueue.main, listener)
+        if watchedDevice != 0 {
+            AudioObjectRemovePropertyListenerBlock(watchedDevice, &sourceAddress, DispatchQueue.main, listener)
+        }
+    }
+}
+
+/// Option-Space. The decision looks only at the key code and the Option flag, never at typed characters.
+enum AssistantPushToTalkHotKey {
+    static let space: UInt16 = 49
+    enum Action: Equatable { case start, stop, ignore }
+    static func action(type: NSEvent.EventType, keyCode: UInt16, option: Bool, isRepeat: Bool,
+                       enabled: Bool, appActive: Bool, textFocused: Bool, listening: Bool) -> Action {
+        guard enabled else { return .ignore }
+        if type == .keyDown, keyCode == space, option, !isRepeat {
+            if appActive && textFocused { return .ignore }
+            return .start
+        }
+        if type == .keyUp, keyCode == space { return .stop }
+        if type == .flagsChanged, !option, listening { return .stop }
+        return .ignore

@@ -1,0 +1,7 @@
+Command exited with code 0.
+
+Command output:
+ Experiments/NativeGuest/GuestSystemAudio.swift     | 38 +++++++++++++++++++++-
+ NativeMacGuest/Engines/SharedAudioEngine.swift     | 13 +++++++-
+ .../Tests/Parity/SharedAudioEngineTests.swift      | 25 ++++++++++++++
+ 3 files changed, 74 insertions(+), 2 deletions(-)

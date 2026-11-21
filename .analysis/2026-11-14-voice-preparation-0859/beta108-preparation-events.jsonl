@@ -1,0 +1,42 @@
+{"at": "2026-11-14 09:25:09.530581+0300", "pid": 22654, "architecture": "h16g", "event": "voice-clone-prepare-started", "uptime": 520892.09045745834}
+{"at": "2026-11-14 09:25:09.551034+0300", "pid": 22765, "event": "voice-worker-started", "uptime": 520892.1109170417}
+{"at": "2026-11-14 09:25:09.572067+0300", "pid": 22765, "event": "voice-worker-stage", "operation": "prepare", "stage": "load", "uptime": 520892.1319627917}
+{"at": "2026-11-14 09:25:10.025326+0300", "pid": 22765, "asset": "base-0.h16g.aimodelc", "event": "vox-cache-lookup", "present": false, "uptime": 520892.5850266667}
+{"at": "2026-11-14 10:03:19.342880+0300", "pid": 22765, "asset": "residual.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523181.89531295834}
+{"at": "2026-11-14 10:03:19.357319+0300", "pid": 22765, "asset": "encoder.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523181.91061762505}
+{"at": "2026-11-14 10:03:19.363365+0300", "pid": 22765, "asset": "dit.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523181.9166729167}
+{"at": "2026-11-14 10:03:19.391757+0300", "pid": 22765, "event": "voice-worker-stage", "operation": "prepare", "stage": "validate", "uptime": 523181.9438891667}
+{"at": "2026-11-14 10:03:19.417380+0300", "pid": 22765, "event": "compiler-error", "markers": ["could not load model for cacheIdentifier"]}
+{"at": "2026-11-14 10:03:19.418006+0300", "pid": 22765, "event": "voice-worker-failure-classified", "kind": "cache", "repairAvailable": true, "uptime": 523181.9713035417}
+{"at": "2026-11-14 10:03:19.418326+0300", "pid": 22654, "asset": "encoder.h16g.aimodelc", "code": 0, "domain": "Foundation._GenericObjCError", "event": "voice-worker-failure", "kind": "cache", "operation": "prepare", "repairAvailable": true, "uptime": 523181.97159675}
+{"at": "2026-11-14 10:03:19.489866+0300", "pid": 28645, "event": "voice-worker-started", "uptime": 523182.04315208335}
+{"at": "2026-11-14 10:03:19.531123+0300", "pid": 28645, "event": "voice-worker-stage", "operation": "prepare", "stage": "load", "uptime": 523182.08442170836}
+{"at": "2026-11-14 10:06:06.740330+0300", "pid": 28645, "asset": "dit.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523349.29370383336}
+{"at": "2026-11-14 10:06:06.746620+0300", "pid": 28645, "event": "voice-worker-stage", "operation": "prepare", "stage": "validate", "uptime": 523349.2999932917}
+{"at": "2026-11-14 10:06:06.852040+0300", "pid": 28645, "event": "compiler-error", "markers": ["could not load model for cacheIdentifier"]}
+{"at": "2026-11-14 10:06:06.852265+0300", "pid": 28645, "event": "voice-worker-failure-classified", "kind": "cache", "repairAvailable": true, "uptime": 523349.40565120836}
+{"at": "2026-11-14 10:06:06.852465+0300", "pid": 22654, "asset": "residual.h16g.aimodelc", "code": 0, "domain": "Foundation._GenericObjCError", "event": "voice-worker-failure", "kind": "cache", "operation": "prepare", "repairAvailable": true, "uptime": 523349.40585083334}
+{"at": "2026-11-14 10:06:06.860192+0300", "pid": 29098, "event": "voice-worker-started", "uptime": 523349.4135780417}
+{"at": "2026-11-14 10:06:06.870216+0300", "pid": 29098, "event": "voice-worker-stage", "operation": "prepare", "stage": "load", "uptime": 523349.4235900417}
+{"at": "2026-11-14 10:06:06.880806+0300", "pid": 29098, "asset": "residual.h16g.aimodelc", "event": "vox-cache-entry-repaired", "uptime": 523349.4339316667}
+{"at": "2026-11-14 10:06:07.181730+0300", "pid": 29098, "asset": "base-0.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523349.735105625}
+{"at": "2026-11-14 10:06:07.183301+0300", "pid": 29098, "asset": "residual.h16g.aimodelc", "event": "vox-cache-lookup", "present": false, "uptime": 523349.7366994167}
+{"at": "2026-11-14 10:03:19.546939+0300", "pid": 28645, "asset": "encoder.h16g.aimodelc", "event": "vox-cache-entry-repaired", "uptime": 523182.1052360417}
+{"at": "2026-11-14 10:03:19.945870+0300", "pid": 28645, "asset": "base-0.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523182.5057622917}
+{"at": "2026-11-14 10:03:19.947665+0300", "pid": 28645, "asset": "residual.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523182.50757687504}
+{"at": "2026-11-14 10:03:19.949234+0300", "pid": 28645, "asset": "encoder.h16g.aimodelc", "event": "vox-cache-lookup", "present": false, "uptime": 523182.50914562505}
+{"at": "2026-11-14 10:08:17.907395+0300", "pid": 29098, "asset": "encoder.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523480.4608430834}
+{"at": "2026-11-14 10:08:17.909580+0300", "pid": 29098, "asset": "dit.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523480.4630472917}
+{"at": "2026-11-14 10:08:17.915451+0300", "pid": 29098, "event": "voice-worker-stage", "operation": "prepare", "stage": "validate", "uptime": 523480.46889333334}
+{"at": "2026-11-14 10:08:18.295889+0300", "pid": 29098, "event": "compiler-error", "markers": ["could not load model for cacheIdentifier"]}
+{"at": "2026-11-14 10:08:18.296130+0300", "pid": 29098, "event": "voice-worker-failure-classified", "kind": "cache", "repairAvailable": true, "uptime": 523480.849586}
+{"at": "2026-11-14 10:08:18.296351+0300", "pid": 22654, "asset": "dit.h16g.aimodelc", "code": 0, "domain": "Foundation._GenericObjCError", "event": "voice-worker-failure", "kind": "cache", "operation": "prepare", "repairAvailable": true, "uptime": 523480.8497993334}
+{"at": "2026-11-14 10:08:18.368189+0300", "pid": 29417, "event": "voice-worker-started", "uptime": 523480.9216275417}
+{"at": "2026-11-14 10:08:18.381893+0300", "pid": 29417, "event": "voice-worker-stage", "operation": "prepare", "stage": "load", "uptime": 523480.93533995835}
+{"at": "2026-11-14 10:08:18.392478+0300", "pid": 29417, "asset": "dit.h16g.aimodelc", "event": "vox-cache-entry-repaired", "uptime": 523480.94567050005}
+{"at": "2026-11-14 10:08:18.704529+0300", "pid": 29417, "asset": "base-0.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523481.25797120837}
+{"at": "2026-11-14 10:08:18.706266+0300", "pid": 29417, "asset": "residual.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523481.2597330417}
+{"at": "2026-11-14 10:08:18.707706+0300", "pid": 29417, "asset": "encoder.h16g.aimodelc", "event": "vox-cache-lookup", "present": true, "uptime": 523481.2611774167}
+{"at": "2026-11-14 10:08:18.708946+0300", "pid": 29417, "asset": "dit.h16g.aimodelc", "event": "vox-cache-lookup", "present": false, "uptime": 523481.2624180417}
+{"at": "2026-11-14 10:09:58.764455+0300", "pid": 29417, "event": "voice-worker-stage", "operation": "prepare", "stage": "validate", "uptime": 523581.31379325}
+{"at": "2026-11-14 10:10:00.375173+0300", "pid": 22654, "event": "voice-clone-prepared", "seconds": 2690, "uptime": 523582.9245088334}

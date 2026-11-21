@@ -1,0 +1,15 @@
+Command exited with code 0.
+
+Command output:
+RockNRollTests/ControlChromeIntegrationTests.swift:50:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat, call: controls)
+RockNRollTests/ControlChromeIntegrationTests.swift:91:        let panel = ConversationPanelViewController(catchUp: store, chat: ChatStore())
+RockNRollTests/PerformanceEvaluationTests.swift:83:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
+RockNRollTests/ReactionHistoryPanelTests.swift:14:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
+RockNRollTests/ReactionHistoryPanelTests.swift:61:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
+RockNRollTests/ReactionHistoryPanelTests.swift:89:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat,
+RockNRollTests/ReactionHistoryPanelTests.swift:161:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
+RockNRollTests/ReactionHistoryPanelTests.swift:204:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat, initialFilter: .reactions)
+RockNRollTests/ReactionHistoryPanelTests.swift:241:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
+RockNRollTests/ReactionHistoryPanelTests.swift:271:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
+RockNRollTests/ReactionHistoryPanelTests.swift:297:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat, call: controls)
+RockNRollTests/ReactionHistoryPanelTests.swift:325:        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat, call: controls)

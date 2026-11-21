@@ -491,6 +491,9 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
     private var microphoneGateOpen = true
     private var ownedFactory: LKRTCPeerConnectionFactory?
     private var cached: [String: Any]
+    private var deviceCountsDirty = true
+    private var cachedInputDeviceCount = 0
+    private var cachedOutputDeviceCount = 0
     // The following fields are confined to audioQueue.
     private var playoutEnabled: Bool
 #if os(iOS)
@@ -1351,12 +1354,29 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
         // Availability and actual engine state are reported separately.
         let state = module.engineState, availability = module.engineAvailability
         let processing = module.platformAudioProcessingState
+        let refreshDevices = locked { () -> Bool in
+            guard deviceCountsDirty else { return false }
+            deviceCountsDirty = false
+            return true
+        }
+        let (inputDevices, outputDevices): (Int, Int)
+        if refreshDevices {
+            let inputs = module.inputDevices.count
+            let outputs = module.outputDevices.count
+            locked {
+                cachedInputDeviceCount = inputs
+                cachedOutputDeviceCount = outputs
+            }
+            (inputDevices, outputDevices) = (inputs, outputs)
+        } else {
+            (inputDevices, outputDevices) = locked { (cachedInputDeviceCount, cachedOutputDeviceCount) }
+        }
         update(["inputAvailable": availability.isInputAvailable.boolValue, "outputAvailable": availability.isOutputAvailable.boolValue,
                 "inputEnabled": state.inputEnabled.boolValue, "inputRunning": state.inputRunning.boolValue,
                 "outputEnabled": state.outputEnabled.boolValue, "outputRunning": state.outputRunning.boolValue,
                 "microphoneMuted": module.isMicrophoneMuted, "muteMode": state.muteMode.rawValue,
                 "engineRunning": module.isEngineRunning, "recording": module.isRecording, "playing": module.isPlaying,
-                "inputDeviceCount": module.inputDevices.count, "outputDeviceCount": module.outputDevices.count,
+                "inputDeviceCount": inputDevices, "outputDeviceCount": outputDevices,
                 "recordingAlwaysPrepared": module.isRecordingAlwaysPreparedMode,
                 "voiceProcessingActive": processing.isVoiceProcessingEnabledActive,
                 "voiceProcessingBypassedActive": processing.isVoiceProcessingBypassedActive,
@@ -1616,7 +1636,10 @@ public final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @
     }
     public func audioDeviceModuleDidUpdateDevices(_ audioDeviceModule: LKRTCAudioDeviceModule) {
         forwardObserver?.audioDeviceModuleDidUpdateDevices(audioDeviceModule)
-        locked { cached["deviceUpdates"] = (cached["deviceUpdates"] as? Int ?? 0) + 1 }
+        locked {
+            deviceCountsDirty = true
+            cached["deviceUpdates"] = (cached["deviceUpdates"] as? Int ?? 0) + 1
+        }
         logLifecycle("device-update")
     }
     private static func signature(_ format: AVAudioFormat) -> [Double] {

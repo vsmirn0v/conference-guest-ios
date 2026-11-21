@@ -1,0 +1,24 @@
+/Users/v.smirnov/docs/conference-guest-ios/Experiments/NativeGuest/GuestAcousticEnvironment.swift:47:77: warning: forming 'UnsafeMutableRawPointer' to a variable of type 'T'; this is likely incorrect because 'T' may contain an object reference.
+ 45 |                      scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> T? {
+ 46 |             var property = address(selector, scope), value = initial, size = UInt32(MemoryLayout<T>.size)
+ 47 |             return AudioObjectGetPropertyData(id, &property, 0, nil, &size, &value) == noErr ? value : nil
+    |                                                                             `- warning: forming 'UnsafeMutableRawPointer' to a variable of type 'T'; this is likely incorrect because 'T' may contain an object reference.
+ 48 |         }
+ 49 |         func channels(_ id: AudioObjectID, _ scope: AudioObjectPropertyScope) -> Int {
+/Users/v.smirnov/docs/conference-guest-ios/Experiments/NativeGuest/GuestCamera.swift:321:65: warning: 'devices(for:)' was deprecated in macOS 10.15: Use AVCaptureDeviceDiscoverySession instead. [#DeprecatedDeclaration]
+319 |         let discoveryBegan = ProcessInfo.processInfo.systemUptime
+320 |         let discovered: AVCaptureDevice?
+321 |         if let preferredDeviceID { discovered = AVCaptureDevice.devices(for: .video).first { $0.uniqueID == preferredDeviceID } }
+    |                                                                 `- warning: 'devices(for:)' was deprecated in macOS 10.15: Use AVCaptureDeviceDiscoverySession instead. [#DeprecatedDeclaration]
+322 |         else {
+323 |             // Avoid enumerating external/Continuity devices for the normal built-in path.
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/v.smirnov/docs/conference-guest-ios/Experiments/NativeGuest/GuestCaptureAuthorization.swift:12:97: warning: passing non-Sendable parameter '$0' to function expecting a '@Sendable' closure
+10 | #endif
+11 |         return try await request(status: { AVCaptureDevice.authorizationStatus(for: type) },
+12 |                           prompt: { AVCaptureDevice.requestAccess(for: type, completionHandler: $0) })
+   |                                   |                                                             `- warning: passing non-Sendable parameter '$0' to function expecting a '@Sendable' closure
+   |                                   `- note: parameter '$0' is implicitly non-Sendable
+13 |     }
+14 | 

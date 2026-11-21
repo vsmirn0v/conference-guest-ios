@@ -1,5 +1,8 @@
 #!/bin/bash
 set -euo pipefail
+if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
 source_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 repo_dir="$(dirname -- "$source_dir")"
 build_dir="$(mktemp -d "${TMPDIR:-/tmp}/native-guest-entry.XXXXXX")"

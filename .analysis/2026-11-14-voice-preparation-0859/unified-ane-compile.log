@@ -1,0 +1,36 @@
+Timestamp               Ty Process[PID:TID]
+2026-11-14 08:56:15.818 E  ANELargeModelCompilerService[7541:a22143] (ANECompiler) ANECompiler internal error: temp file: F_PREALLOCATE failure (4682940416 bytes) -> (4955570176 bytes): No space left on device
+2026-11-14 08:56:15.818 E  ANELargeModelCompilerService[7541:a22143] (ANECompiler) ANECompiler internal error: temp file allocation failed (alloc 268435456 bytes)
+2026-11-14 08:56:15.844 E  ANELargeModelCompilerService[7541:a22143] (ANECompiler) <private>
+2026-11-14 08:56:15.863 E  ANELargeModelCompilerService[7541:a22143] (ANECompiler) <private>
+2026-11-14 08:56:17.022 E  ANELargeModelCompilerService[7541:a22143] [com.apple.ane:compiler] <private>: <private>
+2026-11-14 08:56:17.023 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2a80] activating connection: mach=true listener=false peer=false name=com.apple.analyticsd
+2026-11-14 08:56:17.025 E  ANELargeModelCompilerService[7541:a22143] [com.apple.ane:compiler] <private>: <private>
+2026-11-14 08:56:17.026 Df ANELargeModelCompilerService[7541:a2790d] [com.apple.CoreAnalytics:client] Received configuration update from daemon (initial)
+2026-11-14 08:56:17.026 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2bc0] activating connection: mach=false listener=false peer=false name=com.apple.PerfPowerTelemetryClientRegistrationService
+2026-11-14 08:56:17.028 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2bc0] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-11-14 08:56:17.028 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2d00] activating connection: mach=false listener=false peer=false name=com.apple.PerfPowerTelemetryClientRegistrationService
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2d00] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2bc0] activating connection: mach=false listener=false peer=false name=com.apple.PerfPowerTelemetryClientRegistrationService
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2bc0] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2e40] activating connection: mach=false listener=false peer=false name=com.apple.PerfPowerTelemetryClientRegistrationService
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2e40] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2d00] activating connection: mach=false listener=false peer=false name=com.apple.PerfPowerTelemetryClientRegistrationService
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2d00] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2bc0] activating connection: mach=false listener=false peer=false name=com.apple.PerfPowerTelemetryClientRegistrationService
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2bc0] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2e40] activating connection: mach=false listener=false peer=false name=com.apple.PerfPowerTelemetryClientRegistrationService
+2026-11-14 08:56:17.029 Df ANELargeModelCompilerService[7541:a22143] [com.apple.xpc:connection] [0x74991a2e40] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-11-14 08:56:17.029 E  ANELargeModelCompilerService[7541:a22143] [com.apple.ane:compiler] <private>: <private>
+2026-11-14 08:56:17.029 E  ANELargeModelCompilerService[7541:a22143] [com.apple.ane:compiler] <private>: ERROR: model=<private> : output=<private> : lAttr=<private> : lErr=Error Domain=com.apple.appleneuralengine.compiler Code=1 UserInfo={NSLocalizedDescription=<private>, NSUnderlyingError=0x7498c0ca50 {Error Domain=com.apple.appleneuralengine.compiler Code=22 UserInfo={NSLocalizedDescription=<private>}}}
+2026-11-14 08:56:17.030 Df ANELargeModelCompilerService[7541:a22145] [com.apple.xpc.transaction:all] Remaining transactions on activation of exit_when_clean: 1 (0 os_transaction + 1 xpc_transaction_begin)
+2026-11-14 08:56:17.030 Df aned[65549:a220e3] [com.apple.xpc:connection] [0x7535094f00] Re-initialization successful; calling out to event handler with XPC_ERROR_CONNECTION_INTERRUPTED
+2026-11-14 08:56:17.035 E  aned[65549:a210ba] [com.apple.ane:aned] Compilation failed: error=Error Domain=com.apple.appleneuralengine.compiler Code=1 UserInfo={NSLocalizedDescription=<private>, NSUnderlyingError=0x7534ec3db0 {Error Domain=com.apple.appleneuralengine.compiler Code=22 UserInfo={NSLocalizedDescription=<private>}}}
+2026-11-14 08:56:17.036 Df aned[65549:a210ba] [com.apple.xpc:connection] [0x7535094f00] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-11-14 08:56:21.647 Df cfprefsd[182:a27519] [com.apple.xpc:connection] [0x76a8d9f200] invalidated because the client process (pid 7538) either cancelled the connection or exited
+2026-11-14 08:56:21.647 Df cfprefsd[2104:a275d9] [com.apple.xpc:connection] [0x7b78d63ac0] invalidated because the client process (pid 7538) either cancelled the connection or exited
+2026-11-14 08:56:21.647 Df aned[65549:a210ba] [com.apple.xpc:connection] [0x7535095400] invalidated because the client process (pid 7538) either cancelled the connection or exited
+2026-11-14 08:56:21.647 Df aned[65549:a220e3] [com.apple.xpc:connection] [0x7535095540] invalidated because the client process (pid 7538) either cancelled the connection or exited
+2026-11-14 08:56:21.647 Df lsd[2122:a27675] [com.apple.xpc:connection] [0x7999f1e440] invalidated because the client process (pid 7538) either cancelled the connection or exited
+2026-11-14 08:56:23.127 Df corespotlightd[89179:a27947] [com.apple.spotlightindex:CI] <si:cs_priority> - Cached linkedTimestamp <private> 11129787664075380290
+2026-11-14 08:56:23.133 Df corespotlightd[89179:a27874] [com.apple.spotlightindex:CI] <si:cs_pc_c> - Cached linkedTimestamp <private> 6900701265675385032

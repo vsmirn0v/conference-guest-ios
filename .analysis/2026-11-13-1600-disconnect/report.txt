@@ -1,0 +1,56 @@
+RockNRoll Mac disconnect investigation — 13 November 2026
+
+Input: /Users/v.smirnov/docs/RockNRoll Diagnostics 2026-11-13 16.00.zip
+SHA256: fbf78dfe95b3888bc1da9161a5dd0ad47a6ed02c232722c316b25539bc72b2cf
+App: 0.3.0 (103), beta, macOS 27.2 (26B123).
+All times below are Moscow time (UTC+3). Original event timestamps are UTC.
+
+Conclusion
+The archive confirms repeated ICE media-connection failures followed by exhaustion of the three-retry budget. The last retry exposes a recovery-handling defect: a publisher ICE failed callback is treated as irreversible, even though that publisher reports connected 22 ms later. This is an app-side contributor to abandoning the final retry; the archive does not establish why the original media path failed or prove that the whole meeting would have recovered if the final publisher callback had been tolerated.
+
+Timeline (source: events-20261113-061032-780-67358-0001.log)
+15:55:42–44 — Joined a 66-participant meeting. Both media peers connected; both selected TLS relay routes. Lines 5499–5707.
+15:59:30.902 — Subscriber changed disconnected -> failed; publisher followed at .992. Candidate-pair snapshots had zero pairs. Signaling events were still arriving immediately beforehand. Lines 6021–6033.
+15:59:33.047 — Recovery 1 scheduled. Rejoined and startup audio became ready at 15:59:37.929. Publisher used TLS; subscriber selected UDP. Lines 6042–6282.
+16:00:11.831 — Subscriber disconnected. At 16:00:21.819 it failed; TCP relay fallback for the subscriber was scheduled. Lines 6319–6337.
+16:00:22.982 — Recovery 2 scheduled. Subscriber policy became tcp-relay, publisher auto. Publisher timed out at 16:00:36.708 after approximately 10 seconds, with zero remote ICE candidates received and zero candidate pairs; publisher fallback was scheduled. Lines 6345–6582.
+16:00:36.769 — Recovery 3 scheduled. Publisher policy became tcp-relay, subscriber returned to auto. The prior subscriber fallback had not acquired verification. Lines 6584–6591.
+16:00:39.737 — Final publisher ICE failed callback, followed immediately by engine failure. Candidate gathering was still in progress. Lines 6784–6788.
+16:00:39.759 — The same attempt's publisher reported both transport connected and ICE connected, 22 ms after failure. Lines 6792–6793.
+16:00:39.777–.779 — App received leave acknowledgment, completed engine teardown, and displayed GuestPeerError error 4 in failed state. Lines 6794–6796.
+
+Confirmed code findings
+1. Immediate failure latch during recovery.
+   Experiments/NativeGuest/GuestPeer.swift:1031–1047 handles publisher .failed by immediately calling reportICEFailure. That method at :977 latches iceFailureReported and invokes onFailure. A later connected callback does not retract it.
+   Experiments/NativeGuest/GuestEngine.swift:1399 latches failure and notifies the session.
+   Experiments/NativeGuest/GuestSession.swift:398–410 retires the attempt and finishes on exhausted retry budget. Policy at :37–70 permits three retries and resets the budget only after a connection stays established for 60 seconds. The briefly recovered first retry did not reach that interval.
+   NativeMacGuest/Tests/Parity/InitialSubscriberICETests.swift:243–247 explicitly expects immediate publisher failure; that test does not cover failed -> connected recovery.
+   This establishes the app's reaction to the observed callbacks, not the cause of those callbacks or end-to-end media recovery.
+
+2. Opaque user-facing error.
+   Experiments/NativeGuest/GuestPeer.swift:8 declares GuestPeerError without LocalizedError. iceFailed maps to the displayed error 4. NativeMacGuest/Engines/NativeDesktopGuestEngine.swift:579 exposes localizedDescription, producing the generic domain/code message instead of an actionable connection error.
+
+3. Separate assistant output-format failures.
+   Fourteen attention-failed events occurred between 10:03:23 and 10:21:48, hours before the final meeting failure. Every one cites an evidence range such as L8-L12 or L19-L27.
+   NativeMacGuest/Attention/AttentionModel.swift:191 performs exact single-reference lookup; :658–660 rejects a range string. The remote-output schema at :509–518 allows arbitrary evidence strings, so schema acceptance does not guarantee that the returned references satisfy the parser. No causal connection to the network disconnect is shown.
+
+What the archive does and does not establish
+- Automatic reconnection and TCP/TLS fallback were attempted. This is not evidence of absent TCP support; TLS was already selected before the original failure.
+- Signaling rejoined the same meeting on all three retries, so the evidence does not support a continuous total Internet outage.
+- The root of the original media-path failure remains undetermined. There is no packet capture, detailed native RTC event log, or network-path transition record in this archive to separate local network/VPN behavior, TURN/SFU behavior, and native ICE behavior.
+- No crash report for 13 November is included. Bundled crash/resource reports are dated 8–11 November. The relevant process remained alive through diagnostic export.
+- Audio teardown reported success. No audio-device route change was logged near the final incident.
+- The final publisher connected callback alone does not prove incoming media or audible playback had recovered.
+
+Recommended implementation work
+- Permit bounded recovery from transient native ICE failed callbacks while an attempt is still gathering/checking; cancel the pending failure on verified recovery, preserve finite deadlines, and keep explicit closure/cancellation terminal. Add a regression for this exact failed -> connected sequence, including retry-budget exhaustion.
+- Surface a localized connection-recovery error and retry action.
+- Constrain evidence references to the current window in structured output; for providers without that constraint, implement validated formal reference handling or correction while continuing to reject nonexistent evidence.
+
+Validation performed
+Parsed all five event logs and inspected metadata of all ten bundled reports. Programmatically checked the final retry sequence, 22 ms callback interval, 42 ms interval from publisher failure to final alert, and all fourteen assistant errors. The relevant GuestPeer, GuestSession, GuestEngine and AttentionModel files are byte-identical to the preserved .build/native-beta-103/source snapshot. No app code was changed and no live network reproduction or build/test run was performed.
+
+Companion evidence: events.jsonl contains selected original events with source line numbers. Large audio snapshots are omitted from those excerpts; the input archive remains the primary evidence.
+
+Remediation follow-up — 13 November 2026
+The requested fixes are now implemented locally. Final validation: 105 hosted Mac tests passed, 2 optional Rapid-MLX tests skipped, 0 failures; 31 session policy/lifecycle scenarios passed. See fix-validation.json and fix.patch for source hashes, tests, limits and the scoped change. This follow-up supersedes the original investigation's statement that no code had been changed. No release or installation was performed.

@@ -1,0 +1,57 @@
+Command exited with code 0.
+
+Command output:
+Rock'N'Roll for Mac diagnostics
+Created: 2026-11-10T12:36:07Z (uptime 267552)
+App: 0.3.0 (84) at /Applications/Rock'N'Roll for Mac.app
+Updates: beta
+macOS: Версия 27.2 (Выпуск 26B123)
+Mac: Mac16,12
+Language: ru-RU
+Microphone: allowed; camera: allowed; screen recording: allowed
+Audio devices: {"input":{"alive":true,"inputChannels":3,"name":"Микрофон MacBook Air","outputChannels":0,"present":true,"sampleRate":48000,"transport":"bltn"},"output":{"alive":true,"inputChannels":4,"name":"Динамики MacBook Air","outputChannels":2,"present":true,"sampleRate":44100,"transport":"bltn"}}
+Installed copies:
+  /Applications/Rock'N'Roll for Mac.app 0.3.0 (84)
+  /Applications/RockNRoll Native Guest.app 0.3.0 (20)
+  ~/docs/conference-guest-ios/.build/worktrees/release-84/.build/native-dmg/release-84/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/worktrees/release-83/.build/native-dmg/release-83/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/native-dmg/release-82/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/native-dmg/release-81/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/native-dmg/release-80/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/work/assistant-moments/.build/native-dmg/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  and 24 more
+Saved logs: 5 files; crash and hang reports: 10
+Recent events (400, oldest first):
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267232.37541912502}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267232.77637558337}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267233.20178929169}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267233.59722004167}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267234.00196904171}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267234.37849695835}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267239.17666187504}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267239.58321816666}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267241.98539945832}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267242.78480012499}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267243.1806965}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267244.37926641665}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267244.78125029168}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267245.1802870417}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267245.65458908334}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267245.97995354171}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267246.38140775001}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267247.22941608337}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267247.58119112503}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267248.80585679167}
+{"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267250.78292933333}
+{"client":"participant-8167","event
+total 1776
+drwxr-xr-x@ 7 v.smirnov  1405325475     224 Nov 10 15:37 .
+drwxr-xr-x@ 5 v.smirnov  1405325475     160 Nov 10 15:37 ..
+-rw-r--r--@ 1 v.smirnov  1405325475  142533 Nov 10 13:11 events-20261110-100618-221-35549-0001.log
+-rw-r--r--@ 1 v.smirnov  1405325475  173579 Nov 10 13:18 events-20261110-101240-436-36489-0001.log
+-rw-r--r--@ 1 v.smirnov  1405325475     157 Nov 10 14:29 events-20261110-112938-434-65224-0001.log
+-rw-r--r--@ 1 v.smirnov  1405325475  163429 Nov 10 14:48 events-20261110-113009-919-65362-0001.log
+-rw-r--r--@ 1 v.smirnov  1405325475  418227 Nov 10 15:36 events-20261110-120037-078-71646-0001.log
+time":267551.31744862499}
+2026-11-10T12:36:06.770Z {"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267551.69994670834}
+2026-11-10T12:36:07.173Z {"client":"participant-8167","event":"media-event","method":"rtc:speakers:changed","uptime":267552.10388558335}

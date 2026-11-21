@@ -1,0 +1,295 @@
+Command exited with code 0.
+
+Command output:
+commit 678cb5c390d2e041e3d96f44471b24f9c00254b1
+Author: v.smirnov <v.smirnov@gigab2b.ru>
+Date:   Tue Nov 3 22:13:30 2026 +0300
+
+    Mac: catch-up finds undated live text; times and reactions in live text
+    
+    Catch-up placed live text only by the provider's createdAt. Lines without
+    it (or with a seconds or differently named timestamp) were never inside any
+    sound-off period, so catch-up showed "No transcript" although live text had
+    lines for that time.
+    
+    - Live chat and transcript events record when they arrived. A line is placed
+      by the provider's time when it agrees with arrival (within 10 minutes),
+      otherwise by arrival; history pages keep provider time only.
+    - Provider times are read from createdAt, timestamp, startTime, startedAt or
+      time, in seconds or milliseconds; pre-2020 values count as absent.
+    - The first live transcript event logs its field names (no content).
+    - Live text shows a time on each line and lists reactions among the lines;
+      catch-up periods show line times and the reactions sent in them. Chat
+      messages without a provider time sort by arrival.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/Experiments/NativeGuest/GuestMeetingFeatures.swift b/Experiments/NativeGuest/GuestMeetingFeatures.swift
+index ce24f5f..cc499ad 100644
+--- a/Experiments/NativeGuest/GuestMeetingFeatures.swift
++++ b/Experiments/NativeGuest/GuestMeetingFeatures.swift
+@@ -53,6 +53,9 @@ struct GuestMeetingMessage: Identifiable, Equatable, Sendable {
+     var sentAt: Date?
+     var isOwn: Bool
+     var delivery: Delivery = .sent
++    /// When a live event first delivered this message here; nil for history pages.
++    /// It places live text in time when the provider's own timestamp is absent.
++    var receivedAt: Date? = nil
+ }
+ 
+ struct GuestMeetingReactionEvent: Identifiable, Equatable, Sendable {
+@@ -141,7 +144,7 @@ struct GuestMeetingFeatures {
+             case "settings-updated":
+                 if let title = payload["title"] as? String { snapshot.title = String(title.prefix(512)) }
+             case "chat-message":
+-                if snapshot.permissions.canViewChat, let message = decodeMessage(payload["message"], fallbackID: envelope["requestId"]) {
++                if snapshot.permissions.canViewChat, let message = decodeMessage(payload["message"], fallbackID: envelope["requestId"], receivedAt: Date()) {
+                     upsert(message, transcript: false)
+                 }
+             case "reaction":
+@@ -152,7 +155,14 @@ struct GuestMeetingFeatures {
+                     snapshot.reactions = Array(snapshot.reactions.suffix(100))
+                 }
+             case "transcription-message":
+-                if snapshot.permissions.canViewTranscript, let message = decodeMessage(payload["message"]) { upsert(message, transcript: true) }
++                if snapshot.permissions.canViewTranscript, let message = decodeMessage(payload["message"], receivedAt: Date()) {
++                    if !loggedTranscriptShape, let fields = payload["message"] as? [String: Any] {
++                        // Field names only, never content: which timestamp the provider sends.
++                        loggedTranscriptShape = true
++                        probeLog("transcript-message-shape", ["keys": fields.keys.sorted(), "dated": message.sentAt != nil])
++                    }
++                    upsert(message, transcript: true)
++                }
+             case "transcription-started": snapshot.transcriptionStatus = .active
+             case "transcription-stopped": snapshot.transcriptionStatus = .stopped
+             case "transcription-error": snapshot.transcriptionStatus = .failed
+@@ -283,18 +293,23 @@ struct GuestMeetingFeatures {
+             return member
+         }.sorted { $0.isLocal != $1.isLocal ? $0.isLocal : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+     }
+-    private func decodeMessage(_ raw: Any?, fallbackID: Any? = nil) -> GuestMeetingMessage? {
++    private var loggedTranscriptShape = false
++    private func decodeMessage(_ raw: Any?, fallbackID: Any? = nil, receivedAt: Date? = nil) -> GuestMeetingMessage? {
+         guard let value = raw as? [String: Any], let id = Self.identifier(value["id"] ?? fallbackID),
+               let participant = Self.identifier(value["participantId"]), let text = value["text"] as? String,
+               !text.isEmpty, text.utf8.count <= 64 * 1024 else { return nil }
+         return .init(id: id, participantID: participant,
+                      participantName: String((value["participantName"] as? String ?? members[participant]?.name ?? "Participant").prefix(256)),
+-                     text: String(text.prefix(4_096)), sentAt: Self.date(value["createdAt"]),
+-                     isOwn: participant == snapshot.localParticipantID)
++                     text: String(text.prefix(4_096)),
++                     sentAt: ["createdAt", "timestamp", "startTime", "startedAt", "time"].lazy.compactMap { Self.date(value[$0]) }.first,
++                     isOwn: participant == snapshot.localParticipantID, receivedAt: receivedAt)
+     }
+     private mutating func upsert(_ message: GuestMeetingMessage, transcript: Bool) {
+         var values = transcript ? snapshot.transcript : snapshot.messages
+-        if let index = values.firstIndex(where: { $0.id == message.id }) { values[index] = message }
++        if let index = values.firstIndex(where: { $0.id == message.id }) {
++            var updated = message; updated.receivedAt = values[index].receivedAt ?? message.receivedAt
++            values[index] = updated
++        }
+         else { values.append(message) }
+         values.sort {
+             if $0.sentAt != $1.sentAt { return ($0.sentAt ?? .distantPast) < ($1.sentAt ?? .distantPast) }
+@@ -309,9 +324,11 @@ struct GuestMeetingFeatures {
+     }
+     private static func date(_ value: Any?) -> Date? {
+         if let number = value as? NSNumber {
+-            let milliseconds = number.doubleValue
+-            guard milliseconds.isFinite else { return nil }
+-            return Date(timeIntervalSince1970: milliseconds / 1_000)
++            // Milliseconds or seconds since 1970; anything before 2020 is not a wall-clock time.
++            let raw = number.doubleValue
++            guard raw.isFinite else { return nil }
++            let date = Date(timeIntervalSince1970: raw > 10_000_000_000 ? raw / 1_000 : raw)
++            return date > Date(timeIntervalSince1970: 1_577_836_800) ? date : nil
+         }
+         if let value = value as? String {
+             let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+diff --git a/Experiments/NativeGuestTests/MeetingFeaturesTests.swift b/Experiments/NativeGuestTests/MeetingFeaturesTests.swift
+index 4537dd2..814bae9 100644
+--- a/Experiments/NativeGuestTests/MeetingFeaturesTests.swift
++++ b/Experiments/NativeGuestTests/MeetingFeaturesTests.swift
+@@ -96,6 +96,13 @@ import LiveKitWebRTC
+         features.receive(event("transcription-started"))
+         features.receive(event("transcription-message", ["message": message("t1")]))
+         precondition(features.snapshot.transcriptionStatus == .active && features.snapshot.transcript.count == 1)
++        precondition(features.snapshot.transcript[0].receivedAt != nil, "Live text records when it arrived")
++        features.receive(event("transcription-message", ["message": ["id": "t2", "participantId": "remote", "text": "Seconds", "timestamp": 1_700_000_100]]))
++        precondition(features.snapshot.transcript.first { $0.id == "t2" }?.sentAt == Date(timeIntervalSince1970: 1_700_000_100),
++                     "A seconds timestamp under another key still dates the line")
++        features.receive(event("transcription-message", ["message": ["id": "t3", "participantId": "remote", "text": "Undated"]]))
++        let undated = features.snapshot.transcript.first { $0.id == "t3" }
++        precondition(undated?.sentAt == nil && undated?.receivedAt != nil, "An undated line keeps its arrival time")
+         let epoch = features.epoch
+         try features.acceptHistory(["messages": [message("history", at: 1_600_000_000_000)], "nextPageKey": 25], transcript: false, epoch: epoch)
+         precondition(features.snapshot.messages.map(\.id) == ["history", "m1"] && features.snapshot.chatHasMore)
+diff --git a/NativeMacGuest/DesktopMeetingModel.swift b/NativeMacGuest/DesktopMeetingModel.swift
+index 1950411..4b49bdc 100644
+--- a/NativeMacGuest/DesktopMeetingModel.swift
++++ b/NativeMacGuest/DesktopMeetingModel.swift
+@@ -121,6 +121,39 @@ import UniformTypeIdentifiers
+     @Published var catchUpFocus: UUID?
+     /// Sound is off while the service transcribes: what is said is kept for catch-up.
+     var soundOffSavingText: Bool { connected && !snapshot.playoutOn && transcriptionIndicator == .on }
++    /// When a line of live text was spoken: the provider's time when it agrees with
++    /// when the line arrived here (within 10 minutes), else the arrival time.
++    static func spokenAt(_ message: GuestMeetingMessage) -> Date? {
++        guard let received = message.receivedAt else { return message.sentAt }
++        guard let sent = message.sentAt, abs(sent.timeIntervalSince(received)) <= 600 else { return received }
++        return sent
++    }
++    enum LiveTextRow: Identifiable {
++        case line(GuestMeetingMessage, Date?)
++        case reaction(MeetingReactionEvent)
++        var id: String { switch self { case .line(let item, _): "line-" + item.id; case .reaction(let item): "reaction-" + item.id } }
++    }
++    /// Live text in spoken order with reactions placed among the lines. A line
++    /// without any time keeps its place after the line before it.
++    func liveTextRows(limit: Int = 1000) -> [LiveTextRow] {
++        var rows: [(Date, Int, LiveTextRow)] = [], last = Date.distantPast, order = 0
++        for line in transcript.suffix(limit) {
++            let time = Self.spokenAt(line); last = time ?? last
++            rows.append((last, order, .line(line, time))); order += 1
++        }
++        if let first = rows.first?.0 {
++            for event in chat.reactionHistory.events where event.timestamp >= first {
++                rows.append((event.timestamp, order, .reaction(event))); order += 1
++            }
++        } else {
++            for event in chat.reactionHistory.events { rows.append((event.timestamp, order, .reaction(event))); order += 1 }
++        }
++        return rows.sorted { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }.map(\.2)
++    }
++    func catchUpReactions(_ interval: MissedInterval, now: Date = Date()) -> [MeetingReactionEvent] {
++        let end = interval.end ?? now
++        return chat.reactionHistory.events.filter { $0.timestamp >= interval.start && $0.timestamp <= end }
++    }
+     func catchUpInterval(_ id: UUID) -> MissedInterval? { catchUp.timeline.intervals.first { $0.id == id } }
+     func catchUpLines(_ id: UUID) -> [TranscriptSegment] {
+         catchUpInterval(id).map { catchUp.timeline.transcript(during: $0) } ?? []
+@@ -968,13 +1001,13 @@ import UniformTypeIdentifiers
+         let previousTranscription = guestFeatures.transcriptionStatus
+         guestFeatures = features
+         noteTranscription(from: previousTranscription, to: features.transcriptionStatus)
+-        catchUp.observe(messages: features.transcript.map { TranscriptSegment(id: $0.id, speaker: $0.participantName, text: $0.text, spokenAt: $0.sentAt) }, canView: features.permissions.canViewTranscript, enabled: features.transcriptionStatus == .active)
++        catchUp.observe(messages: features.transcript.map { TranscriptSegment(id: $0.id, speaker: $0.participantName, text: $0.text, spokenAt: Self.spokenAt($0)) }, canView: features.permissions.canViewTranscript, enabled: features.transcriptionStatus == .active)
+         chat.reactionHistoryAvailable = features.permissions.canSendReaction
+         chat.canSend = features.permissions.canSendChat && features.connected
+         chat.unavailableReason = features.permissions.canViewChat ? nil : L("Chat is unavailable in this meeting.")
+         chat.replace(features.messages.map { message in
+             ChatEntry(id: message.id, sender: message.participantName, text: message.text,
+-                sentAt: message.sentAt ?? Date.distantPast, isOwn: message.isOwn,
++                sentAt: message.sentAt ?? message.receivedAt ?? Date.distantPast, isOwn: message.isOwn,
+                 delivery: message.delivery == .pending ? .pending : message.delivery == .failed ? .failed : .sent)
+         })
+         for event in features.reactions where receivedReactions.insert(event.id).inserted {
+diff --git a/NativeMacGuest/DesktopMeetingView.swift b/NativeMacGuest/DesktopMeetingView.swift
+index 3bd0f21..5c0cce6 100644
+--- a/NativeMacGuest/DesktopMeetingView.swift
++++ b/NativeMacGuest/DesktopMeetingView.swift
+@@ -813,13 +813,23 @@ struct NativeDesktopConversationView: View {
+                                     }.font(.headline)
+                                     Text(NativeDesktopCatchUpCard.title(interval)).font(.caption).foregroundStyle(.secondary)
+                                     let lines = model.catchUp.timeline.transcript(during: interval)
++                                    let reactions = model.catchUpReactions(interval)
+                                     if lines.isEmpty { Text(L("No transcript is available for this interval.")).foregroundStyle(.secondary) }
+                                     ForEach(lines) { line in
+                                         VStack(alignment: .leading, spacing: 2) {
+-                                            if let speaker = line.speaker { Text(speaker).font(.caption.bold()) }
++                                            HStack {
++                                                if let speaker = line.speaker { Text(speaker).font(.caption.bold()) }
++                                                Spacer()
++                                                if let time = line.spokenAt { Text(time, style: .time).font(.caption2).foregroundStyle(.secondary) }
++                                            }
+                                             Text(line.text).textSelection(.enabled)
+                                         }
+                                     }
++                                    if !reactions.isEmpty {
++                                        HStack(spacing: 6) {
++                                            ForEach(reactions.suffix(12)) { event in Text(event.kind.emoji).help(event.displayName ?? L("Participant")) }
++                                        }.font(.title3).accessibilityLabel(L("%ld reactions", reactions.count))
++                                    }
+                                     if !interval.isOngoing && !model.catchUp.timeline.isReviewed(interval) {
+                                         Button(L("Mark reviewed")) { model.catchUp.markReviewed(interval.id) }.font(.caption)
+                                     }
+@@ -839,8 +849,24 @@ struct NativeDesktopConversationView: View {
+                             }
+                             if model.guestFeatures.transcriptHasMore { Button(L("Earlier transcript")) { model.loadMoreTranscript() } }
+                             if model.transcript.isEmpty { Text(L("Transcript appears here when the meeting service provides it.")).foregroundStyle(.secondary) }
+-                            ForEach(model.transcript.suffix(tab == 2 ? 40 : 1000)) { line in
+-                                VStack(alignment: .leading, spacing: 4) { Text(line.participantName).font(.caption.bold()); Text(line.text).textSelection(.enabled) }
++                            ForEach(model.liveTextRows()) { row in
++                                switch row {
++                                case .line(let line, let time):
++                                    VStack(alignment: .leading, spacing: 4) {
++                                        HStack {
++                                            Text(line.participantName).font(.caption.bold()); Spacer()
++                                            if let time { Text(time, style: .time).font(.caption2).foregroundStyle(.secondary) }
++                                        }
++                                        Text(line.text).textSelection(.enabled)
++                                    }
++                                case .reaction(let event):
++                                    HStack(spacing: 6) {
++                                        Text(event.kind.emoji)
++                                        Text(event.displayName ?? L("Participant")).font(.caption).foregroundStyle(.secondary)
++                                        Spacer()
++                                        Text(event.timestamp, style: .time).font(.caption2).foregroundStyle(.secondary)
++                                    }
++                                }
+                             }
+                             if model.guestFeatures.permissions.canManageTranscript {
+                                 Button(model.guestFeatures.transcriptionStatus == .active ? L("Stop transcription") : L("Start transcription")) { model.setTranscription(model.guestFeatures.transcriptionStatus != .active) }
+diff --git a/NativeMacGuest/Tests/Parity/DesktopParityTests.swift b/NativeMacGuest/Tests/Parity/DesktopParityTests.swift
+index c47dce3..799f578 100644
+--- a/NativeMacGuest/Tests/Parity/DesktopParityTests.swift
++++ b/NativeMacGuest/Tests/Parity/DesktopParityTests.swift
+@@ -1286,6 +1286,30 @@ private final class DesktopActivitySpy: NSUserActivity {
+         XCTAssertNil(plain.catchUpOffer, "A short mute with nothing transcribed offers nothing")
+         _ = await plain.leave()
+     }
++    /// The provider may send live text without its own timestamp; the arrival time
++    /// still places it in the period when sound was off.
++    func testUndatedLiveTextReceivedWhileMutedIsCaughtUpAndListedWithReactions() async throws {
++        let engine = DesktopTestEngine()
++        let model = try model(engine)
++        try await model.connect()
++        var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active; features.permissions.canViewTranscript = true
++        features.permissions.canSendReaction = true
++        model.receiveFeaturesForTesting(features)
++        engine.snapshot.playoutOn = false; engine.onState?(engine.snapshot)
++        features.transcript = [GuestMeetingMessage(id: "t1", participantID: "p", participantName: "Anna",
++            text: "Undated line", sentAt: nil, isOwn: false, receivedAt: Date())]
++        features.reactions = [GuestMeetingReactionEvent(id: UUID(), participantID: "p", participantName: "Anna", reaction: .like, receivedAt: Date())]
++        model.receiveFeaturesForTesting(features)
++        engine.snapshot.playoutOn = true; engine.onState?(engine.snapshot)
++        let offer = try XCTUnwrap(model.catchUpOffer)
++        XCTAssertEqual(model.catchUpLines(offer).map(\.text), ["Undated line"])
++        XCTAssertEqual(model.chat.reactionHistory.events.count, 1, "Reactions reach the chat history")
++        XCTAssertEqual(model.catchUpReactions(try XCTUnwrap(model.catchUpInterval(offer))).count, 1)
++        let rows = model.liveTextRows()
++        XCTAssertEqual(rows.count, 2, "Live text lists the line and the reaction")
++        if case .line(_, let time) = rows[0] { XCTAssertNotNil(time, "Live text shows a time") } else { XCTFail("line first") }
++        _ = await model.leave()
++    }
+     func testTranscriptionIndicatorAnnouncesOnceAndExplainsItself() async throws {
+         let model = try model(DesktopTestEngine())
+         var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active
+diff --git a/RockNRoll/en.lproj/Localizable.strings b/RockNRoll/en.lproj/Localizable.strings
+index 0e505f2..0c9cac3 100644
+--- a/RockNRoll/en.lproj/Localizable.strings
++++ b/RockNRoll/en.lproj/Localizable.strings
+@@ -1444,3 +1444,4 @@
+ "%ld lines of live text" = "%ld lines of live text";
+ "Read what you missed" = "Read what you missed";
+ "Sound is off · live text is saved for catch-up" = "Sound is off · live text is saved for catch-up";
++"%ld reactions" = "%ld reactions";
+diff --git a/RockNRoll/ru.lproj/Localizable.strings b/RockNRoll/ru.lproj/Localizable.strings
+index a926aa0..68b2b1b 100644
+--- a/RockNRoll/ru.lproj/Localizable.strings
++++ b/RockNRoll/ru.lproj/Localizable.strings
+@@ -1442,3 +1442,4 @@
+ "%ld lines of live text" = "Строк текста: %ld";
+ "Read what you missed" = "Прочитать пропущенное";
+ "Sound is off · live text is saved for catch-up" = "Звук выключен · текст сохраняется в «Пропущено»";
++"%ld reactions" = "Реакций: %ld";

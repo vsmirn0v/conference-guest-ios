@@ -1,0 +1,8 @@
+Command exited with code 1.
+
+Command output:
+bootstrap.py			prepare-sherpa.py
+build.py			test-library.sh
+native_dependencies.py		test-rock.sh
+patch_xcodegen_project.py	test-standalone.sh
+prepare-livekit.py		test-update-safety.sh

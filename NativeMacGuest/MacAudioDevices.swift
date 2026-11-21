@@ -72,8 +72,19 @@ struct MacAudioSnapshot: Equatable {
 @MainActor
 protocol MacAudioHardware: AnyObject {
     func snapshot() throws -> MacAudioSnapshot
+    func validationState(for id: UInt32, direction: MacAudioDirection) throws -> (canSelect: Bool, selectedID: UInt32)
     func select(_ id: UInt32, for direction: MacAudioDirection) throws
     func observe(_ changed: @escaping @MainActor () -> Void)
+}
+
+extension MacAudioHardware {
+    func validationState(for id: UInt32, direction: MacAudioDirection) throws -> (canSelect: Bool, selectedID: UInt32) {
+        let current = try snapshot()
+        return (
+            canSelect: current.devices(for: direction).contains(where: { $0.id == id }),
+            selectedID: current.selectedID(for: direction)
+        )
+    }
 }
 
 @MainActor
@@ -119,12 +130,12 @@ final class MacAudioDevices {
         guard let hardware else { throw MacAudioError.unavailable }
         // Recheck membership at click time: a disconnected device must not be
         // selected from a stale popup, nor an input-only device used as output.
-        let current = try hardware.snapshot()
-        guard current.devices(for: direction).contains(where: { $0.id == id }) else {
+        let state = try hardware.validationState(for: id, direction: direction)
+        guard state.canSelect else {
             refresh()
             throw MacAudioError.unavailable
         }
-        guard current.selectedID(for: direction) != id else { refresh(); return }
+        guard state.selectedID != id else { refresh(); return }
         try hardware.select(id, for: direction)
         // HAL setters may complete asynchronously. Checkmarks follow observed
         // state, never an optimistic selection that could fail to take effect.
@@ -215,6 +226,16 @@ private final class MacCoreAudioHardware: MacAudioHardware {
         return MacAudioSnapshot(devices: devices,
             outputID: try number(system, MacAudioDirection.output.defaultSelector),
             inputID: try number(system, MacAudioDirection.input.defaultSelector))
+    }
+
+    func validationState(for id: UInt32, direction: MacAudioDirection) throws -> (canSelect: Bool, selectedID: UInt32) {
+        let selectedID = try number(system, direction.defaultSelector)
+        guard id != 0,
+              (try? number(id, 0x6C69766E /* livn */)) == 1,
+              (try? number(id, 0x64666C74 /* dflt */, scope: direction.scope)) == 1 else {
+            return (canSelect: false, selectedID: selectedID)
+        }
+        return (canSelect: true, selectedID: selectedID)
     }
 
     func select(_ id: UInt32, for direction: MacAudioDirection) throws {

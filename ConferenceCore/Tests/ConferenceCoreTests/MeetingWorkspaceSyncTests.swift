@@ -882,4 +882,70 @@ final class MeetingWorkspaceSyncTests: XCTestCase {
         doc.upsertTaskProfile(defaultNewer)
         XCTAssertEqual(doc.canonicalTaskProfile?.profileID, "default")
     }
+
+    func testCloudEnvelopeChangedItemDecodeSkipsCorruptPayloadWhilePropagatingGenerationMismatch() throws {
+        struct TestEnvelope: Codable {
+            var schema: Int
+            var generation: String
+            var record: MeetingLibrarySyncRecord
+        }
+        let zone = CKRecordZone.ID(zoneName: "MeetingLibrary", ownerName: CKCurrentUserDefaultName)
+        let v1 = SyncVersion(counter: 1, device: "mac-1")
+        let note = SyncedMeetingNote(
+            sessionID: UUID(),
+            noteID: UUID(),
+            markdown: "Valid payload",
+            version: v1,
+            updatedAt: Date(),
+            isDeleted: SyncValue(false, version: v1)
+        )
+        let record = MeetingLibrarySyncRecord.note(note)
+        let recordName = CloudEnvelopeTransport<MeetingLibrarySyncRecord>.cloudRecordName(for: record.syncRecordID)
+        let ckID = CKRecord.ID(recordName: recordName, zoneID: zone)
+
+        // 1. Corrupted JSON/LZFSE bytes are skipped cleanly instead of poisoning the zone fetch.
+        let corrupt = try CloudEnvelopeTransport<MeetingLibrarySyncRecord>.decodeChangedItemPayload(
+            Data("not-json-at-all".utf8),
+            hasChangeTag: true,
+            recordID: ckID,
+            generation: "gen-1",
+            zone: zone
+        )
+        XCTAssertNil(corrupt)
+
+        // 2. Future schema record is skipped cleanly instead of poisoning the zone fetch.
+        let futurePayload = try CloudPayloadCodec.encode(TestEnvelope(schema: 99, generation: "gen-1", record: record))
+        let future = try CloudEnvelopeTransport<MeetingLibrarySyncRecord>.decodeChangedItemPayload(
+            futurePayload,
+            hasChangeTag: true,
+            recordID: ckID,
+            generation: "gen-1",
+            zone: zone
+        )
+        XCTAssertNil(future)
+
+        // 3. Valid schema-2 record decodes intact.
+        let validPayload = try CloudPayloadCodec.encode(TestEnvelope(schema: 2, generation: "gen-1", record: record))
+        let decoded = try CloudEnvelopeTransport<MeetingLibrarySyncRecord>.decodeChangedItemPayload(
+            validPayload,
+            hasChangeTag: true,
+            recordID: ckID,
+            generation: "gen-1",
+            zone: zone
+        )
+        XCTAssertEqual(decoded, record)
+
+        // 4. Zone generation change MUST still throw so the transport resets its zone session.
+        XCTAssertThrowsError(
+            try CloudEnvelopeTransport<MeetingLibrarySyncRecord>.decodeChangedItemPayload(
+                validPayload,
+                hasChangeTag: true,
+                recordID: ckID,
+                generation: "gen-2",
+                zone: zone
+            )
+        ) { error in
+            XCTAssertEqual(error as? CloudZoneError, .generationChanged)
+        }
+    }
 }

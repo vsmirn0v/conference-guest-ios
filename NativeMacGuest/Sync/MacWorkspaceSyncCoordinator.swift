@@ -2,6 +2,7 @@ import Combine
 import CloudKit
 import ConferenceCore
 import Foundation
+import Network
 
 @MainActor
 final class MacWorkspaceSyncCoordinator: ObservableObject {
@@ -46,6 +47,9 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
     private var lastLocalSchedule: (meetings: [CalendarMeeting], bindings: [String: URL], suppressed: [String: Date])?
     private var cancellables: Set<AnyCancellable> = []
+    private var pathMonitor: NWPathMonitor?
+    private var reachabilityOnline = true
+    private let replicaIOQueue = DispatchQueue(label: "dev.vsmirn0v.mac.workspace.replica-io", qos: .utility)
     private var cloudBackoffUntil: Date = .distantPast
     private var consecutiveCloudBackoffs = 0
     private enum DeferredHistoryMerge: Error { case unsavedNotes }
@@ -145,9 +149,27 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         }
     }
 
+    deinit {
+        pathMonitor?.cancel()
+    }
+
     func start() {
         guard !started else { return }
         started = true
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let online = (path.status == .satisfied)
+                let becameOnline = !self.reachabilityOnline && online
+                self.reachabilityOnline = online
+                if becameOnline && self.syncPreferences.enabled {
+                    self.scheduleSync(delayMilliseconds: 250)
+                }
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "dev.vsmirn0v.mac.workspace.reachability"))
+        pathMonitor = monitor
         installObservers()
         if !syncPreferences.enabled || !syncPreferences.shareCalendar {
             calendar?.applyRemoteSchedule([], localDeviceID: deviceID)
@@ -664,18 +686,19 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         for redirect in redirects { onTranscriptChanged?(redirect.winner) }
     }
 
-    private func applyPendingCloudChanges() async throws {
+    private func applyPendingCloudChanges(preMergeLocalNoteMarkdown: [UUID: String] = [:]) async throws {
         guard let sessions = replica.pendingCloudSessions else { return }
         var report = MeetingWorkspaceSyncDocument.LibraryMergeOutcome()
         report.changedSessions = sessions
         report.changedSettingsKeys = replica.pendingCloudSettings ?? []
-        try await applyRemoteLibraryReport(report)
+        try await applyRemoteLibraryReport(report, preMergeLocalNoteMarkdown: preMergeLocalNoteMarkdown)
         replica.pendingCloudSessions = nil
         replica.pendingCloudSettings = nil
         try await persistReplicaCheckpoint()
     }
 
     private func syncWorkspacePass() async throws -> CloudZoneSession? {
+        let preMergeLocalNoteMarkdown = replica.workspaceDoc.notes.mapValues(\.markdown)
         let zoneSession = try await connectZone(name: "library", transport: libraryTransport) {
             self.replica.libraryToken = nil
             self.replica.acknowledgedLibrary.removeAll()
@@ -733,7 +756,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         if !report.changedSessions.isEmpty { objectWillChange.send() }
         if requiresApply {
             // A failed/partial SQLite apply is replayed before the next local export.
-            try await applyPendingCloudChanges()
+            try await applyPendingCloudChanges(preMergeLocalNoteMarkdown: preMergeLocalNoteMarkdown)
         }
 
         // Export Obsidian (both after incoming remote changes and after local changes), then push updated receipts.
@@ -761,7 +784,8 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
         }
     }
 
-    private func mergeIncomingTranscripts(session: CloudZoneSession) async throws {
+    @discardableResult
+    private func mergeIncomingTranscripts(session: CloudZoneSession, requeueObsidian: Bool = false) async throws -> Set<UUID> {
         let changes = try await transcriptTransport.fetch(session: session, after: replica.transcriptToken)
         replica.transcriptToken = changes.token
         let changedSessions = replica.workspaceDoc.mergeTranscriptRecords(changes.records)
@@ -770,7 +794,15 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             applyTranscriptsToJournal(for: changedSessions)
             archiveUpdatedSessions(Array(changedSessions))
             for id in changedSessions { onTranscriptChanged?(id) }
+            if requeueObsidian,
+               (try? await meetingLibrary.store.requeueObsidianTranscriptsIfNeeded(sessionIDs: changedSessions)) == true {
+                await obsidianExportNow()
+                if let postExportSnapshot = try? await meetingLibrary.store.localSyncSnapshot(exporterDeviceID: deviceID) {
+                    refreshObsidianReceipts(from: postExportSnapshot)
+                }
+            }
         }
+        return changedSessions
     }
 
     private func syncTranscriptsPass(prefetched: CloudZoneSession?) async throws {
@@ -781,7 +813,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
             zoneSession = prefetched
         } else {
             zoneSession = try await connectTranscriptZone()
-            if retention != .off { try await mergeIncomingTranscripts(session: zoneSession) }
+            if retention != .off { try await mergeIncomingTranscripts(session: zoneSession, requeueObsidian: true) }
         }
 
         let eligible = replica.workspaceDoc.transcriptRecordsForCloud(retention: retention)
@@ -1222,9 +1254,15 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                 if let old, old.value == val { return old }
                 return SyncValue(val, version: replica.workspaceDoc.nextVersion())
             }
-            func syncOpt<V: Equatable>(_ val: V?, old: SyncValue<V>?) -> SyncValue<V>? {
-                guard let val else { return old }
-                return syncScalar(val, old: old)
+            func syncOpt(_ val: String?, old: SyncValue<String>?) -> SyncValue<String>? {
+                if let val { return syncScalar(val, old: old) }
+                guard old != nil else { return nil }
+                return syncScalar("", old: old)
+            }
+            func syncOptArray<E: Equatable>(_ val: [E]?, old: SyncValue<[E]>?) -> SyncValue<[E]>? {
+                if let val { return syncScalar(val, old: old) }
+                guard old != nil else { return nil }
+                return syncScalar([], old: old)
             }
 
             var updatedRules = existing?.guidanceRules ?? [:]
@@ -1253,7 +1291,7 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                 about: syncOpt(fp.about, old: existing?.about),
                 matters: syncOpt(fp.matters, old: existing?.matters),
                 never: syncOpt(fp.never, old: existing?.never),
-                people: syncOpt(fp.people, old: existing?.people),
+                people: syncOptArray(fp.people, old: existing?.people),
                 defaultReminderOverride: existing?.defaultReminderOverride,
                 guidanceRules: updatedRules
             )
@@ -1302,7 +1340,12 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
 
     // MARK: - Remote -> Local Application
 
-    private func applyRemoteLibraryReport(_ report: MeetingWorkspaceSyncDocument.LibraryMergeOutcome) async throws {
+    private func applyRemoteLibraryReport(
+        _ report: MeetingWorkspaceSyncDocument.LibraryMergeOutcome,
+        preMergeLocalNoteMarkdown: [UUID: String] = [:]
+    ) async throws {
+        remoteApplyDepth += 1
+        defer { remoteApplyDepth -= 1 }
 
         let store = meetingLibrary.store
         for sessionID in report.changedSessions {
@@ -1334,7 +1377,9 @@ final class MacWorkspaceSyncCoordinator: ObservableObject {
                 outcome: sessionOutcome,
                 tasks: Array(sessionTasks),
                 links: Array(sessionLinks),
-                localDeviceID: deviceID
+                localDeviceID: deviceID,
+                alreadyMergedFromLocalMarkdown: preMergeLocalNoteMarkdown[sessionID],
+                syncBaseMarkdown: replica.workspaceDoc.noteBases[sessionID]?.markdown
             )
 
             if bundleResult.sessionBecameActiveLocal {

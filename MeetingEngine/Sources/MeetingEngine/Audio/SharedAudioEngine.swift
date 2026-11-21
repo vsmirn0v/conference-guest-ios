@@ -128,6 +128,7 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
     public private(set) var talkUnmuted = false
     /// Between an engine stop the app did not ask for and the next start (guarantee 9).
     public private(set) var rebuilding = false
+    private var pendingRebuildStart = false
     public private(set) var recoveries = 0
     /// The talk meeting whose unmute could not be restored after a rebuild (it stays muted).
     public var onRecoveryFailed: ((UUID) -> Void)?
@@ -421,6 +422,7 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
         case .stopped:
             guard !rebuilding else { return nil }
             rebuilding = true
+            pendingRebuildStart = false
             cancelParticipationVoice()
             for attachment in attachments.values { attachment.disableSenders() }
             return Task { await work.run { [self] in
@@ -429,17 +431,37 @@ public enum SharedAudioEngineError: LocalizedError, Equatable {
                 // the rebuilding ADM worker (beta 84, Bluetooth → built-in: >2 s, then a
                 // timeout and a queued suppress behind it) and changes nothing.
                 if muteConfirmed, moduleMuted, !talkUnmuted, !privateCheckActive { return true }
+                // When `.started` has already arrived for an unmuted talk meeting before this
+                // stop task entered `work`, skip the intermediate native mute and let the
+                // immediately-following `.started` pass restore or mute once.
+                if pendingRebuildStart, talkUnmuted, talkMeetingID != nil, !privateCheckActive, !cleanupFailed {
+                    return true
+                }
                 return await muteModuleLocked(module)
             } }
         case .started:
             guard rebuilding else { return nil }
+            pendingRebuildStart = true
             return Task { await work.run { [self] in
                 guard rebuilding else { return true }
-                rebuilding = false; recoveries += 1
+                rebuilding = false
+                pendingRebuildStart = false
+                recoveries += 1
                 guard talkUnmuted, let id = talkMeetingID, let talk = attachments[id], let module,
-                      !privateCheckActive, !cleanupFailed else { return true }
+                      !privateCheckActive, !cleanupFailed else {
+                    if let module, !(muteConfirmed && moduleMuted) {
+                        _ = await muteModuleLocked(module)
+                    }
+                    return true
+                }
                 let restored = await unmuteLocked(talk, module: module, epoch: talkEpoch)
-                if !restored { talkUnmuted = false; onRecoveryFailed?(id) }
+                if !restored {
+                    talkUnmuted = false
+                    if !(muteConfirmed && moduleMuted) {
+                        _ = await muteModuleLocked(module)
+                    }
+                    onRecoveryFailed?(id)
+                }
                 return restored
             } }
         }

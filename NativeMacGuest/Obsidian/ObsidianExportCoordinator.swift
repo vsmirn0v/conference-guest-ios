@@ -26,7 +26,7 @@ import Foundation
         self.library = library
         let root = library.store.storeRoot.appendingPathComponent("ExportBackups", isDirectory: true)
         let journal = library.workspaceJournal
-        self.worker = worker ?? ObsidianExportWorker(store: library.store, backupRoot: root, transcriptProvider: { session in
+        let resolvedWorker = worker ?? ObsidianExportWorker(store: library.store, backupRoot: root, transcriptProvider: { session in
             let events = await journal.exportSyncedEvents(sessionID: session.id, deviceID: "")
             if let body = MeetingMarkdownTemplate.transcriptBody(events: events, startedAt: session.recordedStart) {
                 return body
@@ -35,6 +35,10 @@ import Foundation
             return MeetingMarkdownTemplate.transcriptBody(events: archived, startedAt: session.recordedStart)
         }) { event, fields in
             probeLog(event, fields)
+        }
+        self.worker = resolvedWorker
+        library.store.setOutboxWakeHandler { [weak resolvedWorker] in
+            resolvedWorker?.wake()
         }
     }
 
@@ -160,9 +164,14 @@ import Foundation
         lastError = rows.first(where: { $0.paused })?.lastErrorCode
         lastSuccess = try? await library.store.latestObsidianDelivery(destinationID: destination.id)
         vaultName = destination.vaultBookmark.flatMap(ObsidianVaultAccess.bookmarkedURL)?.lastPathComponent
-        if let bookmark = destination.vaultBookmark, case .granted(let url) = ObsidianVaultAccess.resolve(bookmark) {
-            waitingForVault = false
-            url.stopAccessingSecurityScopedResource()
+        if destination.vaultBookmark != nil {
+            waitingForVault = !(await worker.isVaultAccessible(for: destination))
+            // Pick up any refreshed bookmark persisted by the worker without overwriting an in-flight user edit.
+            if settingsWrite == nil, let latest = try? await library.store.destination(),
+               latest.id == destination.id, latest.configRevision == destination.configRevision,
+               latest.vaultBookmark != destination.vaultBookmark {
+                self.destination = latest
+            }
         } else {
             waitingForVault = true
         }

@@ -1,0 +1,49 @@
+Command exited with code 0.
+
+Command output:
+AcousticValidationExperiment.swift
+App.swift
+Assets.xcassets
+Attention
+CaptureDiagnostics.swift
+CompanionControlPolicy.swift
+CompanionFiles.swift
+Data
+DesktopDeviceSettings.swift
+DesktopHeadsetMute.swift
+DesktopHomeView.swift
+DesktopMeetingModel.swift
+DesktopMeetingView.swift
+DesktopPresenterEditor.swift
+DesktopPresenterRelay.swift
+DesktopPresenterSession.swift
+DesktopReminders.swift
+DesktopShareCapture.swift
+DesktopSharedText.swift
+DesktopWorkspace.swift
+Engines
+Info.plist
+JoinWindow.swift
+MCP
+MeetingController.swift
+MicrophoneActivationExperiment.swift
+MicrophoneGraphExperiment.swift
+MicrophoneHandover.swift
+NativeDesktopCameraLease.swift
+NativeDesktopMediaReadiness.swift
+NativeDesktopMeetingChrome.swift
+NativeDesktopSharedMedia.swift
+NativeGuest-Bridging-Header.h
+NativeGuest.entitlements
+README.md
+RendererCheck.swift
+StandaloneEntry.swift
+StartupCaptureReceiver.swift
+StartupRawOutputSupersession.swift
+StartupTransportReadiness.swift
+zsh:1: no matches found: NativeMacGuest/*.xcodeproj
+docs/audio-reliability-2026-10-12.md:215:existing xcodebuild test command (Mac or Simulator destination):
+docs/audio-reliability-2026-10-12.md:221:xcodebuild test -project RockNRoll.xcodeproj -scheme RockNRoll \
+docs/guest-background-recovery-2026-10-13.md:87:for xcodebuild and run `RockNRollUITests/BackgroundGuestAudioUITests`. Use a
+docs/incoming-media-latency-2026-10-11.md:33:`xcodebuild test`, use `TEST_RUNNER_ROCKNROLL_RECEIVE_DELAY=1`.
+docs/incoming-media-latency-2026-10-11.md:134:variables to the existing simulator/Mac `xcodebuild test` workflow:

@@ -9,11 +9,13 @@ actor ObsidianExportWorker {
     private let store: MeetingLibraryStore
     private let backupRoot: URL
     private let writer: ObsidianFileWriter
-    private let vaultResolver: (Data) -> ObsidianVaultAccess.Resolution
+    private let vaultResolver: (Data) -> (resolution: ObsidianVaultAccess.Resolution, refreshedBookmark: Data?)
     private let transcriptProvider: @Sendable (MeetingSessionRecord) async -> String?
     private var running = false
     private var processing = false
+    private var pendingWake = false
     private var loopTask: Task<Void, Never>?
+    private var sleepWaiter: (id: UUID, continuation: CheckedContinuation<Void, Never>, timer: Task<Void, Never>)?
     private var vaultCache: (destinationID: UUID, configRevision: Int, url: URL, started: Bool)?
 
     var onLog: (String, [String: Any]) -> Void = { _, _ in }
@@ -25,7 +27,11 @@ actor ObsidianExportWorker {
         self.store = store
         self.backupRoot = backupRoot
         self.writer = writer ?? ObsidianFileWriter(backupRoot: backupRoot)
-        self.vaultResolver = vaultResolver ?? { ObsidianVaultAccess.resolve($0) }
+        if let vaultResolver {
+            self.vaultResolver = { (vaultResolver($0), nil) }
+        } else {
+            self.vaultResolver = { ObsidianVaultAccess.resolveWithRefresh($0) }
+        }
         self.transcriptProvider = transcriptProvider
         self.onLog = onLog
     }
@@ -49,16 +55,79 @@ actor ObsidianExportWorker {
         }
     }
 
-    /// Starts the background loop: immediate pass, then a poll until stopped.
+    /// Starts the background loop: immediate pass, then event-driven wake + smart retry sleep.
     func start() {
-        guard !running else { return }
+        store.setOutboxWakeHandler { [weak self] in
+            self?.wake()
+        }
+        if running {
+            wakeIsolated()
+            return
+        }
         running = true
         loopTask = Task { [weak self] in
             while let self, !Task.isCancelled {
+                await self.clearPendingWake()
                 await self.runOnce()
-                try? await Task.sleep(for: .milliseconds(500))
+                let delay = await self.nextSleepDelay()
+                await self.waitForWakeOrDelay(delay)
             }
         }
+    }
+
+    /// Wakes the background loop immediately when new outbox rows are queued or settings change.
+    nonisolated func wake() {
+        Task { await self.wakeIsolated() }
+    }
+
+    private func clearPendingWake() {
+        pendingWake = false
+    }
+
+    private func wakeIsolated() {
+        pendingWake = true
+        finishSleepWaiter()
+    }
+
+    private func finishSleepWaiter(id: UUID? = nil) {
+        guard let waiter = sleepWaiter, id == nil || waiter.id == id else { return }
+        sleepWaiter = nil
+        waiter.timer.cancel()
+        waiter.continuation.resume()
+    }
+
+    private func nextSleepDelay(now: Date = Date()) async -> TimeInterval {
+        guard let destination = try? await store.destination(),
+              destination.enabled,
+              destination.vaultBookmark != nil else {
+            return 30.0
+        }
+        if let nextAttempt = try? await store.earliestActiveOutboxAttempt(destinationID: destination.id) {
+            return min(15.0, max(0.25, nextAttempt.timeIntervalSince(now)))
+        }
+        return 15.0
+    }
+
+    private func waitForWakeOrDelay(_ delay: TimeInterval) async {
+        if pendingWake || !running || Task.isCancelled { return }
+        finishSleepWaiter()
+        let waiterID = UUID()
+        let _: Void = await withTaskCancellationHandler(operation: {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                if pendingWake || !running || Task.isCancelled {
+                    continuation.resume()
+                    return
+                }
+                let ms = max(50, Int((delay * 1000).rounded()))
+                let timer = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(ms))
+                    await self?.finishSleepWaiter(id: waiterID)
+                }
+                sleepWaiter = (waiterID, continuation, timer)
+            }
+        }, onCancel: { [weak self] in
+            Task { await self?.finishSleepWaiter(id: waiterID) }
+        })
     }
 
     /// Stops the background loop and releases any security-scoped vault access.
@@ -69,23 +138,50 @@ actor ObsidianExportWorker {
 
     private func stopIsolated() {
         running = false
+        finishSleepWaiter()
         loopTask?.cancel()
         loopTask = nil
         stopVaultAccess()
     }
 
+    /// Checks whether `destination`'s vault is accessible off the main thread, reusing
+    /// the worker's active security-scoped handle when already open so status polling never
+    /// blocks `@MainActor` or races `stopAccessingSecurityScopedResource()`.
+    func isVaultAccessible(for destination: ObsidianDestinationRecord) async -> Bool {
+        if let cache = vaultCache,
+           cache.destinationID == destination.id,
+           cache.configRevision == destination.configRevision,
+           cache.started {
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: cache.url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
+        return await resolveVault(destination) != nil
+    }
+
     private func resolveVault(_ destination: ObsidianDestinationRecord) async -> URL? {
         if let cache = vaultCache, cache.destinationID == destination.id,
            cache.configRevision == destination.configRevision, cache.started {
-            return cache.url
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: cache.url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                return cache.url
+            }
         }
         stopVaultAccess()
         guard let bookmark = destination.vaultBookmark else {
             onLog("obsidian-export-no-bookmark", [:])
             return nil
         }
-        switch vaultResolver(bookmark) {
+        let resolved = vaultResolver(bookmark)
+        switch resolved.resolution {
         case .granted(let url):
+            if let refreshed = resolved.refreshedBookmark {
+                try? await store.refreshDestinationVaultBookmark(
+                    id: destination.id,
+                    expectedConfigRevision: destination.configRevision,
+                    bookmark: refreshed
+                )
+                onLog("obsidian-export-refreshed-stale-bookmark", ["destination": destination.id.uuidString])
+            }
             vaultCache = (destination.id, destination.configRevision, url, true)
             return url
         case .stale:

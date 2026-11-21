@@ -1,0 +1,3260 @@
+{
+ "root": "/Users/v.smirnov/docs/conference-guest-ios/.build",
+ "cutoff": "2026-11-08 00:00 (local)",
+ "total_stale_bytes": 42826817536,
+ "total_fresh_bytes": 45346811904,
+ "stale_count": 375,
+ "fresh_count": 31,
+ "stale": [
+  {
+   "name": "webrtc-m156-desktop-audio",
+   "type": "dir",
+   "size_bytes": 15384780800,
+   "mtime": "2026-10-28 18:52",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "reverse-sdk",
+   "type": "dir",
+   "size_bytes": 10330746880,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cold-start31",
+   "type": "dir",
+   "size_bytes": 1967013888,
+   "mtime": "2026-10-26 23:09",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "camera-share114",
+   "type": "dir",
+   "size_bytes": 1913520128,
+   "mtime": "2026-10-26 19:26",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r4",
+   "type": "dir",
+   "size_bytes": 1844510720,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "guest-sdk-vendor",
+   "type": "dir",
+   "size_bytes": 908328960,
+   "mtime": "2026-10-13 21:25",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "webrtc-m155-20261024",
+   "type": "dir",
+   "size_bytes": 712171520,
+   "mtime": "2026-10-28 23:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-guest",
+   "type": "dir",
+   "size_bytes": 691830784,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-dependencies",
+   "type": "dir",
+   "size_bytes": 658214912,
+   "mtime": "2026-10-24 20:34",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "zoom-media-investigation",
+   "type": "dir",
+   "size_bytes": 579698688,
+   "mtime": "2026-10-27 17:11",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "bluetooth-aec-validation",
+   "type": "dir",
+   "size_bytes": 536297472,
+   "mtime": "2026-10-27 23:35",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "release111",
+   "type": "dir",
+   "size_bytes": 520212480,
+   "mtime": "2026-10-26 00:44",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-screen-quality",
+   "type": "dir",
+   "size_bytes": 509583360,
+   "mtime": "2026-10-28 09:01",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "release114",
+   "type": "dir",
+   "size_bytes": 390406144,
+   "mtime": "2026-10-26 19:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "join-readiness-build31-20261029",
+   "type": "dir",
+   "size_bytes": 355319808,
+   "mtime": "2026-10-29 09:54",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-ios-probe",
+   "type": "dir",
+   "size_bytes": 353468416,
+   "mtime": "2026-10-25 01:01",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-guest-m156",
+   "type": "dir",
+   "size_bytes": 335630336,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "media-startup-profile",
+   "type": "dir",
+   "size_bytes": 325779456,
+   "mtime": "2026-10-27 00:48",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "ocr-actual-profile",
+   "type": "dir",
+   "size_bytes": 307236864,
+   "mtime": "2026-10-27 00:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "camera-quality-background",
+   "type": "dir",
+   "size_bytes": 300535808,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-rock-unit",
+   "type": "dir",
+   "size_bytes": 286683136,
+   "mtime": "2026-10-24 23:27",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "ui91",
+   "type": "dir",
+   "size_bytes": 206311424,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "release112",
+   "type": "dir",
+   "size_bytes": 187056128,
+   "mtime": "2026-10-26 13:59",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "startup-capture-live",
+   "type": "dir",
+   "size_bytes": 182255616,
+   "mtime": "2026-10-27 09:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "floating-layout",
+   "type": "dir",
+   "size_bytes": 168734720,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-ios-regression",
+   "type": "dir",
+   "size_bytes": 143200256,
+   "mtime": "2026-10-25 20:25",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "ui93",
+   "type": "dir",
+   "size_bytes": 126287872,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "cleanup-backup-20261107-2330",
+   "type": "dir",
+   "size_bytes": 125427712,
+   "mtime": "2026-11-07 23:38",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "review89",
+   "type": "dir",
+   "size_bytes": 112439296,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "glass92",
+   "type": "dir",
+   "size_bytes": 112435200,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "performance90",
+   "type": "dir",
+   "size_bytes": 109260800,
+   "mtime": "2026-10-23 11:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "release113",
+   "type": "dir",
+   "size_bytes": 107261952,
+   "mtime": "2026-10-26 15:17",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "release110",
+   "type": "dir",
+   "size_bytes": 104472576,
+   "mtime": "2026-10-26 00:02",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "calendar94",
+   "type": "dir",
+   "size_bytes": 104005632,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-handoff18-ios-ui",
+   "type": "dir",
+   "size_bytes": 83124224,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "presenter-mirror-effects",
+   "type": "dir",
+   "size_bytes": 81264640,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-engine-core",
+   "type": "dir",
+   "size_bytes": 81252352,
+   "mtime": "2026-10-26 19:13",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "audio-startup-followup",
+   "type": "dir",
+   "size_bytes": 77660160,
+   "mtime": "2026-10-27 22:12",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "audio-reliability",
+   "type": "dir",
+   "size_bytes": 74547200,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "beta105-validation",
+   "type": "dir",
+   "size_bytes": 70959104,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "media-backend-experiments",
+   "type": "dir",
+   "size_bytes": 64045056,
+   "mtime": "2026-10-28 18:05",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-guest-m156-debug",
+   "type": "dir",
+   "size_bytes": 59928576,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "meeting-layout",
+   "type": "dir",
+   "size_bytes": 52158464,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "system-background108",
+   "type": "dir",
+   "size_bytes": 49569792,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "cleanup-preservation-20261028-m155",
+   "type": "dir",
+   "size_bytes": 45387776,
+   "mtime": "2026-10-28 23:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "audio-mixing87",
+   "type": "dir",
+   "size_bytes": 45305856,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "reaction-history-info",
+   "type": "dir",
+   "size_bytes": 44359680,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "fixture-adm-diagnostic",
+   "type": "dir",
+   "size_bytes": 42434560,
+   "mtime": "2026-10-28 15:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "physical101",
+   "type": "dir",
+   "size_bytes": 41766912,
+   "mtime": "2026-10-23 11:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "cellular-call-recovery",
+   "type": "dir",
+   "size_bytes": 41377792,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "camera-background-device",
+   "type": "dir",
+   "size_bytes": 39284736,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "background-audio-join",
+   "type": "dir",
+   "size_bytes": 38981632,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-core-regression",
+   "type": "dir",
+   "size_bytes": 36233216,
+   "mtime": "2026-10-24 21:22",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "handoff-home-clock-review",
+   "type": "dir",
+   "size_bytes": 35115008,
+   "mtime": "2026-10-25 08:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "latency72-device",
+   "type": "dir",
+   "size_bytes": 33505280,
+   "mtime": "2026-10-23 11:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "handoff-refresh-review-ac433d6f",
+   "type": "dir",
+   "size_bytes": 32542720,
+   "mtime": "2026-10-25 07:50",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-media-start",
+   "type": "dir",
+   "size_bytes": 29315072,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-framing62",
+   "type": "dir",
+   "size_bytes": 28655616,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "polish98",
+   "type": "dir",
+   "size_bytes": 27447296,
+   "mtime": "2026-10-23 11:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "beta104-validation",
+   "type": "dir",
+   "size_bytes": 27066368,
+   "mtime": "2026-10-28 08:34",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "live-activity",
+   "type": "dir",
+   "size_bytes": 23691264,
+   "mtime": "2026-10-23 11:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-handoff18",
+   "type": "dir",
+   "size_bytes": 22507520,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-release-r2-readback.zip",
+   "type": "file",
+   "size_bytes": 19345408,
+   "mtime": "2026-10-09 15:53",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-release-r3-readback.zip",
+   "type": "file",
+   "size_bytes": 19345408,
+   "mtime": "2026-10-09 16:12",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "physical-2026-10-20",
+   "type": "dir",
+   "size_bytes": 18960384,
+   "mtime": "2026-10-23 11:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-release-readback.zip",
+   "type": "file",
+   "size_bytes": 18747392,
+   "mtime": "2026-10-09 15:40",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-sdk-export",
+   "type": "dir",
+   "size_bytes": 18325504,
+   "mtime": "2026-10-27 15:44",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-release20",
+   "type": "dir",
+   "size_bytes": 17731584,
+   "mtime": "2026-10-25 09:29",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-device-images",
+   "type": "dir",
+   "size_bytes": 16740352,
+   "mtime": "2026-10-11 11:53",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mission-control",
+   "type": "dir",
+   "size_bytes": 15749120,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "sdk-mac-feasibility",
+   "type": "dir",
+   "size_bytes": 14782464,
+   "mtime": "2026-10-23 14:13",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-audio",
+   "type": "dir",
+   "size_bytes": 12976128,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r2",
+   "type": "dir",
+   "size_bytes": 12742656,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r3",
+   "type": "dir",
+   "size_bytes": 12742656,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "background105-recovery",
+   "type": "dir",
+   "size_bytes": 11575296,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "meeting-access",
+   "type": "dir",
+   "size_bytes": 10104832,
+   "mtime": "2026-10-23 11:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "background-recovery",
+   "type": "dir",
+   "size_bytes": 9928704,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-external-tests",
+   "type": "dir",
+   "size_bytes": 9191424,
+   "mtime": "2026-10-24 21:34",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "share-features110",
+   "type": "dir",
+   "size_bytes": 9175040,
+   "mtime": "2026-10-27 14:14",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-sdk",
+   "type": "dir",
+   "size_bytes": 8867840,
+   "mtime": "2026-10-27 15:58",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-camera108",
+   "type": "dir",
+   "size_bytes": 8826880,
+   "mtime": "2026-10-23 13:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-presenter-tests",
+   "type": "dir",
+   "size_bytes": 7819264,
+   "mtime": "2026-10-26 19:10",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-background",
+   "type": "dir",
+   "size_bytes": 7774208,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "ux-review90",
+   "type": "dir",
+   "size_bytes": 7118848,
+   "mtime": "2026-10-15 10:25",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "history-immersive",
+   "type": "dir",
+   "size_bytes": 6881280,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "screen-sharing-lifecycle",
+   "type": "dir",
+   "size_bytes": 6864896,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-app-vpio-r9-fault",
+   "type": "dir",
+   "size_bytes": 6770688,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "cleanup-media-startup-20261029",
+   "type": "dir",
+   "size_bytes": 6762496,
+   "mtime": "2026-10-29 12:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-calendar-residence",
+   "type": "dir",
+   "size_bytes": 6664192,
+   "mtime": "2026-10-28 08:34",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "presenter80",
+   "type": "dir",
+   "size_bytes": 6455296,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "notification-settings107",
+   "type": "dir",
+   "size_bytes": 6393856,
+   "mtime": "2026-10-24 09:17",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "reaction-history",
+   "type": "dir",
+   "size_bytes": 6299648,
+   "mtime": "2026-10-10 19:00",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-rotation61",
+   "type": "dir",
+   "size_bytes": 6012928,
+   "mtime": "2026-10-10 10:03",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-share-tests",
+   "type": "dir",
+   "size_bytes": 5967872,
+   "mtime": "2026-10-26 19:13",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "defaults103",
+   "type": "dir",
+   "size_bytes": 5316608,
+   "mtime": "2026-10-23 11:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "ios73-crash",
+   "type": "dir",
+   "size_bytes": 5242880,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "stable-focus108",
+   "type": "dir",
+   "size_bytes": 4972544,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "screen-quality",
+   "type": "dir",
+   "size_bytes": 4587520,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "beta83",
+   "type": "dir",
+   "size_bytes": 4526080,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-ui-evidence",
+   "type": "dir",
+   "size_bytes": 4403200,
+   "mtime": "2026-10-25 00:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "review70-fixes",
+   "type": "dir",
+   "size_bytes": 4272128,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "camera-mirror",
+   "type": "dir",
+   "size_bytes": 4145152,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "thumb-controls",
+   "type": "dir",
+   "size_bytes": 4079616,
+   "mtime": "2026-10-23 11:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "presenter-screen-fix",
+   "type": "dir",
+   "size_bytes": 3723264,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "incoming-latency",
+   "type": "dir",
+   "size_bytes": 3661824,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "outgoing-call-recovery",
+   "type": "dir",
+   "size_bytes": 3608576,
+   "mtime": "2026-10-10 19:51",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "ocr-canvas112",
+   "type": "dir",
+   "size_bytes": 3444736,
+   "mtime": "2026-10-27 14:14",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-physical-images",
+   "type": "dir",
+   "size_bytes": 3096576,
+   "mtime": "2026-10-11 12:13",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "share-cancel-crash",
+   "type": "dir",
+   "size_bytes": 3059712,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "pip-continuity",
+   "type": "dir",
+   "size_bytes": 2654208,
+   "mtime": "2026-10-23 11:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview-low-latency",
+   "type": "dir",
+   "size_bytes": 2633728,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview-cadence",
+   "type": "dir",
+   "size_bytes": 2605056,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-live-large-recovered.log",
+   "type": "file",
+   "size_bytes": 2449408,
+   "mtime": "2026-10-25 01:17",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview-crash72",
+   "type": "dir",
+   "size_bytes": 2375680,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-release-12.log",
+   "type": "file",
+   "size_bytes": 1998848,
+   "mtime": "2026-10-24 22:57",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "guest-renderer-ownership",
+   "type": "dir",
+   "size_bytes": 1937408,
+   "mtime": "2026-10-23 11:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "presenter-background-camera",
+   "type": "dir",
+   "size_bytes": 1777664,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-release-13.log",
+   "type": "file",
+   "size_bytes": 1695744,
+   "mtime": "2026-10-24 23:40",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-release.log",
+   "type": "file",
+   "size_bytes": 1687552,
+   "mtime": "2026-10-25 01:15",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-release-15.log",
+   "type": "file",
+   "size_bytes": 1683456,
+   "mtime": "2026-10-25 00:13",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-release-16.log",
+   "type": "file",
+   "size_bytes": 1683456,
+   "mtime": "2026-10-25 00:30",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "startup-investigation31",
+   "type": "dir",
+   "size_bytes": 1617920,
+   "mtime": "2026-10-26 23:30",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-release-14.log",
+   "type": "file",
+   "size_bytes": 1556480,
+   "mtime": "2026-10-24 23:55",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-ios-regression.log",
+   "type": "file",
+   "size_bytes": 1445888,
+   "mtime": "2026-10-24 21:51",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "portrait-controls",
+   "type": "dir",
+   "size_bytes": 1441792,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "shared-text-check",
+   "type": "dir",
+   "size_bytes": 1359872,
+   "mtime": "2026-10-25 23:31",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "window-resize",
+   "type": "dir",
+   "size_bytes": 1314816,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-strip",
+   "type": "dir",
+   "size_bytes": 1277952,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-camera-device.log",
+   "type": "file",
+   "size_bytes": 1228800,
+   "mtime": "2026-10-11 11:51",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "menu-suggestion108",
+   "type": "dir",
+   "size_bytes": 1175552,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "static-share-recovery",
+   "type": "dir",
+   "size_bytes": 1110016,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-live-12-summary.json",
+   "type": "file",
+   "size_bytes": 1093632,
+   "mtime": "2026-10-25 01:18",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-device-build-15003.log",
+   "type": "file",
+   "size_bytes": 1073152,
+   "mtime": "2026-10-09 15:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "design-access",
+   "type": "dir",
+   "size_bytes": 1040384,
+   "mtime": "2026-10-20 16:45",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "ui-ux-review-2026-09-24",
+   "type": "dir",
+   "size_bytes": 1028096,
+   "mtime": "2026-09-24 11:09",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-simulator.log",
+   "type": "file",
+   "size_bytes": 1003520,
+   "mtime": "2026-10-11 01:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-preview-release15.sample.txt",
+   "type": "file",
+   "size_bytes": 966656,
+   "mtime": "2026-10-25 00:17",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-private-preview-16.sample.txt",
+   "type": "file",
+   "size_bytes": 937984,
+   "mtime": "2026-10-25 00:26",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-physical-isolated-13.sample.txt",
+   "type": "file",
+   "size_bytes": 884736,
+   "mtime": "2026-10-24 23:46",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-device-release-15003.log",
+   "type": "file",
+   "size_bytes": 819200,
+   "mtime": "2026-10-09 16:02",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-mac-release-15003.log",
+   "type": "file",
+   "size_bytes": 815104,
+   "mtime": "2026-10-09 16:05",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-private-preview-15.sample.txt",
+   "type": "file",
+   "size_bytes": 737280,
+   "mtime": "2026-10-25 00:11",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "presenter-space-preview",
+   "type": "dir",
+   "size_bytes": 724992,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r3-build.log",
+   "type": "file",
+   "size_bytes": 708608,
+   "mtime": "2026-10-24 21:52",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-guest-soak-14.log",
+   "type": "file",
+   "size_bytes": 696320,
+   "mtime": "2026-10-24 23:58",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-simulator-tests-15003.log",
+   "type": "file",
+   "size_bytes": 659456,
+   "mtime": "2026-10-09 15:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-live-large.log",
+   "type": "file",
+   "size_bytes": 647168,
+   "mtime": "2026-10-25 01:03",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "telemost-15003",
+   "type": "dir",
+   "size_bytes": 634880,
+   "mtime": "2026-10-09 15:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-acceptance-15.log",
+   "type": "file",
+   "size_bytes": 606208,
+   "mtime": "2026-10-25 00:07",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "share-timeout",
+   "type": "dir",
+   "size_bytes": 606208,
+   "mtime": "2026-10-26 15:30",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-simulator-tests-15003-r2.log",
+   "type": "file",
+   "size_bytes": 561152,
+   "mtime": "2026-10-09 15:55",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-ios-regression-13.log",
+   "type": "file",
+   "size_bytes": 557056,
+   "mtime": "2026-10-24 23:44",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-build-tests-14.log",
+   "type": "file",
+   "size_bytes": 512000,
+   "mtime": "2026-10-24 23:51",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-build-tests-15.log",
+   "type": "file",
+   "size_bytes": 512000,
+   "mtime": "2026-10-25 00:01",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-build-tests-16.log",
+   "type": "file",
+   "size_bytes": 507904,
+   "mtime": "2026-10-25 00:25",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-live-6-summary.json",
+   "type": "file",
+   "size_bytes": 503808,
+   "mtime": "2026-10-25 01:18",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-telemost-remote-2.log",
+   "type": "file",
+   "size_bytes": 483328,
+   "mtime": "2026-10-24 22:35",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-images70",
+   "type": "dir",
+   "size_bytes": 483328,
+   "mtime": "2026-10-11 01:52",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-debug-13.log",
+   "type": "file",
+   "size_bytes": 479232,
+   "mtime": "2026-10-24 23:29",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-renderer-16-check",
+   "type": "dir",
+   "size_bytes": 479232,
+   "mtime": "2026-10-25 00:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-build.log",
+   "type": "file",
+   "size_bytes": 471040,
+   "mtime": "2026-10-25 00:43",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "trueconf-15003",
+   "type": "dir",
+   "size_bytes": 466944,
+   "mtime": "2026-10-09 15:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-ios-dedicated",
+   "type": "dir",
+   "size_bytes": 425984,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-meeting-runtime.log",
+   "type": "file",
+   "size_bytes": 417792,
+   "mtime": "2026-10-14 17:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-ios-scenes",
+   "type": "dir",
+   "size_bytes": 397312,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "vendor",
+   "type": "dir",
+   "size_bytes": 397312,
+   "mtime": "2026-09-29 14:40",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-meeting-active.log",
+   "type": "file",
+   "size_bytes": 385024,
+   "mtime": "2026-10-14 17:41",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-simulator-final.log",
+   "type": "file",
+   "size_bytes": 376832,
+   "mtime": "2026-10-11 01:46",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-sim27.log",
+   "type": "file",
+   "size_bytes": 368640,
+   "mtime": "2026-10-11 11:46",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-handoff20-coordinator-ios",
+   "type": "dir",
+   "size_bytes": 364544,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-15003.log",
+   "type": "file",
+   "size_bytes": 352256,
+   "mtime": "2026-10-09 15:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "hybrid-loopback-15003",
+   "type": "dir",
+   "size_bytes": 348160,
+   "mtime": "2026-10-09 15:31",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-mac.log",
+   "type": "file",
+   "size_bytes": 344064,
+   "mtime": "2026-10-11 01:44",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-final-mac-all.log",
+   "type": "file",
+   "size_bytes": 335872,
+   "mtime": "2026-10-11 12:10",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-final-sim27.log",
+   "type": "file",
+   "size_bytes": 335872,
+   "mtime": "2026-10-11 12:11",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-device-15003.log",
+   "type": "file",
+   "size_bytes": 331776,
+   "mtime": "2026-10-09 15:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-simulator-15003.log",
+   "type": "file",
+   "size_bytes": 331776,
+   "mtime": "2026-10-09 15:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-visual70",
+   "type": "dir",
+   "size_bytes": 331776,
+   "mtime": "2026-10-11 01:57",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-first-mac.log",
+   "type": "file",
+   "size_bytes": 299008,
+   "mtime": "2026-10-11 11:41",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-final-guest-1.log",
+   "type": "file",
+   "size_bytes": 290816,
+   "mtime": "2026-10-24 22:57",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "presenter-review-20261013",
+   "type": "dir",
+   "size_bytes": 290816,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-accepted-sim17.log",
+   "type": "file",
+   "size_bytes": 290816,
+   "mtime": "2026-10-11 12:16",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-build.log",
+   "type": "file",
+   "size_bytes": 286720,
+   "mtime": "2026-10-24 20:55",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-native-raw-mac.log",
+   "type": "file",
+   "size_bytes": 286720,
+   "mtime": "2026-10-11 12:07",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "review70",
+   "type": "dir",
+   "size_bytes": 278528,
+   "mtime": "2026-10-20 18:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-acceptance-16.log",
+   "type": "file",
+   "size_bytes": 274432,
+   "mtime": "2026-10-25 00:28",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-accepted-mac.log",
+   "type": "file",
+   "size_bytes": 262144,
+   "mtime": "2026-10-11 12:14",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-se17.log",
+   "type": "file",
+   "size_bytes": 258048,
+   "mtime": "2026-10-11 01:49",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-raw-pip-device.log",
+   "type": "file",
+   "size_bytes": 241664,
+   "mtime": "2026-10-11 12:10",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-device-qualified.log",
+   "type": "file",
+   "size_bytes": 233472,
+   "mtime": "2026-10-11 12:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-final-mac.log",
+   "type": "file",
+   "size_bytes": 233472,
+   "mtime": "2026-10-11 11:45",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r2-tests.log",
+   "type": "file",
+   "size_bytes": 229376,
+   "mtime": "2026-10-24 21:24",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-camera-mac.log",
+   "type": "file",
+   "size_bytes": 221184,
+   "mtime": "2026-10-11 11:48",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-isolation-check.log",
+   "type": "file",
+   "size_bytes": 217088,
+   "mtime": "2026-10-11 01:57",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-drafts",
+   "type": "dir",
+   "size_bytes": 208896,
+   "mtime": "2026-10-24 20:41",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-meeting-prototype.log",
+   "type": "file",
+   "size_bytes": 204800,
+   "mtime": "2026-10-14 17:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-se-accepted.log",
+   "type": "file",
+   "size_bytes": 204800,
+   "mtime": "2026-10-11 01:54",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-camera-mac-fixed.log",
+   "type": "file",
+   "size_bytes": 204800,
+   "mtime": "2026-10-11 11:52",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-mac-qualified.log",
+   "type": "file",
+   "size_bytes": 200704,
+   "mtime": "2026-10-11 01:47",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "cleanup-20261012",
+   "type": "dir",
+   "size_bytes": 176128,
+   "mtime": "2026-10-12 21:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-camera-device-diagnosis.log",
+   "type": "file",
+   "size_bytes": 172032,
+   "mtime": "2026-10-11 11:58",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-mac-qualified.log",
+   "type": "file",
+   "size_bytes": 172032,
+   "mtime": "2026-10-11 12:17",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-raw-pip-accepted.jsonl",
+   "type": "file",
+   "size_bytes": 172032,
+   "mtime": "2026-10-11 12:10",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-device-release-final-15003.log",
+   "type": "file",
+   "size_bytes": 163840,
+   "mtime": "2026-10-09 16:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-mac-release-final-15003.log",
+   "type": "file",
+   "size_bytes": 163840,
+   "mtime": "2026-10-09 16:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-mac-accepted.log",
+   "type": "file",
+   "size_bytes": 163840,
+   "mtime": "2026-10-11 01:52",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-raw-pip-live.jsonl",
+   "type": "file",
+   "size_bytes": 163840,
+   "mtime": "2026-10-11 12:09",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "screen-sharing-geometry",
+   "type": "dir",
+   "size_bytes": 163840,
+   "mtime": "2026-10-14 11:25",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-closed-peer-final-15003.log",
+   "type": "file",
+   "size_bytes": 151552,
+   "mtime": "2026-10-09 16:15",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r2-tests-3.log",
+   "type": "file",
+   "size_bytes": 147456,
+   "mtime": "2026-10-24 21:40",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "presenter-defaults108",
+   "type": "dir",
+   "size_bytes": 147456,
+   "mtime": "2026-10-26 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-camera-device-diagnosis-trace.jsonl",
+   "type": "file",
+   "size_bytes": 147456,
+   "mtime": "2026-10-11 11:58",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-device-latest.jsonl",
+   "type": "file",
+   "size_bytes": 147456,
+   "mtime": "2026-10-11 11:58",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-mac-final.log",
+   "type": "file",
+   "size_bytes": 135168,
+   "mtime": "2026-10-11 01:45",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-mac-release.log",
+   "type": "file",
+   "size_bytes": 135168,
+   "mtime": "2026-10-11 01:49",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-camera-device-trace.jsonl",
+   "type": "file",
+   "size_bytes": 135168,
+   "mtime": "2026-10-11 11:51",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-baseline",
+   "type": "dir",
+   "size_bytes": 131072,
+   "mtime": "2026-10-25 00:47",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-continuation",
+   "type": "dir",
+   "size_bytes": 131072,
+   "mtime": "2026-10-25 00:49",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-cross-cleanup",
+   "type": "dir",
+   "size_bytes": 131072,
+   "mtime": "2026-10-25 01:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-cross-resumed-verify",
+   "type": "dir",
+   "size_bytes": 131072,
+   "mtime": "2026-10-25 07:28",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-cross-resumed-write",
+   "type": "dir",
+   "size_bytes": 131072,
+   "mtime": "2026-10-25 07:24",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-cross-write",
+   "type": "dir",
+   "size_bytes": 131072,
+   "mtime": "2026-10-25 00:51",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-rooms",
+   "type": "dir",
+   "size_bytes": 131072,
+   "mtime": "2026-10-25 00:48",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-testbuild.log",
+   "type": "file",
+   "size_bytes": 131072,
+   "mtime": "2026-10-25 00:46",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-mac-delivery.log",
+   "type": "file",
+   "size_bytes": 126976,
+   "mtime": "2026-10-11 01:50",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-guest-13.log",
+   "type": "file",
+   "size_bytes": 122880,
+   "mtime": "2026-10-24 23:43",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-tests.log",
+   "type": "file",
+   "size_bytes": 122880,
+   "mtime": "2026-10-24 21:15",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r3-build.log",
+   "type": "file",
+   "size_bytes": 114688,
+   "mtime": "2026-10-24 21:52",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-lifecycle.log",
+   "type": "file",
+   "size_bytes": 114688,
+   "mtime": "2026-10-25 00:52",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-final-visual17.log",
+   "type": "file",
+   "size_bytes": 114688,
+   "mtime": "2026-10-11 01:55",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r2-tests-2.log",
+   "type": "file",
+   "size_bytes": 110592,
+   "mtime": "2026-10-24 21:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "acoustic-route-reader-check",
+   "type": "dir",
+   "size_bytes": 106496,
+   "mtime": "2026-10-27 22:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r3-guest-1.log",
+   "type": "file",
+   "size_bytes": 106496,
+   "mtime": "2026-10-24 21:55",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r4-guest-1.log",
+   "type": "file",
+   "size_bytes": 106496,
+   "mtime": "2026-10-24 22:10",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r4-build-6.log",
+   "type": "file",
+   "size_bytes": 106496,
+   "mtime": "2026-10-24 22:45",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-accepted-sim27.log",
+   "type": "file",
+   "size_bytes": 106496,
+   "mtime": "2026-10-11 12:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-testbuild-corrected.log",
+   "type": "file",
+   "size_bytes": 102400,
+   "mtime": "2026-10-25 00:58",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-testbuild-diagnostics.log",
+   "type": "file",
+   "size_bytes": 102400,
+   "mtime": "2026-10-25 01:07",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-build-tests-15-final.log",
+   "type": "file",
+   "size_bytes": 98304,
+   "mtime": "2026-10-25 00:04",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-testbuild-full.log",
+   "type": "file",
+   "size_bytes": 98304,
+   "mtime": "2026-10-25 00:54",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-meeting-initial.log",
+   "type": "file",
+   "size_bytes": 94208,
+   "mtime": "2026-10-14 17:35",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-build-tests-13.log",
+   "type": "file",
+   "size_bytes": 94208,
+   "mtime": "2026-10-24 23:31",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-build.log",
+   "type": "file",
+   "size_bytes": 94208,
+   "mtime": "2026-10-24 21:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r4-build-2.log",
+   "type": "file",
+   "size_bytes": 94208,
+   "mtime": "2026-10-24 22:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r4-build-2.log",
+   "type": "file",
+   "size_bytes": 94208,
+   "mtime": "2026-10-24 22:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r4-build-3.log",
+   "type": "file",
+   "size_bytes": 90112,
+   "mtime": "2026-10-24 22:28",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r4-build-6.log",
+   "type": "file",
+   "size_bytes": 90112,
+   "mtime": "2026-10-24 22:46",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r4-build.log",
+   "type": "file",
+   "size_bytes": 90112,
+   "mtime": "2026-10-24 22:08",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "screen-sharing-review",
+   "type": "dir",
+   "size_bytes": 90112,
+   "mtime": "2026-10-12 20:54",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "guest-signal-registry-tests",
+   "type": "dir",
+   "size_bytes": 81920,
+   "mtime": "2026-10-26 18:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "hybrid-harness-build-15003.log",
+   "type": "file",
+   "size_bytes": 81920,
+   "mtime": "2026-10-09 15:24",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-15003",
+   "type": "dir",
+   "size_bytes": 77824,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r4-build-5.log",
+   "type": "file",
+   "size_bytes": 77824,
+   "mtime": "2026-10-24 22:43",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r2-build.log",
+   "type": "file",
+   "size_bytes": 73728,
+   "mtime": "2026-10-24 21:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-build-full.log",
+   "type": "file",
+   "size_bytes": 73728,
+   "mtime": "2026-10-25 00:53",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badge-se-current.png",
+   "type": "file",
+   "size_bytes": 73728,
+   "mtime": "2026-10-11 01:53",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-r4-build-4.log",
+   "type": "file",
+   "size_bytes": 69632,
+   "mtime": "2026-10-24 22:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r4-build-3.log",
+   "type": "file",
+   "size_bytes": 69632,
+   "mtime": "2026-10-24 22:27",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-r4-build.log",
+   "type": "file",
+   "size_bytes": 69632,
+   "mtime": "2026-10-24 22:08",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-sim-build-for-testing-15003.log",
+   "type": "file",
+   "size_bytes": 65536,
+   "mtime": "2026-10-09 16:04",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-live-guest-1.log",
+   "type": "file",
+   "size_bytes": 65536,
+   "mtime": "2026-10-24 21:44",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity",
+   "type": "dir",
+   "size_bytes": 61440,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-physical-isolated-13.log",
+   "type": "file",
+   "size_bytes": 61440,
+   "mtime": "2026-10-24 23:46",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-build-mac.log",
+   "type": "file",
+   "size_bytes": 61440,
+   "mtime": "2026-10-11 11:40",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-physical-recovery-1.log",
+   "type": "file",
+   "size_bytes": 57344,
+   "mtime": "2026-10-24 22:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-build-final.log",
+   "type": "file",
+   "size_bytes": 57344,
+   "mtime": "2026-10-25 00:45",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-parity-audio-build.log",
+   "type": "file",
+   "size_bytes": 49152,
+   "mtime": "2026-10-24 21:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-simulator-15003-r2.log",
+   "type": "file",
+   "size_bytes": 49152,
+   "mtime": "2026-10-09 15:47",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "trueconf-source-default-15003-b.log",
+   "type": "file",
+   "size_bytes": 49152,
+   "mtime": "2026-10-09 16:01",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "core-release101.log",
+   "type": "file",
+   "size_bytes": 45056,
+   "mtime": "2026-10-21 07:06",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-core-regression.log",
+   "type": "file",
+   "size_bytes": 45056,
+   "mtime": "2026-10-24 21:22",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-corrected.log",
+   "type": "file",
+   "size_bytes": 45056,
+   "mtime": "2026-10-25 01:00",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "udp-reassessment-r10-20261029",
+   "type": "dir",
+   "size_bytes": 45056,
+   "mtime": "2026-10-29 01:29",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-ios-minimal",
+   "type": "dir",
+   "size_bytes": 40960,
+   "mtime": "2026-10-25 00:59",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-external-live-1.log",
+   "type": "file",
+   "size_bytes": 40960,
+   "mtime": "2026-10-24 22:22",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-device-trueconf-live-15003.log",
+   "type": "file",
+   "size_bytes": 36864,
+   "mtime": "2026-10-09 15:52",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-presenter-window-13.log",
+   "type": "file",
+   "size_bytes": 36864,
+   "mtime": "2026-10-24 23:41",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "core-tests-15003.log",
+   "type": "file",
+   "size_bytes": 32768,
+   "mtime": "2026-10-09 14:59",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "hybrid-device-runtime-15003.log",
+   "type": "file",
+   "size_bytes": 32768,
+   "mtime": "2026-10-09 15:26",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "hybrid-harness-15003",
+   "type": "dir",
+   "size_bytes": 32768,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "hybrid-mac-runtime-15003.log",
+   "type": "file",
+   "size_bytes": 32768,
+   "mtime": "2026-10-09 15:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-presenter-window-2.log",
+   "type": "file",
+   "size_bytes": 32768,
+   "mtime": "2026-10-24 22:55",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-external-15.log",
+   "type": "file",
+   "size_bytes": 28672,
+   "mtime": "2026-10-25 00:08",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-telemost-remote-1.log",
+   "type": "file",
+   "size_bytes": 28672,
+   "mtime": "2026-10-24 22:34",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-live-large-diagnostics.log",
+   "type": "file",
+   "size_bytes": 28672,
+   "mtime": "2026-10-25 01:09",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "trueconf-source-default-15003.log",
+   "type": "file",
+   "size_bytes": 28672,
+   "mtime": "2026-10-09 15:50",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-device-telemost-live-15003.log",
+   "type": "file",
+   "size_bytes": 24576,
+   "mtime": "2026-10-09 15:48",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-external-16.log",
+   "type": "file",
+   "size_bytes": 24576,
+   "mtime": "2026-10-25 00:30",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-rock-r4-unit-final.log",
+   "type": "file",
+   "size_bytes": 20480,
+   "mtime": "2026-10-24 23:31",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "telemost-source-15003-b.log",
+   "type": "file",
+   "size_bytes": 20480,
+   "mtime": "2026-10-09 15:58",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-device-15003",
+   "type": "dir",
+   "size_bytes": 16384,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-mac-15003",
+   "type": "dir",
+   "size_bytes": 16384,
+   "mtime": "2026-10-20 18:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-rock-13.log",
+   "type": "file",
+   "size_bytes": 16384,
+   "mtime": "2026-10-24 23:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-rock-final-1.log",
+   "type": "file",
+   "size_bytes": 16384,
+   "mtime": "2026-10-24 23:01",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-telemost-presenter-final-1.log",
+   "type": "file",
+   "size_bytes": 16384,
+   "mtime": "2026-10-24 23:07",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-large.log",
+   "type": "file",
+   "size_bytes": 16384,
+   "mtime": "2026-10-25 00:56",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-commit.log",
+   "type": "file",
+   "size_bytes": 16384,
+   "mtime": "2026-10-25 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-staged-paths.json",
+   "type": "file",
+   "size_bytes": 16384,
+   "mtime": "2026-10-25 01:22",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "telemost-source-15003.log",
+   "type": "file",
+   "size_bytes": 16384,
+   "mtime": "2026-10-09 15:47",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "handoff-home-clock-review.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-25 08:08",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-engines-typecheck.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 20:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-layout-1.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 22:14",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-layout-13.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 23:49",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-layout-2.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 22:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-library-test-2.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 22:24",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-library-test.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 21:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-presenter-window-1.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 22:46",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-regression-13.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 23:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-regression-14.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 23:51",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-regression-15.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-25 00:02",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-telemost-13b.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 23:39",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-trueconf-presenter-final-1.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 23:08",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-trueconf-remote-1.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-24 22:26",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-final-local.log",
+   "type": "file",
+   "size_bytes": 12288,
+   "mtime": "2026-10-25 01:18",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-destinations-15003.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-09 15:54",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-device-telemost-15003.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-09 15:45",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-switch-15003.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-09 16:07",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-ios-scenes-preparation.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-25 07:27",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-final-regression-1.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-24 22:48",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-layout-narrow-14.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-24 23:54",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-presenter-regression-2.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-24 22:24",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-share-regression.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-24 21:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-telemost-13.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-24 23:35",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-guest-index-watch.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-23 16:35",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview-controls-outline.txt",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-11 11:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview-native-engine-outline.txt",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-11 11:30",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview-rock-view-outline.txt",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-11 11:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-device-images.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-11 11:53",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "trueconf-source-15003.log",
+   "type": "file",
+   "size_bytes": 8192,
+   "mtime": "2026-10-09 15:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": ".buildSystem_debug",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-09-23 22:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "CACHEDIR.TAG",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-09-23 22:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "app-dependencies-15003.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:40",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "ast-index-watch.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-13 23:40",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-resumed-commit.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 07:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-cloud17-resumed-push.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 07:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-external-regression.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-24 21:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-ios-schemes.json",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-24 21:44",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-metal-final.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-24 22:50",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-renderer-16.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 00:25",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-rock-offline-final.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-24 23:24",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-large-binary.json",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 00:56",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-live-summary.json",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 01:18",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-renderer-final.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 01:19",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-renderer.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 01:01",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-validation17-synthetic-summary.json",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 01:02",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-camera108-build.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-23 13:37",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-camera108-reaction-build.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-23 13:42",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-push.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 01:24",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-whitespace-check.txt",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-25 01:22",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-package-15003.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:33",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-package-final-15003.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:34",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-package-final-repeat-15003.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-package-r2-15003.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:48",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-package-r3-15003.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 16:01",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-package-repeat-15003.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:34",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-prepare.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:03",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-release-notes.md",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 16:07",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-release-r2-readback.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:53",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-release-r3-readback.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 16:12",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-release-readback.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:40",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "participant-badges-visual70-export.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-11 01:57",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "performance90-xcodegen.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-15 00:56",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview-experiment-project.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-11 12:53",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview-viewport-outline.txt",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-11 11:36",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-camera-device-trace-copy.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-11 11:59",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-device-late-images.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-11 12:18",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-export-images.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-11 12:13",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "preview71-project.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-11 11:47",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "telemost-probe-build-15003.log",
+   "type": "file",
+   "size_bytes": 4096,
+   "mtime": "2026-10-09 15:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "mac-window-probe.swift.tmp",
+   "type": "file",
+   "size_bytes": 0,
+   "mtime": "2026-10-14 17:26",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-desktop-ios-schemes.log",
+   "type": "file",
+   "size_bytes": 0,
+   "mtime": "2026-10-24 21:44",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-guest-build.log",
+   "type": "file",
+   "size_bytes": 0,
+   "mtime": "2026-10-23 14:51",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "native-mac-staged-check.log",
+   "type": "file",
+   "size_bytes": 0,
+   "mtime": "2026-10-25 01:23",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "trueconf-probe-build-15003.log",
+   "type": "file",
+   "size_bytes": 0,
+   "mtime": "2026-10-09 15:32",
+   "stale": true,
+   "protected": false
+  },
+  {
+   "name": "udp-sdk-comparison",
+   "type": "dir",
+   "size_bytes": 0,
+   "mtime": "2026-11-02 14:20",
+   "stale": true,
+   "protected": false
+  }
+ ],
+ "kept_fresh_or_protected": [
+  {
+   "name": "native-dmg",
+   "type": "dir",
+   "size_bytes": 26150555648,
+   "mtime": "2026-11-10 09:14",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "worktrees",
+   "type": "dir",
+   "size_bytes": 8900112384,
+   "mtime": "2026-11-10 09:02",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "native-mac-guest",
+   "type": "dir",
+   "size_bytes": 2678800384,
+   "mtime": "2026-11-09 22:13",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "popover-verification",
+   "type": "dir",
+   "size_bytes": 2279809024,
+   "mtime": "2026-11-09 22:34",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "quiet-checks-ui",
+   "type": "dir",
+   "size_bytes": 2040954880,
+   "mtime": "2026-11-09 23:56",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "appstore-screenshots",
+   "type": "dir",
+   "size_bytes": 1950085120,
+   "mtime": "2026-11-09 19:21",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "main-merge-check",
+   "type": "dir",
+   "size_bytes": 1167962112,
+   "mtime": "2026-11-10 07:58",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "guest-audio-review",
+   "type": "dir",
+   "size_bytes": 80388096,
+   "mtime": "2026-11-09 17:59",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "thread-search",
+   "type": "dir",
+   "size_bytes": 58376192,
+   "mtime": "2026-11-10 11:33",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "sherpa-onnx-cache",
+   "type": "dir",
+   "size_bytes": 20209664,
+   "mtime": "2026-11-09 19:13",
+   "stale": false,
+   "protected": true
+  },
+  {
+   "name": "appstore-pad2.xcresult",
+   "type": "dir",
+   "size_bytes": 3424256,
+   "mtime": "2026-11-09 19:24",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone.xcresult",
+   "type": "dir",
+   "size_bytes": 2506752,
+   "mtime": "2026-11-09 18:37",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone6.xcresult",
+   "type": "dir",
+   "size_bytes": 2170880,
+   "mtime": "2026-11-09 19:21",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone4.xcresult",
+   "type": "dir",
+   "size_bytes": 2150400,
+   "mtime": "2026-11-09 18:56",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone2.xcresult",
+   "type": "dir",
+   "size_bytes": 2072576,
+   "mtime": "2026-11-09 18:43",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone5.xcresult",
+   "type": "dir",
+   "size_bytes": 2035712,
+   "mtime": "2026-11-09 19:03",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone3.xcresult",
+   "type": "dir",
+   "size_bytes": 1957888,
+   "mtime": "2026-11-09 18:49",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-screenshots-build.log",
+   "type": "file",
+   "size_bytes": 1093632,
+   "mtime": "2026-11-09 18:19",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone6-test.log",
+   "type": "file",
+   "size_bytes": 475136,
+   "mtime": "2026-11-09 19:20",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-inspect-test.log",
+   "type": "file",
+   "size_bytes": 327680,
+   "mtime": "2026-11-09 18:28",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone3-test.log",
+   "type": "file",
+   "size_bytes": 266240,
+   "mtime": "2026-11-09 18:49",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-pad.xcresult",
+   "type": "dir",
+   "size_bytes": 147456,
+   "mtime": "2026-11-09 19:09",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone4-test.log",
+   "type": "file",
+   "size_bytes": 139264,
+   "mtime": "2026-11-09 18:56",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone5-test.log",
+   "type": "file",
+   "size_bytes": 126976,
+   "mtime": "2026-11-09 19:03",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-inspect-test2.log",
+   "type": "file",
+   "size_bytes": 114688,
+   "mtime": "2026-11-09 18:30",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-pad-test.log",
+   "type": "file",
+   "size_bytes": 114688,
+   "mtime": "2026-11-09 19:09",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-pad2-test.log",
+   "type": "file",
+   "size_bytes": 114688,
+   "mtime": "2026-11-09 19:24",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone2-test.log",
+   "type": "file",
+   "size_bytes": 110592,
+   "mtime": "2026-11-09 18:43",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-phone-test.log",
+   "type": "file",
+   "size_bytes": 102400,
+   "mtime": "2026-11-09 18:37",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-inspect-test3.log",
+   "type": "file",
+   "size_bytes": 98304,
+   "mtime": "2026-11-09 18:31",
+   "stale": false,
+   "protected": false
+  },
+  {
+   "name": "appstore-capture",
+   "type": "dir",
+   "size_bytes": 8192,
+   "mtime": "2026-11-09 19:41",
+   "stale": false,
+   "protected": true
+  }
+ ]
+}

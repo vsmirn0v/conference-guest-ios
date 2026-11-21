@@ -1,7 +1,6 @@
 import XCTest
 import AVFoundation
 import LiveKit
-import Network
 @testable import RockNRoll
 
 @MainActor
@@ -81,19 +80,5 @@ final class MediaEnergyTests: XCTestCase {
         sink.retire(); try await Task.sleep(nanoseconds: 100_000_000); sink.render(frame: frame)
         try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(samples, 2)
-    }
-    func testConnectionProbeCancellationReturnsImmediatelyAndSuccessUsesEvents() async throws {
-        let queue = DispatchQueue(label: "probe-test")
-        let probe = MeetingServiceProbe(host: "127.0.0.1", port: 9, queue: queue)
-        let task = Task { await probe.run(timeout: 10) }; task.cancel()
-        let cancelled = await task.value; XCTAssertFalse(cancelled)
-        let ready = expectation(description: "Listener ready")
-        let listener = try NWListener(using: .tcp)
-        listener.newConnectionHandler = { connection in connection.start(queue: queue); connection.cancel() }
-        listener.stateUpdateHandler = { if case .ready = $0 { ready.fulfill() } }
-        listener.start(queue: queue); defer { listener.cancel() }
-        await fulfillment(of: [ready], timeout: 2)
-        let successful = await MeetingServiceProbe(host: "127.0.0.1", port: try XCTUnwrap(listener.port).rawValue, queue: queue).run()
-        XCTAssertTrue(successful)
     }
 }

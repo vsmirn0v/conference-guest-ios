@@ -218,6 +218,8 @@ extension MeetingLibraryStore {
     func applyRemoteNote(
         _ remote: SyncedMeetingNote,
         localDeviceID: String,
+        alreadyMergedFromLocalMarkdown: String? = nil,
+        syncBaseMarkdown: String? = nil,
         deferOutbox: Bool = false
     ) throws -> (markdown: String, changed: Bool) {
         let db = try db()
@@ -248,6 +250,11 @@ extension MeetingLibraryStore {
                 if existingNote.markdown == remote.markdown {
                     finalMarkdown = existingNote.markdown
                     noteChanged = false
+                } else if let preMergedLocal = alreadyMergedFromLocalMarkdown, existingNote.markdown == preMergedLocal {
+                    // `MeetingWorkspaceSyncDocument` already merged `preMergedLocal` with the remote note
+                    // using real Lamport versions; avoid merging a second time and duplicating conflict quotes.
+                    finalMarkdown = remote.markdown
+                    noteChanged = finalMarkdown != existingNote.markdown
                 } else {
                     let localVersion = SyncVersion(counter: Int64(max(1, existingNote.revision)), device: localDeviceID)
                     let merge = NoteThreeWayMerger.merge(
@@ -265,7 +272,7 @@ extension MeetingLibraryStore {
                 noteChanged = true
             }
 
-            let baseMarkdown = remote.markdown
+            let baseMarkdown = syncBaseMarkdown ?? remote.markdown
             try db.run("""
                 INSERT INTO note_sync_bases(session_id,sha256,markdown) VALUES(?,?,?)
                 ON CONFLICT(session_id) DO UPDATE SET sha256=excluded.sha256,markdown=excluded.markdown
@@ -535,7 +542,9 @@ extension MeetingLibraryStore {
         outcome: SyncedMeetingOutcome?,
         tasks: [SyncedMeetingTask],
         links: [SyncedTaskLink],
-        localDeviceID: String
+        localDeviceID: String,
+        alreadyMergedFromLocalMarkdown: String? = nil,
+        syncBaseMarkdown: String? = nil
     ) throws -> (finalMarkdown: String?, sessionBecameActiveLocal: Bool) {
         var sessionResult = RemoteSessionApplyResult(changed: false)
         if let session {
@@ -548,7 +557,13 @@ extension MeetingLibraryStore {
         var noteMarkdown: String?
         var noteChanged = false
         if let note {
-            let applied = try applyRemoteNote(note, localDeviceID: localDeviceID, deferOutbox: true)
+            let applied = try applyRemoteNote(
+                note,
+                localDeviceID: localDeviceID,
+                alreadyMergedFromLocalMarkdown: alreadyMergedFromLocalMarkdown,
+                syncBaseMarkdown: syncBaseMarkdown,
+                deferOutbox: true
+            )
             noteMarkdown = applied.markdown
             noteChanged = applied.changed
         }
@@ -618,6 +633,41 @@ extension MeetingLibraryStore {
         guard updated != current else { return false }
         try saveTaskProfile(updated)
         return true
+    }
+
+    /// Re-queues Obsidian export when delayed transcript chunks arrive on a later sync pass
+    /// for sessions whose exported Markdown includes the `.transcript` section.
+    func requeueObsidianTranscriptsIfNeeded(sessionIDs: Set<UUID>) throws -> Bool {
+        guard !sessionIDs.isEmpty else { return false }
+        let db = try db()
+        return try db.transaction {
+            guard let destination = try Self.activeDestination(db),
+                  destination.enabled,
+                  destination.vaultBookmark != nil,
+                  destination.layout.sections.contains(.transcript) else {
+                return false
+            }
+            var queuedAny = false
+            let nowMs = Date().syncMilliseconds
+            for sessionID in sessionIDs {
+                guard let currentRevision = try db.one(
+                    "SELECT export_revision FROM meeting_sessions WHERE session_id=?",
+                    bind: { try Self.bindText($0, sessionID.uuidString, at: 1) }
+                )?.integer(0) else {
+                    continue
+                }
+                let nextRevision = Int(currentRevision) + 1
+                try db.run("UPDATE meeting_sessions SET export_revision=?, updated_at=? WHERE session_id=?") {
+                    try Self.bindInt($0, Int64(nextRevision), at: 1)
+                    try Self.bindInt($0, nowMs, at: 2)
+                    try Self.bindText($0, sessionID.uuidString, at: 3)
+                }
+                if try Self.queueOutbox(db: db, sessionID: sessionID, desiredRevision: nextRevision) > 0 {
+                    queuedAny = true
+                }
+            }
+            return queuedAny
+        }
     }
 
     func obsidianSyncReceipt(for sessionID: UUID, exporterDeviceID: String) throws -> ObsidianSyncReceipt? {

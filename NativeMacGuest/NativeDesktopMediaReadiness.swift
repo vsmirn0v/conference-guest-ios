@@ -15,7 +15,7 @@ enum NativeDesktopMediaReadinessMode: String, CaseIterable {
     }
 }
 
-struct NativeDesktopJoinReadinessPolicy {
+struct NativeDesktopJoinReadinessPolicy: Equatable {
     static let microphoneKey = "nativeDesktop.microphoneReadinessPolicy"
     static let cameraKey = "nativeDesktop.cameraReadinessPolicy"
     var microphone: NativeDesktopMediaReadinessMode = .whenPluggedIn

@@ -1038,4 +1038,111 @@ final class IOSWorkspaceSyncTests: XCTestCase {
         XCTAssertEqual(f.workspace.tasks.first?.id, id)
     }
 
+    func testConflictingNoteMergeDoesNotDuplicateQuoteAndFinishPreservesRemoteActiveLeg() async throws {
+        let f = try await makeCoordinator()
+        let controllerID = UUID()
+        let joinURL = try XCTUnwrap(URL(string: "https://meet.example.com/handoff-sync"))
+        let sid = f.workspace.beginSession(
+            controllerID: controllerID,
+            requestedWorkspaceID: nil,
+            title: "Cross-Device Review",
+            invitation: joinURL,
+            roomIdentity: "meet.example.com · handoff-sync",
+            calendarMeeting: nil
+        )
+        for _ in 0..<20 where f.workspace.sessions.first(where: { $0.id == sid }) == nil {
+            try await Task.sleep(for: .milliseconds(15))
+        }
+
+        // Seed shared base note, then create concurrent conflicting edits on iOS and Mac.
+        let baseNote = SyncedMeetingNote(
+            sessionID: sid,
+            noteID: UUID(),
+            markdown: "Shared heading",
+            version: SyncVersion(counter: 1, device: "mac-1"),
+            updatedAt: Date(),
+            isDeleted: SyncValue(false, version: SyncVersion(counter: 1, device: "mac-1"))
+        )
+        f.libraryCloud.records["note:" + sid.uuidString] = .note(baseNote)
+        await f.workspace.synchronizeNow()
+
+        f.workspace.updateNoteDraft("iOS conflicting line", for: sid)
+        await f.workspace.flushNotesNow()
+
+        let remoteConflict = SyncedMeetingNote(
+            sessionID: sid,
+            noteID: baseNote.noteID,
+            markdown: "Mac conflicting line",
+            version: SyncVersion(counter: 50, device: "mac-1"),
+            parentSHA256: baseNote.sha256,
+            updatedAt: Date().addingTimeInterval(5),
+            isDeleted: SyncValue(false, version: SyncVersion(counter: 50, device: "mac-1"))
+        )
+        f.libraryCloud.records["note:" + sid.uuidString] = .note(remoteConflict)
+        await f.workspace.synchronizeNow()
+
+        let mergedMarkdown = try XCTUnwrap(f.workspace.notesBySession[sid]?.markdown)
+        let quoteOccurrences = mergedMarkdown.components(separatedBy: "> Note from another device:").count - 1
+        XCTAssertEqual(quoteOccurrences, 1, "Conflicting note merge must emit at most one remote quote block, got:\n\(mergedMarkdown)")
+
+        // Context settings optional fields can be cleared cleanly back to empty.
+        await f.workspace.saveContextSettings(
+            scopeKey: "room:meet.example.com · handoff-sync",
+            scopeKind: .room,
+            title: "Cross-Device Review",
+            sameRoomTransition: nil,
+            about: "Initial context",
+            matters: "Latency",
+            never: "Fluff",
+            people: ["Alice"]
+        )
+        await f.workspace.saveContextSettings(
+            scopeKey: "room:meet.example.com · handoff-sync",
+            scopeKind: .room,
+            title: "Cross-Device Review",
+            sameRoomTransition: nil,
+            about: nil,
+            matters: nil,
+            never: nil,
+            people: nil
+        )
+        let clearedSettings = f.workspace.contextSettings["room:meet.example.com · handoff-sync"]
+        XCTAssertEqual(clearedSettings?.about?.value, "")
+        XCTAssertEqual(clearedSettings?.matters?.value, "")
+        XCTAssertEqual(clearedSettings?.never?.value, "")
+        XCTAssertEqual(clearedSettings?.people?.value, [])
+
+        // Simulate an active remote Mac leg and 205 live transcript events (2 chunks of 200).
+        if var remoteActive = try await f.store.session(sid) {
+            remoteActive.legs["mac-1"] = DeviceParticipationLeg(
+                deviceID: "mac-1",
+                deviceKind: .mac,
+                joinedAt: remoteActive.startedAt,
+                leftAt: nil,
+                hasOutcomeWriter: true,
+                updatedAt: Date()
+            )
+            try await f.store.upsertSession(remoteActive)
+        }
+        let events = (0..<205).map { idx in
+            SyncedTranscriptEvent(
+                id: "ev-\(idx)",
+                kind: "transcript",
+                occurredAt: Date().addingTimeInterval(Double(idx)),
+                speaker: "Speaker",
+                text: "Line \(idx)",
+                deviceID: f.roomSync.deviceID
+            )
+        }
+        f.workspace.recordLiveEvents(controllerID: controllerID, events: events, micIntervals: [])
+        f.workspace.finishSession(controllerID: controllerID, endedAt: Date())
+        for _ in 0..<40 where f.workspace.sessions.first(where: { $0.id == sid })?.legs[f.roomSync.deviceID]?.leftAt == nil {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        let finished = try XCTUnwrap(f.workspace.sessions.first(where: { $0.id == sid }))
+        XCTAssertEqual(finished.state, "active")
+        XCTAssertNil(finished.endedAt, "Session endedAt must remain nil while another device leg is still active")
+        XCTAssertEqual(finished.legs[f.roomSync.deviceID]?.transcriptChunkCount, 2)
+    }
 }

@@ -1,0 +1,730 @@
+offline mode
+ninja: Entering directory `out/configuration-recovery'
+
+
+disable fast local for non-interactive: fastlocal=1->0
+ use `--fast_local` to enable fast local with non-interactive mode
+schedule pending:1+ready:0 (node:15719 edge:2)
+build start: Ready 1 Pending 1
+rebuild manifest finished
+
+loading build.ninja... done 136.204042ms
+load siso config done 7.510875ms
+schedule pending:1+ready:0 (node:41922 edge:2)
+build start: Ready 1 Pending 1
+rebuild manifest finished
+schedule pending:1+ready:0 (node:41922 edge:8)
+build start: Ready 454 Pending 2147
+[0/2547] 0.29s S ACTION //build/rust/std:find_stdlib(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[0/2527] 0.29s S CXX obj/media/media_constants/media_constants.o
+[0/2337] 0.29s S ACTION //build/rust/std/rules:libc_libc_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[0/2324] 0.29s S CXX obj/api/audio_options_api/audio_options.o
+[0/2307] 0.29s S CC obj/common_audio/common_audio_c/webrtc_vad.o
+[0/2304] 0.29s S CXX obj/modules/rtp_rtcp/leb128/leb128.o
+[0/2286] 0.29s S ACTION //build/rust/std/rules:compiler_builtins_compiler_builtins_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[0/2262] 0.29s S ACTION //build/rust/gni_impl:gen_allow_all_warnings_rsp(//build/toolchain/mac:clang_arm64)
+[0/2254] 0.29s S CXX obj/api/rtp_headers/rtp_headers.o
+[0/2252] 0.29s S CXX obj/rtc_base/memory/aligned_malloc/aligned_malloc.o
+[0/2231] 0.29s S CXX obj/api/transport/network_control/network_types.o
+[0/2200] 0.29s S CXX obj/api/video/corruption_detection/frame_instrumentation_data/frame_instrumentation_data.o
+[0/2198] 0.29s S ACTION //build/rust/gni_impl:rustc_print_cfg(//build/toolchain/mac:clang_arm64)
+[0/2156] 0.29s S CXX obj/api/video/video_rtp_headers/hdr_metadata.o
+[0/2156] 0.29s S CC obj/common_audio/common_audio_neon_c/downsample_fast_neon.o
+[0/1521] 0.30s S ACTION //build/rust/std/rules:object_object_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[0/1483] 0.30s S OBJC obj/sdk/base_objc/RTCVideoEncoderQpThresholds.o
+[0/1396] 0.30s S CXX obj/api/video/video_rtp_headers/color_space.o
+[0/1182] 0.30s S CXX obj/api/video/video_rtp_headers/video_content_type.o
+[0/1176] 0.30s S CXX obj/api/video/video_rtp_headers/video_timing.o
+[0/1175] 0.30s S OBJCXX obj/sdk/base_objc/RTCVideoEncoderFactory.o
+[0/1166] 0.30s S CXX obj/api/priority/priority.o
+[0/980] 0.30s S OBJCXX obj/sdk/base_objc/RTCLogging.o
+[0/935] 0.31s S CC obj/common_audio/common_audio_c/spl_sqrt.o
+[0/923] 0.31s S CC obj/common_audio/common_audio_c/splitting_filter.o
+[0/851] 0.31s S CXX obj/api/units/data_rate/data_rate.o
+[0/842] 0.31s S CXX clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/alloc_error_handler_impl/alias.o
+[0/839] 0.31s S CC obj/common_audio/common_audio_c/vector_scaling_operations.o
+[0/834] 0.31s S CXX obj/api/video_codecs/scalability_mode/scalability_mode.o
+[0/827] 0.31s S CC obj/common_audio/common_audio_neon_c/min_max_operations_neon.o
+[0/825] 0.31s S CXX obj/rtc_base/timestamp_aligner/timestamp_aligner.o
+[0/816] 0.31s S CC obj/common_audio/common_audio_c/vad_core.o
+[0/807] 0.31s S CC obj/common_audio/common_audio_c/vad_filterbank.o
+[0/798] 0.31s S ACTION //build/rust/std/rules:std_std_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[0/787] 0.31s S CC obj/common_audio/common_audio_c/vad_gmm.o
+[0/778] 0.31s S ACTION //build/rust/gni_impl:rustc_print_cfg(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[0/771] 0.31s S CC obj/common_audio/common_audio_c/vad_sp.o
+[0/763] 0.31s S ACTION //third_party/rust/proc_macro2/v1:proc_macro2_lib_v1_build_script_write_rustflags(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[0/757] 0.31s S CC obj/common_audio/common_audio_c/vector_operations.o
+[0/751] 0.31s S ACTION //build/rust/gni_impl:gen_allow_all_warnings_rsp(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[0/742] 0.31s S CC obj/common_audio/common_audio_c/filter_ar_fast_q12.o
+[0/734] 0.31s S ACTION //third_party/rust/quote/v1:quote_lib_v1_build_script_write_rustflags(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[0/722] 0.31s S OBJC obj/sdk/base_objc/RTCEncodedImage.o
+[0/713] 0.31s S ACTION //build/rust/std/rules:test_test_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[0/704] 0.31s S CXX obj/build/rust/allocator/alloc_error_handler_impl/alloc_error_handler_impl.o
+[0/501] 0.31s S CXX obj/modules/audio_device/file_audio_device/file_audio_device.o
+[0/501] 0.31s S CXX obj/rtc_base/rtc_base_tests_utils/fake_clock.o
+[0/486] 0.31s S CXX obj/common_audio/common_audio_neon/sinc_resampler_neon.o
+[0/485] 0.31s S CXX obj/common_audio/common_audio_neon/fir_filter_neon.o
+[0/485] 0.32s S CXX obj/rtc_base/rtc_base_tests_utils/test_echo_server.o
+[0/485] 0.32s S CXX obj/api/audio/audio_processing_options_resolver/audio_processing_options_resolver.o
+[0/485] 0.32s S OBJC obj/sdk/base_objc/RTCVideoCodecInfo.o
+[0/485] 0.32s S ACTION //modules/audio_device:audio_device_unittest_bin__runner(//build/toolchain/mac:clang_arm64)
+[0/485] 0.32s S OBJC obj/sdk/base_objc/RTCVideoCapturer.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/spl_inl.o
+[0/485] 0.32s S OBJC obj/sdk/base_objc/RTCVideoEncoderSettings.o
+[0/485] 0.32s S CXX obj/build/rust/allocator/alloc_error_handler_impl/alias.o
+[0/485] 0.32s S OBJCXX obj/sdk/base_objc/RTCVideoFrame.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/ring_buffer.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/resample_by_2.o
+[0/485] 0.32s S CXX obj/rtc_base/random/random.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/auto_corr_to_refl_coef.o
+[0/485] 0.32s S CXX obj/rtc_base/network/received_packet/received_packet.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/auto_correlation.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/copy_set_operations.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/randomization_functions.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/cross_correlation.o
+[0/485] 0.32s S CXX clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/alloc_error_handler_impl/alloc_error_handler_impl.o
+[0/485] 0.32s S CXX obj/rtc_base/task_queue_for_test/task_queue_for_test.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/division_operations.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/downsample_fast.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/energy.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/filter_ar.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/filter_ma_fast_q12.o
+[0/485] 0.32s S CXX obj/rtc_base/ifaddrs_converter/ifaddrs_converter.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/get_hanning_window.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/get_scaling_square.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/levinson_durbin.o
+[0/485] 0.32s S CXX obj/rtc_base/async_packet_socket/async_packet_socket.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/lpc_to_refl_coef.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/min_max_operations.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/refl_coef_to_lpc.o
+[0/485] 0.32s S CXX obj/build/rust/cxx_cppdeps_lib/cxx.o
+[0/485] 0.32s S CXX obj/rtc_base/experiments/field_trial_parser/field_trial_list.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/resample.o
+[0/485] 0.32s S CXX obj/rtc_base/experiments/field_trial_parser/struct_parameters_parser.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/resample_48khz.o
+[0/485] 0.32s S CXX obj/rtc_base/ifaddrs_converter/mac_ifaddrs_converter.o
+[0/485] 0.32s S CXX obj/rtc_base/race_checker/race_checker.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/resample_by_2_internal.o
+[0/485] 0.32s S CXX obj/rtc_base/experiments/field_trial_parser/field_trial_parser.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/resample_fractional.o
+[0/485] 0.32s S CC obj/common_audio/third_party/spl_sqrt_floor/spl_sqrt_floor/spl_sqrt_floor.o
+[0/485] 0.32s S CXX obj/rtc_base/experiments/field_trial_parser/field_trial_units.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_c/spl_init.o
+[0/485] 0.32s S CXX obj/api/transport/rtp/corruption_detection_message/corruption_detection_message.o
+[0/485] 0.32s S CXX obj/api/units/data_size/data_size.o
+[0/485] 0.32s S CC obj/common_audio/common_audio_neon_c/cross_correlation_neon.o
+[0/485] 0.32s S CXX obj/rtc_base/async_tcp_socket/async_tcp_socket.o
+[0/485] 0.32s S CXX obj/api/units/frequency/frequency.o
+[0/485] 0.32s S CXX obj/api/rtp_parameters/media_types.o
+[0/485] 0.32s S CXX obj/rtc_base/memory/fifo_buffer/fifo_buffer.o
+[0/485] 0.32s S CXX obj/api/rtp_parameters/rtp_parameters.o
+[0/485] 0.33s S CXX obj/rtc_base/bitstream_reader/bitstream_reader.o
+[0/485] 0.33s S CXX obj/common_audio/common_audio_cc/dot_product_with_scale.o
+[0/485] 0.33s S CXX obj/common_audio/third_party/ooura/fft_size_256/fft4g.o
+[0/485] 0.33s S CXX obj/api/rtc_error/rtc_error.o
+[0/485] 0.33s S CXX obj/rtc_base/socket_address_pair/socket_address_pair.o
+[0/485] 0.33s S CXX obj/rtc_base/socket_adapters/socket_adapters.o
+[0/485] 0.33s S CXX obj/api/transport/rtp/dependency_descriptor/dependency_descriptor.o
+[0/485] 0.33s S ACTION //modules/audio_device:audio_ring_buffer_mac_unittest_bin__runner(//build/toolchain/mac:clang_arm64)
+[0/485] 0.33s S CXX obj/rtc_base/bit_buffer/bit_buffer.o
+[0/485] 0.33s S ACTION //modules/audio_device:fine_audio_buffer_unittest_bin__runner(//build/toolchain/mac:clang_arm64)
+[0/485] 0.33s S CXX obj/modules/audio_device/audio_device_buffer/fine_audio_buffer.o
+[0/485] 0.33s S CXX obj/modules/audio_device/audio_device_generic/audio_device_generic.o
+[0/485] 0.33s S CXX obj/modules/audio_device/file_audio_device/file_audio_device_factory.o
+[0/485] 0.33s S CXX obj/modules/audio_device/audio_device_dummy/audio_device_dummy.o
+[0/485] 0.33s S CXX obj/rtc_base/network/network.o
+[0/485] 0.33s S CXX obj/modules/audio_device/audio_device_buffer/audio_device_buffer.o
+[0/485] 0.33s S CXX obj/test/time_controller/time_controller_impl/simulated_thread.o
+[0/485] 0.33s S CXX obj/test/time_controller/time_controller/simulated_time_controller.o
+[0/485] 0.33s S CXX obj/test/time_controller/time_controller_impl/simulated_time_controller_impl.o
+[0/485] 0.33s S CXX obj/test/time_controller/time_controller_impl/simulated_task_queue.o
+[0/485] 0.33s S CXX obj/test/time_controller/time_controller/real_time_controller.o
+[0/485] 0.33s S CXX obj/rtc_base/network/sent_packet/sent_packet.o
+[0/485] 0.33s S CXX obj/rtc_base/system/file_wrapper/file_wrapper.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/cpu_time.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/server_socket_adapters.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/proxy_server.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/memory_usage.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/memory_stream.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/firewall_socket_server.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/fake_ssl_identity.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/virtual_socket_server.o
+[0/485] 0.33s S CXX obj/rtc_base/rtc_base_tests_utils/test_utils.o
+[0/485] 0.33s S CXX obj/rtc_base/cpu_info/cpu_info.o
+[0/485] 0.36s F CXX obj/modules/rtp_rtcp/leb128/leb128.o
+[1/485] 0.36s S LIBTOOL-STATIC obj/modules/rtp_rtcp/libleb128.a
+[1/485] 0.38s F CXX obj/api/video/video_rtp_headers/hdr_metadata.o
+[2/485] 0.40s F CXX clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/alloc_error_handler_impl/alias.o
+[3/485] 0.41s F ACTION //third_party/rust/quote/v1:quote_lib_v1_build_script_write_rustflags(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[4/484] 0.42s F CC obj/common_audio/common_audio_c/webrtc_vad.o
+[5/484] 0.42s F CXX clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/alloc_error_handler_impl/alloc_error_handler_impl.o
+[6/484] 0.43s S LIBTOOL-STATIC clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballoc_error_handler_impl.a
+[6/484] 0.43s F CXX obj/build/rust/allocator/alloc_error_handler_impl/alias.o
+[7/484] 0.43s F ACTION //build/rust/std/rules:std_std_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[8/483] 0.45s F CXX obj/build/rust/allocator/alloc_error_handler_impl/alloc_error_handler_impl.o
+[8/483] 0.45s S LIBTOOL-STATIC obj/build/rust/allocator/liballoc_error_handler_impl.a
+[9/483] 0.45s F ACTION //build/rust/std/rules:libc_libc_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[10/482] 0.46s F ACTION //build/rust/std/rules:compiler_builtins_compiler_builtins_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[11/481] 0.46s F ACTION //third_party/rust/proc_macro2/v1:proc_macro2_lib_v1_build_script_write_rustflags(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[12/480] 0.48s F ACTION //build/rust/std/rules:object_object_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[13/479] 0.49s F ACTION //modules/audio_device:audio_ring_buffer_mac_unittest_bin__runner(//build/toolchain/mac:clang_arm64)
+[13/479] 0.49s F ACTION //modules/audio_device:audio_device_unittest_bin__runner(//build/toolchain/mac:clang_arm64)
+[15/477] 0.50s F ACTION //build/rust/std/rules:test_test_vunknown_build_script_write_rustflags(//build/toolchain/mac:clang_arm64)
+[16/476] 0.50s F LIBTOOL-STATIC clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballoc_error_handler_impl.a
+[17/476] 0.50s S ACTION //build/rust/allocator:alloc_error_handler_impl_ffi_generator(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[17/476] 0.51s F ACTION //modules/audio_device:fine_audio_buffer_unittest_bin__runner(//build/toolchain/mac:clang_arm64)
+[18/475] 0.56s F LIBTOOL-STATIC obj/build/rust/allocator/liballoc_error_handler_impl.a
+[19/475] 0.56s S ACTION //build/rust/allocator:alloc_error_handler_impl_ffi_generator(//build/toolchain/mac:clang_arm64)
+[19/475] 0.62s F CC obj/common_audio/common_audio_neon_c/downsample_fast_neon.o
+[20/475] 0.65s F CXX obj/api/video/corruption_detection/frame_instrumentation_data/frame_instrumentation_data.o
+[21/475] 0.65s S LIBTOOL-STATIC obj/api/video/corruption_detection/libframe_instrumentation_data.a
+[21/475] 0.70s F CXX obj/media/media_constants/media_constants.o
+[22/475] 0.70s S LIBTOOL-STATIC obj/media/libmedia_constants.a
+[22/475] 0.77s F CXX obj/api/audio_options_api/audio_options.o
+[23/475] 0.77s S LIBTOOL-STATIC obj/api/libaudio_options_api.a
+[23/475] 0.89s F CXX obj/api/units/data_size/data_size.o
+[24/475] 0.90s S LIBTOOL-STATIC obj/api/units/libdata_size.a
+[24/475] 0.91s F CXX obj/api/video/video_rtp_headers/color_space.o
+[25/475] 0.93s S LIBTOOL-STATIC obj/api/units/libfrequency.a
+[25/475] 0.93s F CXX obj/api/units/frequency/frequency.o
+[26/475] 0.95s F CXX obj/rtc_base/memory/aligned_malloc/aligned_malloc.o
+[26/475] 0.95s S LIBTOOL-STATIC obj/rtc_base/memory/libaligned_malloc.a
+[27/475] 0.99s F LIBTOOL-STATIC obj/api/units/libdata_size.a
+[27/475] 0.99s F CXX obj/api/rtp_headers/rtp_headers.o
+[29/475] 1.02s F CC obj/common_audio/third_party/spl_sqrt_floor/spl_sqrt_floor/spl_sqrt_floor.o
+[29/475] 1.02s S LIBTOOL-STATIC obj/common_audio/third_party/spl_sqrt_floor/libspl_sqrt_floor.a
+[30/475] 1.03s F LIBTOOL-STATIC obj/api/units/libfrequency.a
+[31/475] 1.14s S LIBTOOL-STATIC obj/api/librtc_error.a
+[31/475] 1.14s F CXX obj/api/rtc_error/rtc_error.o
+[32/475] 1.20s F CXX obj/api/transport/network_control/network_types.o
+[33/475] 1.22s F CXX obj/api/units/data_rate/data_rate.o
+[34/475] 1.23s S LIBTOOL-STATIC obj/api/units/libdata_rate.a
+[34/475] 1.26s F CXX obj/api/video/video_rtp_headers/video_timing.o
+[35/475] 1.34s S LIBTOOL-STATIC obj/api/libpriority.a
+[35/475] 1.34s F CXX obj/api/priority/priority.o
+[36/475] 1.39s F CXX obj/api/video_codecs/scalability_mode/scalability_mode.o
+[37/475] 1.40s S LIBTOOL-STATIC obj/api/video_codecs/libscalability_mode.a
+[37/475] 1.41s F CXX obj/api/video/video_rtp_headers/video_content_type.o
+[37/475] 1.41s S LIBTOOL-STATIC obj/api/video/libvideo_rtp_headers.a
+[38/475] 1.48s F LIBTOOL-STATIC obj/api/video/corruption_detection/libframe_instrumentation_data.a
+[39/475] 1.52s F CXX obj/api/rtp_parameters/media_types.o
+[40/475] 1.55s F LIBTOOL-STATIC obj/media/libmedia_constants.a
+[41/475] 1.59s F CXX obj/common_audio/third_party/ooura/fft_size_256/fft4g.o
+[41/475] 1.59s S LIBTOOL-STATIC obj/common_audio/third_party/ooura/libfft_size_256.a
+[42/475] 1.59s F LIBTOOL-STATIC obj/api/librtc_error.a
+[43/475] 1.62s F LIBTOOL-STATIC obj/api/units/libdata_rate.a
+[44/474] 1.63s S LIBTOOL-STATIC obj/api/transport/libnetwork_control.a
+[44/474] 1.64s F CXX obj/api/transport/rtp/corruption_detection_message/corruption_detection_message.o
+[44/474] 1.64s S LIBTOOL-STATIC obj/api/transport/rtp/libcorruption_detection_message.a
+[45/474] 1.65s F LIBTOOL-STATIC obj/api/video_codecs/libscalability_mode.a
+[46/474] 1.66s F LIBTOOL-STATIC obj/api/libpriority.a
+[47/474] 1.69s F CC obj/common_audio/common_audio_c/spl_inl.o
+[48/474] 1.70s F LIBTOOL-STATIC obj/api/video/libvideo_rtp_headers.a
+[49/474] 1.71s S LIBTOOL-STATIC obj/api/librtp_headers.a
+[49/474] 1.72s F LIBTOOL-STATIC obj/api/transport/libnetwork_control.a
+[50/474] 1.73s S LIBTOOL-STATIC obj/common_audio/libcommon_audio_cc.a
+[50/474] 1.73s F CXX obj/common_audio/common_audio_cc/dot_product_with_scale.o
+[51/474] 1.73s F CC obj/common_audio/common_audio_c/resample_48khz.o
+[52/474] 1.74s F CXX obj/rtc_base/bitstream_reader/bitstream_reader.o
+[52/474] 1.74s F CC obj/common_audio/common_audio_c/vad_core.o
+[54/474] 1.74s S LIBTOOL-STATIC obj/rtc_base/libbitstream_reader.a
+[54/474] 1.78s F CC obj/common_audio/common_audio_c/spl_sqrt.o
+[55/474] 1.80s F CC obj/common_audio/common_audio_c/resample_by_2_internal.o
+[56/474] 1.82s F CC obj/common_audio/common_audio_c/vad_filterbank.o
+[57/474] 1.83s F CC obj/common_audio/common_audio_c/resample_fractional.o
+[58/474] 1.86s F LIBTOOL-STATIC obj/common_audio/libcommon_audio_cc.a
+[59/474] 1.87s F CC obj/common_audio/common_audio_c/vad_gmm.o
+[60/474] 1.89s F LIBTOOL-STATIC obj/rtc_base/libbitstream_reader.a
+[61/474] 1.90s F CC obj/common_audio/common_audio_c/spl_init.o
+[62/474] 1.93s F CXX obj/build/rust/cxx_cppdeps_lib/cxx.o
+[63/474] 1.94s S LIBTOOL-STATIC obj/build/rust/libcxx_cppdeps_lib.a
+[63/474] 1.95s F CC obj/common_audio/common_audio_c/ring_buffer.o
+[64/474] 1.97s F CC obj/common_audio/common_audio_c/splitting_filter.o
+[65/474] 1.99s F LIBTOOL-STATIC obj/modules/rtp_rtcp/libleb128.a
+[66/474] 1.99s F CXX obj/rtc_base/bit_buffer/bit_buffer.o
+[67/474] 1.99s S LIBTOOL-STATIC obj/rtc_base/libbit_buffer.a
+[67/474] 2.00s F CC obj/common_audio/common_audio_c/resample_by_2.o
+[68/474] 2.01s F LIBTOOL-STATIC obj/build/rust/libcxx_cppdeps_lib.a
+[69/474] 2.03s F CC obj/common_audio/common_audio_c/energy.o
+[70/474] 2.05s F CC obj/common_audio/common_audio_c/vad_sp.o
+[71/474] 2.05s F CC obj/common_audio/common_audio_c/auto_corr_to_refl_coef.o
+[71/474] 2.06s F CC obj/common_audio/common_audio_c/vector_operations.o
+[73/474] 2.08s F CXX obj/api/transport/rtp/dependency_descriptor/dependency_descriptor.o
+[74/474] 2.08s S LIBTOOL-STATIC obj/api/transport/rtp/libdependency_descriptor.a
+[74/474] 2.08s F LIBTOOL-STATIC obj/common_audio/third_party/spl_sqrt_floor/libspl_sqrt_floor.a
+[75/474] 2.11s F CC obj/common_audio/common_audio_c/filter_ar_fast_q12.o
+[76/474] 2.11s F CC obj/common_audio/common_audio_c/auto_correlation.o
+[77/474] 2.12s F LIBTOOL-STATIC obj/rtc_base/libbit_buffer.a
+[78/474] 2.13s F CC obj/common_audio/common_audio_c/copy_set_operations.o
+[79/474] 2.13s F CC obj/common_audio/common_audio_c/randomization_functions.o
+[80/474] 2.15s F CC obj/common_audio/common_audio_c/cross_correlation.o
+[81/474] 2.18s F CC obj/common_audio/common_audio_c/division_operations.o
+[82/474] 2.19s F OBJC obj/sdk/base_objc/RTCVideoEncoderQpThresholds.o
+[83/474] 2.20s F LIBTOOL-STATIC obj/api/transport/rtp/libdependency_descriptor.a
+[84/474] 2.21s F OBJC obj/sdk/base_objc/RTCVideoEncoderSettings.o
+[84/474] 2.21s F LIBTOOL-STATIC obj/api/librtp_headers.a
+[86/474] 2.24s F LIBTOOL-STATIC obj/api/transport/rtp/libcorruption_detection_message.a
+[87/474] 2.25s F CC obj/common_audio/common_audio_c/downsample_fast.o
+[88/474] 2.26s F CC obj/common_audio/common_audio_c/filter_ar.o
+[89/474] 2.26s F LIBTOOL-STATIC obj/common_audio/third_party/ooura/libfft_size_256.a
+[90/474] 2.26s F CC obj/common_audio/common_audio_c/filter_ma_fast_q12.o
+[91/474] 2.29s F CC obj/common_audio/common_audio_c/get_hanning_window.o
+[92/474] 2.30s F CC obj/common_audio/common_audio_c/get_scaling_square.o
+[92/474] 2.30s F CC obj/common_audio/common_audio_c/resample.o
+[94/474] 2.33s F CC obj/common_audio/common_audio_c/levinson_durbin.o
+[95/474] 2.35s F CC obj/common_audio/common_audio_c/refl_coef_to_lpc.o
+[96/474] 2.35s F CC obj/common_audio/common_audio_c/vector_scaling_operations.o
+[97/474] 2.36s F CC obj/common_audio/common_audio_c/lpc_to_refl_coef.o
+[98/474] 2.38s F CC obj/common_audio/common_audio_c/min_max_operations.o
+[99/474] 2.39s S LIBTOOL-STATIC obj/common_audio/libcommon_audio_c.a
+[99/474] 2.63s F OBJC obj/sdk/base_objc/RTCVideoCodecInfo.o
+[100/474] 2.81s F CC obj/common_audio/common_audio_neon_c/cross_correlation_neon.o
+[101/474] 2.96s F CXX obj/rtc_base/timestamp_aligner/timestamp_aligner.o
+[102/474] 2.96s S LIBTOOL-STATIC obj/rtc_base/libtimestamp_aligner.a
+[102/474] 3.03s F LIBTOOL-STATIC obj/common_audio/libcommon_audio_c.a
+[103/474] 3.05s F OBJC obj/sdk/base_objc/RTCEncodedImage.o
+[104/474] 3.09s F CXX obj/modules/audio_device/audio_device_buffer/fine_audio_buffer.o
+[105/474] 3.11s F OBJCXX obj/sdk/base_objc/RTCVideoFrame.o
+[106/474] 3.11s F LIBTOOL-STATIC obj/rtc_base/libtimestamp_aligner.a
+[107/474] 3.13s F OBJCXX obj/sdk/base_objc/RTCVideoEncoderFactory.o
+[108/474] 3.15s F LIBTOOL-STATIC obj/rtc_base/memory/libaligned_malloc.a
+[108/474] 3.15s F CXX obj/api/rtp_parameters/rtp_parameters.o
+[110/474] 3.15s S LIBTOOL-STATIC obj/api/librtp_parameters.a
+[110/474] 3.21s F CXX obj/modules/audio_device/audio_device_buffer/audio_device_buffer.o
+[111/474] 3.22s F CC obj/common_audio/common_audio_neon_c/min_max_operations_neon.o
+[112/474] 3.22s S LIBTOOL-STATIC obj/common_audio/libcommon_audio_neon_c.a
+[112/474] 3.28s F OBJCXX obj/sdk/base_objc/RTCLogging.o
+[113/474] 3.29s F ACTION //build/rust/gni_impl:rustc_print_cfg(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[114/473] 3.29s F ACTION //build/rust/gni_impl:rustc_print_cfg(//build/toolchain/mac:clang_arm64)
+[115/472] 3.30s F ACTION //build/rust/gni_impl:gen_allow_all_warnings_rsp(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[116/472] 3.30s F ACTION //build/rust/allocator:alloc_error_handler_impl_ffi_generator(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[117/455] 3.32s S LIBTOOL-STATIC obj/sdk/libbase_objc.a
+[117/455] 3.32s F ACTION //build/rust/gni_impl:gen_allow_all_warnings_rsp(//build/toolchain/mac:clang_arm64)
+[118/454] 3.32s F OBJC obj/sdk/base_objc/RTCVideoCapturer.o
+[118/454] 3.32s F ACTION //build/rust/allocator:alloc_error_handler_impl_ffi_generator(//build/toolchain/mac:clang_arm64)
+[120/432] 3.32s F LIBTOOL-STATIC obj/api/librtp_parameters.a
+[121/432] 3.36s S RUST local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libprofiler_builtins_profiler_builtins.rlib local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libprofiler_builtins_profiler_builtins.rmeta obj/build/rust/std/rules/profiler_builtins.rustflags.json obj/build/rust/std/rules/profiler_builtins.rsp.rust
+[121/432] 3.36s F CXX obj/rtc_base/network/sent_packet/sent_packet.o
+[121/432] 3.36s S LIBTOOL-STATIC obj/rtc_base/network/libsent_packet.a
+[121/432] 3.36s S RUST local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rlib local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rmeta obj/build/rust/std/rules/core.rustflags.json obj/build/rust/std/rules/core.rsp.rust
+[122/432] 3.37s F LIBTOOL-STATIC obj/common_audio/libcommon_audio_neon_c.a
+[123/429] 3.40s F LIBTOOL-STATIC obj/sdk/libbase_objc.a
+[123/429] 3.40s S LIBTOOL-STATIC obj/modules/audio_device/libaudio_device_buffer.a
+[124/429] 3.51s S LIBTOOL-STATIC obj/rtc_base/libcpu_info.a
+[124/429] 3.51s F CXX obj/rtc_base/cpu_info/cpu_info.o
+[125/429] 3.53s F CXX obj/common_audio/common_audio_neon/sinc_resampler_neon.o
+[126/429] 3.56s F ACTION //build/rust/std:find_stdlib(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[127/428] 3.57s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/liballoc.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/liballoc.rlib
+[127/428] 3.57s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libgimli.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libgimli.rlib
+[127/428] 3.57s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libstd.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libstd.rlib
+[127/428] 3.57s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/liballoc.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/liballoc.rlib
+[127/428] 3.57s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/librustc_demangle.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/librustc_demangle.rlib
+[127/428] 3.57s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/librustc_std_workspace_std.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_std.rlib
+[127/428] 3.57s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libadler2.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libadler2.rlib
+[127/428] 3.57s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/librustc_std_workspace_core.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_core.rlib
+[127/428] 3.57s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libadler2.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libadler2.rlib
+[127/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libgimli.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libgimli.rlib
+[129/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/librustc_std_workspace_core.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_core.rlib
+[129/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/librustc_demangle.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/librustc_demangle.rlib
+[132/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libstd.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libstd.rlib
+[132/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libaddr2line.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libaddr2line.rlib
+[132/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/librustc_std_workspace_alloc.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_alloc.rlib
+[133/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/librustc_std_workspace_std.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_std.rlib
+[133/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/librustc_std_workspace_alloc.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_alloc.rlib
+[134/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libaddr2line.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libaddr2line.rlib
+[135/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libunwind.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libunwind.rlib
+[136/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libtest.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libtest.rlib
+[136/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libproc_macro.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libproc_macro.rlib
+[136/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libprofiler_builtins.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libprofiler_builtins.rlib
+[136/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libstd_detect.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libstd_detect.rlib
+[136/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libobject.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libobject.rlib
+[136/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libstd_detect.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libstd_detect.rlib
+[137/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libunwind.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libunwind.rlib
+[137/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libprofiler_builtins.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libprofiler_builtins.rlib
+[137/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libobject.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libobject.rlib
+[137/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libmemchr.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libmemchr.rlib
+[137/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libtest.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libtest.rlib
+[137/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libminiz_oxide.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libminiz_oxide.rlib
+[139/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libproc_macro.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libproc_macro.rlib
+[141/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libmemchr.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libmemchr.rlib
+[141/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/liblibc.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/liblibc.rlib
+[142/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libgetopts.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libgetopts.rlib
+[143/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libpanic_abort.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libpanic_abort.rlib
+[143/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libgetopts.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libgetopts.rlib
+[144/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libcore.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore.rlib
+[144/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/liblibc.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/liblibc.rlib
+[144/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libpanic_abort.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libpanic_abort.rlib
+[145/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libcore.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore.rlib
+[147/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libminiz_oxide.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libminiz_oxide.rlib
+[148/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libcfg_if.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcfg_if.rlib
+[148/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libhashbrown.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libhashbrown.rlib
+[148/428] 3.58s S COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libcompiler_builtins.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcompiler_builtins.rlib
+[148/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libhashbrown.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libhashbrown.rlib
+[149/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libcfg_if.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcfg_if.rlib
+[150/428] 3.58s F COPY clang_arm64_for_rust_host_build_tools/obj/build/rust/std/libcompiler_builtins.rlib clang_arm64_for_rust_host_build_tools/prebuilt_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcompiler_builtins.rlib
+[151/418] 3.59s S RUST clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballoc_error_handler_impl_ffi.rlib clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballoc_error_handler_impl_ffi.rmeta clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/alloc_error_handler_impl_ffi.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/alloc_error_handler_impl_ffi.rsp.rust
+[151/418] 3.59s S RUST(BIN) clang_arm64_for_rust_host_build_tools/std_std_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/std_std_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/std_std_vunknown_build_script.rsp.rust
+[151/418] 3.59s S RUST(BIN) clang_arm64_for_rust_host_build_tools/libc_libc_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/libc_libc_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/libc_libc_vunknown_build_script.rsp.rust
+[151/418] 3.59s S RUST(BIN) clang_arm64_for_rust_host_build_tools/test_test_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/test_test_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/test_test_vunknown_build_script.rsp.rust
+[151/418] 3.59s S RUST(BIN) clang_arm64_for_rust_host_build_tools/proc_macro2_lib_v1_build_script clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/proc_macro2_lib_v1_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/proc_macro2_lib_v1_build_script.rsp.rust
+[151/418] 3.59s S RUST(BIN) clang_arm64_for_rust_host_build_tools/object_object_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/object_object_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/object_object_vunknown_build_script.rsp.rust
+[151/418] 3.60s S RUST(BIN) clang_arm64_for_rust_host_build_tools/compiler_builtins_compiler_builtins_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/compiler_builtins_compiler_builtins_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/compiler_builtins_compiler_builtins_vunknown_build_script.rsp.rust
+[151/418] 3.60s S RUST(BIN) clang_arm64_for_rust_host_build_tools/quote_lib_v1_build_script clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/quote_lib_v1_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/quote_lib_v1_build_script.rsp.rust
+[151/418] 3.67s F RUST local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libprofiler_builtins_profiler_builtins.rlib local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libprofiler_builtins_profiler_builtins.rmeta obj/build/rust/std/rules/profiler_builtins.rustflags.json obj/build/rust/std/rules/profiler_builtins.rsp.rust
+[152/418] 3.73s F LIBTOOL-STATIC obj/modules/audio_device/libaudio_device_buffer.a
+[153/418] 3.81s F LIBTOOL-STATIC obj/rtc_base/libcpu_info.a
+[154/417] 3.88s F RUST clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballoc_error_handler_impl_ffi.rlib clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballoc_error_handler_impl_ffi.rmeta clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/alloc_error_handler_impl_ffi.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/alloc_error_handler_impl_ffi.rsp.rust
+[155/417] 3.89s S RUST clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballocator_6ead5877.rlib clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballocator_6ead5877.rmeta clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/allocator.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/allocator.rsp.rust
+[155/417] 4.02s F CXX obj/rtc_base/system/file_wrapper/file_wrapper.o
+[155/417] 4.02s S LIBTOOL-STATIC obj/rtc_base/system/libfile_wrapper.a
+[156/417] 4.16s F CXX obj/modules/audio_device/audio_device_generic/audio_device_generic.o
+[156/417] 4.16s S LIBTOOL-STATIC obj/modules/audio_device/libaudio_device_generic.a
+[157/417] 4.16s F RUST clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballocator_6ead5877.rlib clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/liballocator_6ead5877.rmeta clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/allocator.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/allocator/allocator.rsp.rust
+[158/417] 4.17s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hmac_sha256/v1/lib/libhmac_sha256_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hmac_sha256/v1/lib/libhmac_sha256_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hmac_sha256/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hmac_sha256/v1/lib.rsp.rust
+[158/417] 4.17s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_width/v0_2/lib/libunicode_width_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_width/v0_2/lib/libunicode_width_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_width/v0_2/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_width/v0_2/lib.rsp.rust
+[158/417] 4.17s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_lex/v1/lib/libclap_lex_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_lex/v1/lib/libclap_lex_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_lex/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_lex/v1/lib.rsp.rust
+[158/417] 4.17s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_ident/v1/lib/libunicode_ident_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_ident/v1/lib/libunicode_ident_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_ident/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_ident/v1/lib.rsp.rust
+[158/417] 4.18s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/anstyle/v1/lib/libanstyle_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/anstyle/v1/lib/libanstyle_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/anstyle/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/anstyle/v1/lib.rsp.rust
+[158/417] 4.18s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/termcolor/v1/lib/libtermcolor_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/termcolor/v1/lib/libtermcolor_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/termcolor/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/termcolor/v1/lib.rsp.rust
+[158/417] 4.18s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/equivalent/v1/lib/libequivalent_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/equivalent/v1/lib/libequivalent_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/equivalent/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/equivalent/v1/lib.rsp.rust
+[158/417] 4.18s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hashbrown/v0_17/lib/libhashbrown_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hashbrown/v0_17/lib/libhashbrown_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hashbrown/v0_17/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hashbrown/v0_17/lib.rsp.rust
+[158/417] 4.19s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/strsim/v0_11/lib/libstrsim_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/strsim/v0_11/lib/libstrsim_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/strsim/v0_11/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/strsim/v0_11/lib.rsp.rust
+[158/417] 4.21s F LIBTOOL-STATIC obj/api/libaudio_options_api.a
+[159/417] 4.22s F LIBTOOL-STATIC obj/rtc_base/system/libfile_wrapper.a
+[160/417] 4.36s F CXX obj/common_audio/common_audio_neon/fir_filter_neon.o
+[161/417] 4.36s S LIBTOOL-STATIC obj/common_audio/libcommon_audio_neon.a
+[161/417] 4.38s F CXX obj/modules/audio_device/file_audio_device/file_audio_device_factory.o
+[162/417] 4.39s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_ident/v1/lib/libunicode_ident_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_ident/v1/lib/libunicode_ident_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_ident/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_ident/v1/lib.rsp.rust
+[163/417] 4.39s F RUST(BIN) clang_arm64_for_rust_host_build_tools/proc_macro2_lib_v1_build_script clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/proc_macro2_lib_v1_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/proc_macro2_lib_v1_build_script.rsp.rust	
+stderr:
+warning: linker stderr: ld: ignoring -lto_library '../../third_party/llvm-build/Release+Asserts/lib/libLTO.dylib', file does not exist
+  |
+  = note: `#[warn(linker_messages)]` on by default
+  = note: the `linker_messages` lint ignores `-D warnings`
+
+warning: 1 warning emitted
+
+
+
+[164/417] 4.39s S ACTION //third_party/rust/proc_macro2/v1:proc_macro2_lib_v1_build_script_output(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[164/417] 4.40s S ACTION //build/rust/std/rules:test_test_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[164/417] 4.40s F RUST(BIN) clang_arm64_for_rust_host_build_tools/test_test_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/test_test_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/test_test_vunknown_build_script.rsp.rust
+[165/417] 4.48s F RUST(BIN) clang_arm64_for_rust_host_build_tools/compiler_builtins_compiler_builtins_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/compiler_builtins_compiler_builtins_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/compiler_builtins_compiler_builtins_vunknown_build_script.rsp.rust
+[166/417] 4.48s S ACTION //build/rust/std/rules:compiler_builtins_compiler_builtins_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[166/417] 4.58s F CXX obj/rtc_base/random/random.o
+[166/417] 4.58s S LIBTOOL-STATIC obj/rtc_base/librandom.a
+[167/417] 4.66s F CXX obj/rtc_base/network/received_packet/received_packet.o
+[167/417] 4.66s S LIBTOOL-STATIC obj/rtc_base/network/libreceived_packet.a
+[168/417] 4.70s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/equivalent/v1/lib/libequivalent_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/equivalent/v1/lib/libequivalent_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/equivalent/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/equivalent/v1/lib.rsp.rust
+[169/417] 4.70s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/anstyle/v1/lib/libanstyle_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/anstyle/v1/lib/libanstyle_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/anstyle/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/anstyle/v1/lib.rsp.rust
+[170/417] 4.71s F ACTION //build/rust/std/rules:test_test_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[171/416] 4.72s F RUST(BIN) clang_arm64_for_rust_host_build_tools/libc_libc_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/libc_libc_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/libc_libc_vunknown_build_script.rsp.rust
+[172/416] 4.72s S ACTION //build/rust/std/rules:libc_libc_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[172/416] 4.74s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_lex/v1/lib/libclap_lex_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_lex/v1/lib/libclap_lex_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_lex/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_lex/v1/lib.rsp.rust
+[173/416] 4.77s F ACTION //build/rust/std/rules:compiler_builtins_compiler_builtins_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[174/405] 4.79s F LIBTOOL-STATIC obj/modules/audio_device/libaudio_device_generic.a
+[175/405] 4.85s F RUST(BIN) clang_arm64_for_rust_host_build_tools/object_object_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/object_object_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/object_object_vunknown_build_script.rsp.rust
+[176/405] 4.85s S ACTION //build/rust/std/rules:object_object_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[176/405] 4.87s F LIBTOOL-STATIC obj/common_audio/libcommon_audio_neon.a
+[177/405] 4.88s F ACTION //third_party/rust/proc_macro2/v1:proc_macro2_lib_v1_build_script_output(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[178/403] 4.88s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/lib/libproc_macro2_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/lib/libproc_macro2_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/lib.rsp.rust
+[178/403] 4.89s F RUST(BIN) clang_arm64_for_rust_host_build_tools/quote_lib_v1_build_script clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/quote_lib_v1_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/quote_lib_v1_build_script.rsp.rust	
+stderr:
+warning: linker stderr: ld: ignoring -lto_library '../../third_party/llvm-build/Release+Asserts/lib/libLTO.dylib', file does not exist
+  |
+  = note: `#[warn(linker_messages)]` on by default
+  = note: the `linker_messages` lint ignores `-D warnings`
+
+warning: 1 warning emitted
+
+
+
+[179/403] 4.89s S ACTION //third_party/rust/quote/v1:quote_lib_v1_build_script_output(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[179/403] 4.94s F LIBTOOL-STATIC obj/rtc_base/network/libsent_packet.a
+[180/403] 4.95s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_width/v0_2/lib/libunicode_width_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_width/v0_2/lib/libunicode_width_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_width/v0_2/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/unicode_width/v0_2/lib.rsp.rust
+[181/403] 5.02s F RUST(BIN) clang_arm64_for_rust_host_build_tools/std_std_vunknown_build_script clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/std_std_vunknown_build_script.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/std/rules/std_std_vunknown_build_script.rsp.rust
+[182/403] 5.03s S ACTION //build/rust/std/rules:std_std_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[182/403] 5.06s F CXX obj/modules/audio_device/audio_device_dummy/audio_device_dummy.o
+[183/403] 5.06s S LIBTOOL-STATIC obj/modules/audio_device/libaudio_device_dummy.a
+[183/403] 5.08s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hmac_sha256/v1/lib/libhmac_sha256_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hmac_sha256/v1/lib/libhmac_sha256_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hmac_sha256/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hmac_sha256/v1/lib.rsp.rust
+[184/403] 5.16s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/strsim/v0_11/lib/libstrsim_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/strsim/v0_11/lib/libstrsim_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/strsim/v0_11/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/strsim/v0_11/lib.rsp.rust
+[185/403] 5.16s F ACTION //build/rust/std/rules:libc_libc_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[186/399] 5.17s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_builder/v4/lib/libclap_builder_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_builder/v4/lib/libclap_builder_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_builder/v4/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_builder/v4/lib.rsp.rust
+[186/399] 5.20s F ACTION //build/rust/std/rules:object_object_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[186/399] 5.20s F LIBTOOL-STATIC obj/rtc_base/network/libreceived_packet.a
+[188/397] 5.21s F ACTION //third_party/rust/quote/v1:quote_lib_v1_build_script_output(//build/toolchain/mac:clang_arm64_for_rust_host_build_tools)
+[189/390] 5.24s F LIBTOOL-STATIC obj/modules/audio_device/libaudio_device_dummy.a
+[190/390] 5.31s S LIBTOOL-STATIC obj/api/audio/libaudio_processing_options_resolver.a
+[190/390] 5.31s F CXX obj/api/audio/audio_processing_options_resolver/audio_processing_options_resolver.o
+[191/390] 5.33s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/termcolor/v1/lib/libtermcolor_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/termcolor/v1/lib/libtermcolor_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/termcolor/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/termcolor/v1/lib.rsp.rust
+[192/390] 5.34s F ACTION //build/rust/std/rules:std_std_vunknown_build_script_output(//build/toolchain/mac:clang_arm64)
+[193/384] 5.35s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/codespan_reporting/v0_13/lib/libcodespan_reporting_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/codespan_reporting/v0_13/lib/libcodespan_reporting_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/codespan_reporting/v0_13/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/codespan_reporting/v0_13/lib.rsp.rust
+[193/384] 5.42s F CXX obj/modules/audio_device/file_audio_device/file_audio_device.o
+[194/384] 5.42s S LIBTOOL-STATIC obj/modules/audio_device/libfile_audio_device.a
+[194/384] 5.76s F CXX obj/rtc_base/ifaddrs_converter/mac_ifaddrs_converter.o
+[195/384] 5.82s F LIBTOOL-STATIC obj/rtc_base/librandom.a
+[196/384] 5.89s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hashbrown/v0_17/lib/libhashbrown_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hashbrown/v0_17/lib/libhashbrown_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hashbrown/v0_17/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/hashbrown/v0_17/lib.rsp.rust
+[197/384] 5.90s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/indexmap/v2/lib/libindexmap_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/indexmap/v2/lib/libindexmap_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/indexmap/v2/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/indexmap/v2/lib.rsp.rust
+[197/384] 5.93s F CXX obj/rtc_base/async_packet_socket/async_packet_socket.o
+[197/384] 5.93s S LIBTOOL-STATIC obj/rtc_base/libasync_packet_socket.a
+[198/384] 5.95s F CXX obj/rtc_base/ifaddrs_converter/ifaddrs_converter.o
+[199/384] 5.95s S LIBTOOL-STATIC obj/rtc_base/libifaddrs_converter.a
+[199/384] 5.96s F LIBTOOL-STATIC obj/api/audio/libaudio_processing_options_resolver.a
+[200/384] 6.01s F LIBTOOL-STATIC obj/modules/audio_device/libfile_audio_device.a
+[201/384] 6.05s F CXX obj/rtc_base/experiments/field_trial_parser/field_trial_units.o
+[202/384] 6.14s F LIBTOOL-STATIC obj/rtc_base/libifaddrs_converter.a
+[203/384] 6.18s F CXX obj/rtc_base/experiments/field_trial_parser/field_trial_parser.o
+[204/384] 6.31s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/codespan_reporting/v0_13/lib/libcodespan_reporting_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/codespan_reporting/v0_13/lib/libcodespan_reporting_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/codespan_reporting/v0_13/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/codespan_reporting/v0_13/lib.rsp.rust
+[205/384] 6.33s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/lib/libproc_macro2_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/lib/libproc_macro2_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/proc_macro2/v1/lib.rsp.rust
+[206/384] 6.34s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/lib/libquote_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/lib/libquote_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/lib.rsp.rust
+[206/384] 6.49s F CXX obj/rtc_base/experiments/field_trial_parser/field_trial_list.o
+[207/384] 6.61s F CXX obj/rtc_base/experiments/field_trial_parser/struct_parameters_parser.o
+[208/384] 6.62s S LIBTOOL-STATIC obj/rtc_base/experiments/libfield_trial_parser.a
+[208/384] 6.72s F LIBTOOL-STATIC obj/rtc_base/libasync_packet_socket.a
+[209/384] 6.74s S LIBTOOL-STATIC obj/rtc_base/librace_checker.a
+[209/384] 6.74s F CXX obj/rtc_base/race_checker/race_checker.o
+[210/384] 6.77s S LIBTOOL-STATIC obj/rtc_base/libsocket_adapters.a
+[210/384] 6.77s F CXX obj/rtc_base/socket_adapters/socket_adapters.o
+[211/384] 6.81s F LIBTOOL-STATIC obj/rtc_base/experiments/libfield_trial_parser.a
+[212/384] 6.85s F CXX obj/rtc_base/socket_address_pair/socket_address_pair.o
+[213/384] 6.85s S LIBTOOL-STATIC obj/rtc_base/libsocket_address_pair.a
+[213/384] 6.90s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/lib/libquote_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/lib/libquote_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/quote/v1/lib.rsp.rust
+[214/384] 6.92s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v3/lib/libsyn_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v3/lib/libsyn_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v3/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v3/lib.rsp.rust
+[214/384] 6.92s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v2/lib/libsyn_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v2/lib/libsyn_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v2/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v2/lib.rsp.rust
+[214/384] 6.93s F CXX obj/rtc_base/async_tcp_socket/async_tcp_socket.o
+[215/384] 6.94s S LIBTOOL-STATIC obj/rtc_base/libasync_tcp_socket.a
+[215/384] 6.97s F LIBTOOL-STATIC obj/rtc_base/libsocket_adapters.a
+[216/384] 6.97s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/indexmap/v2/lib/libindexmap_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/indexmap/v2/lib/libindexmap_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/indexmap/v2/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/indexmap/v2/lib.rsp.rust
+[217/384] 7.01s F LIBTOOL-STATIC obj/rtc_base/libsocket_address_pair.a
+[218/384] 7.48s F CXX obj/rtc_base/rtc_base_tests_utils/memory_stream.o
+[219/384] 7.51s F CXX obj/test/time_controller/time_controller_impl/simulated_thread.o
+[220/384] 7.54s F LIBTOOL-STATIC obj/rtc_base/libasync_tcp_socket.a
+[221/384] 7.63s F CXX obj/test/time_controller/time_controller_impl/simulated_task_queue.o
+[222/384] 7.68s F CXX obj/test/time_controller/time_controller/real_time_controller.o
+[223/384] 7.71s F CXX obj/rtc_base/network/network.o
+[223/384] 7.71s S LIBTOOL-STATIC obj/rtc_base/libnetwork.a
+[224/384] 7.73s F CXX obj/test/time_controller/time_controller_impl/simulated_time_controller_impl.o
+[225/384] 7.74s S LIBTOOL-STATIC obj/test/time_controller/libtime_controller_impl.a
+[225/384] 8.17s F CXX obj/rtc_base/rtc_base_tests_utils/proxy_server.o
+[226/384] 8.22s F CXX obj/test/time_controller/time_controller/simulated_time_controller.o
+[227/384] 8.25s F CXX obj/rtc_base/rtc_base_tests_utils/server_socket_adapters.o
+[228/384] 8.27s F LIBTOOL-STATIC obj/rtc_base/libnetwork.a
+[229/384] 8.29s F CXX obj/rtc_base/rtc_base_tests_utils/test_utils.o
+[230/384] 8.31s F CXX obj/rtc_base/rtc_base_tests_utils/fake_ssl_identity.o
+[231/384] 8.38s F LIBTOOL-STATIC obj/test/time_controller/libtime_controller_impl.a
+[232/384] 9.05s F CXX obj/rtc_base/rtc_base_tests_utils/fake_clock.o
+[233/384] 9.15s F CXX obj/rtc_base/rtc_base_tests_utils/cpu_time.o
+[234/383] 9.17s F CXX obj/rtc_base/memory/fifo_buffer/fifo_buffer.o
+[235/383] 9.22s F LIBTOOL-STATIC obj/rtc_base/librace_checker.a
+[236/383] 9.24s F CXX obj/rtc_base/task_queue_for_test/task_queue_for_test.o
+[237/382] 9.29s F CXX obj/rtc_base/rtc_base_tests_utils/test_echo_server.o
+[238/382] 9.40s F CXX obj/rtc_base/rtc_base_tests_utils/virtual_socket_server.o
+[239/382] 9.45s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_builder/v4/lib/libclap_builder_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_builder/v4/lib/libclap_builder_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_builder/v4/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap_builder/v4/lib.rsp.rust
+[240/382] 9.46s S RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap/v4/lib/libclap_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap/v4/lib/libclap_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap/v4/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap/v4/lib.rsp.rust
+[240/382] 9.56s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap/v4/lib/libclap_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap/v4/lib/libclap_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap/v4/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/clap/v4/lib.rsp.rust
+[241/382] 9.61s F CXX obj/rtc_base/rtc_base_tests_utils/memory_usage.o
+[242/380] 9.64s F CXX obj/rtc_base/rtc_base_tests_utils/firewall_socket_server.o
+[243/380] 12.53s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v3/lib/libsyn_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v3/lib/libsyn_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v3/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v3/lib.rsp.rust
+[244/380] 12.54s S RUST(BIN) clang_arm64_for_rust_host_build_tools/cxxbridge clang_arm64_for_rust_host_build_tools/obj/third_party/rust/cxxbridge_cmd/v1/cxxbridge.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/cxxbridge_cmd/v1/cxxbridge.rsp.rust
+[244/380] 12.54s S RUST(MACRO) clang_arm64_for_rust_host_build_tools/libcxxbridge_macro_v1_lib.dylib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/cxxbridge_macro/v1/lib__proc_macro.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/cxxbridge_macro/v1/lib__proc_macro.rsp.rust
+[244/380] 12.69s F RUST clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v2/lib/libsyn_lib.rlib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v2/lib/libsyn_lib.rmeta clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v2/lib.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/syn/v2/lib.rsp.rust
+[245/380] 12.70s S RUST(MACRO) clang_arm64_for_rust_host_build_tools/libimport.dylib clang_arm64_for_rust_host_build_tools/obj/rust/webrtc_import/webrtc_import_macro__proc_macro.rustflags.json clang_arm64_for_rust_host_build_tools/obj/rust/webrtc_import/webrtc_import_macro__proc_macro.rsp.rust
+[245/380] 12.70s S RUST(MACRO) clang_arm64_for_rust_host_build_tools/libimport_attribute.dylib clang_arm64_for_rust_host_build_tools/obj/build/rust/chromium_prelude/import_attribute__proc_macro.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/chromium_prelude/import_attribute__proc_macro.rsp.rust
+[245/380] 13.90s F RUST(MACRO) clang_arm64_for_rust_host_build_tools/libimport.dylib clang_arm64_for_rust_host_build_tools/obj/rust/webrtc_import/webrtc_import_macro__proc_macro.rustflags.json clang_arm64_for_rust_host_build_tools/obj/rust/webrtc_import/webrtc_import_macro__proc_macro.rsp.rust	
+stderr:
+warning: linker stderr: ld: ignoring -lto_library '../../third_party/llvm-build/Release+Asserts/lib/libLTO.dylib', file does not exist
+  |
+  = note: `#[warn(linker_messages)]` on by default
+  = note: the `linker_messages` lint ignores `-D warnings`
+
+warning: 1 warning emitted
+
+
+
+[246/380] 14.01s F RUST(MACRO) clang_arm64_for_rust_host_build_tools/libimport_attribute.dylib clang_arm64_for_rust_host_build_tools/obj/build/rust/chromium_prelude/import_attribute__proc_macro.rustflags.json clang_arm64_for_rust_host_build_tools/obj/build/rust/chromium_prelude/import_attribute__proc_macro.rsp.rust	
+stderr:
+warning: linker stderr: ld: ignoring -lto_library '../../third_party/llvm-build/Release+Asserts/lib/libLTO.dylib', file does not exist
+  |
+  = note: `#[warn(linker_messages)]` on by default
+  = note: the `linker_messages` lint ignores `-D warnings`
+
+warning: 1 warning emitted
+
+
+
+[247/380] 16.58s F RUST(BIN) clang_arm64_for_rust_host_build_tools/cxxbridge clang_arm64_for_rust_host_build_tools/obj/third_party/rust/cxxbridge_cmd/v1/cxxbridge.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/cxxbridge_cmd/v1/cxxbridge.rsp.rust
+[248/380] 16.58s S ACTION //modules/rtp_rtcp:corruption_detection_extension_cxx_cxx_generated_gen(//build/toolchain/mac:clang_arm64)
+[248/380] 16.86s F ACTION //modules/rtp_rtcp:corruption_detection_extension_cxx_cxx_generated_gen(//build/toolchain/mac:clang_arm64)
+[249/369] 16.86s S CXX obj/api/audio/audio_frame_api/channel_layout.o
+[249/369] 16.86s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_video_layers_allocation_extension.o
+[249/369] 16.86s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/loss_notification.o
+[249/369] 16.86s S CXX obj/api/audio/create_audio_device_module/create_audio_device_module.o
+[249/369] 16.86s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/target_bitrate.o
+[249/369] 16.86s S CXX obj/modules/audio_device/audio_ring_buffer_mac_unittest/audio_ring_buffer_mac_unittest.o
+[249/369] 16.86s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/tmmb_item.o
+[249/369] 16.87s S CXX obj/api/audio/audio_frame_api/audio_frame.o
+[249/369] 16.87s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/pli.o
+[249/369] 16.87s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rapid_resync_request.o
+[249/369] 16.87s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/transport_feedback.o
+[249/369] 16.88s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_packet.o
+[249/369] 16.88s S CXX obj/modules/audio_device/audio_device_unittest/audio_device_unittest.o
+[249/369] 16.88s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_generic_frame_descriptor.o
+[249/369] 16.88s S CXX obj/modules/audio_device/fine_audio_buffer_unittest/fine_audio_buffer_unittest.o
+[249/369] 16.89s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/compound_packet.o
+[249/369] 16.89s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/tmmbr.o
+[249/369] 16.89s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/extended_reports.o
+[249/369] 16.89s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_dependency_descriptor_extension.o
+[249/369] 16.89s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_packet_received.o
+[249/369] 16.89s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/corruption_detection_extension.o
+[249/369] 16.89s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtcp_packet.o
+[249/369] 16.89s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_packet_to_send.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/nack.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/remote_estimate.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/tmmbn.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_util.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/app.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/common_header.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/report_block.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/report_block_data.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_header_extension_map.o
+[249/369] 16.90s S CXX obj/api/rtp_packet_info/rtp_packet_info.o
+[249/369] 16.90s S CXX obj/modules/rtp_rtcp/corruption_detection_extension_cxx_cxx_generated/corruption_detection_extension_cxx.rs.o
+[249/369] 16.91s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_header_extensions.o
+[249/369] 16.91s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/congestion_control_feedback.o
+[249/369] 16.92s S CXX obj/common_audio/common_audio/audio_util.o
+[249/369] 16.92s S CXX obj/common_audio/common_audio/real_fourier.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/receiver_report.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/channel_buffer.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/audio_converter.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/sdes.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/real_fourier_ooura.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/fir.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/wav_file.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/psfb.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/push_resampler.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/remb.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/dlrr.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/sender_report.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_dependency_descriptor_writer.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/bye.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtpfb.o
+[249/369] 16.93s S CXX obj/modules/audio_device/audio_device_impl/audio_device_data_observer.o
+[249/369] 16.93s S CXX obj/modules/audio_device/audio_device_impl/audio_device_mac.o
+[249/369] 16.93s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_rtcp_defines.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/smoothing_filter.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/vad.o
+[249/369] 16.93s S CXX obj/modules/audio_device/audio_device_impl/audio_device_utils_mac.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/push_sinc_resampler.o
+[249/369] 16.93s S OBJCXX obj/modules/audio_device/audio_device_impl/audio_engine_device.o
+[249/369] 16.93s S CXX obj/modules/audio_device/audio_device_impl/audio_device_impl.o
+[249/369] 16.93s S CXX obj/modules/audio_device/audio_device_impl/audio_mixer_manager_mac.o
+[249/369] 16.93s S OBJCXX obj/api/audio/create_audio_device_module/create_audio_engine_device_module.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/resampler.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/sinc_resampler.o
+[249/369] 16.93s S CXX obj/common_audio/common_audio/window_generator.o
+[249/369] 16.94s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_dependency_descriptor_reader.o
+[249/369] 16.94s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_generic_frame_descriptor_extension.o
+[249/369] 16.94s S CXX obj/common_audio/common_audio/wav_header.o
+[249/369] 16.94s S CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rrtr.o
+[249/369] 17.49s F CXX obj/api/audio/create_audio_device_module/create_audio_device_module.o
+[250/369] 17.51s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/tmmb_item.o
+[250/369] 17.51s F CXX obj/api/audio/audio_frame_api/channel_layout.o
+[252/369] 17.53s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/target_bitrate.o
+[252/369] 17.53s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/loss_notification.o
+[254/369] 17.58s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/pli.o
+[255/369] 17.70s F CXX obj/modules/rtp_rtcp/corruption_detection_extension_cxx_cxx_generated/corruption_detection_extension_cxx.rs.o
+[256/369] 17.78s F CXX obj/api/audio/audio_frame_api/audio_frame.o
+[257/369] 17.94s F RUST(MACRO) clang_arm64_for_rust_host_build_tools/libcxxbridge_macro_v1_lib.dylib clang_arm64_for_rust_host_build_tools/obj/third_party/rust/cxxbridge_macro/v1/lib__proc_macro.rustflags.json clang_arm64_for_rust_host_build_tools/obj/third_party/rust/cxxbridge_macro/v1/lib__proc_macro.rsp.rust
+[258/369] 18.08s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rrtr.o
+[259/369] 18.26s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_video_layers_allocation_extension.o
+[260/369] 18.28s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/tmmbr.o
+[261/369] 18.42s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/tmmbn.o
+[262/369] 18.47s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_util.o
+[263/369] 18.49s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/sdes.o
+[264/369] 18.54s F CXX obj/modules/audio_device/audio_ring_buffer_mac_unittest/audio_ring_buffer_mac_unittest.o
+[265/369] 18.66s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_generic_frame_descriptor_extension.o
+[266/369] 18.83s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/transport_feedback.o
+[267/369] 18.89s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/psfb.o
+[268/369] 18.91s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/extended_reports.o
+[269/369] 18.96s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/fir.o
+[270/369] 19.02s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/common_header.o
+[271/369] 19.04s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/app.o
+[272/369] 19.10s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_generic_frame_descriptor.o
+[273/369] 19.12s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_packet.o
+[274/369] 19.38s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/remb.o
+[275/369] 19.53s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/report_block.o
+[276/369] 19.59s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/report_block_data.o
+[277/369] 19.61s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtpfb.o
+[278/369] 19.69s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/dlrr.o
+[279/369] 19.84s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/sender_report.o
+[280/369] 19.89s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_dependency_descriptor_writer.o
+[281/369] 19.91s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/bye.o
+[282/369] 19.95s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_dependency_descriptor_extension.o
+[283/369] 20.17s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rapid_resync_request.o
+[284/369] 20.25s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/compound_packet.o
+[285/369] 20.49s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtcp_packet.o
+[286/369] 20.52s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_packet_received.o
+[287/369] 20.70s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_header_extension_map.o
+[288/369] 20.77s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/receiver_report.o
+[289/369] 20.82s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/congestion_control_feedback.o
+[290/369] 20.85s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/corruption_detection_extension.o
+[290/369] 20.85s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_rtcp_defines.o
+[292/369] 20.88s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_packet_to_send.o
+[293/369] 21.04s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_header_extensions.o
+[294/369] 21.20s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/nack.o
+[295/369] 21.31s F CXX obj/common_audio/common_audio/sinc_resampler.o
+[296/369] 21.32s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/rtp_dependency_descriptor_reader.o
+[297/369] 21.41s F CXX obj/common_audio/common_audio/real_fourier.o
+[298/369] 21.43s F CXX obj/common_audio/common_audio/wav_header.o
+[299/369] 21.45s F CXX obj/modules/rtp_rtcp/rtp_rtcp_format/remote_estimate.o
+[300/369] 21.55s F CXX obj/common_audio/common_audio/push_sinc_resampler.o
+[301/369] 21.67s F CXX obj/common_audio/common_audio/audio_converter.o
+[302/369] 21.80s F CXX obj/common_audio/common_audio/vad.o
+[303/369] 21.85s F CXX obj/common_audio/common_audio/wav_file.o
+[304/369] 21.93s F CXX obj/api/rtp_packet_info/rtp_packet_info.o
+[305/369] 22.02s F CXX obj/common_audio/common_audio/window_generator.o
+[306/369] 22.06s F CXX obj/common_audio/common_audio/smoothing_filter.o
+[307/369] 22.10s F CXX obj/common_audio/common_audio/resampler.o
+[308/369] 22.13s F CXX obj/common_audio/common_audio/push_resampler.o
+[309/369] 22.16s F CXX obj/common_audio/common_audio/channel_buffer.o
+[310/369] 22.41s F CXX obj/common_audio/common_audio/audio_util.o
+[311/369] 22.43s F CXX obj/common_audio/common_audio/real_fourier_ooura.o
+[312/369] 22.81s F CXX obj/modules/audio_device/audio_device_impl/audio_device_data_observer.o
+[313/369] 22.92s F CXX obj/modules/audio_device/audio_device_impl/audio_mixer_manager_mac.o
+[314/369] 23.01s E RUST local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rlib local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rmeta obj/build/rust/std/rules/core.rustflags.json obj/build/rust/std/rules/core.rsp.rust	
+FAILED: b53d372f-1ec5-459f-95bf-961d419dc5ee "./local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rlib" RUST local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rlib local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rmeta obj/build/rust/std/rules/core.rustflags.json obj/build/rust/std/rules/core.rsp.rust
+err: exit=1
+"python3" "../../build/rust/gni_impl/rustc_wrapper.py" --dump-rustc-env-and-flags obj/build/rust/std/rules/core.rustflags.json --rsp=obj/build/rust/std/rules/core.rsp --rustc=../../third_party/rust-toolchain/bin/rustc --depfile=local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rlib.d --emit=dep-info=local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rlib.d,link,metadata=local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rmeta -o local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rlib -- -Clinker="../../third_party/llvm-build/Release+Asserts/bin/clang++" ../../third_party/rust-toolchain/lib/rustlib/src/rust/library/core/src/lib.rs LDFLAGS RUSTENV OUT_DIR=gen/build/rust/std/rules/core CFG_DISABLE_UNSTABLE_FEATURES=0 STD_ENV_ARCH=aarch64 CARGO_PKG_VERSION=0.0.0 CARGO_PKG_VERSION_MAJOR=0 CARGO_PKG_VERSION_MINOR=0 CARGO_PKG_VERSION_PATCH=0 CARGO_PKG_VERSION_PRE= CARGO_PKG_NAME=core CARGO_PKG_DESCRIPTION=The\ Rust\ Core\ Library CARGO_PKG_REPOSITORY=https://github.com/rust-lang/rust.git CARGO_MANIFEST_DIR=../../build/rust/std/rules/core/crate SDKROOT=sdk/xcode_links/MacOSX27.2.sdk
+build step: rust_rlib "./local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/libcore_core.rlib"
+siso_rule: rust_rlib
+stderr:
+error: failed to write /Users/v.smirnov/docs/conference-guest-ios/.build/webrtc-m156-port/workspace/src/out/configuration-recovery/local_rustc_sysroot/lib/rustlib/aarch64-apple-darwin/lib/rustcENYyZ4/lib.rmeta: No space left on device (os error 28)
+
+error: aborting due to 1 previous error
+
+ERROR: `rustc` exited with a non-zero exit code: 1
+NOTE: To apply machine-applicable fix suggestions (if any), run: build/rust/apply_fixes.py out/configuration-recovery rustc obj/build/rust/std/rules/core.rustflags.json
+
+
+[315/369] 23.02s - CXX obj/modules/audio_device/audio_device_impl/audio_device_mac.o
+[315/369] 23.02s - CXX obj/modules/audio_device/audio_device_impl/audio_device_impl.o
+[315/369] 23.03s - OBJCXX obj/modules/audio_device/audio_device_impl/audio_engine_device.o
+[315/369] 23.03s - CXX obj/modules/audio_device/audio_device_unittest/audio_device_unittest.o
+[315/369] 23.03s - OBJCXX obj/api/audio/create_audio_device_module/create_audio_engine_device_module.o
+[315/369] 23.03s - CXX obj/modules/audio_device/audio_device_impl/audio_device_utils_mac.o
+[315/369] 23.03s - CXX obj/modules/audio_device/fine_audio_buffer_unittest/fine_audio_buffer_unittest.o
+build failed
+
+	
+noexec:24 local:291 remote:0 cache:0 skip:2232
+  cache-write:0(err:0) fallback:0 retry:0
+fs: ops: 10536(err:765) / r:3536(err:0) 338.35MiB / w:81(err:0) 137.98KiB
+
+
+shutdown cloud logging/monitoring done 10.75µs
+
+23.09s Build Failure: 315 done, 1 failed, 54 remaining - 13.64/s
+ 1 steps failed: exit=1
+see ./out/configuration-recovery/siso_output for full command line and output
+ or ./out/configuration-recovery/siso.INFO
+use ./out/configuration-recovery/siso_failed_commands.sh to re-run failed commands

@@ -165,9 +165,17 @@ actor ObsidianFileWriter {
         }
     }
 
-    /// Backup folder name from the vault-relative path: safe, non-secret components only.
+    /// Backup folder name from the target filename + path digest: collision-free even on
+    /// deep iCloud Drive Obsidian vault paths without exceeding filesystem component limits.
     static func safeBackupName(for url: URL) -> String {
-        url.path.replacingOccurrences(of: "/", with: "_").prefix(120).description
+        let canonical = url.standardizedFileURL.path
+        let digest = SHA256.hash(data: Data(canonical.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let baseName = url.lastPathComponent
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+            .prefix(64)
+        let prefix = baseName.isEmpty ? "vault-file" : String(baseName)
+        return "\(prefix)-\(digest)"
     }
 
     private func checkFault(_ fault: Fault, target: URL) throws {

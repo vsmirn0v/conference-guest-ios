@@ -1,0 +1,9 @@
+Command exited with code 0.
+
+Command output:
+RockNRoll-blahuuslzegtmqefanbarewjmevo
+RockNativeGuest-ahrywdulctufiedhwrmbkbdjerzi
+RockNativeGuest-cxzzwzgbazmdoychizmtzengowao
+RockNativeGuest-fhtchszqpmkvwoakrhsjtafeslpr
+RockNativeGuest-fiazptbcdzzzfcfgebrbhooewcff
+/Users/v.smirnov/Library/Developer/Xcode/DerivedData/RockNRoll-blahuuslzegtmqefanbarewjmevo/SourcePackages/artifacts/webrtc-xcframework/LiveKitWebRTC/LiveKitWebRTC.xcframework

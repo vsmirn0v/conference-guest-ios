@@ -1,0 +1,69 @@
+<style>
+  #portrait-share-proposal { padding: 32px 8px; }
+  #portrait-share-proposal .phone {
+    max-width: 393px; margin: auto; container-type: inline-size; overflow: hidden;
+    background: #09090b; color: #f5f5f7; border-radius: 30px;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  }
+  #portrait-share-proposal .status { display: flex; justify-content: space-between;
+    align-items: center; padding: 18px 26px 10px; font-weight: 600; font-size: 14px; }
+  #portrait-share-proposal .status span { display: inline-flex; align-items: center; gap: 5px; }
+  #portrait-share-proposal .status svg { width: 16px; height: 16px; }
+  #portrait-share-proposal .bar { display: grid; grid-template-columns: 44px minmax(0,1fr) 44px;
+    align-items: center; gap: 6px; padding: 4px 10px 18px; }
+  #portrait-share-proposal .round, #portrait-share-proposal .identity {
+    background: #222225; color: inherit; border: 1px solid #343437; border-radius: 22px; }
+  #portrait-share-proposal .round { height: 44px; display: grid; place-items: center; }
+  #portrait-share-proposal .round svg { width: 21px; height: 21px; }
+  #portrait-share-proposal .identity { min-width: 0; display: grid; text-align: left;
+    grid-template-columns: minmax(0, 1fr) 13px; align-items: center; gap: 6px;
+    padding: 7px 12px; min-height: 46px; font: inherit; }
+  #portrait-share-proposal .title, #portrait-share-proposal .sub span { overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis; }
+  #portrait-share-proposal .title { display: block; font-size: 15px; font-weight: 600; }
+  #portrait-share-proposal .sub { display: flex; align-items: center; gap: 5px;
+    font-size: 13px; font-weight: 500; margin-top: 2px; }
+  #portrait-share-proposal .sub svg { width: 14px; height: 14px; color: #65d996; flex: none; }
+  #portrait-share-proposal .disclose { width: 13px; color: #babac1; }
+  #portrait-share-proposal .sheet { margin: 0 9px 10px; padding: 19px 17px;
+    background: #222225; border-radius: 23px; }
+  #portrait-share-proposal .sheet h3 { font: 600 17px -apple-system,BlinkMacSystemFont,sans-serif; margin: 0 0 16px; }
+  #portrait-share-proposal dl { display: grid; grid-template-columns: auto minmax(0,1fr);
+    gap: 12px; margin: 0; font-size: 14px; }
+  #portrait-share-proposal dt { color: #bebec4; }
+  #portrait-share-proposal dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+  #portrait-share-proposal [hidden] { display: none; }
+  @container (max-width: 340px) {
+    #portrait-share-proposal .bar { grid-template-columns: 44px minmax(0,1fr); }
+    #portrait-share-proposal .chat { display: none; }
+  }
+</style>
+<div id="portrait-share-proposal" class="viz-dotted-background">
+  <div class="phone" role="group" aria-label="Portrait screen sharing header concept">
+    <div class="status" aria-hidden="true"><span>10:39</span><span><i data-lucide="signal"></i> 4G <i data-lucide="battery-full"></i></span></div>
+    <div class="bar">
+      <span class="round" role="img" aria-label="Minimize meeting"><i data-lucide="chevron-down" aria-hidden="true"></i></span>
+      <button type="button" class="identity cursor-interaction" aria-expanded="false" aria-controls="portrait-share-details">
+        <span style="min-width:0"><span class="title">Engineering design review</span>
+          <span class="sub"><i data-lucide="audio-lines" aria-hidden="true"></i><span>Alex Morgan speaking</span></span>
+        </span><i data-lucide="chevron-right" class="disclose" aria-hidden="true"></i>
+      </button>
+      <span class="round chat" role="img" aria-label="Chat"><i data-lucide="message-circle" aria-hidden="true"></i></span>
+    </div>
+    <section id="portrait-share-details" class="sheet" hidden>
+      <h3>Engineering design review</h3>
+      <dl><dt>Speaking</dt><dd>Alex Morgan</dd><dt>Sharing screen</dt><dd>Sam Rivera</dd></dl>
+    </section>
+  </div>
+</div>
+<script>
+  (() => {
+    const root = document.getElementById('portrait-share-proposal');
+    const identity = root.querySelector('.identity');
+    const details = root.querySelector('.sheet');
+    identity.addEventListener('click', () => {
+      details.hidden = !details.hidden;
+      identity.setAttribute('aria-expanded', String(!details.hidden));
+    });
+  })();
+</script>

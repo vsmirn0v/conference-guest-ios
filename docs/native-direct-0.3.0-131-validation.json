@@ -1,0 +1,75 @@
+{
+  "version": "0.3.0",
+  "build": "131",
+  "channel": "beta",
+  "sourceCommit": "d0d4ccee321105bb926166a7b65be37ff5c8d502",
+  "sourceState": "Built from the working tree with the camera tile fix, relay recovery correction and Guest audio reception diagnostics. Local source edits remain uncommitted. Concurrent edits to GuestSystemAudio were confined to iOS conditional blocks.",
+  "changes": [
+    "Keep visible participant cameras subscribed beside a focused screen share and preserve sidebar identity while the share loads.",
+    "Suppress quiet-stream relay fallback when another stream on the same subscriber transport receives packets.",
+    "Record packet loss, decoder concealment, anonymous affected receivers and audio output callback gaps. Add audio-reception.log to diagnostic archives."
+  ],
+  "sourceManifest": {
+    "path": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-131/build/build-evidence.json",
+    "sha256": "219c3c4e11156d2ff149ab53dd22198dc7501743b32a8107936b0cc46d331fd7"
+  },
+  "validation": {
+    "nativeDesktopTests": {
+      "executed": 32,
+      "failed": 0,
+      "log": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-131/tests.log"
+    },
+    "distributionTests": {
+      "executed": 27,
+      "failed": 0
+    },
+    "architectureGatePassed": true,
+    "archivedDiagnosticMarkersVerified": true,
+    "limits": [
+      "Reporter Sony headset retest remains pending.",
+      "Installed Sparkle upgrade was not exercised in this release task."
+    ]
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-131/build/RockNRollNativeGuest-0.3.0-131.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-131/export-131/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "131",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "artifact": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "131",
+    "file": "RockNRoll-0.3.0-131-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-131-arm64.dmg",
+    "sha256": "a642e9c9a2849cd01df84866673ffb86b6b9d76b330e8dd91c8c31df6894bfda",
+    "length": 41062393,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-beta-131/package-131/RockNRoll-0.3.0-131-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-131-arm64.dmg",
+      "sha256": "a642e9c9a2849cd01df84866673ffb86b6b9d76b330e8dd91c8c31df6894bfda",
+      "length": 41062393
+    },
+    "state": {
+      "appcastSHA256": "df54b92dc322c4c29d5c92c55f06778ef79a494698eb2f1702d18cbe9799614a",
+      "inventorySHA256": "0df6e494234628f3849e06cf767a1c886f5d9f91487640c64cef127cb6ff0aff",
+      "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-131-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/83f78eae62e24cd68184c3ae0c1d299f/backup",
+    "httpsVerified": true
+  }
+}

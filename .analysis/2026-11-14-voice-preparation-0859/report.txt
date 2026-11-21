@@ -1,0 +1,62 @@
+Rock'N'Roll for Mac diagnostics
+Created: 2026-11-14T05:59:03Z (uptime 519325)
+App: 0.3.0 (107) at /Applications/Rock'N'Roll for Mac.app
+Updates: beta
+macOS: Версия 27.2 (Выпуск 26B123)
+Mac: Mac16,12
+Language: ru-RU
+Microphone: allowed; camera: allowed; screen recording: allowed
+Audio devices: {"input":{"alive":true,"inputChannels":3,"name":"Микрофон MacBook Air","outputChannels":0,"present":true,"sampleRate":48000,"transport":"bltn"},"output":{"alive":true,"inputChannels":4,"name":"Динамики MacBook Air","outputChannels":2,"present":true,"sampleRate":44100,"transport":"bltn"}}
+Installed copies:
+  /Applications/Rock'N'Roll for Mac.app 0.3.0 (107)
+  /Applications/RockNRoll Native Guest.app 0.3.0 (20)
+  ~/docs/conference-guest-ios/.build/voice-recovery-validation/Xcode/Build/Products/Debug/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/voice-recovery-validation/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/workspace-103-listener-proof-validation/Xcode/Build/Products/Debug/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/native-beta-104/source/.build/beta-build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/native-beta-103/source/.build/beta-build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+  ~/docs/conference-guest-ios/.build/native-beta-103/source/.build/workspace-validation/Xcode/Build/Products/Debug/Rock'N'Roll for Mac.app ?
+  and 24 more
+Saved logs: 5 files; crash and hang reports: 10
+Recent events (41, oldest first):
+{"build":"107","event":"app-launch","macOS":"Версия 27.2 (Выпуск 26B123)","uptime":517382.94793629169,"version":"0.3.0"}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":0,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-created","ownOperation":true,"uptime":517383.84743437503}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-start","ownOperation":true,"playout":true,"recording":true,"uptime":517384.18498841667}
+{"engine":"coreml","event":"local-transcription-loaded","seconds":13.954164291673806,"uptime":517400.0711722917}
+{"event":"local-transcription-warmed","kept":false,"seconds":13.95456720830407,"uptime":517400.07127029169}
+{"event":"local-transcription-unloaded","uptime":517400.07128375}
+{"architecture":"h16g","event":"voice-clone-prepare-started","uptime":517423.44669545838}
+{"event":"voice-worker-started","pid":6713,"uptime":517423.46259175002}
+{"event":"voice-worker-stage","operation":"prepare","pid":6713,"stage":"load","uptime":517423.49287070835}
+{"event":"voice-worker-stage","operation":"prepare","pid":6713,"stage":"validate","uptime":517423.96454779169}
+{"event":"voice-clone-prepare-failed","seconds":0,"uptime":517424.07045683335}
+{"architecture":"h16g","event":"voice-clone-prepare-started","uptime":517479.74583658337}
+{"event":"voice-worker-started","pid":6964,"uptime":517479.78532770835}
+{"event":"voice-worker-stage","operation":"prepare","pid":6964,"stage":"load","uptime":517479.79529100005}
+{"event":"voice-worker-stage","operation":"prepare","pid":6964,"stage":"validate","uptime":517568.51548995834}
+{"event":"voice-clone-prepare-failed","seconds":88,"uptime":517568.62638020836}
+{"activeNativeCall":"set-engine-unavailable","activeOperation":"shutdown","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":1,"event":"audio-engine-lifecycle","kind":"engine-stop","ownOperation":true,"playout":false,"recording":false,"uptime":517718.66798795835}
+{"activeNativeCall":"set-engine-unavailable","activeOperation":"shutdown","deviceUpdates":0,"enginesCreated":1,"enginesReleased":1,"engineStarts":1,"engineStops":1,"event":"audio-engine-lifecycle","kind":"engine-released","ownOperation":true,"uptime":517718.66893225}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":0,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-created","ownOperation":true,"uptime":517723.09207808337}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-start","ownOperation":true,"playout":true,"recording":true,"uptime":517723.28476850002}
+{"architecture":"h16g","event":"voice-clone-prepare-started","uptime":517741.24706429167}
+{"event":"voice-worker-started","pid":7536,"uptime":517741.27859479171}
+{"event":"voice-worker-stage","operation":"prepare","pid":7536,"stage":"load","uptime":517741.28920187504}
+{"event":"voice-worker-stage","operation":"prepare","pid":7536,"stage":"validate","uptime":517741.57129304169}
+{"event":"voice-clone-prepare-failed","seconds":0,"uptime":517741.6405706667}
+{"architecture":"h16g","event":"voice-clone-prepare-started","uptime":517743.65580837504}
+{"event":"voice-worker-started","pid":7538,"uptime":517743.68723458337}
+{"event":"voice-worker-stage","operation":"prepare","pid":7538,"stage":"load","uptime":517743.69729475002}
+{"activeNativeCall":"set-engine-unavailable","activeOperation":"shutdown","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":1,"event":"audio-engine-lifecycle","kind":"engine-stop","ownOperation":true,"playout":false,"recording":false,"uptime":518111.4135806667}
+{"activeNativeCall":"set-engine-unavailable","activeOperation":"shutdown","deviceUpdates":0,"enginesCreated":1,"enginesReleased":1,"engineStarts":1,"engineStops":1,"event":"audio-engine-lifecycle","kind":"engine-released","ownOperation":true,"uptime":518111.41415208334}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":0,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-created","ownOperation":true,"uptime":518134.67046579171}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-start","ownOperation":true,"playout":true,"recording":true,"uptime":518134.91178250004}
+{"activeNativeCall":"set-engine-unavailable","activeOperation":"shutdown","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":1,"event":"audio-engine-lifecycle","kind":"engine-stop","ownOperation":true,"playout":false,"recording":false,"uptime":518618.00203754171}
+{"activeNativeCall":"set-engine-unavailable","activeOperation":"shutdown","deviceUpdates":0,"enginesCreated":1,"enginesReleased":1,"engineStarts":1,"engineStops":1,"event":"audio-engine-lifecycle","kind":"engine-released","ownOperation":true,"uptime":518618.00257500005}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":0,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-created","ownOperation":true,"uptime":518653.34845212504}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-start","ownOperation":true,"playout":true,"recording":true,"uptime":518654.12639612501}
+{"event":"voice-clone-prepare-failed","seconds":1420,"uptime":519164.2798046667}
+{"activeNativeCall":"set-engine-unavailable","activeOperation":"shutdown","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":1,"event":"audio-engine-lifecycle","kind":"engine-stop","ownOperation":true,"playout":false,"recording":false,"uptime":519317.81454929168}
+{"activeNativeCall":"set-engine-unavailable","activeOperation":"shutdown","deviceUpdates":0,"enginesCreated":1,"enginesReleased":1,"engineStarts":1,"engineStops":1,"event":"audio-engine-lifecycle","kind":"engine-released","ownOperation":true,"uptime":519317.81635270838}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":0,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-created","ownOperation":true,"uptime":519319.57692033338}
+{"activeNativeCall":"start-recording","activeOperation":"foreground-input-prepare","deviceUpdates":0,"enginesCreated":1,"enginesReleased":0,"engineStarts":1,"engineStops":0,"event":"audio-engine-lifecycle","kind":"engine-start","ownOperation":true,"playout":true,"recording":true,"uptime":519319.78622395836}

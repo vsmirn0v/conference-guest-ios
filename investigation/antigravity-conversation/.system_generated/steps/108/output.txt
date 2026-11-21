@@ -1,0 +1,16 @@
+Command exited with code 0.
+
+Command output:
+/Applications/Xcode.app
+local binary target 'LiveKitWebRTC' at '/Users/v.smirnov/docs/conference-guest-ios/.build/native-mac-guest/Dependencies/webrtc-xcframework/LiveKitWebRTC.xcframework' does not contain a binary artifact.fatalError
+Resolved source packages:
+  SherpaOnnxKit: (null)
+  webrtc-xcframework: (null)
+  client-sdk-swift: (null)
+  ConferenceCore: (null)
+
+2026-11-10 15:44:26.839 xcodebuild[81066:4654881] Writing error result bundle to /var/folders/2q/819tlzj1381cgp6r0x62xc9m_x057_/T/ResultBundle_2026-10-11_15-44-0026.xcresult
+xcodebuild: error: Could not resolve package dependencies:
+  local binary target 'LiveKitWebRTC' at '/Users/v.smirnov/docs/conference-guest-ios/.build/native-mac-guest/Dependencies/webrtc-xcframework/LiveKitWebRTC.xcframework' does not contain a binary artifact.
+  fatalError
+

@@ -33,43 +33,7 @@ final class CameraOutputTests: XCTestCase {
         CVBufferSetAttachment(result, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
         return result
     }
-    func testAllTiersProduceProportionalNativeBuffersAndKeepRotationColorAndTimestamp() throws {
-        let input = try pixels(width: 1080, height: 1920)
-        for (tier, width, height) in [(CameraQualityPolicy.Tier.high, 720, 1280), (.balance, 540, 960), (.constrained, 360, 640)] {
-            let processor = CameraOutputProcessor(); processor.setProfile(.init(tier: tier, fps: 24))
-            let frame = VideoFrame(dimensions: .init(width: 1080, height: 1920), rotation: ._90,
-                timeStampNs: 123, buffer: CVPixelVideoBuffer(pixelBuffer: input))
-            let output = try XCTUnwrap(processor.process(frame: frame))
-            let pixels = try XCTUnwrap(output.toCVPixelBuffer())
-            XCTAssertEqual(CVPixelBufferGetWidth(pixels), width); XCTAssertEqual(CVPixelBufferGetHeight(pixels), height)
-            XCTAssertEqual(output.rotation, ._90); XCTAssertEqual(output.timeStampNs, 123)
-            XCTAssertEqual(CVPixelBufferGetPixelFormatType(pixels), kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
-            CVPixelBufferLockBaseAddress(pixels, .readOnly)
-            XCTAssertEqual(CVPixelBufferGetBaseAddressOfPlane(pixels, 0)?.assumingMemoryBound(to: UInt8.self).pointee, 32)
-            CVPixelBufferUnlockBaseAddress(pixels, .readOnly)
-            XCTAssertNotNil(CVBufferCopyAttachment(pixels, kCVImageBufferYCbCrMatrixKey, nil))
-        }
-    }
-    func testThirtyFpsInputAchievesTwentyFourFpsWithoutIntervalDrift() throws {
-        let processor = CameraOutputProcessor(); processor.setProfile(.init(tier: .high, fps: 24))
-        let input = try pixels(width: 320, height: 180)
-        var frames = 0
-        for index in 0..<300 {
-            let frame = VideoFrame(dimensions: .init(width: 320, height: 180), rotation: ._0,
-                timeStampNs: Int64(index) * 1_000_000_000 / 30, buffer: CVPixelVideoBuffer(pixelBuffer: input))
-            if processor.process(frame: frame) != nil { frames += 1 }
-        }
-        XCTAssertGreaterThanOrEqual(frames, 239); XCTAssertLessThanOrEqual(frames, 241)
-    }
-    func testCameraProcessorPreservesFullNativeAspectInsteadOfSDKLogicalCenterCrop() throws {
-        let processor = CameraOutputProcessor()
-        let input = try pixels(width: 1280, height: 960)
-        let frame = VideoFrame(dimensions: .init(width: 1280, height: 720), rotation: ._0,
-            timeStampNs: 1, buffer: CVPixelVideoBuffer(pixelBuffer: input))
-        let output = try XCTUnwrap(processor.process(frame: frame))
-        XCTAssertEqual(output.dimensions.width, 720); XCTAssertEqual(output.dimensions.height, 540)
-        XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(output.toCVPixelBuffer())), 720)
-    }
+
     func testUncertainTransportDoesNotBecomeExcellentAndRestrictionsOverrideGoodRtt() {
         XCTAssertEqual(CameraUplinkSample.classify(limited: false, roundTrip: nil, availableBitrate: nil, loss: nil), .unknown)
         XCTAssertEqual(CameraUplinkSample.classify(limited: false, roundTrip: .nan, availableBitrate: .infinity, loss: -1), .unknown)

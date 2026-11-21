@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 
 /// Exactly one physical ADM. The other endpoint generates and measures PCM without hardware.
@@ -306,3 +307,4 @@ extension GuestMediaSnapshot {
         }
     }
 }
+#endif

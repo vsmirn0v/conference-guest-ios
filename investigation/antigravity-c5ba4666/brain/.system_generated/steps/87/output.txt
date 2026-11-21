@@ -1,0 +1,34 @@
+Command exited with code 0.
+
+Command output:
+commit 678cb5c390d2e041e3d96f44471b24f9c00254b1
+Author: v.smirnov <v.smirnov@gigab2b.ru>
+Date:   Tue Nov 3 22:13:30 2026 +0300
+
+    Mac: catch-up finds undated live text; times and reactions in live text
+    
+    Catch-up placed live text only by the provider's createdAt. Lines without
+    it (or with a seconds or differently named timestamp) were never inside any
+    sound-off period, so catch-up showed "No transcript" although live text had
+    lines for that time.
+    
+    - Live chat and transcript events record when they arrived. A line is placed
+      by the provider's time when it agrees with arrival (within 10 minutes),
+      otherwise by arrival; history pages keep provider time only.
+    - Provider times are read from createdAt, timestamp, startTime, startedAt or
+      time, in seconds or milliseconds; pre-2020 values count as absent.
+    - The first live transcript event logs its field names (no content).
+    - Live text shows a time on each line and lists reactions among the lines;
+      catch-up periods show line times and the reactions sent in them. Chat
+      messages without a provider time sort by arrival.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+ Experiments/NativeGuest/GuestMeetingFeatures.swift | 35 ++++++++++++++------
+ .../NativeGuestTests/MeetingFeaturesTests.swift    |  7 ++++
+ NativeMacGuest/DesktopMeetingModel.swift           | 37 ++++++++++++++++++++--
+ NativeMacGuest/DesktopMeetingView.swift            | 32 +++++++++++++++++--
+ .../Tests/Parity/DesktopParityTests.swift          | 24 ++++++++++++++
+ RockNRoll/en.lproj/Localizable.strings             |  1 +
+ RockNRoll/ru.lproj/Localizable.strings             |  1 +
+ 7 files changed, 123 insertions(+), 14 deletions(-)

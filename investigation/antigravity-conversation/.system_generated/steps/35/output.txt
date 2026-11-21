@@ -1,0 +1,35 @@
+Command exited with code 0.
+
+Command output:
+   1 "deviceUpdates":3
+   1 "engineStarts":2
+   1 "engineStops":1
+   1 "enginesCreated":2
+   1 "enginesReleased":1
+1:Rock'N'Roll for Mac diagnostics
+2:Created: 2026-11-10T12:36:07Z (uptime 267552)
+3:App: 0.3.0 (84) at /Applications/Rock'N'Roll for Mac.app
+4:Updates: beta
+5:macOS: Версия 27.2 (Выпуск 26B123)
+6:Mac: Mac16,12
+7:Language: ru-RU
+8:Microphone: allowed; camera: allowed; screen recording: allowed
+9:Audio devices: {"input":{"alive":true,"inputChannels":3,"name":"Микрофон MacBook Air","outputChannels":0,"present":true,"sampleRate":48000,"transport":"bltn"},"output":{"alive":true,"inputChannels":4,"name":"Динамики MacBook Air","outputChannels":2,"present":true,"sampleRate":44100
+10:Installed copies:
+11:  /Applications/Rock'N'Roll for Mac.app 0.3.0 (84)
+12:  /Applications/RockNRoll Native Guest.app 0.3.0 (20)
+13:  ~/docs/conference-guest-ios/.build/worktrees/release-84/.build/native-dmg/release-84/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+14:  ~/docs/conference-guest-ios/.build/worktrees/release-83/.build/native-dmg/release-83/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+15:  ~/docs/conference-guest-ios/.build/native-dmg/release-82/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+16:  ~/docs/conference-guest-ios/.build/native-dmg/release-81/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+17:  ~/docs/conference-guest-ios/.build/native-dmg/release-80/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+18:  ~/docs/conference-guest-ios/work/assistant-moments/.build/native-dmg/build/Xcode/Build/Products/Release/Rock'N'Roll for Mac.app ?
+19:  and 24 more
+20:Saved logs: 5 files; crash and hang reports: 10
+21:Recent events (400, oldest first):
+26:{"event":"video-negotiation","local":[{"codecParameters":{"125":{"level-asymmetry-allowed":"1","packetization-mode":"1","profile-level-id":"42e034"}},"codecs":{"35":"av1","96":"vp8","98":"vp9","100":"vp9","125":"h264"},"direction":"recvonly","feedback":{"35":["ccm fir","nack","nack pli","transpor
+27:{"escalated":false,"event":"attention-verdict","firstProbability":-1,"latencyMs":2461,"level":"no","lines":0,"mentioned":false,"mode":"mentions","outcome":"belowThreshold","probability":0.080000000000000002,"shown":false,"uptime":267410.81824466668}
+33:{"event":"remote-track","kind":"audio","target":"SUBSCRIBER","uptime":267416.63783841667}
+34:{"event":"video-negotiation","local":[{"codecParameters":{"125":{"level-asymmetry-allowed":"1","packetization-mode":"1","profile-level-id":"42e034"}},"codecs":{"35":"av1","96":"vp8","98":"vp9","100":"vp9","125":"h264"},"direction":"recvonly","feedback":{"35":["ccm fir","nack","nack pli","transpor
+37:{"audioActiveOperation":{"callerTimedOut":true,"deadlineAt":267532.36473408336,"id":20,"name":"microphone-mute","nativeCall":"set-microphone-muted","nativeCalls":[],"nativeSeconds":2.0369766250369139,"nativeStartedAt":267530.36489379167,"queuedAt":267530.36473408336,"queueSeconds":2.2833351977169
+38:{"escalated":false,"event":"attention-verdict","firstProbability":-1,"latencyMs":1887,"level":"soon","lines":1,"mentioned":false,"mode":"mentions","outcome":"belowThreshold","probability":0.57999999999999996,"shown":false,"uptime":267533.77104395838}

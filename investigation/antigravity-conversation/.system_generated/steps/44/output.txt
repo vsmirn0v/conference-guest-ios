@@ -1,0 +1,15 @@
+Command exited with code 0.
+
+Command output:
+SherpaOnnxKit		native-macos
+guest-sdk		webrtc-xcframework
+Dependencies/guest-sdk/Package.swift:9:        "JazzSDK", "LibSberCast", "JazzCore", "WebRTC", "JazzScreenShareImpl", "SDSoup"
+Dependencies/guest-sdk/Package.swift:18:            name: "WebRTC",
+Dependencies/guest-sdk/Package.swift:19:            url: "https://github.com/vsmirn0v/conference-guest-ios/releases/download/guest-native-webrtc-150.7871.03-r6/WebRTC.xcframework.zip",
+Dependencies/webrtc-xcframework/Package.swift:5:    name: "LiveKitWebRTC",
+Dependencies/webrtc-xcframework/Package.swift:7:    products: [.library(name: "LiveKitWebRTC", targets: ["LiveKitWebRTC"])],
+Dependencies/webrtc-xcframework/Package.swift:10:            name: "LiveKitWebRTC",
+Dependencies/webrtc-xcframework/Package.swift:11:            url: "https://github.com/vsmirn0v/conference-guest-ios/releases/download/native-webrtc-150.7871.03-r3/LiveKitWebRTC.xcframework.zip",
+project.yml:17:  NativeWebRTC:
+project.yml:18:    path: Dependencies/webrtc-xcframework
+project.yml:47:      - package: NativeWebRTC

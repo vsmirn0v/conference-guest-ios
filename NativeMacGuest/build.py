@@ -2,7 +2,7 @@
 """Provision/build the external Mac companion; never modify the iOS app bundle."""
 import argparse, hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, tempfile
 from native_dependencies import (AUDIO_ROUTE_RECOVERY_PATCHES, audio_route_recovery_lock_paths,
-    default_framework_root, ensure_framework, verify_audio_route_recovery_framework)
+    default_framework_root, ensure_framework, sha256 as cached_sha256, verify_audio_route_recovery_framework)
 from distribution.build_support import (APP_NAME, APP_BUNDLE_NAME, EXECUTABLE_NAME,
     application_executable, configure_distribution, find_application, installation_destination, resolve_source_paths)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -36,6 +36,10 @@ archive = build/(f'RockNRollNativeGuest-{a.version}-{a.build_number}.xcarchive')
 if archive is not None and archive.exists():
     raise SystemExit('Refusing to replace an existing archive')
 env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
+if a.reuse_cache:
+    sha_cache = str(ROOT / '.build/native-mac-guest-cache/sha256-cache.json')
+    os.environ['RNR_SHA256_CACHE_PATH'] = sha_cache
+    env['RNR_SHA256_CACHE_PATH'] = sha_cache
 framework_root = ensure_framework(a.framework_root)
 if a.distribution == 'direct':
     try:
@@ -44,7 +48,7 @@ if a.distribution == 'direct':
         raise SystemExit(str(error)) from error
 framework_evidence = json.loads((framework_root/'build-evidence.json').read_text())
 framework_binary = framework_root/'LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/LiveKitWebRTC'
-if hashlib.sha256(framework_binary.read_bytes()).hexdigest() != framework_evidence['frameworkBinarySHA256']:
+if cached_sha256(framework_binary) != framework_evidence['frameworkBinarySHA256']:
     raise SystemExit('Native InputMixer framework does not match its build evidence')
 for resource in (ROOT/'RockNRoll/Assets.xcassets/AdditionalRootCA.dataset').iterdir():
     native_resource = ROOT/'NativeMacGuest/Assets.xcassets/AdditionalRootCA.dataset'/resource.name

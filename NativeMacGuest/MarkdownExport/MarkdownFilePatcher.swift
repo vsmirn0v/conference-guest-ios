@@ -50,8 +50,7 @@ enum MarkdownFilePatcher {
             guard innerStart <= innerEnd, let inner = substring(of: existing, bytes: innerStart..<innerEnd) else {
                 throw ObsidianExportError.markerDamage("block byte range is invalid")
             }
-            let normalizedInner = inner.hasPrefix("\n") ? String(inner.dropFirst()) : inner
-            let canonicalInner = normalizedInner.hasSuffix("\n") ? String(normalizedInner.dropLast()) : normalizedInner
+            let canonicalInner = normalizeManagedInner(inner)
             if let expectedBlockSHA256, sha256(canonicalInner) != expectedBlockSHA256 {
                 throw ObsidianExportError.managedBlockConflict
             }
@@ -100,7 +99,14 @@ enum MarkdownFilePatcher {
         let start = structure.lines[block.beginLine].byteEnd + 1
         let end = structure.lines[block.endLine].byteStart
         guard start <= end, let inner = substring(of: text, bytes: start..<end) else { return nil }
-        return inner.hasSuffix("\n") ? String(inner.dropLast()) : inner
+        let normalized = inner.replacingOccurrences(of: "\r\n", with: "\n")
+        return normalized.hasSuffix("\n") ? String(normalized.dropLast()) : normalized
+    }
+
+    private static func normalizeManagedInner(_ inner: String) -> String {
+        let normalized = inner.replacingOccurrences(of: "\r\n", with: "\n")
+        let withoutLeading = normalized.hasPrefix("\n") ? String(normalized.dropFirst()) : normalized
+        return withoutLeading.hasSuffix("\n") ? String(withoutLeading.dropLast()) : withoutLeading
     }
 
     /// Full-file creation for a separate meeting file: frontmatter + managed block.

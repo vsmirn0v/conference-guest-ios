@@ -1,0 +1,23 @@
+Command exited with code 0.
+
+Command output:
+7:not an in-place replacement for their TestFlight bundle.
+17:This is not a TestFlight publication. Previous native apps are retained under
+20:Initial parity qualification passed 19 native lifecycle/media tests, three external
+21:provider facade tests and 17 actual GPU checks. Selected shipping simulator
+22:regressions passed 65 tests with three documented skips. The exact installed
+72:separately; it is not embedded in the iOS app or a TestFlight release.
+125:Synthetic tests cannot establish these hardware workflows. The app does not silently force
+149:bash Experiments/NativeGuestTests/run-session.sh
+150:bash Experiments/NativeGuestTests/run-engine.sh
+151:bash Experiments/NativeGuestTests/run-companion-policy.sh
+152:bash NativeMacGuest/test-standalone.sh
+153:bash NativeMacGuest/test-rock.sh \
+172:Mac XCTest coverage is in `NativeGuestCompanionProtocolTests` and
+173:`NativeGuestIntegrationTests`. After the host's Mac `build-for-testing`, run:
+176:python3 Experiments/NativeGuestTests/run-mac-integration.py \
+192:python3 Experiments/NativeGuestTests/run-mac-capture.py \
+198:This diagnostic test requires a matching installed **Debug** M156 helper and a
+199:signed Mac `build-for-testing` host. Release intentionally omits its private
+207:helper and host/test/probe artifacts before and after the run. Keep the Mac free
+208:of concurrent meeting tests during this procedure.

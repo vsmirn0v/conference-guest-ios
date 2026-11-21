@@ -1,0 +1,6 @@
+Command exited with code 128.
+
+Command output:
+fatal: ambiguous argument 'RockNRoll/CatchUp': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'

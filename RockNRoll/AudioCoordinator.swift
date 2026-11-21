@@ -199,6 +199,23 @@ final class AudioCoordinator {
         idiom == .phone && outputs == [.builtInSpeaker]
     }
 
+    /// `.voiceChat` can route to the built-in speaker via `overrideOutputAudioPort(.speaker)`
+    /// without changing `AVAudioSession.Mode` (avoiding a full VPIO `AVAudioEngine` teardown).
+    /// Only switch `.videoChat -> .voiceChat` when routing to the built-in receiver (`speaker == false`),
+    /// since `.videoChat` defaults to speaker and cannot select the receiver via port override alone.
+    nonisolated static func builtInOutputMode(currentMode: AVAudioSession.Mode, speaker: Bool) -> AVAudioSession.Mode {
+        if !speaker && currentMode == .videoChat {
+            return .voiceChat
+        }
+        return currentMode
+    }
+
+    /// Avoid calling `setPreferredInput(.builtInMic)` when the session is already on the built-in
+    /// route with no external preferred input, which otherwise forces a redundant CoreAudio input reset.
+    nonisolated static func shouldForceBuiltInMicInput(route: ProximityOutputPolicy.Route, preferredInputPort: AVAudioSession.Port?) -> Bool {
+        route != .builtIn || (preferredInputPort != nil && preferredInputPort != .builtInMic)
+    }
+
     func setProximityRoutingNeeded(_ needed: Bool) {
         proximityRoutingNeeded = needed
         updateProximityRouting()
@@ -401,8 +418,7 @@ final class AudioCoordinator {
             }
             var options = session.categoryOptions
             if !speaker { options.remove(.defaultToSpeaker) }
-            let mode: AVAudioSession.Mode = [.voiceChat, .videoChat].contains(session.mode)
-                ? (speaker ? .videoChat : .voiceChat) : session.mode
+            let mode = Self.builtInOutputMode(currentMode: session.mode, speaker: speaker)
             if session.mode != mode || session.categoryOptions != options {
                 try session.setCategory(session.category, mode: mode, options: options)
             }
@@ -411,7 +427,11 @@ final class AudioCoordinator {
                 box.value = Self.inspectRouteSnapshot(session)
                 return
             }
-            if !preservingExternalRoute, let input = session.availableInputs?.first(where: { $0.portType == .builtInMic }), session.preferredInput != input {
+            let currentProximityRoute = Self.proximityRoute(session.currentRoute)
+            if !preservingExternalRoute,
+               Self.shouldForceBuiltInMicInput(route: currentProximityRoute, preferredInputPort: session.preferredInput?.portType),
+               let input = session.availableInputs?.first(where: { $0.portType == .builtInMic }),
+               session.preferredInput != input {
                 try session.setPreferredInput(input)
             }
             try expected.check(); try request.check(); try configuration.check()

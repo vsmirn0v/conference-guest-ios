@@ -29,8 +29,6 @@ targets:
       - path: RockNRoll
       - path: Dependencies/MLXAudioVoice/LICENSE
         buildPhase: resources
-      - path: Shared/BroadcastLifecycle.swift
-      - path: Shared/LocalSharePreviewTransport.swift
       - path: Shared/OutgoingShareExperiment.swift
       - path: Shared/OutgoingVideoCadence.swift
       - path: Shared/NativeGuestCompanionProtocol.swift
@@ -70,6 +68,10 @@ targets:
           CLOUDKIT_ENVIRONMENT: Development
         Release:
           CLOUDKIT_ENVIRONMENT: Production
+          DEAD_CODE_STRIPPING: YES
+          DEPLOYMENT_POSTPROCESSING: YES
+          STRIP_INSTALLED_PRODUCT: YES
+          STRIP_STYLE: all
   RockBroadcast:
     type: app-extension
     platform: iOS
@@ -90,6 +92,12 @@ targets:
         DEVELOPMENT_TEAM: 5V64BP2H3P
         GENERATE_INFOPLIST_FILE: NO
         APPLICATION_EXTENSION_API_ONLY: YES
+      configs:
+        Release:
+          DEAD_CODE_STRIPPING: YES
+          DEPLOYMENT_POSTPROCESSING: YES
+          STRIP_INSTALLED_PRODUCT: YES
+          STRIP_STYLE: all
   MeetingActivity:
     type: app-extension
     platform: iOS
@@ -111,6 +119,12 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
+      configs:
+        Release:
+          DEAD_CODE_STRIPPING: YES
+          DEPLOYMENT_POSTPROCESSING: YES
+          STRIP_INSTALLED_PRODUCT: YES
+          STRIP_STYLE: all
   RockNRollTests:
     type: bundle.unit-test
     platform: iOS

@@ -1,0 +1,6 @@
+Command exited with code 0.
+
+Command output:
+RockNRoll/ConversationPanelViewController.swift:668:                self?.chat.reactionHistory.receive(kind: .wave, participantID: "late", displayName: "Narek", isOwn: false)
+RockNRoll/VendorIntegration/GuestCallLayoutFixture.swift:35:            chat.reactionHistory.receive(kind: .heart, participantID: "ani", displayName: "Ani", isOwn: false)
+RockNRoll/VendorIntegration/NativeConferenceEngine.swift:1796:                self?.chat?.reactionHistory.receive(kind: event.kind, participantID: event.participantID,

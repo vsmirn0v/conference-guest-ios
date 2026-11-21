@@ -1,0 +1,11 @@
+Command exited with code 0.
+
+Command output:
+Experiments/NativeGuest/GuestDuplexProbe.swift
+Experiments/NativeGuest/GuestStartupAudio.swift
+Experiments/NativeGuest/GuestSystemAudio.swift
+NativeMacGuest/Tests/Parity/SharedMediaTests.swift
+Experiments/NativeGuest/GuestDuplexProbe.swift:250:            ["enginesCreated", "engineStarts", "engineStops", "deviceUpdates"].allSatisfy { count(measurement.hardware, $0) == count(normal.hardware, $0) }
+Experiments/NativeGuest/GuestStartupAudio.swift:242:            counters: ["enginesCreated", "engineStarts", "engineStops", "enginesReleased", "deviceUpdates"].map { snapshot[$0] as? Int ?? 0 },
+Experiments/NativeGuest/GuestSystemAudio.swift:1160:        locked { cached["deviceUpdates"] = (cached["deviceUpdates"] as? Int ?? 0) + 1 }
+NativeMacGuest/Tests/Parity/SharedMediaTests.swift:35:            "deviceUpdates": devices], inputCallbacks: callbacks, outputCallbacks: 0,

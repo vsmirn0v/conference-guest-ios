@@ -33,7 +33,7 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
 
 @MainActor final class NativeDesktopDeviceModel: ObservableObject {
     private static weak var activePreview: NativeDesktopDeviceModel?
-    let audio = MacAudioDevices(isMac: true)
+    let audio: MacAudioDevices
     @Published var audioSnapshot = MacAudioSnapshot()
     @Published var cameras: [AVCaptureDevice] = []
     @Published var cameraID: String
@@ -72,10 +72,14 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
         guard let rms, rms.isFinite, rms > 0 else { return 0 }
         return min(1, max(0, (20 * log10(rms) + 60) / 60))
     }
-    init(discoverCameras: @escaping @Sendable () -> [AVCaptureDevice] = { AVCaptureDevice.devices(for: .video) },
+    init(audio: MacAudioDevices? = nil,
+         discoverCameras: @escaping @Sendable () -> [AVCaptureDevice] = { AVCaptureDevice.devices(for: .video) },
          authorizeAudio: (() async throws -> Bool)? = nil,
          createAudioOwner: (() async throws -> any NativeDesktopPrivateAudioOwner)? = nil,
          suspendReadiness: (() async throws -> ((Bool) -> Void))? = nil) {
+        let resolvedAudio = audio ?? .shared
+        self.audio = resolvedAudio
+        self.audioSnapshot = resolvedAudio.snapshot
         self.authorizeAudio = authorizeAudio ?? { try await GuestCaptureAuthorization.request(.audio) }
         self.createAudioOwner = createAudioOwner ?? {
             if SharedAudioEngine.enabledAtLaunch {
@@ -101,7 +105,7 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
             guard !Task.isCancelled else { return }
             self?.cameras = devices
         }
-        audio.$snapshot.sink { [weak self] in self?.audioSnapshot = $0 }.store(in: &subscriptions)
+        self.audio.$snapshot.sink { [weak self] in self?.audioSnapshot = $0 }.store(in: &subscriptions)
         NativeDesktopCameraLease.shared.$liveTrack.sink { [weak self] in self?.borrowedLiveTrack = $0 }.store(in: &subscriptions)
     }
     func selectCamera(_ id: String) {

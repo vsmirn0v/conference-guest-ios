@@ -1,0 +1,23 @@
+target_os = "mac"
+target_cpu = "arm64"
+is_debug = false
+symbol_level = 0
+enable_dsyms = false
+is_component_build = false
+rtc_include_tests = true
+rtc_build_examples = false
+rtc_enable_symbol_export = true
+rtc_enable_protobuf = false
+rtc_libvpx_build_vp9 = true
+rtc_use_h264 = false
+enable_libaom = true
+rtc_include_dav1d_in_internal_decoder_factory = true
+enable_stripping = true
+treat_warnings_as_errors = true
+use_rtti = true
+mac_deployment_target = "13.0"
+use_remoteexec = false
+
+use_lld = false
+enable_rust = true
+rtc_use_h265 = true

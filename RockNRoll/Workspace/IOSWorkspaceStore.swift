@@ -147,8 +147,19 @@ enum IOSWorkspaceStoreError: LocalizedError {
 }
 
 actor IOSWorkspaceStore {
+    struct LocalSnapshot: Sendable {
+        var sessions: [IOSMeetingSessionItem]
+        var notesBySession: [UUID: IOSMeetingNoteItem]
+        var outcomesBySession: [UUID: IOSMeetingOutcomeItem]
+        var tasks: [IOSMeetingTaskItem]
+        var taskProfile: IOSTaskProfile
+        var taskArchiveDates: [UUID: Date]
+        var contextSettings: [String: SyncedMeetingContextSettings]
+    }
+
     let root: URL
     private var handle: OpaquePointer?
+    private var transactionDepth = 0
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -300,6 +311,26 @@ actor IOSWorkspaceStore {
     }
 
     // MARK: - Sessions
+
+    func loadSnapshot() throws -> LocalSnapshot {
+        try prepare()
+        let sessions = try allSessions()
+        let notes = try allNotes()
+        let outcomes = try allOutcomes()
+        let tasks = try allTasks()
+        let profile = try taskProfile()
+        let archiveDates = try taskArchiveDates(profileID: profile.profileID)
+        let settings = try allContextSettings()
+        return LocalSnapshot(
+            sessions: sessions,
+            notesBySession: notes,
+            outcomesBySession: outcomes,
+            tasks: tasks,
+            taskProfile: profile,
+            taskArchiveDates: archiveDates,
+            contextSettings: settings
+        )
+    }
 
     func allSessions() throws -> [IOSMeetingSessionItem] {
         try prepare()
@@ -470,7 +501,12 @@ actor IOSWorkspaceStore {
         return item
     }
 
-    func applyRemoteNote(_ remote: SyncedMeetingNote, localDeviceID: String) throws -> (markdown: String, changed: Bool) {
+    func applyRemoteNote(
+        _ remote: SyncedMeetingNote,
+        localDeviceID: String,
+        alreadyMergedFromLocalMarkdown: String? = nil,
+        syncBaseMarkdown: String? = nil
+    ) throws -> (markdown: String, changed: Bool) {
         try prepare()
         if remote.isDeleted.value {
             try run("DELETE FROM notes WHERE session_id=?") { bindText($0, remote.sessionID.uuidString, at: 1) }
@@ -487,6 +523,11 @@ actor IOSWorkspaceStore {
             if existing.markdown == remote.markdown {
                 finalMarkdown = existing.markdown
                 changed = false
+            } else if let preMergedLocal = alreadyMergedFromLocalMarkdown, existing.markdown == preMergedLocal {
+                // `MeetingWorkspaceSyncDocument` already merged `preMergedLocal` with the remote note
+                // using real Lamport versions; avoid merging a second time and duplicating conflict quotes.
+                finalMarkdown = remote.markdown
+                changed = finalMarkdown != existing.markdown
             } else {
                 let localVersion = SyncVersion(counter: Int64(max(1, existing.revision)), device: localDeviceID)
                 let merge = NoteThreeWayMerger.merge(
@@ -504,7 +545,7 @@ actor IOSWorkspaceStore {
             changed = true
         }
 
-        try saveNoteSyncBase(remote.sessionID, markdown: remote.markdown)
+        try saveNoteSyncBase(remote.sessionID, markdown: syncBaseMarkdown ?? remote.markdown)
         guard changed else { return (finalMarkdown, false) }
 
         let updated = IOSMeetingNoteItem(
@@ -584,10 +625,12 @@ actor IOSWorkspaceStore {
 
     func replaceTasks(for sessionID: UUID, tasks: [IOSMeetingTaskItem]) throws {
         try prepare()
-        try ensureSessionExists(sessionID)
-        try run("DELETE FROM tasks WHERE session_id=?") { bindText($0, sessionID.uuidString, at: 1) }
-        for task in tasks {
-            try upsertTask(task)
+        try transaction {
+            try ensureSessionExists(sessionID)
+            try run("DELETE FROM tasks WHERE session_id=?") { bindText($0, sessionID.uuidString, at: 1) }
+            for task in tasks {
+                try upsertTask(task)
+            }
         }
     }
 
@@ -642,77 +685,79 @@ actor IOSWorkspaceStore {
         links: [SyncedTaskLink]
     ) throws {
         try prepare()
-        try ensureSessionExists(sessionID)
+        try transaction {
+            try ensureSessionExists(sessionID)
 
-        if let outcome {
-            if outcome.isDeleted.value {
-                try run("DELETE FROM outcomes WHERE session_id=?") { bindText($0, sessionID.uuidString, at: 1) }
-            } else {
-                let item = IOSMeetingOutcomeItem(
-                    outcomeID: outcome.outcomeID,
-                    sessionID: sessionID,
-                    state: outcome.state.value,
-                    summary: outcome.summary.value,
-                    decisions: outcome.decisions.value,
-                    openQuestions: outcome.openQuestions.value,
-                    summaryEdited: outcome.summaryEdited,
-                    decisionsEdited: outcome.decisionsEdited,
-                    questionsEdited: outcome.questionsEdited,
-                    coverageSeconds: outcome.coverageSeconds,
-                    writerTier: outcome.writerTier,
-                    versions: outcome.versions,
-                    reviewCandidates: outcome.reviewCandidates.value,
-                    updatedAt: outcome.updatedAt
-                )
-                try saveOutcome(item)
-            }
-        }
-
-        let active = tasks
-            .filter { !$0.isDeleted.value }
-            .sorted { ($0.ordinal.value, $0.id.uuidString) < ($1.ordinal.value, $1.id.uuidString) }
-            .map { task in
-                IOSMeetingTaskItem(
-                    id: task.id,
-                    sessionID: sessionID,
-                    outcomeID: task.outcomeID,
-                    ordinal: task.ordinal.value,
-                    text: task.text.value,
-                    owner: task.owner.value,
-                    assigneeID: task.assigneeID.value,
-                    dueDay: task.dueDay.value,
-                    dueAt: task.dueAt.value,
-                    reminderAt: task.done.value ? nil : task.reminderAt.value,
-                    done: task.done.value,
-                    completedAt: task.completedAt.value,
-                    updatedAt: task.updatedAt
-                )
-            }
-        try replaceTasks(for: sessionID, tasks: active)
-
-        for link in links {
-            try run("INSERT OR IGNORE INTO task_links(session_id,historical_task_id,canonical_task_id) VALUES(?,?,?)") { stmt in
-                bindText(stmt, sessionID.uuidString, at: 1)
-                bindText(stmt, link.historicalTaskID.uuidString, at: 2)
-                bindText(stmt, link.canonicalTaskID.uuidString, at: 3)
-            }
-        }
-
-        for task in tasks {
-            for (profileID, archived) in task.archivedByProfile {
-                if let archivedAt = archived.value {
-                    try run("""
-                        INSERT INTO task_archive(profile_id,task_id,archived_at) VALUES(?,?,?)
-                        ON CONFLICT(profile_id,task_id) DO UPDATE SET archived_at=excluded.archived_at
-                        """) { stmt in
-                        bindText(stmt, profileID, at: 1)
-                        bindText(stmt, task.id.uuidString, at: 2)
-                        bindInt(stmt, archivedAt.syncMilliseconds, at: 3)
-                    }
+            if let outcome {
+                if outcome.isDeleted.value {
+                    try run("DELETE FROM outcomes WHERE session_id=?") { bindText($0, sessionID.uuidString, at: 1) }
                 } else {
-                    try run("DELETE FROM task_archive WHERE profile_id=? AND task_id=?") { stmt in
-                        bindText(stmt, profileID, at: 1)
-                        bindText(stmt, task.id.uuidString, at: 2)
+                    let item = IOSMeetingOutcomeItem(
+                        outcomeID: outcome.outcomeID,
+                        sessionID: sessionID,
+                        state: outcome.state.value,
+                        summary: outcome.summary.value,
+                        decisions: outcome.decisions.value,
+                        openQuestions: outcome.openQuestions.value,
+                        summaryEdited: outcome.summaryEdited,
+                        decisionsEdited: outcome.decisionsEdited,
+                        questionsEdited: outcome.questionsEdited,
+                        coverageSeconds: outcome.coverageSeconds,
+                        writerTier: outcome.writerTier,
+                        versions: outcome.versions,
+                        reviewCandidates: outcome.reviewCandidates.value,
+                        updatedAt: outcome.updatedAt
+                    )
+                    try saveOutcome(item)
+                }
+            }
+
+            let active = tasks
+                .filter { !$0.isDeleted.value }
+                .sorted { ($0.ordinal.value, $0.id.uuidString) < ($1.ordinal.value, $1.id.uuidString) }
+                .map { task in
+                    IOSMeetingTaskItem(
+                        id: task.id,
+                        sessionID: sessionID,
+                        outcomeID: task.outcomeID,
+                        ordinal: task.ordinal.value,
+                        text: task.text.value,
+                        owner: task.owner.value,
+                        assigneeID: task.assigneeID.value,
+                        dueDay: task.dueDay.value,
+                        dueAt: task.dueAt.value,
+                        reminderAt: task.done.value ? nil : task.reminderAt.value,
+                        done: task.done.value,
+                        completedAt: task.completedAt.value,
+                        updatedAt: task.updatedAt
+                    )
+                }
+            try replaceTasks(for: sessionID, tasks: active)
+
+            for link in links {
+                try run("INSERT OR IGNORE INTO task_links(session_id,historical_task_id,canonical_task_id) VALUES(?,?,?)") { stmt in
+                    bindText(stmt, sessionID.uuidString, at: 1)
+                    bindText(stmt, link.historicalTaskID.uuidString, at: 2)
+                    bindText(stmt, link.canonicalTaskID.uuidString, at: 3)
+                }
+            }
+
+            for task in tasks {
+                for (profileID, archived) in task.archivedByProfile {
+                    if let archivedAt = archived.value {
+                        try run("""
+                            INSERT INTO task_archive(profile_id,task_id,archived_at) VALUES(?,?,?)
+                            ON CONFLICT(profile_id,task_id) DO UPDATE SET archived_at=excluded.archived_at
+                            """) { stmt in
+                            bindText(stmt, profileID, at: 1)
+                            bindText(stmt, task.id.uuidString, at: 2)
+                            bindInt(stmt, archivedAt.syncMilliseconds, at: 3)
+                        }
+                    } else {
+                        try run("DELETE FROM task_archive WHERE profile_id=? AND task_id=?") { stmt in
+                            bindText(stmt, profileID, at: 1)
+                            bindText(stmt, task.id.uuidString, at: 2)
+                        }
                     }
                 }
             }
@@ -1048,6 +1093,26 @@ actor IOSWorkspaceStore {
             completedAt: colInt(stmt, 11).map(Date.fromSyncMilliseconds),
             updatedAt: Date.fromSyncMilliseconds(updatedMs)
         )
+    }
+
+    private func transaction<T>(_ body: () throws -> T) throws -> T {
+        if transactionDepth > 0 {
+            transactionDepth += 1
+            defer { transactionDepth -= 1 }
+            return try body()
+        }
+        try exec("BEGIN IMMEDIATE TRANSACTION;")
+        transactionDepth = 1
+        do {
+            let result = try body()
+            transactionDepth = 0
+            try exec("COMMIT;")
+            return result
+        } catch {
+            transactionDepth = 0
+            try? exec("ROLLBACK;")
+            throw error
+        }
     }
 
     private func exec(_ sql: String) throws {

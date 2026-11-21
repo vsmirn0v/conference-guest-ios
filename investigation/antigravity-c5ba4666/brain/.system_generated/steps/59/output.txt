@@ -1,0 +1,19 @@
+Command exited with code 0.
+
+Command output:
+RockNRoll/ConversationPanelViewController.swift:54:    private let mode = UISegmentedControl(items: [L("Chat"), L("Live text"), L("Catch up")])
+RockNRoll/SharedTextOverlay.swift:232:                self.updateStatus(text.isEmpty ? L("No text found. Try a clearer frame or return to Live.") : L("Selectable text · Live Text is unavailable on this device."))
+RockNRoll/en.lproj/Localizable.strings:163:"Live text" = "Live text";
+RockNRoll/en.lproj/Localizable.strings:1267:"Selectable text · Live Text is unavailable on this device." = "Selectable text · Live Text is unavailable on this device.";
+RockNRoll/en.lproj/Localizable.strings:1407:"The meeting service reported an error, so new speech is not being turned into text. Text captured so far stays in Live text." = "The meeting service reported an error, so new speech is not being turned into text. Text captured so far stays in Live text.";
+RockNRoll/en.lproj/Localizable.strings:1411:"Show live text" = "Show live text";
+RockNRoll/en.lproj/Localizable.strings:1444:"%ld lines of live text" = "%ld lines of live text";
+RockNRoll/en.lproj/Localizable.strings:1446:"Sound is off · live text is saved for catch-up" = "Sound is off · live text is saved for catch-up";
+RockNRoll/en.lproj/Localizable.strings:1461:"When a meeting is not transcribed by its service, other participants' speech is turned into text here, for Live text and Catch up. It keeps working while the meeting's sound is off." = "When a meeting is not transcribed by its service, other participants' speech is turned into text here, for Live text and Catch up. It keeps working while the meeting's sound is off.";
+RockNRoll/ru.lproj/Localizable.strings:163:"Live text" = "Текст";
+RockNRoll/ru.lproj/Localizable.strings:1265:"Selectable text · Live Text is unavailable on this device." = "Текст для выделения · Live Text недоступен на этом устройстве.";
+RockNRoll/ru.lproj/Localizable.strings:1405:"The meeting service reported an error, so new speech is not being turned into text. Text captured so far stays in Live text." = "Сервис встреч сообщил об ошибке, поэтому новая речь не превращается в текст. Уже полученный текст останется в разделе «Текст».";
+RockNRoll/ru.lproj/Localizable.strings:1409:"Show live text" = "Показать текст";
+RockNRoll/ru.lproj/Localizable.strings:1442:"%ld lines of live text" = "Строк текста: %ld";
+RockNRoll/ru.lproj/Localizable.strings:1444:"Sound is off · live text is saved for catch-up" = "Звук выключен · текст сохраняется в «Пропущено»";
+RockNRoll/ru.lproj/Localizable.strings:1459:"When a meeting is not transcribed by its service, other participants' speech is turned into text here, for Live text and Catch up. It keeps working while the meeting's sound is off." = "Если сервис встречи не расшифровывает её, речь других участников превращается в текст здесь, для «Текста» и «Пропущено». Это работает и при выключенном звуке встречи.";

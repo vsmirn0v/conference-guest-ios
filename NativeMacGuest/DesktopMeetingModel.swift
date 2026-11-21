@@ -48,7 +48,13 @@ import UniformTypeIdentifiers
     @Published private(set) var videos: [NativeDesktopExternalVideo] = []
     @Published private(set) var localCamera: LKRTCVideoTrack?
     @Published private(set) var localShare: LKRTCVideoTrack?
-    @Published private(set) var guestFeatures = GuestMeetingSnapshot()
+    @Published private(set) var guestFeatures = GuestMeetingSnapshot() {
+        didSet {
+            if oldValue.transcript != guestFeatures.transcript {
+                cachedMergedTranscript = nil
+            }
+        }
+    }
     @Published var panel: Panel?
     /// Durable library and notes drafts, installed by the workspace when the model is created.
     var meetingLibrary: MeetingLibraryController?
@@ -156,7 +162,10 @@ import UniformTypeIdentifiers
         }
     }
     /// Speech transcribed on this Mac while the meeting service does not transcribe.
-    @Published private(set) var localTranscript: [GuestMeetingMessage] = []
+    @Published private(set) var localTranscript: [GuestMeetingMessage] = [] {
+        didSet { cachedMergedTranscript = nil }
+    }
+    private var cachedMergedTranscript: [GuestMeetingMessage]?
     /// This meeting only: the person paused transcription on this Mac.
     @Published var localTranscriptionPaused = false { didSet { updateLocalTranscription() } }
     private var localTranscriber: MeetingTranscriber?
@@ -938,8 +947,30 @@ import UniformTypeIdentifiers
                                           title: effectiveInitial, startedAt: Date(), endedAt: nil)]
         engine = makeEngine ?? UniversalMeetingEngine.shared.makeSession(destination: destination, chat: chat)
         reactionObserver.onReaction = { [weak self] kind, _ in self?.sendReaction(kind) }
+        let hasCustomReadinessPolicy = readinessPolicy != nil
+        func rawDefaultsFingerprint() -> (Bool?, String?, String?) {
+            let defaults = UserDefaults.standard
+            return (
+                defaults.object(forKey: "nativeDesktop.shareCameraReactions") as? Bool,
+                defaults.string(forKey: NativeDesktopJoinReadinessPolicy.microphoneKey),
+                defaults.string(forKey: NativeDesktopJoinReadinessPolicy.cameraKey)
+            )
+        }
+        var lastDefaults = rawDefaultsFingerprint()
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).sink { [weak self] _ in
-            Task { @MainActor in self?.refreshSystemReactions(); self?.refreshReadinessEligibility() }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let current = rawDefaultsFingerprint()
+                if current.0 != lastDefaults.0 {
+                    lastDefaults.0 = current.0
+                    self.refreshSystemReactions()
+                }
+                if hasCustomReadinessPolicy || current.1 != lastDefaults.1 || current.2 != lastDefaults.2 {
+                    lastDefaults.1 = current.1
+                    lastDefaults.2 = current.2
+                    self.refreshReadinessEligibility()
+                }
+            }
         }.store(in: &subscriptions)
         chat.reactionHistory.beginMeeting(id: sessionID)
         catchUp.enter(roomKey: invitation.absoluteString)
@@ -950,7 +981,15 @@ import UniformTypeIdentifiers
                 self?.updateLocalTranscription()
             }
         }.store(in: &subscriptions)
-        chat.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        // Observe chat state excluding `draft` so typing in the chat field does not invalidate video tiles on every keystroke.
+        Publishers.MergeMany(
+            chat.$items.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            chat.$unreadCount.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            chat.$canSend.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            chat.$unavailableReason.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            chat.$reactionHistoryAvailable.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            chat.$unreadCoverageIsLimited.dropFirst().map { _ in () }.eraseToAnyPublisher()
+        ).sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         chat.reactionHistory.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         if let saved = UserDefaults.standard.object(forKey: meetingVolumeKey) as? Double { meetingVolume = Self.clampedVolume(saved) }
         let initialVolume = meetingVolume
@@ -1232,7 +1271,13 @@ import UniformTypeIdentifiers
     var canReact: Bool { connected && guestFeatures.permissions.canSendReaction }
     var transcript: [GuestMeetingMessage] {
         guard !localTranscript.isEmpty else { return guestFeatures.transcript }
-        return (guestFeatures.transcript + localTranscript).sorted { (Self.spokenAt($0) ?? .distantPast) < (Self.spokenAt($1) ?? .distantPast) }
+        if let cachedMergedTranscript { return cachedMergedTranscript }
+        let merged = (guestFeatures.transcript + localTranscript)
+            .map { ($0, Self.spokenAt($0) ?? .distantPast) }
+            .sorted { $0.1 < $1.1 }
+            .map(\.0)
+        cachedMergedTranscript = merged
+        return merged
     }
     var participants: [NativeDesktopParticipant] { snapshot.participants }
     /// Participants whose video the display mode receives. Tiles, speaking state
